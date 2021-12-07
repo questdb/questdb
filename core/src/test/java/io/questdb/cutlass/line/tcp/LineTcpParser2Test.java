@@ -35,7 +35,6 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import java.nio.charset.StandardCharsets;
 
 public class LineTcpParser2Test extends LineUdpLexerTest {
     private final LineTcpParser lineTcpParser = new LineTcpParser();
@@ -125,7 +124,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
 
         // Single space char after last tag and invalid timestamp
         assertThat(
-                "--ERROR=INVALID_TIMESTAMP--","measurement,tag=x 10000i\n"
+                "measurement,tag=x 10000i--ERROR=INVALID_TIMESTAMP--", "measurement,tag=x 10000i\n"
         );
 
         // Double space char between last tag and timestamp
@@ -136,15 +135,15 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
 
         // Double space char between last tag and invalid timestamp
         assertThat(
-                "--ERROR=INVALID_TIMESTAMP--","measurement,tag=x  10000i\n"
+                "measurement,tag=x  10000i--ERROR=INVALID_TIMESTAMP--", "measurement,tag=x  10000i\n"
         );
 
     }
 
     @Test
     public void testNoFieldsAndNotTags() {
-        assertThat("--ERROR=INCOMPLETE_FIELD--","measurement 10000\n"); // One space char
-        assertThat("--ERROR=NO_FIELDS--","measurement  10000\n"); // Two space chars
+        assertThat("measurement 10000--ERROR=INCOMPLETE_FIELD--", "measurement 10000\n"); // One space char
+        assertThat("measurement  10000--ERROR=NO_FIELDS--", "measurement  10000\n"); // Two space chars
     }
 
     @Test
@@ -244,7 +243,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     @Test
     public void testWithQuotedStringsWithEscapedQuotesUnsuccessful() {
         assertThat(
-                "--ERROR=INVALID_FIELD_VALUE--",
+                "measurement,tag=value,tag2=value field=10000i,field2=\"str=special,lineend--ERROR=INVALID_FIELD_VALUE--",
                 "measurement,tag=value,tag2=value field=10000i,field2=\"str=special,lineend\n"
         );
     }
@@ -252,7 +251,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     @Test
     public void testInvalidMeasurementNamePrefix1() {
         assertThat(
-                "--ERROR=INVALID_TABLE_NAME--",
+                "../measurement,tag=value,tag2=value field=10000i--ERROR=INVALID_TABLE_NAME--",
                 "../measurement,tag=value,tag2=value field=10000i\n"
         );
     }
@@ -268,7 +267,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     @Test
     public void testInvalidMeasurementNameMid2() {
         assertThat(
-                "--ERROR=INVALID_TABLE_NAME--",
+                "mea/surement,tag=value,tag2=value field=10000i--ERROR=INVALID_TABLE_NAME--",
                 "mea/surement,tag=value,tag2=value field=10000i\n"
         );
     }
@@ -276,7 +275,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     @Test
     public void testInvalidMeasurementNameMid3() {
         assertThat(
-                "--ERROR=INVALID_TABLE_NAME--",
+                "mea\0surement,tag=value,tag2=value field=10000i--ERROR=INVALID_TABLE_NAME--",
                 "mea\0surement,tag=value,tag2=value field=10000i\n"
         );
     }
@@ -284,7 +283,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     @Test
     public void testInvalidMeasurementNameMid4() {
         assertThat(
-                "--ERROR=INVALID_TABLE_NAME--",
+                "mea\\\\surement,tag=value,tag2=value field=10000i--ERROR=INVALID_TABLE_NAME--",
                 "mea\\\\surement,tag=value,tag2=value field=10000i\n"
         );
     }
@@ -292,7 +291,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     @Test
     public void testInvalidMeasurementNameEnd1() {
         assertThat(
-                "--ERROR=INVALID_TABLE_NAME--",
+                "measurement\\\\,tag=value,tag2=value field=10000i--ERROR=INVALID_TABLE_NAME--",
                 "measurement\\\\,tag=value,tag2=value field=10000i\n"
         );
     }
@@ -308,7 +307,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     @Test
     public void testInvalidMeasurementNameEnd3() {
         assertThat(
-                "--ERROR=INVALID_TABLE_NAME--",
+                "measurement/,tag=value,tag2=value field=10000i--ERROR=INVALID_TABLE_NAME--",
                 "measurement/,tag=value,tag2=value field=10000i\n"
         );
     }
@@ -316,7 +315,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     @Test
     public void testInvalidMeasurementNameEnd4() {
         assertThat(
-                "--ERROR=INVALID_TABLE_NAME--",
+                "measurement\0,tag=value,tag2=value field=10000i--ERROR=INVALID_TABLE_NAME--",
                 "measurement\0,tag=value,tag2=value field=10000i\n"
         );
     }
@@ -356,7 +355,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     @Test
     public void testInvalidMeasurementNamePrefix2() {
         assertThat(
-                "--ERROR=INVALID_TABLE_NAME--",
+                "\0measurement,tag=value,tag2=value field=10000i--ERROR=INVALID_TABLE_NAME--",
                 "\0measurement,tag=value,tag2=value field=10000i\n"
         );
     }
@@ -364,7 +363,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     @Test
     public void testInvalidMeasurementNamePrefix3() {
         assertThat(
-                "--ERROR=INVALID_TABLE_NAME--",
+                "\\\\measurement,tag=value,tag2=value field=10000i--ERROR=INVALID_TABLE_NAME--",
                 "\\\\measurement,tag=value,tag2=value field=10000i\n"
         );
     }
@@ -372,7 +371,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     @Test
     public void testMangledMeasurementNameFromBothEnds() {
         assertThat(
-                "--ERROR=INVALID_TABLE_NAME--",
+                "\0\0\0,tag=value,tag2=value field=10000i--ERROR=INVALID_TABLE_NAME--",
                 "\0\0\0,tag=value,tag2=value field=10000i\n"
         );
     }
@@ -401,10 +400,10 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
 
         // Shorter version
         assertThat(
-        "md_msgs ts_nsec=1634886503004129476i,pcap_msg=1111111i,raw_msg=\"__\"____\"___,\"_______\"___,\"___\"________,\",Length=11i,MsgSeqNum=111111i,MsgType=11i,first_dir=T 1634886503004129476\n" +
-                "md_msgs ts_nsec=1634886503004129476i,pkt_size=1111i,pcap_file=\"_______________________________________________________\",raw_msg=\"__\"___________,\"________\"________\",Length=11i,first_dir=T 1634886503004129476\n",
-        "md_msgs ts_nsec=1634886503004129476i,pcap_msg=1111111i,raw_msg=\"__\\\"____\\\"___,\\\"_______\\\"___,\\\"___\\\"________,\",Length=11i,MsgSeqNum=111111i,MsgType=11i,first_dir=T 1634886503004129476\r\n" +
-                "md_msgs ts_nsec=1634886503004129476i,pkt_size=1111i,pcap_file=\"_______________________________________________________\",raw_msg=\"__\\\"___________,\\\"________\\\"________\",Length=11i,first_dir=T 1634886503004129476\r"
+                "md_msgs ts_nsec=1634886503004129476i,pcap_msg=1111111i,raw_msg=\"__\"____\"___,\"_______\"___,\"___\"________,\",Length=11i,MsgSeqNum=111111i,MsgType=11i,first_dir=T 1634886503004129476\n" +
+                        "md_msgs ts_nsec=1634886503004129476i,pkt_size=1111i,pcap_file=\"_______________________________________________________\",raw_msg=\"__\"___________,\"________\"________\",Length=11i,first_dir=T 1634886503004129476\n",
+                "md_msgs ts_nsec=1634886503004129476i,pcap_msg=1111111i,raw_msg=\"__\\\"____\\\"___,\\\"_______\\\"___,\\\"___\\\"________,\",Length=11i,MsgSeqNum=111111i,MsgType=11i,first_dir=T 1634886503004129476\r\n" +
+                        "md_msgs ts_nsec=1634886503004129476i,pkt_size=1111i,pcap_file=\"_______________________________________________________\",raw_msg=\"__\\\"___________,\\\"________\\\"________\",Length=11i,first_dir=T 1634886503004129476\r"
         );
     }
 
@@ -463,7 +462,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     }
 
     protected void assertThat(CharSequence expected, String lineStr, int start) throws LineProtoException {
-        byte[] line = lineStr.getBytes(StandardCharsets.UTF_8);
+        byte[] line = lineStr.getBytes(Files.UTF_8);
         final int len = line.length;
         final boolean endWithEOL = line[len - 1] == '\n' || line[len - 1] == '\r';
         int fullLen = endWithEOL ? line.length : line.length + 1;
@@ -514,12 +513,20 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
             }
             switch (rc) {
                 case MEASUREMENT_COMPLETE:
-                    startOfLineAddr = lineTcpParser.getBufferAddress() + 1;
                     if (!onErrorLine) {
                         assembleLine();
                     } else {
+                        final StringSink tmpSink = new StringSink();
+                        if (Chars.utf8Decode(startOfLineAddr, lineTcpParser.getBufferAddress(), tmpSink)) {
+                            sink.put(tmpSink.toString());
+                        }
+                        sink.put("--ERROR=");
+                        sink.put(lineTcpParser.getErrorCode().toString());
+                        sink.put("--");
                         onErrorLine = false;
                     }
+                    startOfLineAddr = lineTcpParser.getBufferAddress() + 1;
+
                     lineTcpParser.startNextMeasurement();
                     break;
                 case BUFFER_UNDERFLOW:
@@ -527,13 +534,6 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
                 case ERROR:
                     Assert.assertFalse(onErrorLine);
                     onErrorLine = true;
-                    StringSink tmpSink = new StringSink();
-                    if (Chars.utf8Decode(startOfLineAddr, lineTcpParser.getBufferAddress(), tmpSink)) {
-                        sink.put(tmpSink.toString());
-                    }
-                    sink.put("--ERROR=");
-                    sink.put(lineTcpParser.getErrorCode().toString());
-                    sink.put("--");
                     break;
             }
         }
@@ -551,6 +551,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
         // bufHi always the same, data always ends at the end of the buffer
         // the only difference from iteration to iteration is where the data starts, which is set in shl
         lineTcpParser.shl(shl);
+        startOfLineAddr -= shl;
         return parseMeasurement(parseHi);
     }
 

@@ -339,7 +339,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 return -1;
             }
 
-            byte[] bytes = recvBuffer.getBytes(StandardCharsets.UTF_8);
+            byte[] bytes = recvBuffer.getBytes(Files.UTF_8);
             int n = 0;
             while (n < bufferLen && n < bytes.length) {
                 Unsafe.getUnsafe().putByte(buffer++, bytes[n++]);

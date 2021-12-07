@@ -34,7 +34,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionInterruptor;
+import io.questdb.griffin.SqlExecutionCircuitBreaker;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
@@ -76,7 +76,7 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
         dataMap.clear();
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
-            cursor.of(baseCursor, dataMap, mapSink, executionContext.getSqlExecutionInterruptor());
+            cursor.of(baseCursor, dataMap, mapSink, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
             baseCursor.close();
@@ -99,7 +99,7 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
         private Map dataMap;
         private RecordSink recordSink;
         private Record record;
-        private SqlExecutionInterruptor interruptor;
+        private SqlExecutionCircuitBreaker circuitBreaker;
 
         public DistinctRecordCursor() {
         }
@@ -122,7 +122,7 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
         @Override
         public boolean hasNext() {
             while (baseCursor.hasNext()) {
-                interruptor.checkInterrupted();
+                circuitBreaker.test();
                 MapKey key = dataMap.withKey();
                 recordSink.copy(record, key);
                 if (key.create()) {
@@ -148,12 +148,12 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
             dataMap.clear();
         }
 
-        public void of(RecordCursor baseCursor, Map dataMap, RecordSink recordSink, SqlExecutionInterruptor interruptor) {
+        public void of(RecordCursor baseCursor, Map dataMap, RecordSink recordSink, SqlExecutionCircuitBreaker circuitBreaker) {
             this.baseCursor = baseCursor;
             this.dataMap = dataMap;
             this.recordSink = recordSink;
             this.record = baseCursor.getRecord();
-            this.interruptor = interruptor;
+            this.circuitBreaker = circuitBreaker;
         }
 
         @Override

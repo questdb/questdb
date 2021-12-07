@@ -152,20 +152,15 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
     }
 
     private void rehash() {
-        int size = size();
-        int newCapacity = capacity * 2;
-        free = capacity = newCapacity;
-        int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
-
         int[] oldValues = values;
         CharSequence[] oldKeys = keys;
-        this.keys = new CharSequence[len];
-        this.values = new int[len];
-        Arrays.fill(keys, null);
-        mask = len - 1;
-
-        free -= size;
-        for (int i = oldKeys.length; i-- > 0; ) {
+        int size = capacity - free;
+        capacity = capacity * 2;
+        free = capacity - size;
+        mask = Numbers.ceilPow2((int) (capacity / loadFactor)) - 1;
+        this.keys = new CharSequence[mask + 1];
+        this.values = new int[mask + 1];
+        for (int i = oldKeys.length - 1; i > -1; i--) {
             CharSequence key = oldKeys[i];
             if (key != null) {
                 final int index = keyIndex(key);

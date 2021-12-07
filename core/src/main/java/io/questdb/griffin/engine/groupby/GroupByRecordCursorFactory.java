@@ -31,6 +31,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.BytecodeAssembler;
@@ -86,6 +87,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         dataMap.clear();
+        final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         final RecordCursor baseCursor = base.getCursor(executionContext);
 
         try {
@@ -93,7 +95,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             final Record baseRecord = baseCursor.getRecord();
             final int n = groupByFunctions.size();
             while (baseCursor.hasNext()) {
-                executionContext.getSqlExecutionInterruptor().checkInterrupted();
+                circuitBreaker.test();
                 final MapKey key = dataMap.withKey();
                 mapSink.copy(baseRecord, key);
                 MapValue value = key.createValue();

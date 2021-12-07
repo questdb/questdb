@@ -28,6 +28,7 @@ import io.questdb.cutlass.line.tcp.AuthDb;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkError;
+import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 
@@ -45,7 +46,7 @@ public class AuthenticatedLineTcpSender extends LineTcpSender {
 
     public AuthenticatedLineTcpSender(String keyId, PrivateKey privateKey, int sendToIPv4Address, int sendToPort, int bufferCapacity) {
         super(sendToIPv4Address, sendToPort, bufferCapacity);
-        keyIdBytes = keyId.getBytes(StandardCharsets.UTF_8);
+        keyIdBytes = keyId.getBytes(Files.UTF_8);
         if (keyIdBytes.length >= (BUF_SZ - 1)) {
             throw new IllegalArgumentException("keyId \"" + keyId + "\" is too long");
         }

@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.std.Files;
 import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -420,7 +421,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
                 rawSignature = junkSignature;
             }
             byte[] signature = Base64.getEncoder().encode(rawSignature);
-            send(new String(signature, StandardCharsets.UTF_8) + "\n", fragmentSignature);
+            send(new String(signature, Files.UTF_8) + "\n", fragmentSignature);
             handleContextIO();
         } catch (Exception ex) {
             throw new RuntimeException(ex);

@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionInterruptor;
+import io.questdb.griffin.SqlExecutionCircuitBreaker;
 import io.questdb.std.Misc;
 
 class IntersectRecordCursor implements RecordCursor {
@@ -41,7 +41,7 @@ class IntersectRecordCursor implements RecordCursor {
     private RecordCursor slaveCursor;
     private Record masterRecord;
     private RecordCursor symbolCursor;
-    private SqlExecutionInterruptor interruptor;
+    private SqlExecutionCircuitBreaker circuitBreaker;
 
     public IntersectRecordCursor(Map map, RecordSink recordSink) {
         this.map = map;
@@ -52,7 +52,7 @@ class IntersectRecordCursor implements RecordCursor {
         this.masterCursor = masterCursor;
         this.slaveCursor = slaveCursor;
         this.masterRecord = masterCursor.getRecord();
-        interruptor = executionContext.getSqlExecutionInterruptor();
+        circuitBreaker = executionContext.getCircuitBreaker();
         map.clear();
         populateSlaveMap(slaveCursor);
         toTop();
@@ -64,7 +64,7 @@ class IntersectRecordCursor implements RecordCursor {
             MapKey key = map.withKey();
             key.put(record, recordSink);
             key.createValue();
-            interruptor.checkInterrupted();
+            circuitBreaker.test();
         }
     }
 
@@ -82,7 +82,7 @@ class IntersectRecordCursor implements RecordCursor {
     public void close() {
         Misc.free(this.masterCursor);
         Misc.free(this.slaveCursor);
-        interruptor = null;
+        circuitBreaker = null;
     }
 
     @Override
@@ -98,7 +98,7 @@ class IntersectRecordCursor implements RecordCursor {
             if (key.findValue() != null) {
                 return true;
             }
-            interruptor.checkInterrupted();
+            circuitBreaker.test();
         }
         return false;
     }
