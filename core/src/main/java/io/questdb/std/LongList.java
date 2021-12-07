@@ -115,6 +115,12 @@ public class LongList implements Mutable, LongVec {
     }
 
     public int binarySearch(long value, int scanDir) {
+
+        // this is the same algorithm as implemented in C (util.h)
+        // template<class T, class V>
+        // inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_t scan_dir)
+        // please ensure these implementations are in sync
+
         int low = 0;
         int high = pos;
 
