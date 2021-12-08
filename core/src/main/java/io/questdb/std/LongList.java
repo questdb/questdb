@@ -136,7 +136,7 @@ public class LongList implements Mutable, LongVec {
                 // In case of multiple equal values, find the first
                 return scanDir == BinarySearch.SCAN_UP ?
                         scrollUp(mid, midVal) :
-                        scrollDown(high, mid, midVal);
+                        scrollDown(mid, high, midVal);
             }
         }
         return scanDir == BinarySearch.SCAN_UP ?
@@ -144,26 +144,26 @@ public class LongList implements Mutable, LongVec {
                 scanDown(value, low, high + 1);
     }
 
-    private int scrollDown(int high, int mid, long midVal) {
+    private int scrollDown(int low, int high, long value) {
         do {
-            if (mid < high) {
-                mid++;
+            if (low < high) {
+                low++;
             } else {
-                return mid;
+                return low;
             }
-        } while (data[mid] == midVal);
-        return mid - 1;
+        } while (data[low] == value);
+        return low - 1;
     }
 
-    private int scrollUp(int mid, long midVal) {
+    private int scrollUp(int high, long value) {
         do {
-            if (mid > 0) {
-                mid--;
+            if (high > 0) {
+                high--;
             } else {
                 return 0;
             }
-        } while (data[mid] == midVal);
-        return mid + 1;
+        } while (data[high] == value);
+        return high + 1;
     }
 
     public int binarySearchBlock(int shl, long value, int scanDir) {

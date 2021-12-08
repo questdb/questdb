@@ -85,64 +85,80 @@ inline uint32_t ceil_pow_2(uint32_t v) {
     v |= v >> 16u;
     return v + 1;
 }
-// the "high" boundary is inclusive
+
 template<class T, class V>
-inline int64_t scan_search(T data, V value, int64_t low, int64_t high, int32_t scan_dir) {
-    for (int64_t p = low; p <= high; p++) {
-        if (data[p] == value) {
-            p += scan_dir;
-            while (p > 0 && p <= high && data[p] == value) {
-                p += scan_dir;
-            }
-            return p - scan_dir;
+inline int64_t scroll_up(T data, int64_t high, V value) {
+    do {
+        if (high > 0) {
+            high--;
+        } else {
+            return 0;
         }
-        if (data[p] > value) {
-            return -p - 1;
+    } while (data[high] == value);
+    return high + 1;
+}
+
+template<class T, class V>
+inline int64_t scroll_down(T data, int64_t low, int64_t high, V value) {
+    do {
+        if (low < high) {
+            low++;
+        } else {
+            return low;
+        }
+    } while (data[low] == value);
+    return low - 1;
+}
+
+template<class T, class V>
+inline int64_t scan_up(T* data, V value, int64_t low, int64_t high) {
+    for (int64_t i = low; i < high; i++) {
+        T that = data[i];
+        if (that == value) {
+            return i;
+        }
+        if (that > value) {
+            return -(i + 1);
         }
     }
-    return -(high + 1) - 1;
+    return -(high + 1);
+}
+
+template<class T, class V>
+inline int64_t scan_down(T* data, V value, int64_t low, int64_t high) {
+    for (int64_t i = high - 1; i >= low; i--) {
+        T that = data[i];
+        if (that == value) {
+            return i;
+        }
+        if (that < value) {
+            return -(i + 2);
+        }
+    }
+    return -(low + 1);
 }
 
 // the "high" boundary is inclusive
 template<class T, class V>
 inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_t scan_dir) {
-    while (low < high) {
-        if (high - low < 65) {
-            return scan_search(data, value, low, high, scan_dir);
-        }
-        int64_t mid = (low + high) / 2;
-        T midVal = data[mid];
+    while (high - low > 65) {
+        const int64_t mid = (low + high) / 2;
+        const T midVal = data[mid];
 
         if (midVal < value) {
-            if (low < mid) {
-                low = mid;
-            } else {
-                if (data[high] > value) {
-                    return -low - 1;
-                }
-                return -high - 1;
-            }
-        } else if (midVal > value)
-            high = mid;
-        else {
+            low = mid;
+        } else if (midVal > value) {
+            high = mid - 1;
+        } else {
             // In case of multiple equal values, find the first
-            mid += scan_dir;
-            while (mid > 0 && mid <= high && data[mid] == midVal) {
-                mid += scan_dir;
-            }
-            return mid - scan_dir;
+            return scan_dir == -1 ?
+                   scroll_up(data, mid, midVal) :
+                   scroll_down(data, mid, high, midVal);
         }
     }
-
-    if (data[low] > value) {
-        return -low - 1;
-    }
-
-    if (data[low] == value) {
-        return low;
-    }
-
-    return -(low + 1) - 1;
+    return scan_dir == -1 ?
+           scan_up(data, value, low, high + 1) :
+           scan_down(data, value, low, high + 1);
 }
 
 template<typename T>

@@ -24,7 +24,6 @@
 
 package io.questdb.std;
 
-import io.questdb.cairo.BinarySearch;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.CharSink;
@@ -64,8 +63,12 @@ public class DirectLongList implements Mutable, Closeable {
         this.pos += thatSize;
     }
 
-    public long binarySearch(long v) {
-        return Vect.binarySearch64Bit(start, v, 0, (pos - start) / 8, BinarySearch.SCAN_UP);
+    public long binarySearch(long value, int scanDir) {
+        final long high = (pos - start) / 8;
+        if (high > 0) {
+            return Vect.binarySearch64Bit(start, value, 0, high - 1, scanDir);
+        }
+        return -1;
     }
 
     // clear without "zeroing" memory
