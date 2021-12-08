@@ -51,6 +51,31 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     private final int engineEventQueue = engine.getConfiguration().getWriterCommandQueueCapacity();
 
     @Test
+    public void testAsyncAlterCommandInvalidSerialisation() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
+            QueryFuture cf = null;
+            try {
+                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
+                    CompiledQueryImpl cc = new CompiledQueryImpl(engine).withDefaultContext(sqlExecutionContext);
+                    AlterStatement creepyAlterStatement = new AlterStatement();
+                    creepyAlterStatement.of((short) 1000, "product", writer.getMetadata().getId(), 1000);
+                    cc.ofAlter(creepyAlterStatement);
+                    cf = cc.execute(commandReplySequence);
+                }
+                cf.await();
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertEquals("Invalid alter table command [code=1000]", ex.getFlyweightMessage());
+            } finally {
+                if (cf != null) {
+                    cf.close();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAsyncAlterCommandsExceedEngineEventQueue() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table product (timestamp timestamp)", sqlExecutionContext);
@@ -193,43 +218,10 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 cf.await();
                 Assert.fail();
             } catch (SqlException ex) {
+                if (cf != null) {
+                    cf.close();
+                }
                 TestUtils.assertContains(ex.getFlyweightMessage(), "could not remove partition '2020-01-01'");
-            }
-        });
-    }
-
-    @Test
-    public void testAsyncAlterDeserializationFails() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table product as (select x, timestamp_sequence('2020-01-01', 1000000000) ts from long_sequence(100))" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
-
-            QueryFuture cf;
-            // Block table
-            String tableName = "product";
-            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "test lock")) {
-                final int tableId = writer.getMetadata().getId();
-                short command = ADD_COLUMN;
-                AlterStatement creepyAlter = new AlterStatement() {
-                    @Override
-                    public void serialize(TableWriterTask event) {
-                        event.of(TableWriterTask.TSK_ALTER_TABLE, tableId, tableName);
-                        event.putShort(command);
-                        event.putInt(-1);
-                        event.putInt(1000);
-                    }
-                };
-                creepyAlter.of(command, tableName, tableId, 100);
-                CompiledQueryImpl cc = new CompiledQueryImpl(engine).withDefaultContext(sqlExecutionContext);
-                cc.ofAlter(creepyAlter);
-                cf = cc.execute(commandReplySequence);
-            } // Unblock table
-
-            try {
-                cf.await();
-                Assert.fail();
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "invalid alter statement serialized to writer queue");
             }
         });
     }
@@ -269,6 +261,47 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             } // Unblock table
             int status = compiler.compile("ALTER TABLE product drop column to_remove", sqlExecutionContext).execute(null).getStatus();
             Assert.assertEquals(QUERY_COMPLETE, status);
+        });
+    }
+
+    @Test
+    public void testAsyncAlterDeserializationFails() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table product as (select x, timestamp_sequence('2020-01-01', 1000000000) ts from long_sequence(100))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            QueryFuture cf;
+            // Block table
+            String tableName = "product";
+            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "test lock")) {
+                final int tableId = writer.getMetadata().getId();
+                short command = ADD_COLUMN;
+                AlterStatement creepyAlter = new AlterStatement() {
+                    @Override
+                    public void serialize(TableWriterTask event) {
+                        event.of(TableWriterTask.TSK_ALTER_TABLE, tableId, tableName);
+                        event.putShort(command);
+                        event.putInt(-1);
+                        event.putInt(1000);
+                    }
+                };
+                creepyAlter.of(command, tableName, tableId, 100);
+                CompiledQueryImpl cc = new CompiledQueryImpl(engine).withDefaultContext(sqlExecutionContext);
+                cc.ofAlter(creepyAlter);
+                cf = cc.execute(commandReplySequence);
+            } // Unblock table
+            engine.tick();
+
+            try {
+                cf.await();
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "invalid alter statement serialized to writer queue [2]");
+            }
+
+            if (cf != null) {
+                cf.close();
+            }
         });
     }
 
@@ -322,31 +355,6 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
 
                 // ALTER TABLE should be executed successfully on writer.close() before engine.tick()
                 cf.await();
-            } finally {
-                if (cf != null) {
-                    cf.close();
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testAsyncAlterCommandInvalidSerialisation() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
-            QueryFuture cf = null;
-            try {
-                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
-                    CompiledQueryImpl cc = new CompiledQueryImpl(engine).withDefaultContext(sqlExecutionContext);
-                    AlterStatement creepyAlterStatement = new AlterStatement();
-                    creepyAlterStatement.of((short) 1000, "product", writer.getMetadata().getId(), 1000);
-                    cc.ofAlter(creepyAlterStatement);
-                    cf = cc.execute(commandReplySequence);
-                }
-                cf.await();
-                Assert.fail();
-            } catch (SqlException ex) {
-                TestUtils.assertEquals("Invalid alter table command [code=1000]", ex.getFlyweightMessage());
             } finally {
                 if (cf != null) {
                     cf.close();
