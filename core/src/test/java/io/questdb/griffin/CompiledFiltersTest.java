@@ -116,15 +116,83 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectAllFilterWithColTopsScalar() throws Exception {
-        testSelectAllFilterWithColTops(SqlExecutionContext.JIT_MODE_FORCE_SCALAR);
+        final String query = "select * from t1 where j < 0";
+        final String expected = "x\tts\tj\n" +
+                "4\t1970-01-01T00:01:43.000000Z\t-6945921502384501475\n" +
+                "7\t1970-01-01T00:01:46.000000Z\t-7611843578141082998\n" +
+                "8\t1970-01-01T00:01:47.000000Z\t-5354193255228091881\n" +
+                "9\t1970-01-01T00:01:48.000000Z\t-2653407051020864006\n" +
+                "10\t1970-01-01T00:01:49.000000Z\t-1675638984090602536\n" +
+                "14\t1970-01-01T00:01:53.000000Z\t-7489826605295361807\n" +
+                "15\t1970-01-01T00:01:54.000000Z\t-4094902006239100839\n" +
+                "16\t1970-01-01T00:01:55.000000Z\t-4474835130332302712\n" +
+                "17\t1970-01-01T00:01:56.000000Z\t-6943924477733600060\n";
+
+        testFilterWithColTops(query, expected, SqlExecutionContext.JIT_MODE_FORCE_SCALAR);
     }
 
     @Test
-    public void testSelectAllFilterWithColTopsVector() throws Exception {
-        testSelectAllFilterWithColTops(SqlExecutionContext.JIT_MODE_ENABLED);
+    public void testSelectAllFilterWithColTopsVectorized() throws Exception {
+        final String query = "select * from t1 where j < 0";
+        final String expected = "x\tts\tj\n" +
+                "4\t1970-01-01T00:01:43.000000Z\t-6945921502384501475\n" +
+                "7\t1970-01-01T00:01:46.000000Z\t-7611843578141082998\n" +
+                "8\t1970-01-01T00:01:47.000000Z\t-5354193255228091881\n" +
+                "9\t1970-01-01T00:01:48.000000Z\t-2653407051020864006\n" +
+                "10\t1970-01-01T00:01:49.000000Z\t-1675638984090602536\n" +
+                "14\t1970-01-01T00:01:53.000000Z\t-7489826605295361807\n" +
+                "15\t1970-01-01T00:01:54.000000Z\t-4094902006239100839\n" +
+                "16\t1970-01-01T00:01:55.000000Z\t-4474835130332302712\n" +
+                "17\t1970-01-01T00:01:56.000000Z\t-6943924477733600060\n";
+
+        testFilterWithColTops(query, expected, SqlExecutionContext.JIT_MODE_ENABLED);
     }
 
-    public void testSelectAllFilterWithColTops(int jitMode) throws Exception {
+    @Test
+    public void testSelectAllBothPageFramesFilterWithColTopsScalar() throws Exception {
+        final String query = "select * from t1 where x = 3";
+        final String expected = "x\tts\tj\n" +
+                "3\t1970-01-01T00:00:02.000000Z\tNaN\n" +
+                "3\t1970-01-01T00:01:42.000000Z\t7746536061816329025\n";
+
+        testFilterWithColTops(query, expected, SqlExecutionContext.JIT_MODE_FORCE_SCALAR);
+    }
+
+    @Test
+    public void testSelectAllBothPageFramesFilterWithColTopsVectorized() throws Exception {
+        final String query = "select * from t1 where x = 3";
+        final String expected = "x\tts\tj\n" +
+                "3\t1970-01-01T00:00:02.000000Z\tNaN\n" +
+                "3\t1970-01-01T00:01:42.000000Z\t7746536061816329025\n";
+
+        testFilterWithColTops(query, expected, SqlExecutionContext.JIT_MODE_ENABLED);
+    }
+
+    @Test
+    public void testSelectNonColTopColumnFilterWithColTopsScalar() throws Exception {
+        // Here we intentionally use a single non-col top column in both SELECT and WHERE,
+        // so that we make sure that col top detection doesn't use query metadata.
+        final String query = "select x from t1 where x = 12";
+        final String expected = "x\n" +
+                "12\n" +
+                "12\n";
+
+        testFilterWithColTops(query, expected, SqlExecutionContext.JIT_MODE_FORCE_SCALAR);
+    }
+
+    @Test
+    public void testSelectNonColTopColumnFilterWithColTopsVectorized() throws Exception {
+        // Here we intentionally use a single non-col top column in both SELECT and WHERE,
+        // so that we make sure that col top detection doesn't use query metadata.
+        final String query = "select x from t1 where x = 12";
+        final String expected = "x\n" +
+                "12\n" +
+                "12\n";
+
+        testFilterWithColTops(query, expected, SqlExecutionContext.JIT_MODE_ENABLED);
+    }
+
+    public void testFilterWithColTops(String query, String expected, int jitMode) throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setJitMode(jitMode);
 
@@ -140,11 +208,6 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
                     " timestamp_sequence(100000000, 1000000) ts," +
                     " rnd_long() j " +
                     "from long_sequence(20)", sqlExecutionContext);
-
-            final String query = "select * from t1 where x = 3";
-            final String expected = "x\tts\tj\n" +
-                    "3\t1970-01-01T00:00:02.000000Z\tNaN\n" +
-                    "3\t1970-01-01T00:01:42.000000Z\t7746536061816329025\n";
 
             assertSql(query, expected);
 

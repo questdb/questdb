@@ -54,8 +54,8 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
     private int partitionIndex;
     // The following fields are used for table iteration:
-    // when compiled filter is in use they store rows array indexes;
-    // when Java filter is in use they store rowids
+    // when compiled filter is in use, they store rows array indexes;
+    // when Java filter is in use, they store rowids
     private long hi;
     private long current;
 
