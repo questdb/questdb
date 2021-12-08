@@ -2,9 +2,9 @@ trigger: none
 
 variables:
   OS_MAPPING: none
-  Windows_NT-X86: windows 
+  Windows_NT-X86: windows
   Darwin-X64: osx
-  Darwin-ARM: armosx 
+  Darwin-ARM: armosx
   Linux-ARM: armlinux
   Linux-X64: linux
 
@@ -27,7 +27,7 @@ stages:
               poolName: "Azure Pipelines"
               os: macOS
               jdk: "1.11"
-              generator: "CodeBlocks - Unix Makefiles"       
+              generator: "CodeBlocks - Unix Makefiles"
 
         pool:
           name: $(poolName)
@@ -44,7 +44,7 @@ stages:
 
           - bash: |
               echo "##vso[task.setvariable variable=OS_MAPPING]$(Linux-X64)"
-              sudo apt-get install -y nasm g++-10-aarch64-linux-gnu gcc-10-aarch64-linux-gnu gcc-mingw-w64
+              sudo apt-get install -y nasm g++-10-aarch64-linux-gnu gcc-10-aarch64-linux-gnu gcc-mingw-w64 g++-mingw-w64
             condition: and(eq(variables['Agent.OS'], 'Linux'), eq(variables['Agent.OSArchitecture'], 'x64'))
             displayName: "Install NASM for Linux x64"
           - bash: |
@@ -52,7 +52,7 @@ stages:
               brew install nasm
             displayName: "Install NASM Mac"
             condition: eq(variables['Agent.OS'], 'Darwin')
-          
+
           - task: CMake@1
             inputs:
               workingDirectory: core
@@ -69,16 +69,35 @@ stages:
           - task: CMake@1
             inputs:
               workingDirectory: core
-              cmakeArgs: -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/linux-arm64.cmake -DCMAKE_EXECUTABLE_SUFFIX=-10 -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release
-            displayName: "Build source-code Linux arm"
+              cmakeArgs: -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/linux-arm64.cmake -DCMAKE_EXECUTABLE_SUFFIX=-10 -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release -B cmake-build-release-arm64
+            displayName: "CMAKE Linux arm"
             condition: eq(variables['Agent.OS'], 'Linux')
 
           - task: CMake@1
             inputs:
               workingDirectory: core
-              cmakeArgs: -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/windows-x86_64.cmake -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release
-            displayName: "Build source-code for Windows"
+              cmakeArgs: --build cmake-build-release-arm64 --config Release
+            displayName: "Build source-code $(Agent.OS) for ARM Linux"
             condition: eq(variables['Agent.OS'], 'Linux')
+
+          - bash: curl https://raw.githubusercontent.com/AdoptOpenJDK/openjdk-jdk11/master/src/java.base/windows/native/include/jni_md.h > $JAVA_HOME/include/jni_md.h
+            condition: eq(variables['Agent.OS'], 'Linux')
+            displayName: "Download windows jni_md.h from JDK 11"
+
+          - task: CMake@1
+            inputs:
+              workingDirectory: core
+              cmakeArgs: -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/windows-x86_64.cmake -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release -B cmake-build-release-win64
+            displayName: "CMake for Windows"
+            condition: eq(variables['Agent.OS'], 'Linux')
+
+          - task: CMake@1
+            inputs:
+              workingDirectory: core
+              cmakeArgs: --build cmake-build-release-win64 --config Release
+            displayName: "Build source-code $(Agent.OS) for Windows"
+            condition: eq(variables['Agent.OS'], 'Linux')
+
 
           - task: S3Upload@1
             inputs:
