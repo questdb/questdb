@@ -55,6 +55,23 @@ struct JitGlobalContext {
 static JitGlobalContext gGlobalContext;
 #endif
 
+uint32_t type_shift(data_type_t type) {
+    switch (type) {
+        case data_type_t::i8:
+            return 0;
+        case data_type_t::i16:
+            return 1;
+        case data_type_t::i32:
+        case data_type_t::f32:
+            return 2;
+        case data_type_t::i64:
+        case data_type_t::f64:
+            return 3;
+        default:
+            __builtin_unreachable();
+    }
+}
+
 namespace questdb::x86 {
     using namespace asmjit::x86;
 
@@ -65,29 +82,9 @@ namespace questdb::x86 {
         auto column_idx = static_cast<int32_t>(read<int64_t>(istream, size, pos));
         Gp column_address = c.newInt64("column_address");
         c.mov(column_address, ptr(cols_ptr, 8 * column_idx, 8));
-
-        switch (type) {
-            case data_type_t::i8: {
-                return {Mem(column_address, input_index, 0, 0, 1), type, data_kind_t::kMemory};
-            }
-            case data_type_t::i16: {
-                return {Mem(column_address, input_index, 1, 0, 2), type, data_kind_t::kMemory};
-            }
-            case data_type_t::i32: {
-                return {Mem(column_address, input_index, 2, 0, 4), type, data_kind_t::kMemory};
-            }
-            case data_type_t::i64: {
-                return {Mem(column_address, input_index, 3, 0, 8), type, data_kind_t::kMemory};
-            }
-            case data_type_t::f32: {
-                return {Mem(column_address, input_index, 2, 0, 4), type, data_kind_t::kMemory};
-            }
-            case data_type_t::f64: {
-                return {Mem(column_address, input_index, 3, 0, 8), type, data_kind_t::kMemory};
-            }
-            default:
-                __builtin_unreachable();
-        }
+        auto shift = type_shift(type);
+        auto type_size  = 1 << shift;
+        return {Mem(column_address, input_index, shift, 0, type_size), type, data_kind_t::kMemory};
     }
 
     jit_value_t mem2reg(Compiler &c, const jit_value_t &v) {
@@ -717,23 +714,6 @@ namespace questdb::x86 {
 namespace questdb::avx2 {
     using namespace asmjit::x86;
 
-    uint32_t type_shift(data_type_t type) {
-        switch (type) {
-            case data_type_t::i8:
-                return 0;
-            case data_type_t::i16:
-                return 1;
-            case data_type_t::i32:
-            case data_type_t::f32:
-                return 2;
-            case data_type_t::i64:
-            case data_type_t::f64:
-                return 3;
-            default:
-                __builtin_unreachable();
-        }
-    }
-
     data_type_t mask_type(data_type_t type) {
         switch (type) {
             case data_type_t::f32:
@@ -1134,6 +1114,7 @@ struct JitCompiler {
         bool null_check = true;
         if (exec_hint == single_size && features.hasAVX2()) {
             auto step = 256 / ((1 << type_size) * 8);
+            c.func()->frame().setAvxEnabled();
             avx2_loop2(filter_expr, filter_size, step, null_check);
         } else {
             scalar_loop(filter_expr, filter_size, null_check);
