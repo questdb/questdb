@@ -142,7 +142,7 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
                     "from long_sequence(20)", sqlExecutionContext);
 
             final String query = "select * from t1 where x = 3";
-            final String expected = "j\tts\n" +
+            final String expected = "x\tts\tj\n" +
                     "3\t1970-01-01T00:00:02.000000Z\tNaN\n" +
                     "3\t1970-01-01T00:01:42.000000Z\t7746536061816329025\n";
 
