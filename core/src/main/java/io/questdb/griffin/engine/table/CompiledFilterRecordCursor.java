@@ -39,6 +39,7 @@ import java.util.function.BooleanSupplier;
 
 class CompiledFilterRecordCursor implements RecordCursor {
 
+    private final IntList columnIndexes;
     private final TableReaderSelectedColumnRecord recordA;
     private final TableReaderSelectedColumnRecord recordB;
 
@@ -65,6 +66,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
     private final BooleanSupplier nextPage = this::nextPage;
 
     public CompiledFilterRecordCursor(@NotNull IntList columnIndexes) {
+        this.columnIndexes = columnIndexes;
         this.recordA = new TableReaderSelectedColumnRecord(columnIndexes);
         this.recordB = new TableReaderSelectedColumnRecord(columnIndexes);
     }
@@ -161,14 +163,14 @@ class CompiledFilterRecordCursor implements RecordCursor {
     private boolean nextPage() {
         PageFrame frame;
         final TableReader reader = pageFrameCursor.getTableReader();
-        final int tableColumnCount = reader.getMetadata().getColumnCount();
-        final int metadataColumnCount = metadata.getColumnCount();
+        final int columnCount = metadata.getColumnCount();
         while ((frame = pageFrameCursor.next()) != null) {
             partitionIndex = frame.getPartitionIndex();
 
-            final int base = reader.getColumnBase(partitionIndex);
             boolean hasColumnTops = false;
-            for (int columnIndex = 0; columnIndex < tableColumnCount; columnIndex++) {
+            final int base = reader.getColumnBase(partitionIndex);
+            for (int i = 0; i < columnCount; i++) {
+                final int columnIndex = columnIndexes.getQuick(i);
                 final long top = reader.getColumnTop(base, columnIndex);
                 if (top > frame.getPartitionLo()) {
                     hasColumnTops = true;
@@ -193,9 +195,9 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
             // Use compiled filter in case of a dense page frame.
 
-            columns.extend(tableColumnCount);
+            columns.extend(columnCount);
             columns.clear();
-            for (int columnIndex = 0; columnIndex < metadataColumnCount; columnIndex++) {
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 final long columnBaseAddress = frame.getPageAddress(columnIndex);
                 columns.add(columnBaseAddress);
             }

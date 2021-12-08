@@ -169,37 +169,29 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectColTopColumnFilterWithColTopsScalar() throws Exception {
-        // Here we intentionally use a single col top column in both SELECT and WHERE,
-        // so that we make sure that col top detection doesn't use query metadata.
-        final String query = "select j from t1 where j < 0";
-        final String expected = "j\n" +
-                "-6945921502384501475\n" +
-                "-7611843578141082998\n" +
-                "-5354193255228091881\n" +
-                "-2653407051020864006\n" +
-                "-1675638984090602536\n" +
-                "-7489826605295361807\n" +
-                "-4094902006239100839\n" +
-                "-4474835130332302712\n" +
-                "-6943924477733600060\n";
+    public void testSelectNonColTopColumnFilterWithColTopsScalar() throws Exception {
+        final String query = "select x from t1 where x < 4";
+        final String expected = "x\n" +
+                "1\n" +
+                "2\n" +
+                "3\n" +
+                "1\n" +
+                "2\n" +
+                "3\n";
 
         testFilterWithColTops(query, expected, SqlExecutionContext.JIT_MODE_FORCE_SCALAR);
     }
 
     @Test
-    public void testSelectColTopColumnFilterWithColTopsVectorized() throws Exception {
-        final String query = "select j from t1 where j < 0";
-        final String expected = "j\n" +
-                "-6945921502384501475\n" +
-                "-7611843578141082998\n" +
-                "-5354193255228091881\n" +
-                "-2653407051020864006\n" +
-                "-1675638984090602536\n" +
-                "-7489826605295361807\n" +
-                "-4094902006239100839\n" +
-                "-4474835130332302712\n" +
-                "-6943924477733600060\n";
+    public void testSelectNonColTopColumnFilterWithColTopsVectorized() throws Exception {
+        final String query = "select x from t1 where x < 4";
+        final String expected = "x\n" +
+                "1\n" +
+                "2\n" +
+                "3\n" +
+                "1\n" +
+                "2\n" +
+                "3\n";
 
         testFilterWithColTops(query, expected, SqlExecutionContext.JIT_MODE_ENABLED);
     }
