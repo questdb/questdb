@@ -24,17 +24,16 @@
 
 package io.questdb.griffin.update;
 
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Misc;
 
 import java.io.Closeable;
 
 public class UpdateStatement implements Closeable {
-    public final static UpdateStatement EMPTY = new UpdateStatement();
     private final String updateTableName;
     private RecordCursorFactory rowIdFactory;
-    private int tableId;
-    private long tableVersion;
+    private final int tableId;
+    private final long tableVersion;
 
     public UpdateStatement(
             String tableName,
@@ -46,10 +45,6 @@ public class UpdateStatement implements Closeable {
         this.rowIdFactory = rowIdFactory;
         this.tableId = tableId;
         this.tableVersion = tableVersion;
-    }
-
-    private UpdateStatement() {
-        updateTableName = "";
     }
 
     @Override
@@ -65,19 +60,11 @@ public class UpdateStatement implements Closeable {
         return tableVersion;
     }
 
-    public RecordCursorFactory getRowIdFactory() {
+    public RecordCursorFactory getUpdateDataFactory() {
         return rowIdFactory;
     }
 
     public CharSequence getUpdateTableName() {
         return updateTableName;
-    }
-
-    public void setTableId(int tableId) {
-        this.tableId = tableId;
-    }
-
-    public void setTableVersion(long tableVersion) {
-        this.tableVersion = tableVersion;
     }
 }

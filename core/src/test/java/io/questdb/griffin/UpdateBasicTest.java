@@ -569,13 +569,11 @@ public class UpdateBasicTest extends AbstractGriffinTest {
     }
 
     private void applyUpdate(UpdateStatement updateStatement) throws SqlException {
-        if (updateStatement != UpdateStatement.EMPTY) {
-            try (TableWriter tableWriter = engine.getWriter(
-                    sqlExecutionContext.getCairoSecurityContext(),
-                    updateStatement.getUpdateTableName(),
-                    "UPDATE")) {
-                inplaceUpdate.executeUpdate(tableWriter, updateStatement, sqlExecutionContext);
-            }
+        try (TableWriter tableWriter = engine.getWriter(
+                sqlExecutionContext.getCairoSecurityContext(),
+                updateStatement.getUpdateTableName(),
+                "UPDATE")) {
+            inplaceUpdate.executeUpdate(tableWriter, updateStatement, sqlExecutionContext);
         }
     }
 

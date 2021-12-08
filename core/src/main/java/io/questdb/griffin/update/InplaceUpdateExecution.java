@@ -76,7 +76,7 @@ public class InplaceUpdateExecution implements Closeable {
             throw ReaderOutOfDateException.of(tableWriter.getTableName());
         }
 
-        RecordMetadata updateMetadata = updateStatement.getRowIdFactory().getMetadata();
+        RecordMetadata updateMetadata = updateStatement.getUpdateDataFactory().getMetadata();
         int updateStatementColumnCount = updateMetadata.getColumnCount();
 
         // Build index column map from table to update to values returned in the update statement row cursors
@@ -92,7 +92,7 @@ public class InplaceUpdateExecution implements Closeable {
         initUpdateMemory(updateStatementColumnCount);
 
         // Start execution frame by frame
-        RecordCursorFactory rowIdFactory = updateStatement.getRowIdFactory();
+        RecordCursorFactory rowIdFactory = updateStatement.getUpdateDataFactory();
 
         // Track how many records updated
         long rowsUpdated = 0;
