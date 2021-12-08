@@ -182,8 +182,6 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectNonColTopColumnFilterWithColTopsVectorized() throws Exception {
-        // Here we intentionally use a single non-col top column in both SELECT and WHERE,
-        // so that we make sure that col top detection doesn't use query metadata.
         final String query = "select x from t1 where x = 12";
         final String expected = "x\n" +
                 "12\n" +
