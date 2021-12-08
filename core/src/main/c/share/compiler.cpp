@@ -749,10 +749,12 @@ namespace questdb::avx2 {
                                       const Gp &bits,
                                       const Gp &rows_ptr,
                                       const Gp &input,
-                                      const Gp &output, int32_t step) {
+                                      const Gp &output,
+                                      const Gp &rows_id_offset,
+                                      int32_t step) {
         Gp offset = c.newInt64();
         for (int32_t i = 0; i < step; ++i) {
-            c.lea(offset, asmjit::x86::ptr(input, i));
+            c.lea(offset, asmjit::x86::ptr(input, rows_id_offset, 0, i, 0));
             c.mov(qword_ptr(rows_ptr, output, 3), offset);
             c.mov(offset, bits);
             c.shr(offset, i);
@@ -1194,7 +1196,7 @@ struct JitCompiler {
         registers.pop();
 
         Gp bits = questdb::avx2::to_bits(c, mask.ymm(), step);
-        questdb::avx2::unrolled_loop2(c, bits.r64(), rows_ptr, input_index, output_index, step);
+        questdb::avx2::unrolled_loop2(c, bits.r64(), rows_ptr, input_index, output_index, rows_id_start_offset, step);
 
         c.add(input_index, step); // index += step
         c.cmp(input_index, stop);
