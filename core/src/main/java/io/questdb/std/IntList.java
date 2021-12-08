@@ -54,55 +54,30 @@ public class IntList implements Mutable {
         System.arraycopy(that.buffer, 0, this.buffer, p, s);
     }
 
-    public int indexOf(int v, int low, int high) {
-        assert high <= pos;
-
-        for (int i = low; i < high; i++) {
-            int f = buffer[i];
-            if (f == v) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    public void setPos(int capacity) {
-        ensureCapacity(capacity);
-        pos = capacity;
-    }
-
     public void arrayCopy(int srcPos, int dstPos, int length) {
         System.arraycopy(buffer, srcPos, buffer, dstPos, length);
     }
 
-    public int binarySearch(int v) {
+    public int binarySearchUniqueList(int v) {
         int low = 0;
-        int high = pos;
-
-        while (low < high) {
-
-            if (high - low < 65) {
-                return scanSearch(v, low, high);
-            }
-
-            int mid = (low + high - 1) >>> 1;
+        int high = pos - 1;
+        while (high - low > 65) {
+            int mid = (low + high) / 2;
             int midVal = buffer[mid];
 
             if (midVal < v)
                 low = mid + 1;
             else if (midVal > v)
-                high = mid;
-            else
+                high = mid - 1;
+            else {
                 return mid;
+            }
         }
-        return -(low + 1);
+        return scanSearch(v, low, high + 1);
     }
 
     public void clear() {
         pos = 0;
-        // this is removed to improve performance
-        // erase() method should be added if entire buffer has to be erased as well
-//        Arrays.fill(buffer, noEntryValue);
     }
 
     public void clear(int capacity) {
@@ -114,12 +89,6 @@ public class IntList implements Mutable {
     public void ensureCapacity(int capacity) {
         ensureCapacity0(capacity);
         pos = capacity;
-    }
-
-    public void insert(int index, int element) {
-        ensureCapacity(++pos);
-        System.arraycopy(buffer, index, buffer, index + 1, pos - index - 1);
-        buffer[index] = element;
     }
 
     public void extendAndSet(int index, int value) {
@@ -213,6 +182,24 @@ public class IntList implements Mutable {
         buffer[index] = buffer[index] + 1;
     }
 
+    public int indexOf(int v, int low, int high) {
+        assert high <= pos;
+
+        for (int i = low; i < high; i++) {
+            int f = buffer[i];
+            if (f == v) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    public void insert(int index, int element) {
+        ensureCapacity(++pos);
+        System.arraycopy(buffer, index, buffer, index + 1, pos - index - 1);
+        buffer[index] = element;
+    }
+
     public void remove(int key) {
         for (int i = 0, n = size(); i < n; i++) {
             if (key == getQuick(i)) {
@@ -249,6 +236,11 @@ public class IntList implements Mutable {
         ensureCapacity0(capacity);
         pos = capacity;
         Arrays.fill(buffer, value);
+    }
+
+    public void setPos(int capacity) {
+        ensureCapacity(capacity);
+        pos = capacity;
     }
 
     public void setQuick(int index, int value) {

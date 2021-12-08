@@ -373,7 +373,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
                 keyIndex = idleTableUpdateDetailsByTableName.keyIndex(tableName);
                 if (keyIndex < 0) {
-                    LOG.info().$("idle table going active [tableName=").$(tableName).I$();
+                    LOG.info().$("idle table going active [tableName=").utf8(tableName).I$();
                     tableUpdateDetails = idleTableUpdateDetailsByTableName.valueAt(keyIndex);
                     if (tableUpdateDetails.getWriter() == null) {
                         tableUpdateDetails.closeLocals();
