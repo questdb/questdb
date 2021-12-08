@@ -27,7 +27,6 @@ package io.questdb.griffin;
 import io.questdb.jit.JitUtil;
 import org.junit.Assume;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class CompiledFiltersTest extends AbstractGriffinTest {
@@ -115,10 +114,20 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore
     @Test
-    public void testFilterWithColTops() throws Exception {
+    public void testSelectAllFilterWithColTopsScalar() throws Exception {
+        testSelectAllFilterWithColTops(SqlExecutionContext.JIT_MODE_FORCE_SCALAR);
+    }
+
+    @Test
+    public void testSelectAllFilterWithColTopsVector() throws Exception {
+        testSelectAllFilterWithColTops(SqlExecutionContext.JIT_MODE_ENABLED);
+    }
+
+    public void testSelectAllFilterWithColTops(int jitMode) throws Exception {
         assertMemoryLeak(() -> {
+            sqlExecutionContext.setJitMode(jitMode);
+
             compiler.compile("create table t1 as (select " +
                     " x," +
                     " timestamp_sequence(0, 1000000) ts " +
@@ -127,22 +136,15 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
             compiler.compile("alter table t1 add j long", sqlExecutionContext);
 
             compiler.compile("insert into t1 select " +
-                            " x," +
-                            " timestamp_sequence(100000000, 1000000) ts," +
-                            " rnd_long() j " +
-                            "from long_sequence(20)", sqlExecutionContext);
+                    " x," +
+                    " timestamp_sequence(100000000, 1000000) ts," +
+                    " rnd_long() j " +
+                    "from long_sequence(20)", sqlExecutionContext);
 
-            final String query = "select * from t1 where j < 0";
-            final String expected = "x\tts\tj\n" +
-                    "4\t1970-01-01T00:01:43.000000Z\t-6945921502384501475\n" +
-                    "7\t1970-01-01T00:01:46.000000Z\t-7611843578141082998\n" +
-                    "8\t1970-01-01T00:01:47.000000Z\t-5354193255228091881\n" +
-                    "9\t1970-01-01T00:01:48.000000Z\t-2653407051020864006\n" +
-                    "10\t1970-01-01T00:01:49.000000Z\t-1675638984090602536\n" +
-                    "14\t1970-01-01T00:01:53.000000Z\t-7489826605295361807\n" +
-                    "15\t1970-01-01T00:01:54.000000Z\t-4094902006239100839\n" +
-                    "16\t1970-01-01T00:01:55.000000Z\t-4474835130332302712\n" +
-                    "17\t1970-01-01T00:01:56.000000Z\t-6943924477733600060\n";
+            final String query = "select * from t1 where x = 3";
+            final String expected = "j\tts\n" +
+                    "3\t1970-01-01T00:00:02.000000Z\tNaN\n" +
+                    "3\t1970-01-01T00:01:42.000000Z\t7746536061816329025\n";
 
             assertSql(query, expected);
 
