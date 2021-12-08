@@ -34,6 +34,7 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
 
     // TODO: keep this test for advanced features such as:
     //  * bind variables
+    //  * deferred symbol literals
 
     @Before
     public void setUp() {

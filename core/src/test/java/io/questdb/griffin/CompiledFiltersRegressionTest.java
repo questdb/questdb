@@ -421,7 +421,6 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
         assertQuery(query, ddl);
     }
 
-    @Ignore
     @Test
     public void testHugeFilter() throws Exception {
         final int N = 1024;
@@ -435,7 +434,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
             if (i > 0) {
                 gen.withAnyOf(" and ");
             }
-            gen.withAnyOf("i64 = 1");
+            gen.withAnyOf("i64 != 0");
         }
         assertGeneratedQuery("select * from x", ddl, gen);
     }
