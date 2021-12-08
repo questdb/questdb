@@ -377,7 +377,7 @@ namespace questdb::x86 {
             return r.as<Gpd>();
         }
         c.mov(r, INT_NULL);
-        c.test(rhs, INT_NULL - 1);
+        c.test(rhs, 2147483647); //INT_NULL - 1
         c.je(l_null);
         c.cmp(lhs, INT_NULL);
         c.je(l_null);
