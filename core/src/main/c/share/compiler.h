@@ -104,6 +104,9 @@ T read(const uint8_t *buf, size_t size, uint32_t &pos) {
 
 struct jit_value_t {
 
+    inline jit_value_t() noexcept
+        : op_(), type_(), kind_() {}
+
     inline jit_value_t(asmjit::Operand op, data_type_t type, data_kind_t kind) noexcept
             : op_(op), type_(type), kind_(kind) {}
 
@@ -120,6 +123,8 @@ struct jit_value_t {
     inline data_type_t dtype() const noexcept { return type_; }
 
     inline data_kind_t dkind() const noexcept { return kind_; }
+
+    inline const asmjit::Operand& op() const noexcept { return op_; }
 
 private:
     asmjit::Operand op_;
