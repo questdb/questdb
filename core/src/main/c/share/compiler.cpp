@@ -1153,7 +1153,9 @@ struct JitCompiler {
         auto mask = registers.top();
         registers.pop();
 
-        c.mov(qword_ptr(rows_ptr, output_index, 3), input_index);
+        x86::Gp adjusted_id = c.newInt64("input_index_+_rows_id_start_offset");
+        c.lea(adjusted_id, ptr(input_index, rows_id_start_offset)); // input_index + rows_id_start_offset
+        c.mov(qword_ptr(rows_ptr, output_index, 3), adjusted_id);
 
         c.and_(mask.gp(), 1);
         c.add(output_index, mask.gp().r64());
@@ -1220,8 +1222,11 @@ struct JitCompiler {
         input_index = c.newInt64("input_index");
         c.mov(input_index, 0);
 
+        rows_id_start_offset = c.newInt64("rows_id_start_offset");
+        c.setArg(4, rows_id_start_offset);
+
         output_index = c.newInt64("output_index");
-        c.setArg(4, output_index);
+        c.mov(output_index, 0);
     }
 
     void end_fn() {
@@ -1238,7 +1243,7 @@ struct JitCompiler {
     x86::Gp rows_size;
     x86::Gp input_index;
     x86::Gp output_index;
-
+    x86::Gp rows_id_start_offset;
 };
 
 void fillJitErrorObject(JNIEnv *e, jobject error, uint32_t code, const char *msg) {
