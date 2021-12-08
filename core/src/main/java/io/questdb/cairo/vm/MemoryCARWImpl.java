@@ -28,7 +28,10 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Long256Acceptor;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -93,9 +96,9 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
 
     @Override
     public void truncate() {
-        // our "extend" implementation will reduce size as well as
-        // extend it
-        extend(0);
+        // our internal "extend" implementation will reduce size
+        // as well as extend it
+        extend0(0);
         // reset append offset
         appendAddress = pageAddress;
     }
