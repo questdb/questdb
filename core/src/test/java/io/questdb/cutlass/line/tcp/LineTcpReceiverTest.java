@@ -61,7 +61,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;

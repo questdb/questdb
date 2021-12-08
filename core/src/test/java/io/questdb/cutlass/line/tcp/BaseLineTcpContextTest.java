@@ -39,7 +39,6 @@ import org.junit.Assert;
 import org.junit.Before;
 
 import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
@@ -54,8 +53,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
 
         @Override
-        public void addTableUpdateDetails(LineTcpMeasurementScheduler.TableUpdateDetails tableUpdateDetails) {
-            localTableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
+        public void addTableUpdateDetails(String tableNameUtf8, LineTcpMeasurementScheduler.TableUpdateDetails tableUpdateDetails) {
+            localTableUpdateDetailsByTableName.put(tableNameUtf8, tableUpdateDetails);
         }
 
         @Override
@@ -63,7 +62,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
 
         @Override
-        public LineTcpMeasurementScheduler.TableUpdateDetails getTableUpdateDetails(CharSequence tableName) {
+        public LineTcpMeasurementScheduler.TableUpdateDetails getLocalTableDetails(CharSequence tableName) {
             return localTableUpdateDetailsByTableName.get(tableName);
         }
 
