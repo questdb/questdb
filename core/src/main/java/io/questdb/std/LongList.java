@@ -144,33 +144,7 @@ public class LongList implements Mutable, LongVec {
                 scanDown(value, low, high + 1);
     }
 
-    private int scrollDown(int low, int high, long value) {
-        do {
-            if (low < high) {
-                low++;
-            } else {
-                return low;
-            }
-        } while (data[low] == value);
-        return low - 1;
-    }
-
-    private int scrollUp(int high, long value) {
-        do {
-            if (high > 0) {
-                high--;
-            } else {
-                return 0;
-            }
-        } while (data[high] == value);
-        return high + 1;
-    }
-
     public int binarySearchBlock(int shl, long value, int scanDir) {
-        return binarySearchBlock(0, size(), shl, value, scanDir);
-    }
-
-    public int binarySearchBlock(int low, int high, int shl, long value, int scanDir) {
         // Binary searches using 2^shl blocks
         // e.g. when shl == 2
         // this method treats 4 longs as 1 entry
@@ -180,59 +154,31 @@ public class LongList implements Mutable, LongVec {
         // This is useful when list is a dictionary where first long is a key
         // and subsequent X (1, 3, 7 etc.) values are the value of the dictionary.
 
-        if (low == high) {
-            return -1;
-        }
-
         // this is the same algorithm as implemented in C (util.h)
         // template<class T, class V>
         // inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_t scan_dir)
+        // please ensure these implementations are in sync
 
-        // assert that scan interval is integer number of blocks
-        assert (high - low) % (1 << shl) == 0;
-        high = high >> shl;
-        low = low >> shl;
-
-        while (low < high) {
-            if (high - low < 65) {
-                return scanSearchBlock(value, low, high, shl);
-            }
-
-            int mid = (low + high - 1) / 2;
-            long midVal = data[mid << shl];
+        int low = 0;
+        int high = (pos - 1) >> shl;
+        while (high - low > 65) {
+            final int mid = (low + high) / 2;
+            final long midVal = data[mid << shl];
 
             if (midVal < value) {
-                if (low < mid) {
-                    low = mid;
-                } else {
-                    if (data[high << shl] > value) {
-                        return -(low << shl) - 1;
-                    }
-                    return -(high << shl) - 1;
-                }
-            } else if (midVal > value)
-                high = mid;
-            else {
+                low = mid;
+            } else if (midVal > value) {
+                high = mid - 1;
+            } else {
                 // In case of multiple equal values, find the first
-                mid += scanDir;
-                while (mid > 0 && mid <= high && data[mid << shl] == midVal) {
-                    mid += scanDir;
-                }
-                return (mid - scanDir) << shl;
+                return scanDir == BinarySearch.SCAN_UP ?
+                        scrollUpBlock(shl, mid, midVal) :
+                        scrollDownBlock(shl, mid, high, midVal);
             }
         }
-
-        low <<= shl;
-
-        if (data[low] > value) {
-            return -(low) - 1;
-        }
-
-        if (data[low] == value) {
-            return low;
-        }
-
-        return -(low + 1) - 1;
+        return scanDir == BinarySearch.SCAN_UP ?
+                scanUpBlock(shl, value, low, high + 1) :
+                scanDownBlock(shl, value, low, high + 1);
     }
 
     public void clear() {
@@ -311,10 +257,6 @@ public class LongList implements Mutable, LongVec {
      * @return element at the specified position.
      */
     public long getQuick(int index) {
-//        assert index < pos;
-        if (index >= pos) {
-            System.out.println("shoot");
-        }
         return data[index];
     }
 
@@ -486,20 +428,6 @@ public class LongList implements Mutable, LongVec {
         return -1;
     }
 
-    private int scanSearchBlock(long v, int low, int high, int shl) {
-        for (int i = low; i < high; i++) {
-            int index = i << shl;
-            long f = data[index];
-            if (f == v) {
-                return index;
-            }
-            if (f > v) {
-                return -(index + 1);
-            }
-        }
-        return -((high << shl) + 1);
-    }
-
     private int scanDown(long v, int low, int high) {
         for (int i = high - 1; i >= low; i--) {
             long that = data[i];
@@ -511,6 +439,19 @@ public class LongList implements Mutable, LongVec {
             }
         }
         return -(low + 1);
+    }
+
+    private int scanDownBlock(int shl, long v, int low, int high) {
+        for (int i = high - 1; i >= low; i--) {
+            long that = data[i << shl];
+            if (that == v) {
+                return i << shl;
+            }
+            if (that < v) {
+                return -(((i + 1) << shl) + 1);
+            }
+        }
+        return -((low << shl) + 1);
     }
 
     private int scanUp(long value, int low, int high) {
@@ -525,4 +466,62 @@ public class LongList implements Mutable, LongVec {
         }
         return -(high + 1);
     }
+
+    private int scanUpBlock(int shl, long value, int low, int high) {
+        for (int i = low; i < high; i++) {
+            long that = data[i << shl];
+            if (that == value) {
+                return i << shl;
+            }
+            if (that > value) {
+                return -((i << shl) + 1);
+            }
+        }
+        return -((high << shl) + 1);
+    }
+
+    private int scrollDown(int low, int high, long value) {
+        do {
+            if (low < high) {
+                low++;
+            } else {
+                return low;
+            }
+        } while (data[low] == value);
+        return low - 1;
+    }
+
+    private int scrollDownBlock(int shl, int low, int high, long value) {
+        do {
+            if (low < high) {
+                low++;
+            } else {
+                return low << shl;
+            }
+        } while (data[low << shl] == value);
+        return (low - 1) << shl;
+    }
+
+    private int scrollUp(int high, long value) {
+        do {
+            if (high > 0) {
+                high--;
+            } else {
+                return 0;
+            }
+        } while (data[high] == value);
+        return high + 1;
+    }
+
+    private int scrollUpBlock(int shl, int high, long value) {
+        do {
+            if (high > 0) {
+                high--;
+            } else {
+                return 0;
+            }
+        } while (data[high << shl] == value);
+        return (high + 1) << shl;
+    }
+
 }

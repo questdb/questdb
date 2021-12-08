@@ -68,7 +68,7 @@ public class ColumnVersionWriter implements Closeable {
      */
     public void upsert(long timestamp, int columnIndex, long columnVersion) {
         final int sz = cachedList.size();
-        int index = cachedList.binarySearchBlock(0, sz, BLOCK_SIZE_MSB, timestamp, BinarySearch.SCAN_UP);
+        int index = cachedList.binarySearchBlock(BLOCK_SIZE_MSB, timestamp, BinarySearch.SCAN_UP);
         boolean insert = true;
         if (index > -1) {
             // brute force columns for this timestamp

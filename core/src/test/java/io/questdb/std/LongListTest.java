@@ -26,11 +26,9 @@ package io.questdb.std;
 
 import io.questdb.cairo.BinarySearch;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class LongListTest {
-    @Ignore
     @Test
     public void testBinarySearchBlockFuzz() {
         final int N = 997; // prime
@@ -103,9 +101,9 @@ public class LongListTest {
             if (skip == 0) {
                 Assert.assertTrue(pos < 0);
 
-                pos = (-pos - 1) * 4;
-                if (pos > 0) {
-                    Assert.assertTrue(list.getQuick(pos - 1) < i);
+                pos = -pos - 1;
+                if (pos > 4) {
+                    Assert.assertTrue(list.getQuick(pos - 4) < i);
                 }
 
                 if (pos < M) {
@@ -113,9 +111,8 @@ public class LongListTest {
                 }
             } else {
                 Assert.assertTrue(pos > -1);
-                pos = pos * 4;
-                if (pos > 0) {
-                    Assert.assertTrue(list.getQuick(pos - 1) < i);
+                if (pos > 4) {
+                    Assert.assertTrue(list.getQuick(pos - 4) < i);
                 }
                 Assert.assertEquals(list.getQuick(pos), i);
             }
@@ -129,10 +126,10 @@ public class LongListTest {
             if (skip == 0) {
                 Assert.assertTrue(pos < 0);
 
-                pos = (-pos - 1) * 4;
+                pos = -pos - 1;
 
-                if (pos > 0) {
-                    Assert.assertTrue(list.getQuick(pos - 1) < i);
+                if (pos > 4) {
+                    Assert.assertTrue(list.getQuick(pos - 5) < i);
                 }
 
                 if (pos < M) {
@@ -140,10 +137,10 @@ public class LongListTest {
                 }
             } else {
                 Assert.assertTrue(pos > -1);
-                pos *= 4;
                 Assert.assertEquals(list.getQuick(pos), i);
-                if (pos + 1 < M) {
-                    Assert.assertTrue(list.getQuick(pos + 1) > i);
+                if (pos + 4 < M) {
+                    // this is a block of 4 longs
+                    Assert.assertTrue(list.getQuick(pos + 4) > i);
                 }
             }
         }
@@ -153,7 +150,7 @@ public class LongListTest {
         int pos = list.binarySearch(N, BinarySearch.SCAN_UP);
         Assert.assertTrue(pos < 0);
 
-        pos = (-pos - 1) * 4;
+        pos = -pos - 1;
         Assert.assertEquals(pos, list.size());
 
         // search min value (less than anything in the list)
@@ -161,7 +158,7 @@ public class LongListTest {
         pos = list.binarySearch(-1, BinarySearch.SCAN_UP);
         Assert.assertTrue(pos < 0);
 
-        pos = (-pos - 1) * 4;
+        pos = -pos - 1;
         Assert.assertEquals(0, pos);
     }
 
