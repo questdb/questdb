@@ -32,6 +32,7 @@ import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
+import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastSymbolToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.*;
@@ -42,6 +43,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
 
@@ -152,6 +154,48 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             return parseIndexedParameter(position, name);
         }
         return createNamedParameter(position, name);
+    }
+
+    public Function createImplicitCast(int position, Function function, int toType) throws SqlException {
+        Function cast = createImplicitCastOrNull(position, function, toType);
+        if (cast != null && cast.isConstant()) {
+            try {
+                Function constant = functionToConstant(cast);
+                function.close();
+                return constant;
+            } finally {
+                cast.close();
+            }
+        }
+        return cast;
+    }
+
+    @Nullable
+    private Function createImplicitCastOrNull(int position, Function function, int toType) throws SqlException {
+        int fromType = function.getType();
+        switch (ColumnType.tagOf(fromType)) {
+            case ColumnType.STRING:
+                if (toType == ColumnType.TIMESTAMP) {
+                    return new CastStrToTimestampFunctionFactory.Func(position, function);
+                }
+                break;
+            case ColumnType.SYMBOL:
+                if (toType == ColumnType.TIMESTAMP) {
+                    return new CastSymbolToTimestampFunctionFactory.Func(function);
+                }
+                break;
+            case ColumnType.GEOBYTE:
+            case ColumnType.GEOSHORT:
+            case ColumnType.GEOINT:
+            case ColumnType.GEOLONG:
+                int fromGeoBits = ColumnType.getGeoHashBits(fromType);
+                int toGeoBits = ColumnType.getGeoHashBits(toType);
+                if (ColumnType.isGeoHash(toType) && toGeoBits < fromGeoBits) {
+                    return CastGeoHashToGeoHashFunctionFactory.newInstance(position, function, fromType, toType);
+                }
+                break;
+        }
+        return null;
     }
 
     public Function createIndexParameter(int variableIndex, int position) throws SqlException {

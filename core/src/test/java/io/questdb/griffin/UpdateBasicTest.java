@@ -33,10 +33,7 @@ import io.questdb.griffin.update.InplaceUpdateExecution;
 import io.questdb.griffin.update.UpdateStatement;
 import io.questdb.std.Misc;
 import io.questdb.test.tools.TestUtils;
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
 
 public class UpdateBasicTest extends AbstractGriffinTest {
     private InplaceUpdateExecution inplaceUpdate;
@@ -93,21 +90,37 @@ public class UpdateBasicTest extends AbstractGriffinTest {
                     " cast(x as date) xdate," +
                     " cast(x as float) xfloat," +
                     " cast(x as timestamp) xts, " +
-                    " cast(x as boolean) xbool" +
+                    " cast(x as boolean) xbool," +
+                    " cast(x as long256) xl256" +
                     " from long_sequence(2))" +
                     " timestamp(ts) partition by DAY", sqlExecutionContext);
 
             // All combinations to update xint
             executeUpdateFails("UPDATE up SET xint = xdouble", 21, "inconvertible types: DOUBLE -> INT [from=, to=xint]");
             executeUpdateFails("UPDATE up SET xint = xlong", 21, "inconvertible types: LONG -> INT [from=, to=xint]");
+            executeUpdateFails("UPDATE up SET xshort = xlong", 23, "inconvertible types: LONG -> SHORT [from=, to=xshort]");
+            executeUpdateFails("UPDATE up SET xchar = xlong", 22, "inconvertible types: LONG -> CHAR [from=, to=xchar]");
+            executeUpdateFails("UPDATE up SET xbyte = xlong", 22, "inconvertible types: LONG -> BYTE [from=, to=xbyte]");
+            executeUpdateFails("UPDATE up SET xlong = xl256", 22, "inconvertible types: LONG256 -> LONG [from=, to=xlong]");
+            executeUpdateFails("UPDATE up SET xl256 = xlong", 22, "inconvertible types: LONG -> LONG256 [from=, to=xl256]");
 
-            String expected = "ts\txint\txlong\txdouble\txshort\txbyte\txchar\txdate\txfloat\txts\txbool\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1\t1\t\u0001\t1970-01-01T00:00:00.001Z\t1.0000\t1970-01-01T00:00:00.000001Z\ttrue\n" +
-                    "1970-01-01T00:00:01.000000Z\t2\t2\t2.0\t2\t2\t\u0002\t1970-01-01T00:00:00.002Z\t2.0000\t1970-01-01T00:00:00.000002Z\tfalse\n";
+            String expected = "ts\txint\txlong\txdouble\txshort\txbyte\txchar\txdate\txfloat\txts\txbool\txl256\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1\t1\t\u0001\t1970-01-01T00:00:00.001Z\t1.0000\t1970-01-01T00:00:00.000001Z\ttrue\t0x01\n" +
+                    "1970-01-01T00:00:01.000000Z\t2\t2\t2.0\t2\t2\t\u0002\t1970-01-01T00:00:00.002Z\t2.0000\t1970-01-01T00:00:00.000002Z\tfalse\t0x02\n";
 
             executeUpdate("UPDATE up SET xint=xshort");
             assertSql("up", expected);
             executeUpdate("UPDATE up SET xint=xshort WHERE ts='1970-01-01'");
+            assertSql("up", expected);
+
+            executeUpdate("UPDATE up SET xlong=xshort");
+            assertSql("up", expected);
+            executeUpdate("UPDATE up SET xlong=xshort WHERE ts='1970-01-01'");
+            assertSql("up", expected);
+
+            executeUpdate("UPDATE up SET xlong=xchar");
+            assertSql("up", expected);
+            executeUpdate("UPDATE up SET xlong=xchar WHERE ts='1970-01-01'");
             assertSql("up", expected);
 
             executeUpdate("UPDATE up SET xfloat=xint");
@@ -133,6 +146,16 @@ public class UpdateBasicTest extends AbstractGriffinTest {
             executeUpdate("UPDATE up SET xshort=xchar");
             assertSql("up", expected);
             executeUpdate("UPDATE up SET xshort=xchar WHERE ts='1970-01-01'");
+            assertSql("up", expected);
+
+            executeUpdate("UPDATE up SET xchar=xshort");
+            assertSql("up", expected);
+            executeUpdate("UPDATE up SET xchar=xshort WHERE ts='1970-01-01'");
+            assertSql("up", expected);
+
+            executeUpdate("UPDATE up SET xint=xchar");
+            assertSql("up", expected);
+            executeUpdate("UPDATE up SET xint=xchar WHERE ts='1970-01-01'");
             assertSql("up", expected);
 
             executeUpdate("UPDATE up SET xdouble=xlong");
@@ -192,6 +215,106 @@ public class UpdateBasicTest extends AbstractGriffinTest {
                     "1970-01-01T00:00:04.000000Z\t5\n");
         });
     }
+
+    @Test
+    public void testUpdateToNull() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " cast(x as int) x" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET x = null WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
+
+            assertSql("up", "ts\tx\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\n" +
+                    "1970-01-01T00:00:01.000000Z\t2\n" +
+                    "1970-01-01T00:00:02.000000Z\tNaN\n" +
+                    "1970-01-01T00:00:03.000000Z\tNaN\n" +
+                    "1970-01-01T00:00:04.000000Z\t5\n");
+        });
+    }
+
+    @Test
+    public void testUpdateTimestampToStringLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " timestamp_sequence(0, 1000000) ts1" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET ts1 = '1970-02-01' WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
+
+            assertSql("up", "ts\tts1\n" +
+                    "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\n" +
+                    "1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:01.000000Z\n" +
+                    "1970-01-01T00:00:02.000000Z\t1970-02-01T00:00:00.000000Z\n" +
+                    "1970-01-01T00:00:03.000000Z\t1970-02-01T00:00:00.000000Z\n" +
+                    "1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:04.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testUpdateGeoHashColumnToLowerPrecision() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " rnd_geohash(5) g1c," +
+                    " rnd_geohash(15) g3c," +
+                    " rnd_geohash(25) g5c," +
+                    " rnd_geohash(35) g7c" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            executeUpdate("UPDATE up " +
+                    "SET " +
+                    "g1c = cast('questdb' as geohash(7c)), " +
+                    "g3c = cast('questdb' as geohash(7c)), " +
+                    "g5c = cast('questdb' as geohash(7c)), " +
+                    "g7c = cast('questdb' as geohash(7c)) " +
+                    "WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
+
+            assertSql("up", "ts\tg1c\tg3c\tg5c\tg7c\n" +
+                    "1970-01-01T00:00:00.000000Z\t9\t46s\tjnw97\tzfuqd3b\n" +
+                    "1970-01-01T00:00:01.000000Z\th\twh4\ts2z2f\t1cjjwk6\n" +
+                    "1970-01-01T00:00:02.000000Z\tq\tque\tquest\tquestdb\n" +
+                    "1970-01-01T00:00:03.000000Z\tq\tque\tquest\tquestdb\n" +
+                    "1970-01-01T00:00:04.000000Z\tx\t76u\tq0s5w\ts2vqs1b\n");
+        });
+    }
+
+    @Test
+    @Ignore // TODO: fix
+    public void testUpdateGeoHashColumnToLowerPrecision2() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " rnd_geohash(5) g1c," +
+                    " rnd_geohash(15) g3c," +
+                    " rnd_geohash(25) g5c," +
+                    " rnd_geohash(35) g7c" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            executeUpdate("UPDATE up " +
+                    "SET " +
+                    "g1c = g7c, " +
+                    "g3c = g7c, " +
+                    "g5c = g7c, " +
+                    "g7c = g7c " +
+                    "WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
+
+            assertSql("up", "ts\tg1c\tg3c\tg5c\tg7c\n" +
+                    "1970-01-01T00:00:00.000000Z\t9\t46s\tjnw97\tzfuqd3b\n" +
+                    "1970-01-01T00:00:01.000000Z\th\twh4\ts2z2f\t1cjjwk6\n" +
+                    "1970-01-01T00:00:02.000000Z\tq\tque\tquest\tquestdb\n" +
+                    "1970-01-01T00:00:03.000000Z\tq\tque\tquest\tquestdb\n" +
+                    "1970-01-01T00:00:04.000000Z\tx\t76u\tq0s5w\ts2vqs1b\n");
+        });
+    }
+
 
     @Test
     public void testUpdateToBindVar() throws Exception {

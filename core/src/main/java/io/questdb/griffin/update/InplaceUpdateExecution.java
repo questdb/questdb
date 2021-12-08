@@ -79,7 +79,7 @@ public class InplaceUpdateExecution implements Closeable {
         RecordMetadata updateMetadata = updateStatement.getUpdateDataFactory().getMetadata();
         int updateStatementColumnCount = updateMetadata.getColumnCount();
 
-        // Build index column map from table to update to values returned in the update statement row cursors
+        // Build index column map from table to update to values returned from the update statement row cursors
         updateToColumnMap.clear();
         for (int i = 0; i < updateStatementColumnCount; i++) {
             CharSequence columnName = updateMetadata.getColumnName(i);
@@ -153,7 +153,7 @@ public class InplaceUpdateExecution implements Closeable {
             int columnType = metadata.getColumnType(updateToColumnMap.get(columnIndex));
             MemoryCMARW primaryColMem = updateMemory.get(columnIndex);
 
-            switch (columnType) {
+            switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.INT:
                     primaryColMem.putInt(rowId << 2, record.getInt(columnIndex));
                     break;
@@ -181,6 +181,18 @@ public class InplaceUpdateExecution implements Closeable {
                 case ColumnType.BYTE:
                 case ColumnType.BOOLEAN:
                     primaryColMem.putByte(rowId, record.getByte(columnIndex));
+                    break;
+                case ColumnType.GEOBYTE:
+                    primaryColMem.putByte(rowId, record.getGeoByte(columnIndex));
+                    break;
+                case ColumnType.GEOSHORT:
+                    primaryColMem.putShort(rowId << 1, record.getGeoShort(columnIndex));
+                    break;
+                case ColumnType.GEOINT:
+                    primaryColMem.putInt(rowId << 2, record.getGeoInt(columnIndex));
+                    break;
+                case ColumnType.GEOLONG:
+                    primaryColMem.putLong(rowId << 3, record.getGeoLong(columnIndex));
                     break;
                 default:
                     throw SqlException.$(0, "Column type ")

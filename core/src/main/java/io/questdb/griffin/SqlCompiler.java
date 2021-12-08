@@ -1927,8 +1927,7 @@ public class SqlCompiler implements Closeable {
                 tableColumnNames,
                 tableId,
                 tableVersion,
-                updateStatementData,
-                configuration.getRandom()
+                updateStatementData
         );
     }
 
@@ -1938,8 +1937,7 @@ public class SqlCompiler implements Closeable {
             @Transient ObjList<CharSequence> tableColumnNames,
             int tableId,
             long tableVersion,
-            RecordCursorFactory rowIdFactory,
-            Rnd rnd
+            RecordCursorFactory rowIdFactory
     ) throws SqlException {
         String tableName = Chars.toString(updateQueryModel.getTableName().token);
         if (!rowIdFactory.supportTableRowId(tableName)) {

@@ -46,8 +46,4 @@ public class QueryWithClauseModel implements Mutable {
     public WithClauseModel getWithClause(CharSequence name) {
         return withClauses.get(name);
     }
-
-    public LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses() {
-        return withClauses;
-    }
 }

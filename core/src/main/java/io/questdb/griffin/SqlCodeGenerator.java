@@ -757,7 +757,12 @@ public class SqlCodeGenerator implements Mutable {
 
                         switch (joinType) {
                             case JOIN_CROSS:
-                                master = createCrossJoin(master, masterAlias, slaveModel, slave, masterMetadata, slaveMetadata);
+                                master = new CrossJoinRecordCursorFactory(
+                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                        master,
+                                        slave,
+                                        masterMetadata.getColumnCount()
+                                );
                                 masterAlias = null;
                                 break;
                             case JOIN_ASOF:
@@ -926,24 +931,6 @@ public class SqlCodeGenerator implements Mutable {
             Misc.free(master);
             throw e;
         }
-    }
-
-    @NotNull
-    private RecordCursorFactory createCrossJoin(
-            RecordCursorFactory master,
-            CharSequence masterAlias,
-            QueryModel slaveModel,
-            RecordCursorFactory slave,
-            RecordMetadata masterMetadata,
-            RecordMetadata slaveMetadata
-    ) {
-        RecordMetadata joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
-        return new CrossJoinRecordCursorFactory(
-                joinMetadata,
-                master,
-                slave,
-                masterMetadata.getColumnCount()
-        );
     }
 
     @NotNull
@@ -2307,7 +2294,7 @@ public class SqlCodeGenerator implements Mutable {
                     virtualMetadata.setTimestampIndex(i);
                 }
 
-                final Function function = functionParser.parseFunction(
+                Function function = functionParser.parseFunction(
                         column.getAst(),
                         metadata,
                         executionContext
@@ -2330,14 +2317,18 @@ public class SqlCodeGenerator implements Mutable {
                 }
 
                 int columnType = function.getType();
-                if (targetColumnType != -1 && targetColumnType != function.getType()) {
+                if (targetColumnType != -1 && targetColumnType != columnType) {
                     // This is an update and the target column does not match with column the update is trying to perform
                     if (builtInFunctionCast(function.getType(), targetColumnType)) {
                         // All functions will be able to getLong() if they support getInt(), no need to generate cast here
                         columnType = targetColumnType;
-                    } else if (implicitCastAllowed(function.getType(), targetColumnType)) {
-                        // TODO: add casts for not exactly convertable types
-                        throw new UnsupportedOperationException();
+                    } else {
+                        Function castFunction = functionParser.createImplicitCast(column.getAst().position, function, targetColumnType);
+                        if (castFunction != null) {
+                            function = castFunction;
+                            columnType = targetColumnType;
+                        }
+                        // else - update code will throw incompatibility exception. It will have better chance close resources then
                     }
                 }
 
@@ -2406,19 +2397,6 @@ public class SqlCodeGenerator implements Mutable {
         }
     }
 
-    private boolean implicitCastAllowed(int fromType, int toType) {
-        switch (ColumnType.tagOf(fromType)) {
-            case ColumnType.GEOHASH:
-                return ColumnType.tagOf(toType) == ColumnType.GEOHASH && ColumnType.getGeoHashBits(fromType) <= ColumnType.getGeoHashBits(toType);
-
-            case ColumnType.STRING:
-            case ColumnType.SYMBOL:
-                return toType == ColumnType.TIMESTAMP || toType == ColumnType.SYMBOL || toType == ColumnType.STRING;
-
-        }
-        return false;
-    }
-
     private static boolean builtInFunctionCast(int fromColumnType, int toColumnType) {
         switch (fromColumnType) {
             case ColumnType.NULL:
@@ -2442,8 +2420,6 @@ public class SqlCodeGenerator implements Mutable {
                 return toColumnType == ColumnType.LONG;
             case ColumnType.DATE:
                 return toColumnType == ColumnType.TIMESTAMP;
-            case ColumnType.SYMBOL:
-                return toColumnType == ColumnType.STRING;
 
         }
         return false;
