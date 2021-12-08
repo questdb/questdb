@@ -305,7 +305,7 @@ public class CompiledQueryImpl implements CompiledQuery {
                     // in the event data
                     SqlException result = null;
                     int strLen = Unsafe.getUnsafe().getInt(event.getData());
-                    if (strLen != 0) {
+                    if (strLen > -1) {
                         result = SqlException.$(queryTableNamePosition, event.getData() + 4L, event.getData() + 4L + 2L * strLen);
                     }
                     eventSubSeq.done(seq);

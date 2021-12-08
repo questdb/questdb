@@ -1285,7 +1285,7 @@ public class TableWriter implements Closeable {
                 if (error != null) {
                     event.putStr(error);
                 } else {
-                    event.putInt(0);
+                    event.putInt(-1);
                 }
                 event.setInstance(instance);
             } finally {

@@ -323,7 +323,10 @@ public class AlterStatement implements Mutable {
                         .$(",error=").$(e.getFlyweightMessage())
                         .I$();
 
-                throw SqlException.$(tableNamePosition, e.getFlyweightMessage());
+                throw putPartitionName(SqlException.$(tableNamePosition, "could not remove partition '"),
+                        tableWriter.getPartitionBy(),
+                        partitionTimestamp).put("'. ")
+                        .put(e.getFlyweightMessage());
             }
         }
     }

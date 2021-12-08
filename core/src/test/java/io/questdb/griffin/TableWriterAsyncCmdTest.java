@@ -34,10 +34,13 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.tasks.TableWriterTask;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.griffin.AlterStatement.ADD_COLUMN;
 import static io.questdb.griffin.QueryFuture.QUERY_COMPLETE;
 import static io.questdb.griffin.QueryFuture.QUERY_NO_RESPONSE;
 
@@ -128,7 +131,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAsyncAlterCommandsFailsToDropPartition() throws Exception {
+    public void testAsyncAlterCommandsFailsToDropColumn() throws Exception {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
                 int attempt = 0;
@@ -159,6 +162,75 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 cf.close();
             }
             compile("ALTER TABLE product drop column to_remove", sqlExecutionContext);
+        });
+    }
+
+    @Test
+    public void testAsyncAlterCommandsFailsToDropPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            ff = new FilesFacadeImpl() {
+                final int attempt = 0;
+
+                @Override
+                public int rmdir(Path name) {
+                    if (Chars.contains(name, "2020-01-01")) {
+                        throw CairoException.instance(11);
+                    }
+                    return super.rmdir(name);
+                }
+            };
+            compile("create table product as (select x, timestamp_sequence('2020-01-01', 1000000000) ts from long_sequence(100))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            QueryFuture cf;
+            // Block table
+            try (TableWriter ignored = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
+                CompiledQuery cc = compiler.compile("ALTER TABLE product drop partition LIST '2020-01-01'", sqlExecutionContext);
+                cf = cc.execute(commandReplySequence);
+            } // Unblock table
+
+            try {
+                cf.await();
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "could not remove partition '2020-01-01'");
+            }
+        });
+    }
+
+    @Test
+    public void testAsyncAlterDeserializationFails() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table product as (select x, timestamp_sequence('2020-01-01', 1000000000) ts from long_sequence(100))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            QueryFuture cf;
+            // Block table
+            String tableName = "product";
+            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "test lock")) {
+                final int tableId = writer.getMetadata().getId();
+                short command = ADD_COLUMN;
+                AlterStatement creepyAlter = new AlterStatement() {
+                    @Override
+                    public void serialize(TableWriterTask event) {
+                        event.of(TableWriterTask.TSK_ALTER_TABLE, tableId, tableName);
+                        event.putShort(command);
+                        event.putInt(-1);
+                        event.putInt(1000);
+                    }
+                };
+                creepyAlter.of(command, tableName, tableId, 100);
+                CompiledQueryImpl cc = new CompiledQueryImpl(engine).withDefaultContext(sqlExecutionContext);
+                cc.ofAlter(creepyAlter);
+                cf = cc.execute(commandReplySequence);
+            } // Unblock table
+
+            try {
+                cf.await();
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "invalid alter statement serialized to writer queue");
+            }
         });
     }
 
@@ -250,6 +322,31 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
 
                 // ALTER TABLE should be executed successfully on writer.close() before engine.tick()
                 cf.await();
+            } finally {
+                if (cf != null) {
+                    cf.close();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAsyncAlterCommandInvalidSerialisation() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
+            QueryFuture cf = null;
+            try {
+                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
+                    CompiledQueryImpl cc = new CompiledQueryImpl(engine).withDefaultContext(sqlExecutionContext);
+                    AlterStatement creepyAlterStatement = new AlterStatement();
+                    creepyAlterStatement.of((short) 1000, "product", writer.getMetadata().getId(), 1000);
+                    cc.ofAlter(creepyAlterStatement);
+                    cf = cc.execute(commandReplySequence);
+                }
+                cf.await();
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertEquals("Invalid alter table command [code=1000]", ex.getFlyweightMessage());
             } finally {
                 if (cf != null) {
                     cf.close();

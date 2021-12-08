@@ -358,16 +358,14 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                     engine.clear();
 
                     try (CairoEngine engine = new CairoEngine(configuration)) {
-                        try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                            Assert.assertEquals(ALTER, compile("alter table x add column meh symbol;", sqlExecutionContext).getType());
+                        Assert.assertEquals(ALTER, compile("alter table x add column meh symbol;", sqlExecutionContext).getType());
 
-                            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
-                                SymbolMapReader smr = reader.getSymbolMapReader(16);
-                                Assert.assertNotNull(smr);
-                                Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
-                                Assert.assertFalse(reader.getMetadata().isColumnIndexed(16));
-                                Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
-                            }
+                        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                            SymbolMapReader smr = reader.getSymbolMapReader(16);
+                            Assert.assertNotNull(smr);
+                            Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
+                            Assert.assertFalse(reader.getMetadata().isColumnIndexed(16));
+                            Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
                         }
                     }
                 }
@@ -379,11 +377,9 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
         assertMemoryLeak(
                 () -> {
                     createX();
-
                     engine.clear();
 
                     // create default configuration with nocache
-
                     CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                         @Override
                         public boolean getDefaultSymbolCacheFlag() {
