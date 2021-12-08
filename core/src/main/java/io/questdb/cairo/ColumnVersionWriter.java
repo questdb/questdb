@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.MemoryCMARWImpl;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
@@ -53,7 +53,7 @@ public class ColumnVersionWriter implements Closeable {
     // it can be zero when there are no columns deviating from the main
     // data branch
     public ColumnVersionWriter(FilesFacade ff, LPSZ fileName, long size) {
-        this.mem = new MemoryCMARWImpl(ff, fileName, ff.getPageSize(), size, MemoryTag.MMAP_TABLE_READER);
+        this.mem = Vm.getCMARWInstance(ff, fileName, ff.getPageSize(), size, MemoryTag.MMAP_TABLE_READER);
         this.size = size;
     }
 

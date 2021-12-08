@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.MemoryCMRImpl;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
@@ -41,7 +41,7 @@ public class ColumnVersionReader implements Closeable {
     // it can be zero when there are no columns deviating from the main
     // data branch
     public ColumnVersionReader(FilesFacade ff, LPSZ fileName, long size) {
-        this.mem = new MemoryCMRImpl(ff, fileName, size, MemoryTag.MMAP_TABLE_READER);
+        this.mem = Vm.getCMRInstance(ff, fileName, size, MemoryTag.MMAP_TABLE_READER);
     }
 
     @Override
