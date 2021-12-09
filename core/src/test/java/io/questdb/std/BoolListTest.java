@@ -144,6 +144,83 @@ public class BoolListTest {
     }
 
     @Test
+    public void testInsert() {
+        final int length = 1000;
+        final BoolList list = new BoolList();
+        list.setAll(length, false);
+        assertEquals(length, list.size());
+
+        final int pos = 259;
+        list.insert(pos, true);
+
+        for (int i = 0; i < pos; i++) {
+            assertFalse(list.get(i));
+        }
+        assertTrue(list.get(pos));
+        for (int i = pos + 1; i < length + 1; i++) {
+            assertFalse(list.get(i));
+        }
+        assertEquals(length + 1, list.size());
+    }
+
+    @Test
+    public void testRemoveIndex() {
+        final int length = 1000;
+        final boolean[] values = new boolean[length];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = rnd.nextBoolean();
+        }
+
+        final BoolList list = new BoolList();
+        for (int i = 0; i < values.length; i++) {
+            list.add(values[i]);
+        }
+        assertEquals(length, list.size());
+
+        final int pos = 259;
+        list.removeIndex(pos);
+
+        for (int i = 0; i < pos; i++) {
+            assertEquals(values[i], list.get(i));
+        }
+        for (int i = pos; i < length - 1; i++) {
+            assertEquals(values[i+1], list.get(i));
+        }
+        assertEquals(length - 1, list.size());
+    }
+
+    @Test
+    public void testArrayCopy() {
+        final int length = 1000;
+        final boolean[] values = new boolean[length];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = rnd.nextBoolean();
+        }
+
+        final BoolList list = new BoolList();
+        for (int i = 0; i < values.length; i++) {
+            list.add(values[i]);
+        }
+        assertEquals(length, list.size());
+
+        final int src = 259;
+        final int dst = 706;
+        final int len = 250;
+        list.arrayCopy(src, dst, len);
+
+        for (int i = 0; i < dst; i++) {
+            assertEquals(values[i], list.get(i));
+        }
+        for (int i = 0; i < len; i++) {
+            assertEquals(values[src + i], list.get(dst + i));
+        }
+        for (int i = 0; i < length - dst - len; i++) {
+            assertEquals(values[dst + len + i], list.get(dst + len + i));
+        }
+        assertEquals(length, list.size());
+    }
+
+    @Test
     public void testClear() {
         final int length = 100;
         final BoolList list = new BoolList(32);
@@ -246,5 +323,18 @@ public class BoolListTest {
         assertNotEquals(list1, list2);
         list1.add(false);
         assertNotEquals(list1, list2);
+    }
+
+    @Test
+    public void testToString() {
+        final int length = 5;
+        final boolean[] values = {true, false, true, true, false};
+        final BoolList list = new BoolList();
+
+        for (int i = 0; i < length; i++) {
+            list.add(values[i]);
+        }
+
+        assertEquals("[true,false,true,true,false]", list.toString());
     }
 }

@@ -223,12 +223,6 @@ public class IntList implements Mutable {
         buffer[index1] = noEntryValue;
     }
 
-    public int replace(int index, int value) {
-        int val = buffer[index];
-        buffer[index] = value;
-        return val;
-    }
-
     public void set(int index, int element) {
         if (index < pos) {
             buffer[index] = element;
