@@ -181,11 +181,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             if (state.getExecutionTime() < alterStartFullTimeoutNs) {
                 throw EntryUnavailableException.instance("retry alter table wait");
             } else {
+                state.setContinueExecution(Misc.free(continueExecution));
                 throw SqlException.$(0, "Timeout on waiting ALTER table to finish execution");
             }
         } else {
-            continueExecution.close();
-            state.setContinueExecution(null);
+            state.setContinueExecution(Misc.free(continueExecution));
             sendConfirmation(state, configuration.getKeepAliveHeader());
         }
     }

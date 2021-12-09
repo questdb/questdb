@@ -135,8 +135,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         columnIndex = 0;
         countRows = false;
         if (continueExecution != null) {
-            continueExecution.close();
-            continueExecution = null;
+            continueExecution = Misc.free(continueExecution);
         }
     }
 

@@ -234,6 +234,41 @@ public class DispatcherWriterQueueTest {
                 "alter+table+x+alter+column+s+add+index");
     }
 
+    @Test
+    public void testAlterTableAddIndexContinuesAfterStartTimeoutExpiredAndTimeout() throws Exception {
+        HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
+                )
+                .withAlterTableStartWaitTimeout(500_000)
+                .withAlterTableMaxtWaitTimeout(600_000)
+                .withFilesFacade(new FilesFacadeImpl() {
+                    @Override
+                    public long openRW(LPSZ name) {
+                        if (Chars.endsWith(name, "x/default/s.v")) {
+                            try {
+                                Thread.sleep(1000);
+                            } catch (InterruptedException e) {
+                                e.printStackTrace();
+                            }
+                        }
+                        return super.openRW(name);
+                    }
+                });
+
+        runAlterOnBusyTable((writer, rdr) -> {
+                    TableWriterMetadata metadata = writer.getMetadata();
+                    int columnIndex = metadata.getColumnIndex("s");
+                    Assert.assertTrue(metadata.isColumnIndexed(columnIndex));
+                },
+                1,
+                1,
+                queryTestBuilder,
+                "alter+table+x+alter+column+s+add+index");
+    }
+
     private void runAlterOnBusyTable(
             final AlterVerifyAction alterVerifyAction,
             int httpWorkers,
