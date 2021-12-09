@@ -31,7 +31,6 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.util.PriorityQueue;
 import java.util.concurrent.locks.LockSupport;
 
@@ -67,11 +66,9 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
     }
 
     @Override
-    public void close() throws IOException {
-        if (nextRerun != null) {
-            for (int i = 0, n = nextRerun.size(); i < n; i++) {
-                Misc.free(nextRerun.poll());
-            }
+    public void close() {
+        for (int i = 0, n = nextRerun.size(); i < n; i++) {
+            Misc.free(nextRerun.poll());
         }
     }
 

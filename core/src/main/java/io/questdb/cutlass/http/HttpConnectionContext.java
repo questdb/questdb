@@ -110,6 +110,14 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     @Override
     public void close() {
         LOG.debug().$("close [fd=").$(fd).$(']').$();
+        if (this.pendingRetry) {
+            this.pendingRetry = false;
+            LOG.info().$("closed context with retry pending [fd=").$(fd).$(']').$();
+            if (this.fd > 0) {
+                Net.close(this.fd);
+            }
+        }
+        this.fd = -1;
         nCompletedRequests = 0;
         totalBytesSent = 0;
         csPool.clear();
@@ -119,14 +127,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         headerParser.close();
         localValueMap.close();
         Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
-        if (this.pendingRetry) {
-            LOG.info().$("closed context with retry pending [fd=").$(fd).$(']').$();
-            if (this.fd > 0) {
-                Net.close(this.fd);
-                this.fd = -1;
-            }
-        }
-        this.pendingRetry = false;
         this.receivedBytes = 0;
         LOG.debug().$("closed").$();
     }
