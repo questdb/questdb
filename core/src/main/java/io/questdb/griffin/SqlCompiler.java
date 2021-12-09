@@ -1908,26 +1908,23 @@ public class SqlCompiler implements Closeable {
         // Update QueryModel structure is
         // QueryModel with SET column expressions
         // |-- QueryModel of select-virtual or select-choose of data selected for update
-        //     |-- QueryModel with selected data
-        //         |-- Join QueryModel to represent FROM clause
         final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
-        final QueryModel tableQueryModel = selectQueryModel.getNestedModel();
 
         // First generate plan for nested SELECT QueryModel
-        final RecordCursorFactory updateStatementData = codeGenerator.generate(selectQueryModel, executionContext);
+        final RecordCursorFactory updateToCursorFactory = codeGenerator.generate(selectQueryModel, executionContext);
 
         // And then generate plan for UPDATE top level QueryModel
-        final IntList tableColumnTypes = tableQueryModel.getUpdateTableColumnTypes();
-        final ObjList<CharSequence> tableColumnNames = tableQueryModel.getBottomUpColumnNames();
-        final int tableId = tableQueryModel.getTableId();
-        final long tableVersion = tableQueryModel.getTableVersion();
+        final IntList tableColumnTypes = selectQueryModel.getUpdateTableColumnTypes();
+        final ObjList<CharSequence> tableColumnNames = selectQueryModel.getUpdateTableColumnNames();
+        final int tableId = selectQueryModel.getTableId();
+        final long tableVersion = selectQueryModel.getTableVersion();
         return generateUpdateStatement(
                 updateQueryModel,
                 tableColumnTypes,
                 tableColumnNames,
                 tableId,
                 tableVersion,
-                updateStatementData
+                updateToCursorFactory
         );
     }
 
@@ -1937,35 +1934,33 @@ public class SqlCompiler implements Closeable {
             @Transient ObjList<CharSequence> tableColumnNames,
             int tableId,
             long tableVersion,
-            RecordCursorFactory rowIdFactory
+            RecordCursorFactory updateToCursorFactory
     ) throws SqlException {
         String tableName = Chars.toString(updateQueryModel.getTableName().token);
-        if (!rowIdFactory.supportTableRowId(tableName)) {
+        if (!updateToCursorFactory.supportTableRowId(tableName)) {
             throw SqlException.$(updateQueryModel.getModelPosition(), "Only simple UPDATE statements without joins are supported");
         }
 
-        // Check that virtualColumnFunctions match types of updateTableMetadata
-        RecordMetadata valuesResultMetadata = rowIdFactory.getMetadata();
+        // Check that updateDataFactoryMetadata match types of table to be updated exactly
+        RecordMetadata updateDataFactoryMetadata = updateToCursorFactory.getMetadata();
 
-        for (int i = 0, n = valuesResultMetadata.getColumnCount(); i < n; i++) {
-            int virtualColumnType = valuesResultMetadata.getColumnType(i);
-            CharSequence updateColumnName = valuesResultMetadata.getColumnName(i);
+        for (int i = 0, n = updateDataFactoryMetadata.getColumnCount(); i < n; i++) {
+            int virtualColumnType = updateDataFactoryMetadata.getColumnType(i);
+            CharSequence updateColumnName = updateDataFactoryMetadata.getColumnName(i);
             int tableColumnIndex = tableColumnNames.indexOf(updateColumnName);
-            int columnType = tableColumnTypes.get(tableColumnIndex);
+            int tableColumnType = tableColumnTypes.get(tableColumnIndex);
 
-            if (virtualColumnType != columnType) {
+            if (virtualColumnType != tableColumnType) {
                 // get column position
                 ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
                 int position = setRhs.position;
-                throw SqlException.inconvertibleTypes(position, virtualColumnType, "", columnType, updateColumnName);
+                throw SqlException.inconvertibleTypes(position, virtualColumnType, "", tableColumnType, updateColumnName);
             }
         }
 
         return new UpdateStatement(
                 tableName,
-                rowIdFactory,
-                tableId,
-                tableVersion
+                tableId, tableVersion, updateToCursorFactory
         );
     }
 

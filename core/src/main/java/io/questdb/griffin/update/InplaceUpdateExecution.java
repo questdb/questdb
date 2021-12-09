@@ -76,29 +76,29 @@ public class InplaceUpdateExecution implements Closeable {
             throw ReaderOutOfDateException.of(tableWriter.getTableName());
         }
 
-        RecordMetadata updateMetadata = updateStatement.getUpdateDataFactory().getMetadata();
-        int updateStatementColumnCount = updateMetadata.getColumnCount();
+        RecordMetadata updateToMetadata = updateStatement.getUpdateToDataCursorFactory().getMetadata();
+        int updateToColumnCount = updateToMetadata.getColumnCount();
 
         // Build index column map from table to update to values returned from the update statement row cursors
         updateToColumnMap.clear();
-        for (int i = 0; i < updateStatementColumnCount; i++) {
-            CharSequence columnName = updateMetadata.getColumnName(i);
+        for (int i = 0; i < updateToColumnCount; i++) {
+            CharSequence columnName = updateToMetadata.getColumnName(i);
             int tableColumnIndex = writerMetadata.getColumnIndex(columnName);
             assert tableColumnIndex >= 0;
             updateToColumnMap.add(tableColumnIndex);
         }
 
         // Create update memory list of all columns to be updated
-        initUpdateMemory(updateStatementColumnCount);
+        initUpdateMemory(updateToColumnCount);
 
         // Start execution frame by frame
-        RecordCursorFactory rowIdFactory = updateStatement.getUpdateDataFactory();
+        RecordCursorFactory updateStatementDataCursorFactory = updateStatement.getUpdateToDataCursorFactory();
 
         // Track how many records updated
         long rowsUpdated = 0;
 
         // Start row by row updates
-        try (RecordCursor recordCursor = rowIdFactory.getCursor(executionContext)) {
+        try (RecordCursor recordCursor = updateStatementDataCursorFactory.getCursor(executionContext)) {
 
             Record masterRecord = recordCursor.getRecord();
             long currentPartitionIndex = -1L;
@@ -125,7 +125,7 @@ public class InplaceUpdateExecution implements Closeable {
                 updateColumnValues(
                         writerMetadata,
                         updateToColumnMap,
-                        updateStatementColumnCount,
+                        updateToColumnCount,
                         updateMemory,
                         partitionRowId,
                         masterRecord);

@@ -30,41 +30,41 @@ import io.questdb.std.Misc;
 import java.io.Closeable;
 
 public class UpdateStatement implements Closeable {
-    private final String updateTableName;
-    private RecordCursorFactory rowIdFactory;
+    private final String tableName;
     private final int tableId;
     private final long tableVersion;
+    private RecordCursorFactory updateToDataCursorFactory;
 
     public UpdateStatement(
             String tableName,
-            RecordCursorFactory rowIdFactory,
             int tableId,
-            long tableVersion
+            long tableVersion,
+            RecordCursorFactory updateToCursorFactory
     ) {
-        this.updateTableName = tableName;
-        this.rowIdFactory = rowIdFactory;
+        this.tableName = tableName;
         this.tableId = tableId;
         this.tableVersion = tableVersion;
+        this.updateToDataCursorFactory = updateToCursorFactory;
     }
 
     @Override
     public void close() {
-        rowIdFactory = Misc.free(rowIdFactory);
+        updateToDataCursorFactory = Misc.free(updateToDataCursorFactory);
     }
 
     public int getTableId() {
         return tableId;
     }
 
+    public CharSequence getTableName() {
+        return tableName;
+    }
+
     public long getTableVersion() {
         return tableVersion;
     }
 
-    public RecordCursorFactory getUpdateDataFactory() {
-        return rowIdFactory;
-    }
-
-    public CharSequence getUpdateTableName() {
-        return updateTableName;
+    public RecordCursorFactory getUpdateToDataCursorFactory() {
+        return updateToDataCursorFactory;
     }
 }

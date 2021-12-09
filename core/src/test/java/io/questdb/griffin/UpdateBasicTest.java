@@ -286,7 +286,6 @@ public class UpdateBasicTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore // TODO: fix
     public void testUpdateGeoHashColumnToLowerPrecision2() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +
@@ -309,12 +308,11 @@ public class UpdateBasicTest extends AbstractGriffinTest {
             assertSql("up", "ts\tg1c\tg3c\tg5c\tg7c\n" +
                     "1970-01-01T00:00:00.000000Z\t9\t46s\tjnw97\tzfuqd3b\n" +
                     "1970-01-01T00:00:01.000000Z\th\twh4\ts2z2f\t1cjjwk6\n" +
-                    "1970-01-01T00:00:02.000000Z\tq\tque\tquest\tquestdb\n" +
-                    "1970-01-01T00:00:03.000000Z\tq\tque\tquest\tquestdb\n" +
+                    "1970-01-01T00:00:02.000000Z\tq\tq4s\tq4s2x\tq4s2xyt\n" +
+                    "1970-01-01T00:00:03.000000Z\tb\tbuy\tbuyv3\tbuyv3pv\n" +
                     "1970-01-01T00:00:04.000000Z\tx\t76u\tq0s5w\ts2vqs1b\n");
         });
     }
-
 
     @Test
     public void testUpdateToBindVar() throws Exception {
@@ -694,7 +692,7 @@ public class UpdateBasicTest extends AbstractGriffinTest {
     private void applyUpdate(UpdateStatement updateStatement) throws SqlException {
         try (TableWriter tableWriter = engine.getWriter(
                 sqlExecutionContext.getCairoSecurityContext(),
-                updateStatement.getUpdateTableName(),
+                updateStatement.getTableName(),
                 "UPDATE")) {
             inplaceUpdate.executeUpdate(tableWriter, updateStatement, sqlExecutionContext);
         }
