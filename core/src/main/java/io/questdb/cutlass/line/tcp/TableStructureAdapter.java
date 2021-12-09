@@ -67,7 +67,7 @@ class TableStructureAdapter implements TableStructure {
         if (columnIndex == getTimestampIndex()) {
             return ColumnType.TIMESTAMP;
         }
-        return LineTcpMeasurementScheduler.DEFAULT_COLUMN_TYPES[entities.get(columnIndex).getType()];
+        return DefaultColumnTypes.DEFAULT_COLUMN_TYPES[entities.get(columnIndex).getType()];
     }
 
     @Override

@@ -144,7 +144,7 @@ class LineTcpMeasurementEvent implements Closeable {
                         // Cannot create a column with an open row, writer will commit when a column is created
                         row.cancel();
                         row = null;
-                        int colType = LineTcpMeasurementScheduler.DEFAULT_COLUMN_TYPES[entityType];
+                        int colType = DefaultColumnTypes.DEFAULT_COLUMN_TYPES[entityType];
                         if (TableUtils.isValidInfluxColumnName(charSink)) {
                             writer.addColumn(charSink, colType);
                         } else {
