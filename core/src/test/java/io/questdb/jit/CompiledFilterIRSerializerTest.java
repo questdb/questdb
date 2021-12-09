@@ -44,6 +44,10 @@ import static io.questdb.jit.CompiledFilterIRSerializer.*;
 
 public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
+    private static final String KNOWN_SYMBOL_1 = "ABC";
+    private static final String KNOWN_SYMBOL_2 = "DEF";
+    private static final String UNKNOWN_SYMBOL = "XYZ";
+
     private static TableReader reader;
     private static RecordMetadata metadata;
     private static MemoryCARW irMemory;
@@ -61,6 +65,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                     .col("anint", ColumnType.INT)
                     .col("ageoint", ColumnType.GEOINT)
                     .col("asymbol", ColumnType.SYMBOL)
+                    .col("anothersymbol", ColumnType.SYMBOL)
                     .col("afloat", ColumnType.FLOAT)
                     .col("along", ColumnType.LONG)
                     .col("ageolong", ColumnType.GEOLONG)
@@ -70,6 +75,14 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                     .col("astring", ColumnType.STRING)
                     .timestamp();
             CairoTestUtils.create(model);
+        }
+
+        try (TableWriter writer = new TableWriter(configuration, "x")) {
+            TableWriter.Row row = writer.newRow();
+            row.putSym(writer.getColumnIndex("asymbol"), KNOWN_SYMBOL_1);
+            row.putSym(writer.getColumnIndex("anothersymbol"), KNOWN_SYMBOL_2);
+            row.append();
+            writer.commit();
         }
 
         reader = new TableReader(configuration, "x");
@@ -254,6 +267,12 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testSymbolKnownConstant() throws Exception {
+        serialize("asymbol = '" + KNOWN_SYMBOL_1 + "' or anothersymbol = '" + KNOWN_SYMBOL_2 + "'");
+        assertIR("(i32 0L)(i32 anothersymbol)(=)(i32 0L)(i32 asymbol)(=)(||)(ret)");
+    }
+
+    @Test
     public void testNegatedColumn() throws Exception {
         serialize("-ashort > 0");
         assertIR("(i16 0L)(i16 ashort)(neg)(>)(ret)");
@@ -424,6 +443,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
+    public void testUnsupportedUnknownSymbolConstant() throws Exception {
+        serialize("asymbol = " + UNKNOWN_SYMBOL);
+    }
+
+    @Test(expected = SqlException.class)
     public void testUnsupportedLong256Constant() throws Exception {
         serialize("along = 0x123");
     }
@@ -524,11 +548,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
     private int serialize(CharSequence seq, boolean scalar, boolean debug) throws SqlException {
         ExpressionNode node = expr(seq);
-        return serializer.of(irMemory, metadata).serialize(node, scalar, debug);
+        return serializer.of(irMemory, metadata, reader).serialize(node, scalar, debug);
     }
 
     private void assertIR(String message, String expectedIR) {
-        IRToStringSerializer ser = new IRToStringSerializer(irMemory, metadata);
+        TestIRSerializer ser = new TestIRSerializer(irMemory, metadata);
         String actualIR = ser.serialize();
         Assert.assertEquals(message, expectedIR, actualIR);
     }
@@ -537,14 +561,14 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR(null, expectedIR);
     }
 
-    private static class IRToStringSerializer {
+    private static class TestIRSerializer {
 
         private final MemoryCARW irMem;
         private final RecordMetadata metadata;
         private long offset;
         private StringBuilder sb;
 
-        public IRToStringSerializer(MemoryCARW irMem, RecordMetadata metadata) {
+        public TestIRSerializer(MemoryCARW irMem, RecordMetadata metadata) {
             this.irMem = irMem;
             this.metadata = metadata;
         }

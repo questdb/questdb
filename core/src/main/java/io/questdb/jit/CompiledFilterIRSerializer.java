@@ -25,7 +25,10 @@ package io.questdb.jit;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.GeoHashUtil;
 import io.questdb.griffin.PostOrderTreeTraversalAlgo;
@@ -91,10 +94,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     private MemoryCARW memory;
     private RecordMetadata metadata;
+    private TableReader tableReader;
 
-    public CompiledFilterIRSerializer of(MemoryCARW memory, RecordMetadata metadata) {
+    public CompiledFilterIRSerializer of(MemoryCARW memory, RecordMetadata metadata, TableReader tableReader) {
         this.memory = memory;
         this.metadata = metadata;
+        this.tableReader = tableReader;
         return this;
     }
 
@@ -141,6 +146,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     public void clear() {
         memory = null;
         metadata = null;
+        tableReader = null;
         arithmeticContext.clear();
         backfillNodes.clear();
     }
@@ -298,6 +304,26 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return;
         }
 
+        if (ExpressionType.SYMBOL == arithmeticContext.expressionType) {
+            CharSequence symbol = token;
+            if (Chars.isQuoted(token)) {
+                if (len < 3) {
+                    throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
+                }
+                symbol = symbol.subSequence(1, len - 1);
+            }
+
+            if (arithmeticContext.symbolMapReader != null) {
+                final int key = arithmeticContext.symbolMapReader.keyOf(symbol);
+                if (key != SymbolTable.VALUE_NOT_FOUND) {
+                    memory.putByte(IMM_I4);
+                    memory.putLong(key);
+                    return;
+                }
+            }
+            throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
+        }
+
         if (Chars.isQuoted(token)) {
             if (ExpressionType.CHAR != arithmeticContext.expressionType) {
                 throw SqlException.position(position).put("char constant in non-char expression: ").put(token);
@@ -308,7 +334,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 memory.putLong(token.charAt(1));
                 return;
             }
-            throw SqlException.position(position).put("unsupported char constant: ").put(token);
+            throw SqlException.position(position).put("unsupported string constant: ").put(token);
         }
 
         if (SqlKeywords.isTrueKeyword(token)) {
@@ -640,6 +666,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         private ExpressionNode rootNode;
         ExpressionType expressionType;
+        SymbolMapReader symbolMapReader;
         boolean singleBooleanColumn;
 
         final TypesObserver localTypesObserver = new TypesObserver();
@@ -654,6 +681,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         private void reset() {
             rootNode = null;
             expressionType = null;
+            symbolMapReader = null;
             singleBooleanColumn = false;
             localTypesObserver.clear();
         }
@@ -698,6 +726,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 byte code = columnTypeCode(columnTypeTag);
                 localTypesObserver.observe(code);
                 globalTypesObserver.observe(code);
+
+                if (ExpressionType.SYMBOL == expressionType) {
+                    symbolMapReader = tableReader.getSymbolMapReader(index);
+                }
             }
 
             return contextLeft;

@@ -340,6 +340,16 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolKnownConstant() throws Exception {
+        final String query = "select * from x where sym = 'A' or sym = 'C'";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_symbol('A','B','C') sym" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k) partition by DAY";
+        assertQuery(query, ddl);
+    }
+
+    @Test
     public void testSymbolNull() throws Exception {
         final String query = "select * from x where sym <> null";
         final String ddl = "create table x as " +

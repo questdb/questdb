@@ -735,7 +735,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 ) {
                     final boolean forceScalar = executionContext.getJitMode() == SqlExecutionContext.JIT_MODE_FORCE_SCALAR;
                     final boolean debugJit = LOG.isDebugEnabled();
-                    int jitOptions = jitIRSerializer.of(jitIRMem, factory.getMetadata()).serialize(filter, forceScalar, debugJit);
+                    jitIRSerializer.of(jitIRMem, factory.getMetadata(), reader);
+                    int jitOptions = jitIRSerializer.serialize(filter, forceScalar, debugJit);
                     // Restore column indexes from the base factory. We have to use table reader's
                     // metadata, since factory's metadata is always a GenericRecordMetadata.
                     final IntList columnIndexes = new IntList();
