@@ -84,6 +84,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     static final byte JP = 29;                // jp a
     static final byte RET = 30;               // ret a
 
+    static final byte VAR_I1 = 32;
+    static final byte VAR_I2 = 33;
+    static final byte VAR_I4 = 34;
+    static final byte VAR_I8 = 35;
+    static final byte VAR_F4 = 36;
+    static final byte VAR_F8 = 37;
+
     static final byte UNDEFINED_CODE = -1;
     static final int NOT_NULL_COLUMN_MASK = 1 << 31;
 

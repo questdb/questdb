@@ -79,6 +79,14 @@ enum class instruction_t : uint8_t {
     JP = 29,                // jp a
     RET = 30,               // ret a
     IMM_NULL = 31,          // generic null const
+
+    //todo: change serialisation format IMM/MEM/VAR + type info
+    VAR_I1 = 32,
+    VAR_I2 = 33,
+    VAR_I4 = 34,
+    VAR_I8 = 35,
+    VAR_F4 = 36,
+    VAR_F8 = 37,
 };
 
 static const int64_t LONG_NULL = std::numeric_limits<int64_t>::min();
@@ -148,6 +156,8 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv 
                                                                         jlong fnAddress,
                                                                         jlong colsAddress,
                                                                         jlong colsSize,
+                                                                        jlong varsAddress,
+                                                                        jlong varsSize,
                                                                         jlong rowsAddress,
                                                                         jlong rowsSize,
                                                                         jlong rowsStartOffset);

@@ -76,6 +76,16 @@ namespace questdb::x86 {
     using namespace asmjit::x86;
 
     jit_value_t
+    read_vars_mem(Compiler &c, data_type_t type, const uint8_t *istream, size_t size, uint32_t &pos, const Gp &vars_ptr) {
+        auto idx = static_cast<int32_t>(read<int64_t>(istream, size, pos));
+        Gp address = c.newInt64("bind_variables");
+        c.mov(address, ptr(vars_ptr, 8 * idx, 8));
+        auto shift = type_shift(type);
+        auto type_size  = 1 << shift;
+        return {Mem(address, 0, type_size), type, data_kind_t::kMemory};
+    }
+
+    jit_value_t
     read_mem(Compiler &c, data_type_t type, const uint8_t *istream, size_t size, uint32_t &pos, const Gp &cols_ptr,
              const Gp &input_index) {
 
@@ -648,12 +658,38 @@ namespace questdb::x86 {
     void
     emit_code(Compiler &c, const uint8_t *filter_expr, size_t filter_size, std::stack<jit_value_t> &values,
               bool null_check,
-              const Gp &cols_ptr, const Gp &input_index) {
+              const Gp &cols_ptr,
+              const Gp &vars_ptr,
+              const Gp &input_index) {
         uint32_t read_pos = 0;
         while (read_pos < filter_size) {
             auto ic = static_cast<instruction_t>(read<uint8_t>(filter_expr, filter_size, read_pos));
             switch (ic) {
                 case instruction_t::RET:
+                    break;
+                case instruction_t::VAR_I1:
+                    values.push(
+                            read_vars_mem(c, data_type_t::i8, filter_expr, filter_size, read_pos, vars_ptr));
+                    break;
+                case instruction_t::VAR_I2:
+                    values.push(
+                            read_vars_mem(c, data_type_t::i16, filter_expr, filter_size, read_pos, vars_ptr));
+                    break;
+                case instruction_t::VAR_I4:
+                    values.push(
+                            read_vars_mem(c, data_type_t::i32, filter_expr, filter_size, read_pos, vars_ptr));
+                    break;
+                case instruction_t::VAR_I8:
+                    values.push(
+                            read_vars_mem(c, data_type_t::i64, filter_expr, filter_size, read_pos, vars_ptr));
+                    break;
+                case instruction_t::VAR_F4:
+                    values.push(
+                            read_vars_mem(c, data_type_t::f32, filter_expr, filter_size, read_pos, vars_ptr));
+                    break;
+                case instruction_t::VAR_F8:
+                    values.push(
+                            read_vars_mem(c, data_type_t::f64, filter_expr, filter_size, read_pos, vars_ptr));
                     break;
                 case instruction_t::MEM_I1:
                     values.push(
@@ -741,6 +777,42 @@ namespace questdb::avx2 {
             c.and_(offset, 1);
             c.add(output, offset);
         }
+    }
+
+    jit_value_t
+    read_vars_mem(Compiler &c, data_type_t type, const uint8_t *istream, size_t size, uint32_t &pos, const Gp &vars_ptr) {
+        auto value = x86::read_vars_mem(c, type, istream, size, pos, vars_ptr);
+        Mem mem = value.op().as<Mem>();
+        Ymm val = c.newYmm();
+        switch (type) {
+            case data_type_t::i8: {
+                c.vpbroadcastb(val, mem);
+            }
+            break;
+            case data_type_t::i16: {
+                c.vpbroadcastw(val, mem);
+            }
+            break;
+            case data_type_t::i32: {
+                c.vpbroadcastd(val, mem);
+            }
+            break;
+            case data_type_t::i64: {
+                c.vpbroadcastq(val, mem);
+            }
+            break;
+            case data_type_t::f32: {
+                c.vbroadcastss(val, mem);
+            }
+            break;
+            case data_type_t::f64: {
+                c.vbroadcastsd(val, mem);
+            }
+            break;
+            default:
+                __builtin_unreachable();
+        }
+        return {val, type, data_kind_t::kConst};
     }
 
     jit_value_t
@@ -1029,12 +1101,36 @@ namespace questdb::avx2 {
 
     void
     emit_code(Compiler &c, const uint8_t *filter_expr, size_t filter_size, std::stack<jit_value_t> &values, bool ncheck,
-              const Gp &cols_ptr, const Gp &input_index) {
+              const Gp &cols_ptr, const Gp &vars_ptr, const Gp &input_index) {
         uint32_t read_pos = 0;
         while (read_pos < filter_size) {
             auto ic = static_cast<instruction_t>(read<uint8_t>(filter_expr, filter_size, read_pos));
             switch (ic) {
                 case instruction_t::RET:
+                    break;
+                case instruction_t::VAR_I1:
+                    values.push(
+                            read_vars_mem(c, data_type_t::i8, filter_expr, filter_size, read_pos, vars_ptr));
+                    break;
+                case instruction_t::VAR_I2:
+                    values.push(
+                            read_vars_mem(c, data_type_t::i16, filter_expr, filter_size, read_pos, vars_ptr));
+                    break;
+                case instruction_t::VAR_I4:
+                    values.push(
+                            read_vars_mem(c, data_type_t::i32, filter_expr, filter_size, read_pos, vars_ptr));
+                    break;
+                case instruction_t::VAR_I8:
+                    values.push(
+                            read_vars_mem(c, data_type_t::i64, filter_expr, filter_size, read_pos, vars_ptr));
+                    break;
+                case instruction_t::VAR_F4:
+                    values.push(
+                            read_vars_mem(c, data_type_t::f32, filter_expr, filter_size, read_pos, vars_ptr));
+                    break;
+                case instruction_t::VAR_F8:
+                    values.push(
+                            read_vars_mem(c, data_type_t::f64, filter_expr, filter_size, read_pos, vars_ptr));
                     break;
                 case instruction_t::MEM_I1:
                     values.push(
@@ -1092,8 +1188,7 @@ namespace questdb::avx2 {
     }
 }
 
-
-using CompiledFn = int64_t (*)(int64_t *cols, int64_t cols_count, int64_t *rows, int64_t rows_count,
+using CompiledFn = int64_t (*)(int64_t *cols, int64_t cols_count, int64_t *vars, int64_t vars_count, int64_t *rows, int64_t rows_count,
                                int64_t rows_start_offset);
 
 struct JitCompiler {
@@ -1131,7 +1226,7 @@ struct JitCompiler {
 
         c.bind(l_loop);
 
-        questdb::x86::emit_code(c, filter_expr, filter_size, registers, null_check, cols_ptr, input_index);
+        questdb::x86::emit_code(c, filter_expr, filter_size, registers, null_check, cols_ptr, vars_ptr, input_index);
 
         auto mask = registers.top();
         registers.pop();
@@ -1171,7 +1266,7 @@ struct JitCompiler {
 
         c.bind(l_loop);
 
-        questdb::avx2::emit_code(c, filter_expr, filter_size, registers, null_check, cols_ptr, input_index);
+        questdb::avx2::emit_code(c, filter_expr, filter_size, registers, null_check, cols_ptr, vars_ptr, input_index);
 
         auto mask = registers.top();
         registers.pop();
@@ -1189,24 +1284,30 @@ struct JitCompiler {
     }
 
     void begin_fn() {
-        c.addFunc(FuncSignatureT<int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t>(CallConv::kIdHost));
+        c.addFunc(FuncSignatureT<int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t>(CallConv::kIdHost));
         cols_ptr = c.newIntPtr("cols_ptr");
         cols_size = c.newInt64("cols_size");
 
         c.setArg(0, cols_ptr);
         c.setArg(1, cols_size);
 
+        vars_ptr = c.newIntPtr("vars_ptr");
+        vars_size = c.newInt64("vars_size");
+
+        c.setArg(2, vars_ptr);
+        c.setArg(3, vars_size);
+
         rows_ptr = c.newIntPtr("rows_ptr");
         rows_size = c.newInt64("rows_size");
 
-        c.setArg(2, rows_ptr);
-        c.setArg(3, rows_size);
+        c.setArg(4, rows_ptr);
+        c.setArg(5, rows_size);
+
+        rows_id_start_offset = c.newInt64("rows_id_start_offset");
+        c.setArg(6, rows_id_start_offset);
 
         input_index = c.newInt64("input_index");
         c.mov(input_index, 0);
-
-        rows_id_start_offset = c.newInt64("rows_id_start_offset");
-        c.setArg(4, rows_id_start_offset);
 
         output_index = c.newInt64("output_index");
         c.mov(output_index, 0);
@@ -1222,6 +1323,8 @@ struct JitCompiler {
 
     x86::Gp cols_ptr;
     x86::Gp cols_size;
+    x86::Gp vars_ptr;
+    x86::Gp vars_size;
     x86::Gp rows_ptr;
     x86::Gp rows_size;
     x86::Gp input_index;
@@ -1310,6 +1413,8 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv 
                                                                          jlong fnAddress,
                                                                          jlong colsAddress,
                                                                          jlong colsSize,
+                                                                         jlong varsAddress,
+                                                                         jlong varsSize,
                                                                          jlong rowsAddress,
                                                                          jlong rowsSize,
                                                                          jlong rowsStartOffset) {
@@ -1317,6 +1422,8 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv 
     auto fn = reinterpret_cast<CompiledFn>(fnAddress);
     return fn(reinterpret_cast<int64_t *>(colsAddress),
               colsSize,
+              reinterpret_cast<int64_t *>(varsAddress),
+              varsSize,
               reinterpret_cast<int64_t *>(rowsAddress),
               rowsSize,
               rowsStartOffset);

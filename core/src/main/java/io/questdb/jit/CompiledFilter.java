@@ -50,11 +50,13 @@ public class CompiledFilter implements Closeable {
         }
     }
 
-    public long call(long colsAddress, long colsSize, long rowsAddress, long rowsSize, long rowsStartOffset) {
+    public long call(long colsAddress, long colsSize, long varsAddress, long varsSize, long rowsAddress, long rowsSize, long rowsStartOffset) {
         return FiltersCompiler.callFunction(
                 fnAddress,
                 colsAddress,
                 colsSize,
+                varsAddress,
+                varsSize,
                 rowsAddress,
                 rowsSize,
                 rowsStartOffset

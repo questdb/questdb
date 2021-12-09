@@ -209,6 +209,8 @@ class CompiledFilterRecordCursor implements RecordCursor {
             hi = compiledFilter.call(
                     columns.getAddress(),
                     columns.size(),
+                    0,
+                    0, //todo: add bind variables support
                     rows.getAddress(),
                     rowCount,
                     frame.getPartitionLo()
