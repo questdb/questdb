@@ -1,0 +1,250 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.std;
+
+import org.junit.Test;
+
+import static org.junit.Assert.*;
+
+public class BoolListTest {
+    private final Rnd rnd = new Rnd();
+
+    @Test
+    public void testAddAndGet() {
+        final int length = 1000;
+        final boolean[] values = new boolean[length];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = rnd.nextBoolean();
+        }
+
+        final BoolList list = new BoolList();
+        for (int i = 0; i < values.length; i++) {
+            list.add(values[i]);
+        }
+
+        for (int i = 0; i < values.length; i++) {
+            assertEquals(values[i], list.get(i));
+        }
+        assertEquals(length, list.size());
+
+        assertThrows(ArrayIndexOutOfBoundsException.class, () -> list.get(length+100));
+
+        final int pos = 106;
+        list.set(pos, true);
+        assertTrue(list.getQuiet(pos));
+        assertFalse(list.getQuiet(length+100));
+    }
+
+    @Test
+    public void testSetAndSetQuick() {
+        final int length = 1000;
+        final BoolList list = new BoolList(1000);
+        for (int i = 0; i < length; i++) {
+            assertFalse(list.get(i));
+        }
+
+        list.setPos(length);
+        for (int i = 0; i < length; i++) {
+            assertFalse(list.get(i));
+        }
+
+        final int pos = 10;
+        list.set(pos, true);
+        for (int i = 0; i < length; i++) {
+            assertEquals(i == pos, list.get(i));
+        }
+        assertEquals(length, list.size());
+
+        final int posQuick = 100;
+        list.set(pos, false);
+        list.setQuick(posQuick, true);
+        for (int i = 0; i < length; i++) {
+            assertEquals(i == posQuick, list.get(i));
+        }
+        assertEquals(length, list.size());
+
+        assertThrows(ArrayIndexOutOfBoundsException.class, () -> list.set(1000, true));
+        assertThrows(ArrayIndexOutOfBoundsException.class, () -> list.set(1001, true));
+        assertThrows(AssertionError.class, () -> list.setQuick(1000, true));
+        assertThrows(AssertionError.class, () -> list.setQuick(1001, true));
+    }
+
+    @Test
+    public void testExtendAndSet() {
+        final int length = 1000;
+        final BoolList list = new BoolList(1000);
+        for (int i = 0; i < length; i++) {
+            assertFalse(list.get(i));
+        }
+
+        final int pos = 100;
+        list.extendAndSet(pos, true);
+        for (int i = 0; i < length; i++) {
+            assertEquals(i == pos, list.get(i));
+        }
+        assertEquals(pos + 1, list.size());
+
+        list.set(pos, false);
+
+        final int pos2 = 3000;
+        list.extendAndSet(pos2, true);
+        for (int i = 0; i < pos2 + 1; i++) {
+            assertEquals(i == pos2, list.get(i));
+        }
+        assertEquals(pos2 + 1, list.size());
+    }
+
+    @Test
+    public void testGetLast() {
+        final int length = 1000;
+        final BoolList list = new BoolList(length);
+        list.setPos(length);
+
+        assertFalse(list.getLast());
+
+        list.set(length - 1, true);
+        assertTrue(list.getLast());
+
+        list.setPos(0);
+        assertFalse(list.getLast());
+    }
+
+    @Test
+    public void testReplace() {
+        final int length = 1000;
+        final BoolList list = new BoolList();
+        list.setAll(length, true);
+
+        final int pos = 15;
+        assertTrue(list.replace(pos, false));
+        assertFalse(list.replace(pos, true));
+        assertTrue(list.replace(pos, true));
+    }
+
+    @Test
+    public void testClear() {
+        final int length = 100;
+        final BoolList list = new BoolList(32);
+        assertEquals(0, list.size());
+
+        for (int i = 0; i < length; i++) {
+            list.add(rnd.nextBoolean());
+        }
+        // make sure there is at least 1 true in the list
+        list.set(10, true);
+
+        list.clear();
+        assertEquals(0, list.size());
+        assertTrue(list.get(10));
+
+        list.clear(length);
+        assertEquals(0, list.size());
+        assertFalse(list.get(10));
+    }
+
+    @Test
+    public void testZeroAndPosition() {
+        final int length = 100;
+        final BoolList list = new BoolList(length);
+
+        list.zero(true);
+        for (int i = 0; i < length; i++) {
+            assertFalse(list.get(i));
+        }
+
+        list.setPos(length);
+        list.zero(true);
+        for (int i = 0; i < length; i++) {
+            assertTrue(list.get(i));
+        }
+
+        final int pos = length - 10;
+        list.setPos(pos);
+        list.zero(false);
+        for (int i = 0; i < pos; i++) {
+            assertFalse(list.get(i));
+        }
+        for (int i = pos; i < length; i++) {
+            assertTrue(list.get(i));
+        }
+    }
+
+    @Test
+    public void testSetAll() {
+        final int length = 100;
+        final BoolList list = new BoolList(length);
+
+        list.setAll(length, true);
+        for (int i = 0; i < length; i++) {
+            assertTrue(list.get(i));
+        }
+
+        final int pos = length - 10;
+        list.setPos(pos);
+        list.setAll(length,false);
+        for (int i = 0; i < length; i++) {
+            assertFalse(list.get(i));
+        }
+    }
+
+    @Test
+    public void testEnsureCapacityAndSize() {
+        final int length = 100;
+        final BoolList list = new BoolList(32);
+        assertEquals(0, list.size());
+
+        for (int i = 0; i < length; i++) {
+            list.add(rnd.nextBoolean());
+        }
+        assertEquals(length, list.size());
+    }
+
+    @Test
+    public void testAddAllAndEquals() {
+        final int length = 500;
+        final BoolList list1 = new BoolList();
+        final BoolList list2 = new BoolList(128);
+
+        for (int i = 0; i < length; i++) {
+            list1.add(rnd.nextBoolean());
+        }
+        list2.addAll(list1);
+
+        for (int i = 0; i < length; i++) {
+            assertEquals(list1.get(i), list2.get(i));
+        }
+        assertEquals(list1, list2);
+
+        list2.add(true);
+        assertNotEquals(list1, list2);
+        list1.add(true);
+        assertEquals(list1, list2);
+
+        list2.add(true);
+        assertNotEquals(list1, list2);
+        list1.add(false);
+        assertNotEquals(list1, list2);
+    }
+}
