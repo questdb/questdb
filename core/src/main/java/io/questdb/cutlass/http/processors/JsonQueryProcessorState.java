@@ -134,15 +134,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         queryState = QUERY_PREFIX;
         columnIndex = 0;
         countRows = false;
-        if (continueExecution != null) {
-            continueExecution = Misc.free(continueExecution);
-        }
+        continueExecution = Misc.free(continueExecution);
     }
 
     @Override
     public void close() {
         cursor = Misc.free(cursor);
         recordCursorFactory = Misc.free(recordCursorFactory);
+        continueExecution = Misc.free(continueExecution);
     }
 
     public void configure(

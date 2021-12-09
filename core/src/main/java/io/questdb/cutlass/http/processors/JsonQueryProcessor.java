@@ -190,7 +190,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
-
     @Override
     public void onRequestComplete(
             HttpConnectionContext context

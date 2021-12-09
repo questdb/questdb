@@ -24,7 +24,9 @@
 
 package io.questdb.cutlass.http;
 
-public interface Retry {
+import java.io.Closeable;
+
+public interface Retry extends Closeable {
     /**
      * Notify client that re-run failed
      *

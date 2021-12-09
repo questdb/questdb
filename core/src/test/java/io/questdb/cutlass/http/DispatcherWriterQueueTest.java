@@ -32,8 +32,8 @@ import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -200,6 +200,47 @@ public class DispatcherWriterQueueTest {
     }
 
     @Test
+    public void testAlterTableAddDisconnect() throws Exception {
+        HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
+                )
+                .withAlterTableStartWaitTimeout(500_000)
+                .withAlterTableMaxtWaitTimeout(20_000_000)
+                .withFilesFacade(new FilesFacadeImpl() {
+                    @Override
+                    public long openRW(LPSZ name) {
+                        if (Chars.endsWith(name, "x/default/s.v")) {
+                            try {
+                                Thread.sleep(600);
+                            } catch (InterruptedException e) {
+                                e.printStackTrace();
+                            }
+                        }
+                        return super.openRW(name);
+                    }
+                });
+
+        runAlterOnBusyTable((writer, rdr) -> {
+                    // Wait command execution
+                    TableWriterMetadata metadata = writer.getMetadata();
+                    int columnIndex = metadata.getColumnIndex("s");
+                    for (int i = 0; i < 100 && !writer.getMetadata().isColumnIndexed(columnIndex); i++) {
+                        writer.tick(true);
+                        Os.sleep(100);
+                    }
+                    Assert.assertTrue(metadata.isColumnIndexed(columnIndex));
+                },
+                2,
+                0,
+                queryTestBuilder,
+                true,
+                "alter+table+x+alter+column+s+add+index");
+    }
+
+    @Test
     public void testAlterTableAddIndexContinuesAfterStartTimeoutExpired() throws Exception {
         HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
                 .withTempFolder(temp)
@@ -231,6 +272,7 @@ public class DispatcherWriterQueueTest {
                 1,
                 0,
                 queryTestBuilder,
+                false,
                 "alter+table+x+alter+column+s+add+index");
     }
 
@@ -266,6 +308,7 @@ public class DispatcherWriterQueueTest {
                 1,
                 1,
                 queryTestBuilder,
+                false,
                 "alter+table+x+alter+column+s+add+index");
     }
 
@@ -283,7 +326,7 @@ public class DispatcherWriterQueueTest {
                 )
                 .withAlterTableStartWaitTimeout(2_000_000);
 
-        runAlterOnBusyTable(alterVerifyAction, httpWorkers, errorsExpected, queryTestBuilder, httpAlterQueries);
+        runAlterOnBusyTable(alterVerifyAction, httpWorkers, errorsExpected, queryTestBuilder, false, httpAlterQueries);
     }
 
     private void runAlterOnBusyTable(
@@ -291,6 +334,7 @@ public class DispatcherWriterQueueTest {
             int httpWorkers,
             int errorsExpected,
             HttpQueryTestBuilder queryTestBuilder,
+            boolean noWait,
             final String... httpAlterQueries
     ) throws Exception {
         queryTestBuilder.run((engine) -> {
@@ -310,13 +354,23 @@ public class DispatcherWriterQueueTest {
                 Thread thread = new Thread(() -> {
                     try {
                         barrier.await();
-                        new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                                "GET /query?query=" + httpAlterQuery + " HTTP/1.1\r\n",
-                                "0d\r\n" +
-                                        "{\"ddl\":\"OK\"}\n\r\n" +
-                                        "00\r\n" +
-                                        "\r\n"
-                        );
+                        if (noWait) {
+                            new SendAndReceiveRequestBuilder()
+                                    .withPauseBetweenSendAndReceive(10)
+                                    .execute(
+                                    "GET /query?query=" + httpAlterQuery + " HTTP/1.1\r\n"
+                                            + SendAndReceiveRequestBuilder.RequestHeaders,
+                                    ""
+                            );
+                        } else {
+                            new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                    "GET /query?query=" + httpAlterQuery + " HTTP/1.1\r\n",
+                                    "0d\r\n" +
+                                            "{\"ddl\":\"OK\"}\n\r\n" +
+                                            "00\r\n" +
+                                            "\r\n"
+                            );
+                        }
                     } catch (Error e) {
                         if (errorsExpected == 0) {
                             error = e;
@@ -360,6 +414,6 @@ public class DispatcherWriterQueueTest {
 
     @FunctionalInterface
     interface AlterVerifyAction {
-        void run(TableWriter writer, TableReader rdr);
+        void run(TableWriter writer, TableReader rdr) throws InterruptedException;
     }
 }
