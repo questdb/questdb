@@ -42,12 +42,12 @@ public class BuildInformationHolder implements BuildInformation, CharSequence {
 
     public BuildInformationHolder(
             CharSequence questDbVersion,
-            CharSequence jdkVersion,
-            CharSequence commitHash
+            CharSequence commitHash,
+            CharSequence jdkVersion
     ) {
         this.questDbVersion = questDbVersion;
-        this.jdkVersion = jdkVersion;
         this.commitHash = commitHash;
+        this.jdkVersion = jdkVersion;
         this.buildKey = questDbVersion + ":" + commitHash + ":" + jdkVersion;
     }
 

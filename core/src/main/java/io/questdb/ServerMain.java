@@ -452,8 +452,8 @@ public class ServerMain {
 
         return new BuildInformationHolder(
                 getQuestDbVersion(manifestAttributes),
-                getJdkVersion(manifestAttributes),
-                getCommitHash(manifestAttributes)
+                getCommitHash(manifestAttributes),
+                getJdkVersion(manifestAttributes)
         );
     }
 
