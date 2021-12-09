@@ -189,7 +189,7 @@ public class BytecodeAssembler {
     public void endMethodCode() {
         int len = position() - codeStart;
         if (len > 64 * 1024) {
-            LOG.error().$("Too much input to generate ").$(host.getName()).$(". Bytecode is too long").$();
+            LOG.critical().$("Too much input to generate ").$(host.getName()).$(". Bytecode is too long").$();
             throw BytecodeException.INSTANCE;
         }
         putInt(codeStart - 4, position() - codeStart);
@@ -433,7 +433,7 @@ public class BytecodeAssembler {
         try {
             return x.getDeclaredConstructor().newInstance();
         } catch (Exception e) {
-            LOG.error().$("could not create an instance of ").$(host.getName()).$(", cause: ").$(e).$();
+            LOG.critical().$("could not create an instance of ").$(host.getName()).$(", cause: ").$(e).$();
             throw BytecodeException.INSTANCE;
         }
     }

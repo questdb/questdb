@@ -123,7 +123,7 @@ public class ServerMain {
                 log.advisory().$("OS: freebsd/amd64").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             default:
-                log.error().$("Unsupported OS").$(Vect.getSupportedInstructionSetName()).$();
+                log.critical().$("Unsupported OS").$(Vect.getSupportedInstructionSetName()).$();
                 break;
         }
         log.advisory().$("available CPUs: ").$(Runtime.getRuntime().availableProcessors()).$();
