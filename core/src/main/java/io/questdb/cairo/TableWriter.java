@@ -75,7 +75,6 @@ public class TableWriter implements Closeable {
     private final static RemoveFileLambda REMOVE_OR_EXCEPTION = TableWriter::removeOrException;
     final ObjList<MemoryMAR> columns;
     private final ObjList<MemoryMA> logColumns;
-    //    private final ObjList<MemoryLogA<MemoryA>> replSpliceColumns;
     private final ObjList<SymbolMapWriter> symbolMapWriters;
     private final ObjList<SymbolMapWriter> denseSymbolMapWriters;
     private final ObjList<ColumnIndexer> indexers;
