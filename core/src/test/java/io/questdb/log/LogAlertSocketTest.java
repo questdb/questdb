@@ -167,7 +167,7 @@ public class LogAlertSocketTest {
     public void testFailOverSingleHost() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String host = "127.0.0.1";
-            final int port = 1234;
+            final int port = 1241;
             try (LogAlertSocket alertSkt = new LogAlertSocket(host + ":" + port, LOG)) {
                 final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
                         .putHeader(host)
