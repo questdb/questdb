@@ -1891,7 +1891,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("ALTER TABLE x SET PARAM maxUncommittedRows = 2000000", sqlExecutionContext);
+        compiler.compile("alter TABLE x SET PARAM maxUncommittedRows = 2000000", sqlExecutionContext).execute(null).await();
 
         compiler.compile(
                 "create table top as (" +
@@ -3741,19 +3741,19 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("alter table x add column v double", sqlExecutionContext);
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
-        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
+        compiler.compile("alter table x add column v double", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v1 float", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v2 int", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v3 byte", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v4 short", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v6 date", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v10 char", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v11 string", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v12 binary", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v9 long", sqlExecutionContext).execute(null).await();
 
         compiler.compile(
                 "insert into x " +
@@ -4245,19 +4245,19 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("alter table x add column v double", sqlExecutionContext);
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
-        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
+        compiler.compile("alter table x add column v double", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v1 float", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v2 int", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v3 byte", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v4 short", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v6 date", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v10 char", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v11 string", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v12 binary", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v9 long", sqlExecutionContext).execute(null).await();
 
         compiler.compile(
                 "insert into x " +
@@ -4388,19 +4388,19 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("alter table x add column v double", sqlExecutionContext);
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
-        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
+        compiler.compile("alter table x add column v double", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v1 float", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v2 int", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v3 byte", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v4 short", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v6 date", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v10 char", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v11 string", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v12 binary", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v9 long", sqlExecutionContext).execute(null).await();
 
         compiler.compile(
                 "insert into x " +
@@ -4533,19 +4533,19 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("alter table x add column v double", sqlExecutionContext);
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
-        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
+        compiler.compile("alter table x add column v double", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v1 float", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v2 int", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v3 byte", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v4 short", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v6 date", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v10 char", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v11 string", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v12 binary", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v9 long", sqlExecutionContext).execute(null).await();
 
         compiler.compile(
                 "insert into x " +
@@ -4727,20 +4727,20 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("alter table x add column v double", sqlExecutionContext);
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
-        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
-        compiler.compile("alter table x add column v13 long256", sqlExecutionContext);
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
+        compiler.compile("alter table x add column v double", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v1 float", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v2 int", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v3 byte", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v4 short", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v6 date", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v10 char", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v11 string", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v12 binary", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v13 long256", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v9 long", sqlExecutionContext).execute(null).await();
 
         compiler.compile(
                 "insert into x " +
@@ -4870,19 +4870,19 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("alter table x add column v double", sqlExecutionContext);
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
-        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
+        compiler.compile("alter table x add column v double", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v1 float", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v2 int", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v3 byte", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v4 short", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v6 date", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v10 char", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v11 string", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v12 binary", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v9 long", sqlExecutionContext).execute(null).await();
 
         compiler.compile(
                 "insert into x " +
@@ -5011,19 +5011,19 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("alter table x add column v double", sqlExecutionContext);
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
-        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
+        compiler.compile("alter table x add column v double", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v1 float", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v2 int", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v3 byte", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v4 short", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v6 date", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v10 char", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v11 string", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v12 binary", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v9 long", sqlExecutionContext).execute(null).await();
 
         compiler.compile(
                 "insert into x " +
@@ -5152,19 +5152,19 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("alter table 'привет от штиблет' add column v double", sqlExecutionContext);
-        compiler.compile("alter table 'привет от штиблет' add column v1 float", sqlExecutionContext);
-        compiler.compile("alter table 'привет от штиблет' add column v2 int", sqlExecutionContext);
-        compiler.compile("alter table 'привет от штиблет' add column v3 byte", sqlExecutionContext);
-        compiler.compile("alter table 'привет от штиблет' add column v4 short", sqlExecutionContext);
-        compiler.compile("alter table 'привет от штиблет' add column v5 boolean", sqlExecutionContext);
-        compiler.compile("alter table 'привет от штиблет' add column v6 date", sqlExecutionContext);
-        compiler.compile("alter table 'привет от штиблет' add column v7 timestamp", sqlExecutionContext);
-        compiler.compile("alter table 'привет от штиблет' add column v8 symbol", sqlExecutionContext);
-        compiler.compile("alter table 'привет от штиблет' add column v10 char", sqlExecutionContext);
-        compiler.compile("alter table 'привет от штиблет' add column v11 string", sqlExecutionContext);
-        compiler.compile("alter table 'привет от штиблет' add column v12 binary", sqlExecutionContext);
-        compiler.compile("alter table 'привет от штиблет' add column v9 long", sqlExecutionContext);
+        compiler.compile("alter table 'привет от штиблет' add column v double", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table 'привет от штиблет' add column v1 float", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table 'привет от штиблет' add column v2 int", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table 'привет от штиблет' add column v3 byte", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table 'привет от штиблет' add column v4 short", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table 'привет от штиблет' add column v5 boolean", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table 'привет от штиблет' add column v6 date", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table 'привет от штиблет' add column v7 timestamp", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table 'привет от штиблет' add column v8 symbol", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table 'привет от штиблет' add column v10 char", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table 'привет от штиблет' add column v11 string", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table 'привет от штиблет' add column v12 binary", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table 'привет от штиблет' add column v9 long", sqlExecutionContext).execute(null).await();
 
         compiler.compile(
                 "insert into 'привет от штиблет' " +
@@ -5426,20 +5426,20 @@ public class O3Test extends AbstractO3Test {
                 executionContext
         );
 
-        compiler.compile("alter table x add column v double", executionContext);
-        compiler.compile("alter table x add column v1 float", executionContext);
-        compiler.compile("alter table x add column v2 int", executionContext);
-        compiler.compile("alter table x add column v3 byte", executionContext);
-        compiler.compile("alter table x add column v4 short", executionContext);
-        compiler.compile("alter table x add column v5 boolean", executionContext);
-        compiler.compile("alter table x add column v6 date", executionContext);
-        compiler.compile("alter table x add column v7 timestamp", executionContext);
-        compiler.compile("alter table x add column v8 symbol", executionContext);
-        compiler.compile("alter table x add column v10 char", executionContext);
-        compiler.compile("alter table x add column v11 string", executionContext);
-        compiler.compile("alter table x add column v12 binary", executionContext);
-        compiler.compile("alter table x add column v13 long256", executionContext);
-        compiler.compile("alter table x add column v9 long", executionContext);
+        compiler.compile("alter table x add column v double", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v1 float", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v2 int", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v3 byte", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v4 short", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v5 boolean", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v6 date", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v7 timestamp", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v8 symbol", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v10 char", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v11 string", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v12 binary", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v13 long256", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v9 long", executionContext).execute(null).await();
 
         compiler.compile(
                 "create table append as (" +
@@ -5528,19 +5528,19 @@ public class O3Test extends AbstractO3Test {
                 executionContext
         );
 
-        compiler.compile("alter table x add column v double", executionContext);
-        compiler.compile("alter table x add column v1 float", executionContext);
-        compiler.compile("alter table x add column v2 int", executionContext);
-        compiler.compile("alter table x add column v3 byte", executionContext);
-        compiler.compile("alter table x add column v4 short", executionContext);
-        compiler.compile("alter table x add column v5 boolean", executionContext);
-        compiler.compile("alter table x add column v6 date", executionContext);
-        compiler.compile("alter table x add column v7 timestamp", executionContext);
-        compiler.compile("alter table x add column v8 symbol", executionContext);
-        compiler.compile("alter table x add column v10 char", executionContext);
-        compiler.compile("alter table x add column v11 string", executionContext);
-        compiler.compile("alter table x add column v12 binary", executionContext);
-        compiler.compile("alter table x add column v9 long", executionContext);
+        compiler.compile("alter table x add column v double", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v1 float", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v2 int", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v3 byte", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v4 short", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v5 boolean", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v6 date", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v7 timestamp", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v8 symbol", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v10 char", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v11 string", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v12 binary", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v9 long", executionContext).execute(null).await();
 
         compiler.compile(
                 "create table append as (" +
@@ -6183,20 +6183,20 @@ public class O3Test extends AbstractO3Test {
                 executionContext
         );
 
-        compiler.compile("alter table x add column v double", executionContext);
-        compiler.compile("alter table x add column v1 float", executionContext);
-        compiler.compile("alter table x add column v2 int", executionContext);
-        compiler.compile("alter table x add column v3 byte", executionContext);
-        compiler.compile("alter table x add column v4 short", executionContext);
-        compiler.compile("alter table x add column v5 boolean", executionContext);
-        compiler.compile("alter table x add column v6 date", executionContext);
-        compiler.compile("alter table x add column v7 timestamp", executionContext);
-        compiler.compile("alter table x add column v8 symbol index", executionContext);
-        compiler.compile("alter table x add column v10 char", executionContext);
-        compiler.compile("alter table x add column v11 string", executionContext);
-        compiler.compile("alter table x add column v12 binary", executionContext);
-        compiler.compile("alter table x add column v13 long256", executionContext);
-        compiler.compile("alter table x add column v9 long", executionContext);
+        compiler.compile("alter table x add column v double", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v1 float", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v2 int", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v3 byte", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v4 short", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v5 boolean", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v6 date", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v7 timestamp", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v8 symbol index", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v10 char", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v11 string", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v12 binary", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v13 long256", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v9 long", executionContext).execute(null).await();
 
         compiler.compile(
                 "create table append as (" +
@@ -6273,10 +6273,10 @@ public class O3Test extends AbstractO3Test {
                 executionContext
         );
 
-        compiler.compile("alter table x add column v1 geohash(1c)", executionContext);
-        compiler.compile("alter table x add column v2 geohash(2c)", executionContext);
-        compiler.compile("alter table x add column v4 geohash(4c)", executionContext);
-        compiler.compile("alter table x add column v8 geohash(10c)", executionContext);
+        compiler.compile("alter table x add column v1 geohash(1c)", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v2 geohash(2c)", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v4 geohash(4c)", executionContext).execute(null).await();
+        compiler.compile("alter table x add column v8 geohash(10c)", executionContext).execute(null).await();
 
         compiler.compile(
                 "create table append as (" +
@@ -6366,19 +6366,19 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("alter table x add column v double", sqlExecutionContext);
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
-        compiler.compile("alter table x add column v8 symbol index", sqlExecutionContext);
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
+        compiler.compile("alter table x add column v double", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v1 float", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v2 int", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v3 byte", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v4 short", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v6 date", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v8 symbol index", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v10 char", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v11 string", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v12 binary", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v9 long", sqlExecutionContext).execute(null).await();
 
         // 1970-01-08
         compiler.compile(
@@ -6465,19 +6465,19 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("alter table x add column v double", sqlExecutionContext);
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
-        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
+        compiler.compile("alter table x add column v double", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v1 float", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v2 int", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v3 byte", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v4 short", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v6 date", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v10 char", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v11 string", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v12 binary", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v9 long", sqlExecutionContext).execute(null).await();
 
         compiler.compile(
                 "insert into x " +
@@ -6756,19 +6756,19 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("alter table x add column v double", sqlExecutionContext);
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext);
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext);
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext);
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext);
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext);
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext);
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext);
-        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext);
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext);
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext);
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext);
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext);
+        compiler.compile("alter table x add column v double", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v1 float", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v2 int", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v3 byte", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v4 short", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v6 date", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v10 char", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v11 string", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v12 binary", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v9 long", sqlExecutionContext).execute(null).await();
 
         compiler.compile(
                 "insert into x " +
@@ -7058,7 +7058,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 engine);
 
-        compiler.compile("alter table x drop column c", sqlExecutionContext);
+        compiler.compile("alter table x drop column c", sqlExecutionContext).execute(null).await();
 
         assertO3DataCursors(
                 engine,

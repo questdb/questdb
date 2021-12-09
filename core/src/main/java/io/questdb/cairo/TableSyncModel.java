@@ -228,57 +228,57 @@ public class TableSyncModel implements Mutable, Sinkable {
     }
 
     public void toBinary(TableWriterTask sink) {
-        sink.put(tableAction);
-        sink.put(dataVersion);
-        sink.put(maxTimestamp);
+        sink.putInt(tableAction);
+        sink.putLong(dataVersion);
+        sink.putLong(maxTimestamp);
 
         int n = columnTops.size();
-        sink.put(n); // column top count
+        sink.putInt(n); // column top count
         if (n > 0) {
             for (int i = 0; i < n; i += SLOTS_PER_COLUMN_TOP) {
-                sink.put(columnTops.getQuick(i)); // partition timestamp
-                sink.put((int) columnTops.getQuick(i + 1)); // column index
-                sink.put(columnTops.getQuick(i + 2)); // column top
+                sink.putLong(columnTops.getQuick(i)); // partition timestamp
+                sink.putInt((int) columnTops.getQuick(i + 1)); // column index
+                sink.putLong(columnTops.getQuick(i + 2)); // column top
             }
         }
 
         n = varColumnSizes.size();
-        sink.put(n);
+        sink.putInt(n);
         if (n > 0) {
             for (int i = 0; i < n; i += SLOTS_PER_VAR_COLUMN_SIZE) {
-                sink.put(varColumnSizes.getQuick(i)); // partition timestamp
-                sink.put((int) varColumnSizes.getQuick(i + 1)); // column index
-                sink.put(varColumnSizes.getQuick(i + 2)); // column top
+                sink.putLong(varColumnSizes.getQuick(i)); // partition timestamp
+                sink.putInt((int) varColumnSizes.getQuick(i + 1)); // column index
+                sink.putLong(varColumnSizes.getQuick(i + 2)); // column top
             }
         }
 
         n = partitions.size();
-        sink.put(n); // partition count
+        sink.putInt(n); // partition count
         for (int i = 0; i < n; i += SLOTS_PER_PARTITION) {
-            sink.put((int) partitions.getQuick(i)); // action
-            sink.put(partitions.getQuick(i + 1)); // partition timestamp
-            sink.put(partitions.getQuick(i + 2)); // start row
-            sink.put(partitions.getQuick(i + 3)); // row count
-            sink.put(partitions.getQuick(i + 4)); // name txn (suffix for partition name)
-            sink.put(partitions.getQuick(i + 5)); // data txn
+            sink.putInt((int) partitions.getQuick(i)); // action
+            sink.putLong(partitions.getQuick(i + 1)); // partition timestamp
+            sink.putLong(partitions.getQuick(i + 2)); // start row
+            sink.putLong(partitions.getQuick(i + 3)); // row count
+            sink.putLong(partitions.getQuick(i + 4)); // name txn (suffix for partition name)
+            sink.putLong(partitions.getQuick(i + 5)); // data txn
         }
 
         n = addedColumnMetadata.size();
-        sink.put(n); // column metadata count - this is metadata only for column that have been added
+        sink.putInt(n); // column metadata count - this is metadata only for column that have been added
         for (int i = 0; i < n; i++) {
             final TableColumnMetadata metadata = addedColumnMetadata.getQuick(i);
-            sink.put(metadata.getName());
-            sink.put(metadata.getType()); // column type
-            sink.put(metadata.getHash());
-            sink.put((byte) (metadata.isIndexed() ? 0 : 1)); // column indexed flag
-            sink.put(metadata.getIndexValueBlockCapacity());
+            sink.putStr(metadata.getName());
+            sink.putInt(metadata.getType()); // column type
+            sink.putLong(metadata.getHash());
+            sink.putByte((byte) (metadata.isIndexed() ? 0 : 1)); // column indexed flag
+            sink.putInt(metadata.getIndexValueBlockCapacity());
         }
 
         n = columnMetaIndex.size();
-        sink.put(n); // column metadata shuffle index - drives rearrangement of existing columns on the slave
+        sink.putInt(n); // column metadata shuffle index - drives rearrangement of existing columns on the slave
         for (int i = 0; i < n; i += SLOTS_PER_COLUMN_META_INDEX) {
-            sink.put((int) columnMetaIndex.getQuick(i)); // action
-            sink.put(columnMetaIndex.getQuick(i + 1)); // (int,int) pair on where (from,to) column needs to move
+            sink.putInt((int) columnMetaIndex.getQuick(i)); // action
+            sink.putLong(columnMetaIndex.getQuick(i + 1)); // (int,int) pair on where (from,to) column needs to move
         }
     }
 

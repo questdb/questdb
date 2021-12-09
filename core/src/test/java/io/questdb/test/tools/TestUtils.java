@@ -413,7 +413,9 @@ public final class TestUtils {
         Assert.assertTrue("Initial file count should be >= 0", fileCount >= 0);
         runnable.run();
         Path.clearThreadLocals();
-        Assert.assertEquals(fileCount, Files.getOpenFileCount());
+        if (fileCount != Files.getOpenFileCount()) {
+            Assert.assertEquals(Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
+        }
         Assert.assertEquals(mem, Unsafe.getMemUsed());
 
         // Checks that the same tag used for allocation and freeing native memory

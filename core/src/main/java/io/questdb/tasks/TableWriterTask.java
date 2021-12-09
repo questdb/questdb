@@ -33,6 +33,9 @@ import java.io.Closeable;
 
 public class TableWriterTask implements Closeable {
     public static final int TSK_SLAVE_SYNC = 1;
+    public static final int TSK_ALTER_TABLE = 2;
+    public static final int TSK_ALTER_TABLE_BEGIN = 3;
+    public static final int TSK_ALTER_TABLE_COMPLETE = 4;
     private int type;
     private long tableId;
     private String tableName;
@@ -86,6 +89,18 @@ public class TableWriterTask implements Closeable {
         this.sequence = sequence;
     }
 
+    public void of(
+            int type,
+            long tableId,
+            String tableName
+    ) {
+        this.tableId = tableId;
+        this.tableName = tableName;
+        this.type = type;
+        this.appendPtr = data;
+        this.ip = 0L;
+    }
+
     public long getAppendOffset() {
         return appendPtr - data;
     }
@@ -134,26 +149,33 @@ public class TableWriterTask implements Closeable {
         return type;
     }
 
-    public void put(CharSequence value) {
+    public void putStr(CharSequence value) {
         int len = value.length();
-        ensureCapacity(len * 2 + 4);
+        final int byteLen = len * 2 + 4;
+        ensureCapacity(byteLen);
         Unsafe.getUnsafe().putInt(appendPtr, len);
         Chars.copyStrChars(value, 0, len, appendPtr + 4);
-        appendPtr += len * 2L + 4;
+        this.appendPtr += byteLen;
     }
 
-    public void put(byte c) {
+    public void putByte(byte c) {
         ensureCapacity(1);
         Unsafe.getUnsafe().putByte(appendPtr++, c);
     }
 
-    public void put(int value) {
+    public void putInt(int value) {
         ensureCapacity(4);
         Unsafe.getUnsafe().putInt(appendPtr, value);
         appendPtr += 4;
     }
 
-    public void put(long value) {
+    public void putShort(short value) {
+        ensureCapacity(2);
+        Unsafe.getUnsafe().putShort(appendPtr, value);
+        appendPtr += 2;
+    }
+
+    public void putLong(long value) {
         ensureCapacity(8);
         Unsafe.getUnsafe().putLong(appendPtr, value);
         appendPtr += 8;

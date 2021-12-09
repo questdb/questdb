@@ -1457,8 +1457,8 @@ public class SampleByTest extends AbstractGriffinTest {
                 false);
 
         assertMemoryLeak(() -> {
-            compiler.compile("alter table xx drop column s", sqlExecutionContext);
-            compiler.compile("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
+            compile("alter table xx drop column s", sqlExecutionContext);
+            compile("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
         });
 
         TestUtils.assertSqlCursors(compiler,
@@ -1903,7 +1903,7 @@ public class SampleByTest extends AbstractGriffinTest {
                             "timestamp_sequence(0, 1 * 60 * 1000000L) k\n" +
                             "from\n" +
                             "long_sequence(100)\n", sqlExecutionContext);
-            compiler.compile("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
+            compile("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
         });
 
         String expected = "fk\tlk\tk\ts\n" +
@@ -1955,7 +1955,7 @@ public class SampleByTest extends AbstractGriffinTest {
                             "timestamp_sequence(0, 1 * 60 * 1000000L) k\n" +
                             "from\n" +
                             "long_sequence(100)\n", sqlExecutionContext);
-            compiler.compile("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
+            compile("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
             compiler.compile("insert into xx " +
                     "select " +
                     "timestamp_sequence(24 * 60 * 60 * 1000000L, 1 * 60 * 1000000L),\n" +
@@ -1999,9 +1999,9 @@ public class SampleByTest extends AbstractGriffinTest {
                             "from\n" +
                             "long_sequence(100)\n", sqlExecutionContext);
 
-            compiler.compile("alter table xx add i1 int", sqlExecutionContext);
-            compiler.compile("alter table xx add c1 char", sqlExecutionContext);
-            compiler.compile("alter table xx add l1 long", sqlExecutionContext);
+            compile("alter table xx add i1 int", sqlExecutionContext);
+            compile("alter table xx add c1 char", sqlExecutionContext);
+            compile("alter table xx add l1 long", sqlExecutionContext);
 
             compiler.compile(
                     "insert into xx " +
@@ -2014,13 +2014,13 @@ public class SampleByTest extends AbstractGriffinTest {
                             "from\n" +
                             "long_sequence(100)", sqlExecutionContext);
 
-            compiler.compile("alter table xx add f1 float", sqlExecutionContext);
-            compiler.compile("alter table xx add d1 double", sqlExecutionContext);
-            compiler.compile("alter table xx add s1 symbol", sqlExecutionContext);
-            compiler.compile("alter table xx add ss1 short", sqlExecutionContext);
-            compiler.compile("alter table xx add b1 byte", sqlExecutionContext);
-            compiler.compile("alter table xx add t1 timestamp", sqlExecutionContext);
-            compiler.compile("alter table xx add dt date", sqlExecutionContext);
+            compile("alter table xx add f1 float", sqlExecutionContext);
+            compile("alter table xx add d1 double", sqlExecutionContext);
+            compile("alter table xx add s1 symbol", sqlExecutionContext);
+            compile("alter table xx add ss1 short", sqlExecutionContext);
+            compile("alter table xx add b1 byte", sqlExecutionContext);
+            compile("alter table xx add t1 timestamp", sqlExecutionContext);
+            compile("alter table xx add dt date", sqlExecutionContext);
         });
 
         assertSampleByIndexQuery("fi1\tli1\tfc1\tlc1\tfl1\tlf1\tff1\tlf11\tfd1\tld1\tfs1\tls1\tfss1\tlss1\tfb1\tlb1\tfk\tlk\tft1\tlt1\tfdt\tldt\tk\ts\n" +
@@ -2074,9 +2074,9 @@ public class SampleByTest extends AbstractGriffinTest {
                             "from\n" +
                             "long_sequence(100)\n", sqlExecutionContext);
 
-            compiler.compile("alter table xx add i1 int", sqlExecutionContext);
-            compiler.compile("alter table xx add c1 char", sqlExecutionContext);
-            compiler.compile("alter table xx add l1 long", sqlExecutionContext);
+            compile("alter table xx add i1 int", sqlExecutionContext);
+            compile("alter table xx add c1 char", sqlExecutionContext);
+            compile("alter table xx add l1 long", sqlExecutionContext);
 
             compiler.compile(
                     "insert into xx " +
@@ -2089,17 +2089,17 @@ public class SampleByTest extends AbstractGriffinTest {
                             "from\n" +
                             "long_sequence(100)", sqlExecutionContext);
 
-            compiler.compile("alter table xx add f1 float", sqlExecutionContext);
-            compiler.compile("alter table xx add d1 double", sqlExecutionContext);
-            compiler.compile("alter table xx add s1 symbol", sqlExecutionContext);
-            compiler.compile("alter table xx add ss1 short", sqlExecutionContext);
-            compiler.compile("alter table xx add b1 byte", sqlExecutionContext);
-            compiler.compile("alter table xx add t1 timestamp", sqlExecutionContext);
-            compiler.compile("alter table xx add dt date", sqlExecutionContext);
-            compiler.compile("alter table xx add ge1 geohash(3b)", sqlExecutionContext);
-            compiler.compile("alter table xx add ge2 geohash(2c)", sqlExecutionContext);
-            compiler.compile("alter table xx add ge4 geohash(5c)", sqlExecutionContext);
-            compiler.compile("alter table xx add ge8 geohash(9c)", sqlExecutionContext);
+            compile("alter table xx add f1 float", sqlExecutionContext);
+            compile("alter table xx add d1 double", sqlExecutionContext);
+            compile("alter table xx add s1 symbol", sqlExecutionContext);
+            compile("alter table xx add ss1 short", sqlExecutionContext);
+            compile("alter table xx add b1 byte", sqlExecutionContext);
+            compile("alter table xx add t1 timestamp", sqlExecutionContext);
+            compile("alter table xx add dt date", sqlExecutionContext);
+            compile("alter table xx add ge1 geohash(3b)", sqlExecutionContext);
+            compile("alter table xx add ge2 geohash(2c)", sqlExecutionContext);
+            compile("alter table xx add ge4 geohash(5c)", sqlExecutionContext);
+            compile("alter table xx add ge8 geohash(9c)", sqlExecutionContext);
         });
 
         assertSampleByIndexQuery("fi1\tli1\tfc1\tlc1\tfl1\tlf1\tff1\tlf11\tfd1\tld1\tfs1\tls1\tfss1\tlss1\tfb1\tlb1\tfk\tlk\tft1\tlt1\tfdt\tldt\tfge1\tlge1\tfge2\tlge2\tfge4\tlge4\tfge8\tlge8\tk\ts\n" +
@@ -8936,8 +8936,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
     private void assertWithSymbolColumnTop(String expected, String query) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("alter table xx drop column s", sqlExecutionContext);
-            compiler.compile("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
+            compile("alter table xx drop column s", sqlExecutionContext);
+            compile("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
         });
 
         String forceNoIndexQuery = query.replace("and s = null", " ");
