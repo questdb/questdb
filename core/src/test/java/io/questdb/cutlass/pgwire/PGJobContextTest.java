@@ -3069,18 +3069,20 @@ nodejs code:
 
     @Test
     public void testRunAlterWhenTableLockedWithInserts() throws Exception {
+        writerAsyncCommandBusyWaitTimeout = 1_000_000;
         assertMemoryLeak(() -> testAddColumnBusyWriter(true));
     }
 
     @Test
     public void testRunAlterWhenTableLockedAndAlterTakesTooLong() throws Exception {
         assertMemoryLeak(() -> {
+            writerAsyncCommandBusyWaitTimeout = 1_000_000;
             ff = new FilesFacadeImpl() {
                 @Override
                 public long openRW(LPSZ name) {
                     if (Chars.endsWith(name, "_meta.swp")) {
                         try {
-                            Thread.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() / 1000 + 100);
+                            Thread.sleep(writerAsyncCommandBusyWaitTimeout / 1000 + 100);
                         } catch (InterruptedException e) {
                             e.printStackTrace();
                         }
@@ -3101,7 +3103,7 @@ nodejs code:
                 public long openRW(LPSZ name) {
                     if (Chars.endsWith(name, "_meta.swp")) {
                         try {
-                            Thread.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() / 1000 + 500);
+                            Thread.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() / 1000);
                         } catch (InterruptedException e) {
                             e.printStackTrace();
                         }

@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableStructureChangesException;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -45,7 +44,7 @@ import io.questdb.tasks.TableWriterTask;
 import java.util.concurrent.locks.LockSupport;
 
 public class CompiledQueryImpl implements CompiledQuery {
-    private static final Log LOG = LogFactory.getLog(WriterPool.class);
+    private static final Log LOG = LogFactory.getLog(CompiledQueryImpl.class);
     private final CairoEngine engine;
     private final AlterTableQueryFuture alterFuture = new AlterTableQueryFuture();
     private RecordCursorFactory recordCursorFactory;
@@ -287,37 +286,31 @@ public class CompiledQueryImpl implements CompiledQuery {
                     continue;
                 }
 
-                TableWriterTask event = tableWriterEventQueue.get(seq);
-                int type = event.getType();
-                if (event.getInstance() != commandId || (type != TableWriterTask.TSK_ALTER_TABLE_BEGIN && type != TableWriterTask.TSK_ALTER_TABLE_COMPLETE)) {
-                    LOG.debug()
-                            .$("writer command response received and ignored [instance=").$(event.getInstance())
-                            .$(", type=").$(type)
-                            .$(", expectedInstance=").$(commandId)
-                            .I$();
-                    eventSubSeq.done(seq);
-                    LockSupport.parkNanos(1);
-                    continue;
-                }
-
-                if (type == TableWriterTask.TSK_ALTER_TABLE_COMPLETE) {
-                    // If writer failed to execute the ALTER command it will send back string error
-                    // in the event data
-                    SqlException result = null;
-                    int strLen = Unsafe.getUnsafe().getInt(event.getData());
-                    if (strLen > -1) {
-                        result = SqlException.$(queryTableNamePosition, event.getData() + 4L, event.getData() + 4L + 2L * strLen);
+                try {
+                    TableWriterTask event = tableWriterEventQueue.get(seq);
+                    int type = event.getType();
+                    if (event.getInstance() != commandId || (type != TableWriterTask.TSK_ALTER_TABLE_BEGIN && type != TableWriterTask.TSK_ALTER_TABLE_COMPLETE)) {
+                        LOG.debug()
+                                .$("writer command response received and ignored [instance=").$(event.getInstance())
+                                .$(", type=").$(type)
+                                .$(", expectedInstance=").$(commandId)
+                                .I$();
+                        LockSupport.parkNanos(1);
+                    } else if (type == TableWriterTask.TSK_ALTER_TABLE_COMPLETE) {
+                        // If writer failed to execute the ALTER command it will send back string error
+                        // in the event data
+                        LOG.info().$("writer command response received [instance=").$(commandId).I$();
+                        int strLen = Unsafe.getUnsafe().getInt(event.getData());
+                        if (strLen > -1) {
+                            throw SqlException.$(queryTableNamePosition, event.getData() + 4L, event.getData() + 4L + 2L * strLen);
+                        }
+                        return QUERY_COMPLETE;
+                    } else {
+                        status = QUERY_STARTED;
+                        LOG.info().$("writer command QUERY_STARTED response received [instance=").$(commandId).I$();
                     }
+                } finally {
                     eventSubSeq.done(seq);
-                    LOG.info().$("writer command response received [instance=").$(commandId).I$();
-                    if (result != null) {
-                        throw result;
-                    }
-                    return QUERY_COMPLETE;
-                } else {
-                    status = QUERY_STARTED;
-                    eventSubSeq.done(seq);
-                    LOG.info().$("writer command QUERY_STARTED response received [instance=").$(commandId).I$();
                 }
             }
         }
