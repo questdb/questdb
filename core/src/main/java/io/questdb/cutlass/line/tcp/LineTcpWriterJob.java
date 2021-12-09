@@ -143,11 +143,11 @@ class LineTcpWriterJob implements Job, Closeable {
                     }
                 } else {
                     switch (event.getWriterWorkerId()) {
-                        case LineTcpMeasurementEvent.ALL_WRITERS_RESHUFFLE:
+                        case LineTcpMeasurementEventType.ALL_WRITERS_RESHUFFLE:
                             eventProcessed = processReshuffleEvent(event);
                             break;
 
-                        case LineTcpMeasurementEvent.ALL_WRITERS_RELEASE_WRITER:
+                        case LineTcpMeasurementEventType.ALL_WRITERS_RELEASE_WRITER:
                             eventProcessed = scheduler.processWriterReleaseEvent(event, workerId);
                             break;
 

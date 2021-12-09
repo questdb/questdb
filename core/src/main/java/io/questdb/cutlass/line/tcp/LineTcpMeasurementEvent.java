@@ -38,14 +38,6 @@ import io.questdb.std.str.StringSink;
 import java.io.Closeable;
 
 class LineTcpMeasurementEvent implements Closeable {
-    // A reshuffle event is used to redistribute load across threads
-    static final int ALL_WRITERS_RESHUFFLE = -1;
-    // An incomplete event is used when the queue producer has grabbed an event but is
-    // not able to populate it for some reason, the event needs to be committed to the
-    // queue incomplete
-    static final int ALL_WRITERS_INCOMPLETE_EVENT = -2;
-    static final int ALL_WRITERS_RELEASE_WRITER = -3;
-
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementEvent.class);
     private final MicrosecondClock clock;
     private final LineProtoTimestampAdapter timestampAdapter;
@@ -434,7 +426,7 @@ class LineTcpMeasurementEvent implements Closeable {
             FloatingDirectCharSink floatingCharSink,
             int workerId
     ) {
-        writerWorkerId = ALL_WRITERS_INCOMPLETE_EVENT;
+        writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_INCOMPLETE_EVENT;
         final TableUpdateDetails.ThreadLocalDetails localDetails = tableUpdateDetails.getThreadLocalDetails(workerId);
         final BoolList processedCols = localDetails.getProcessedCols();
         final LowerCaseCharSequenceHashSet addedCols = localDetails.getAddedCols();
@@ -638,7 +630,7 @@ class LineTcpMeasurementEvent implements Closeable {
     }
 
     void createReshuffleEvent(int fromThreadId, int toThreadId, TableUpdateDetails tableUpdateDetails) {
-        writerWorkerId = ALL_WRITERS_RESHUFFLE;
+        writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_RESHUFFLE;
         reshuffleSrcWorkerId = fromThreadId;
         reshuffleTargetWorkerId = toThreadId;
         this.tableUpdateDetails = tableUpdateDetails;
@@ -646,7 +638,7 @@ class LineTcpMeasurementEvent implements Closeable {
     }
 
     void createWriterReleaseEvent(TableUpdateDetails tableUpdateDetails, boolean commitOnWriterClose) {
-        writerWorkerId = ALL_WRITERS_RELEASE_WRITER;
+        writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_RELEASE_WRITER;
         this.tableUpdateDetails = tableUpdateDetails;
         this.commitOnWriterClose = commitOnWriterClose;
     }
