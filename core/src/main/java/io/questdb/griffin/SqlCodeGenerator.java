@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.analytic.AnalyticFunction;
@@ -751,7 +752,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             .$("JIT enabled for (sub)query [tableName=").utf8(model.getName())
                             .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
                     return new CompiledFilterRecordCursorFactory(factory, columnIndexes, f, jitFilter);
-                } catch (SqlException ex) {
+                } catch (SqlException | LimitOverflowException ex) {
                     LOG.debug()
                             .$("JIT cannot be applied to (sub)query [tableName=").utf8(model.getName())
                             .$(", ex=").$(ex.getFlyweightMessage())
