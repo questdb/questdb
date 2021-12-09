@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.bool;
 
+import io.questdb.cairo.BinarySearch;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
@@ -174,7 +175,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 return negated;
             }
 
-            return negated != inList.binarySearch(ts) >= 0;
+            return negated != inList.binarySearch(ts, BinarySearch.SCAN_UP) >= 0;
         }
     }
 }
