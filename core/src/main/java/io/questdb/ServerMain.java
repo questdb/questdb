@@ -212,6 +212,7 @@ public class ServerMain {
 
             System.gc();
 
+            log.critical().$(buildInformation).$();
             log.advisory().$("enjoy").$();
 
             if (Os.type != Os.WINDOWS && optHash.get("-n") == null) {

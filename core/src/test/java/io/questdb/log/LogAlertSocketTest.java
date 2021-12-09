@@ -25,17 +25,27 @@
 package io.questdb.log;
 
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.Arrays;
 
 import static io.questdb.log.HttpLogRecordSink.CRLF;
+import static io.questdb.log.LogAlertSocket.filterHttpHeader;
 
 public class LogAlertSocketTest {
 
     private static final Log LOG = LogFactory.getLog(LogAlertSocketTest.class);
+
+    private StringSink sink;
+
+    @Before
+    public void setUp() {
+        sink = new StringSink();
+    }
 
     @Test
     public void testParseAlertTargetsEmpty() throws Exception {
@@ -178,6 +188,107 @@ public class LogAlertSocketTest {
                         ));
             }
         });
+    }
+
+    @Test
+    public void testParseStatusSuccessResponse() {
+        sink.put("HTTP/1.1 200 OK\r\n" +
+                "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                "Access-Control-Allow-Origin: *\r\n" +
+                "Access-Control-Expose-Headers: Date\r\n" +
+                "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                "Content-Type: application/json\r\n" +
+                "Date: Thu, 09 Dec 2021 09:37:22 GMT\r\n" +
+                "Content-Length: 20\r\n" +
+                "\r\n" +
+                "{\"status\":\"success\"}");
+        TestUtils.assertEquals("{\"status\":\"success\"}", filterHttpHeader(sink));
+    }
+
+    @Test
+    public void testParseStatusErrorResponse() {
+        sink.put("HTTP/1.1 400 Bad Request\r\n" +
+                "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                "Access-Control-Allow-Origin: *\r\n" +
+                "Access-Control-Expose-Headers: Date\r\n" +
+                "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                "Content-Type: application/json\r\n" +
+                "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
+                "Content-Length: 66\r\n" +
+                "\r\n" +
+                "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}");
+        TestUtils.assertEquals(
+                "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}",
+                filterHttpHeader(sink)
+        );
+    }
+
+    @Test
+    public void testParseBadResponse0() {
+        String response = "HTTP/1.1 400 Bad Request\r\n" +
+                "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                "Access-Control-Allow-Origin: *\r\n" +
+                "Access-Control-Expose-Headers: Date\r\n" +
+                "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                "Content-Type: application/json\r\n" +
+                "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
+                "Content-Length: 6o\r\n" +
+                "\r\n" +
+                "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}";
+        sink.put(response);
+        TestUtils.assertEquals(response, filterHttpHeader(sink));
+    }
+
+    @Test
+    public void testParseBadResponse1() {
+        String response = "HTTP/1.1 400 Bad Request\r\n" +
+                "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                "Access-Control-Allow-Origin: *\r\n" +
+                "Access-Control-Expose-Headers: Date\r\n" +
+                "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                "Content-Type: application/json\r\n" +
+                "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
+                "\r\n" +
+                "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}";
+        sink.put(response);
+        TestUtils.assertEquals(response, filterHttpHeader(sink));
+    }
+
+    @Test
+    public void testParseBadResponse2() {
+        String response = "HTTP/1.1 400 Bad Request\r\n" +
+                "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                "Access-Control-Allow-Origin: *\r\n" +
+                "Access-Control-Expose-Headers: Date\r\n" +
+                "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                "Content-Type: application/json\r\n" +
+                "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
+                "Content-Length: 6\r\n" +
+                "\r\n" +
+                "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}";
+        sink.put(response);
+        TestUtils.assertEquals(response, filterHttpHeader(sink));
+    }
+
+    @Test
+    public void testParseBadResponse3() {
+        String response = "HTTP/1.1 400 Bad Request\r\n" +
+                "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                "Access-Control-Allow-Origin: *\r\n" +
+                "Access-Control-Expose-Headers: Date\r\n" +
+                "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                "Content-Type: application/json\r\n" +
+                "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
+                "Content-Length: 66\r\n" +
+                "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}";
+        sink.put(response);
+        TestUtils.assertEquals(response, filterHttpHeader(sink));
     }
 
     private void assertLogError(String socketAddress, String expected) throws Exception {

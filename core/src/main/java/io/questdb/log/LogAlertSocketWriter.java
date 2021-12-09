@@ -51,17 +51,20 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private static final String INSTANCE_ENV = "INSTANCE_NAME";
     private static final String MESSAGE_ENV = "ALERT_MESSAGE";
     private static final String MESSAGE_ENV_VALUE = "${" + MESSAGE_ENV + "}";
+
     private final int level;
     private final MicrosecondClock clock;
+    private final StringSink sink = new StringSink();
     private final FilesFacade ff;
     private final SCSequence writeSequence;
     private final RingQueue<LogRecordSink> alertsSourceQueue;
+    private final QueueConsumer<LogRecordSink> alertsProcessor = this::onLogRecord;
     private final TemplateParser alertTemplate = new TemplateParser();
     private HttpLogRecordSink alertSink;
     private LogAlertSocket socket;
     private ObjList<TemplateNode> alertTemplateNodes;
     private int alertTemplateNodesLen;
-    private final QueueConsumer<LogRecordSink> alertsProcessor = this::onLogRecord;
+    private Log log;
     // changed by introspection
     private String defaultAlertHost;
     private String defaultAlertPort;
@@ -97,7 +100,6 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
 
     @Override
     public void bindProperties(LogFactory factory) {
-        final Log log = factory.create(LogAlertSocketWriter.class.getName());
         int nInBufferSize = LogAlertSocket.IN_BUFFER_SIZE;
         if (inBufferSize != null) {
             try {
@@ -133,6 +135,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                 throw new LogError("Invalid value for defaultAlertPort: " + defaultAlertPort);
             }
         }
+        log = factory.create(LogAlertSocketWriter.class.getName());
         socket = new LogAlertSocket(
                 alertTargets,
                 nInBufferSize,
@@ -322,6 +325,10 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                     alertSink.put(comp);
                 }
             }
+            sink.clear();
+            sink.put(logRecord);
+            sink.clear(sink.length() - Misc.EOL.length());
+            log.info().$("Sending: ").$(sink).$();
             socket.send(alertSink.$());
         }
     }

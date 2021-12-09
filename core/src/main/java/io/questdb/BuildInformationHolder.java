@@ -24,25 +24,31 @@
 
 package io.questdb;
 
-public class BuildInformationHolder implements BuildInformation {
+import org.jetbrains.annotations.NotNull;
+
+public class BuildInformationHolder implements BuildInformation, CharSequence {
     private final CharSequence questDbVersion;
-
-    private final CharSequence jdkVersion;
-
     private final CharSequence commitHash;
+    private final CharSequence jdkVersion;
+    private final String buildKey;
 
-    public BuildInformationHolder(final CharSequence questDbVersion,
-                                  final CharSequence jdkVersion,
-                                  final CharSequence commitHash) {
+    public BuildInformationHolder() {
+        this(
+                "Unknown Version",
+                "Unknown Version",
+                "Unknown Version"
+        );
+    }
+
+    public BuildInformationHolder(
+            CharSequence questDbVersion,
+            CharSequence jdkVersion,
+            CharSequence commitHash
+    ) {
         this.questDbVersion = questDbVersion;
         this.jdkVersion = jdkVersion;
         this.commitHash = commitHash;
-    }
-
-    public BuildInformationHolder() {
-        this.questDbVersion = "Unknown Version";
-        this.jdkVersion = "Unknown Version";
-        this.commitHash = "Unknown Version";
+        this.buildKey = questDbVersion + ":" + commitHash + ":" + jdkVersion;
     }
 
     @Override
@@ -58,5 +64,26 @@ public class BuildInformationHolder implements BuildInformation {
     @Override
     public CharSequence getCommitHash() {
         return commitHash;
+    }
+
+    @Override
+    public String toString() {
+        return buildKey;
+    }
+
+    @Override
+    public int length() {
+        return buildKey.length();
+    }
+
+    @Override
+    public char charAt(int index) {
+        return buildKey.charAt(index);
+    }
+
+    @NotNull
+    @Override
+    public CharSequence subSequence(int start, int end) {
+        return buildKey.subSequence(start, end);
     }
 }

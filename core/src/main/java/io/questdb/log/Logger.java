@@ -64,6 +64,8 @@ class Logger implements LogRecord, Log {
     private final Sequence infoSeq;
     private final RingQueue<LogRecordSink> errorRing;
     private final Sequence errorSeq;
+    private final RingQueue<LogRecordSink> criticalRing;
+    private final Sequence criticalSeq;
     private final RingQueue<LogRecordSink> advisoryRing;
     private final Sequence advisorySeq;
     private final ThreadLocalCursor tl = new ThreadLocalCursor();
@@ -78,6 +80,8 @@ class Logger implements LogRecord, Log {
             Sequence infoSeq,
             RingQueue<LogRecordSink> errorRing,
             Sequence errorSeq,
+            RingQueue<LogRecordSink> criticalRing,
+            Sequence criticalSeq,
             RingQueue<LogRecordSink> advisoryRing,
             Sequence advisorySeq
     ) {
@@ -89,6 +93,8 @@ class Logger implements LogRecord, Log {
         this.infoSeq = infoSeq;
         this.errorRing = errorRing;
         this.errorSeq = errorSeq;
+        this.criticalRing = criticalRing;
+        this.criticalSeq = criticalSeq;
         this.advisoryRing = advisoryRing;
         this.advisorySeq = advisorySeq;
     }
@@ -232,6 +238,11 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord critical() {
+        return addTimestamp(xcritical(), LogLevel.CRITICAL_HEADER);
+    }
+
+    @Override
     public LogRecord info() {
         return addTimestamp(xinfo(), LogLevel.INFO_HEADER);
     }
@@ -244,6 +255,11 @@ class Logger implements LogRecord, Log {
     @Override
     public LogRecord errorW() {
         return addTimestamp(xErrorW(), LogLevel.ERROR_HEADER);
+    }
+
+    @Override
+    public LogRecord criticalW() {
+        return addTimestamp(xCriticalW(), LogLevel.CRITICAL_HEADER);
     }
 
     @Override
@@ -268,6 +284,10 @@ class Logger implements LogRecord, Log {
 
     public LogRecord xerror() {
         return next(errorSeq, errorRing, LogLevel.ERROR);
+    }
+
+    public LogRecord xcritical() {
+        return next(criticalSeq, criticalRing, LogLevel.CRITICAL);
     }
 
     public LogRecord xinfo() {
@@ -303,6 +323,10 @@ class Logger implements LogRecord, Log {
 
     public LogRecord xErrorW() {
         return nextWaiting(infoSeq, infoRing, LogLevel.ERROR);
+    }
+
+    public LogRecord xCriticalW() {
+        return nextWaiting(infoSeq, infoRing, LogLevel.CRITICAL);
     }
 
     private LogRecord addTimestamp(LogRecord rec, String level) {

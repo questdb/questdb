@@ -30,6 +30,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 import java.net.InetAddress;
@@ -38,8 +39,6 @@ import java.util.concurrent.locks.LockSupport;
 import java.util.function.Consumer;
 
 public class LogAlertSocket implements Closeable {
-
-    public static final String NACK = "NACK";
 
     public static final String localHostIp;
 
@@ -51,16 +50,19 @@ public class LogAlertSocket implements Closeable {
         }
     }
 
+    public static final String NACK = "NACK";
     public static final String DEFAULT_HOST = "127.0.0.1";
     public static final int DEFAULT_PORT = 9093;
     public static final int IN_BUFFER_SIZE = 2 * 1024 * 1024;
     public static final int OUT_BUFFER_SIZE = 4 * 1024 * 1024;
     public static final long RECONNECT_DELAY_NANO = 250_000_000; // 1/4th sec
     private static final int HOSTS_LIMIT = 12;
+    private static final char[] CONTENT_LENGTH = {'c', 'o', 'n', 't', 'e', 'n', 't', '-', 'l', 'e', 'n', 'g', 't', 'h'};
 
     private final Log log;
     private final Rnd rand;
     private final NetworkFacade nf;
+    private final StringSink sink = new StringSink();
     private final String[] alertHosts = new String[HOSTS_LIMIT]; // indexed by alertHostIdx < alertHostsCount
     private final int[] alertPorts = new int[HOSTS_LIMIT]; // indexed by alertHostIdx < alertHostsCount
     private final int outBufferSize;
@@ -170,13 +172,15 @@ public class LogAlertSocket implements Closeable {
                         remaining -= n;
                         p += n;
                     } else {
+                        sink.clear();
+                        Chars.utf8Decode(outBufferPtr, outBufferPtr + len, sink);
                         $currentAlertHost(log.info().$("Could not send"))
                                 .$(" [errno=")
                                 .$(nf.errno())
                                 .$(", size=")
                                 .$(n)
                                 .$(", log=")
-                                .$(Chars.stringFromUtf8Bytes(outBufferPtr, len))
+                                .$(sink)
                                 .I$();
                         sendFail = true;
                         // do fail over, could not send
@@ -188,13 +192,13 @@ public class LogAlertSocket implements Closeable {
                     p = inBufferPtr;
                     final int n = nf.recv(fdSocket, p, inBufferSize);
                     if (n > 0) {
+                        sink.clear();
+                        Chars.utf8Decode(inBufferPtr, inBufferPtr + n, sink);
+                        String response = filterHttpHeader(sink);
                         if (ackReceiver != null) {
-                            ackReceiver.accept(Chars.stringFromUtf8Bytes(inBufferPtr, inBufferPtr + n));
+                            ackReceiver.accept(response);
                         } else {
-                            $currentAlertHost(log.info().$("Received"))
-                                    .$(": ")
-                                    .$(Chars.stringFromUtf8Bytes(inBufferPtr, inBufferPtr + n))
-                                    .$();
+                            $currentAlertHost(log.info().$("Received")).$(": ").$(response).$();
                         }
                         break;
                     }
@@ -206,20 +210,20 @@ public class LogAlertSocket implements Closeable {
             freeSocketAndAddress();
             int alertHostIdx = this.alertHostIdx;
             this.alertHostIdx = (this.alertHostIdx + 1) % alertHostsCount;
-            LogRecord logRecord = $alertHost(
+            LogRecord logFailOver = $alertHost(
                     this.alertHostIdx,
                     $alertHost(
                             alertHostIdx,
                             log.info().$("Failing over from")
                     ).$(" to"));
             if (alertHostIdx == this.alertHostIdx) {
-                logRecord.$(" with a delay of ")
+                logFailOver.$(" with a delay of ")
                         .$(reconnectDelay / 1000000)
                         .$(" millis (as it is the same alert manager)")
                         .$();
                 LockSupport.parkNanos(reconnectDelay);
             } else {
-                logRecord.$();
+                logFailOver.$();
             }
             connect();
             sendAttempts--;
@@ -230,9 +234,9 @@ public class LogAlertSocket implements Closeable {
                     .$("None of the configured alert managers are accepting alerts.\n")
                     .$("Giving up sending after ")
                     .$(maxSendAttempts)
-                    .$(" attempts: ")
-                    .$(Chars.stringFromUtf8Bytes(outBufferPtr, len))
-                    .$();
+                    .$(" attempts: [")
+                    .$(Chars.stringFromUtf8Bytes(outBufferPtr, outBufferPtr + len))
+                    .I$();
             if (ackReceiver != null) {
                 ackReceiver.accept(NACK);
             }
@@ -302,6 +306,72 @@ public class LogAlertSocket implements Closeable {
     @VisibleForTesting
     int getDefaultAlertPort() {
         return defaultPort;
+    }
+
+
+    private static boolean isContentLength(CharSequence message, int lo, int hi) {
+        int len = hi - lo;
+        if (len < CONTENT_LENGTH.length) {
+            return false;
+        }
+        for (int i = 0; i < CONTENT_LENGTH.length; i++) {
+            if ((message.charAt(lo + i) | 32) != CONTENT_LENGTH[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @VisibleForTesting
+    static String filterHttpHeader(StringSink message) {
+        final int messageLen = message.length();
+        if (messageLen == 0) {
+            return "";
+        }
+        int contentLength = 0;
+        int lineStart = 0;
+        int colonIdx = -1;
+        boolean headerEndFound = false;
+        for (int i = 0; i < messageLen; i++) {
+            switch (message.charAt(i)) {
+                case ':':
+                    colonIdx = i;
+                    break;
+
+                case '\n':
+                    if (colonIdx != -1) {
+                        if (isContentLength(message, lineStart, colonIdx)) {
+                            int startSize = colonIdx + 1;
+                            int limSize = i - 1;
+                            while (startSize < messageLen && message.charAt(startSize) == ' ') {
+                                startSize++;
+                            }
+                            while (limSize > startSize) {
+                                char c = message.charAt(limSize);
+                                if (c == '\r' || c == ' ') {
+                                    limSize--;
+                                } else {
+                                    break;
+                                }
+                            }
+                            try {
+                                contentLength = Numbers.parseInt(message, startSize, limSize + 1);
+                            } catch (NumericException e) {
+                                return message.toString();
+                            }
+                        }
+                        colonIdx = -1;
+                    } else if (i - lineStart == 1 && message.charAt(i - 1) == '\r') {
+                        lineStart = i + 1;
+                        headerEndFound = true;
+                        break; // for loop
+                    }
+                    lineStart = i + 1;
+                    break;
+            }
+        }
+        boolean wasHttpResponse = headerEndFound && contentLength == messageLen - lineStart;
+        return message.subSequence(wasHttpResponse ? lineStart : 0, messageLen).toString();
     }
 
     private void freeSocketAndAddress() {
