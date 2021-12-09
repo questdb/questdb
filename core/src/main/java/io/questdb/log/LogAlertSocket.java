@@ -325,9 +325,6 @@ public class LogAlertSocket implements Closeable {
     @VisibleForTesting
     static String filterHttpHeader(StringSink message) {
         final int messageLen = message.length();
-        if (messageLen == 0) {
-            return "";
-        }
         int contentLength = 0;
         int lineStart = 0;
         int colonIdx = -1;

@@ -24,15 +24,12 @@
 
 package io.questdb.log;
 
-import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.concurrent.atomic.AtomicBoolean;
-
-import static io.questdb.log.HttpLogRecordSink.CRLF;
 
 class MockAlertTarget extends Thread {
     static final String ACK = "Ack";
@@ -41,12 +38,22 @@ class MockAlertTarget extends Thread {
 
     private final int portNumber;
     private final Runnable onTargetEnd;
-    private final AtomicBoolean isRunning;
+    private volatile boolean breakOnDeathPill;
+    private volatile AtomicBoolean isRunning;
 
     MockAlertTarget(int portNumber, Runnable onTargetEnd) {
+        this(portNumber, true, onTargetEnd);
+    }
+
+    MockAlertTarget(int portNumber, boolean breakOnDeathPill, Runnable onTargetEnd) {
         this.portNumber = portNumber;
+        this.breakOnDeathPill = breakOnDeathPill;
         this.onTargetEnd = onTargetEnd;
         this.isRunning = new AtomicBoolean();
+    }
+
+    void setBreakOnDeathPill(boolean breakOnDeathPill) {
+        this.breakOnDeathPill = breakOnDeathPill;
     }
 
     boolean isRunning() {
@@ -75,17 +82,21 @@ class MockAlertTarget extends Thread {
                 clientSkt.setSoLinger(false, 0);
 
                 // read until end or until death pill is read
-                StringSink inputLine = new StringSink();
-                String line = in.readLine();
-                while (line != null) {
-                    inputLine.put(line).put(CRLF);
-                    if (line.equals(DEATH_PILL)) {
+                while (true) {
+                    String line = in.readLine();
+                    while (line != null) {
+                        if (line.equals(DEATH_PILL)) {
+                            break;
+                        }
+                        line = in.readLine();
+                    }
+                    // send ACK, equivalent to status: ok in http
+                    out.print(ACK);
+                    out.flush();
+                    if (breakOnDeathPill) {
                         break;
                     }
-                    line = in.readLine();
                 }
-                // send ACK, equivalent to status: ok in http
-                out.print(ACK);
             } catch (IOException e) {
                 Assert.fail(e.getMessage());
             } finally {

@@ -164,6 +164,56 @@ public class LogAlertSocketTest {
     }
 
     @Test
+    public void testFailOverSingleHost() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String host = "127.0.0.1";
+            final int port = 1234;
+            try (LogAlertSocket alertSkt = new LogAlertSocket(host + ":" + port, LOG)) {
+                final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
+                        .putHeader(host)
+                        .setMark();
+
+                // start server
+                final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
+                final MockAlertTarget server = new MockAlertTarget(port, () -> {
+                    haltLatch.countDown();
+                });
+                server.setBreakOnDeathPill(false);
+                server.start();
+
+                // connect to server
+                alertSkt.connect();
+
+                // send something
+                alertSkt.send(builder
+                                .rewindToMark()
+                                .put("Something")
+                                .put(CRLF)
+                                .put(MockAlertTarget.DEATH_PILL)
+                                .put(CRLF)
+                                .$(),
+                        ack -> Assert.assertEquals(MockAlertTarget.ACK, ack));
+
+                server.setBreakOnDeathPill(true);
+                builder.clear();
+                alertSkt.send(
+                        builder.put(MockAlertTarget.DEATH_PILL).put(CRLF).$(),
+                        ack -> Assert.assertEquals(MockAlertTarget.ACK, ack)
+                );
+
+                // wait for haltness
+                Assert.assertTrue(haltLatch.await(20_000_000_000L));
+                Assert.assertFalse(server.isRunning());
+
+                // send and fail after a reconnect delay
+                final long start = System.nanoTime();
+                alertSkt.send(builder.length(), ack -> Assert.assertEquals(LogAlertSocket.NACK, ack));
+                Assert.assertTrue(System.nanoTime() - start >= 2 * LogAlertSocket.RECONNECT_DELAY_NANO);
+            }
+        });
+    }
+
+    @Test
     public void testFailOverNoServers() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (LogAlertSocket alertSkt = new LogAlertSocket("localhost:1234,localhost:1243", LOG)) {
