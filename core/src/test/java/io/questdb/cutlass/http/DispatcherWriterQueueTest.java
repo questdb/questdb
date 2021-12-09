@@ -289,7 +289,7 @@ public class DispatcherWriterQueueTest {
                 .withFilesFacade(new FilesFacadeImpl() {
                     @Override
                     public long openRW(LPSZ name) {
-                        if (Chars.endsWith(name, "x/default/s.v")) {
+                        if (Chars.endsWith(name, "x/default/s.v") || Chars.endsWith(name, "x\\default\\s.v")) {
                             try {
                                 Thread.sleep(1000);
                             } catch (InterruptedException e) {
@@ -356,7 +356,7 @@ public class DispatcherWriterQueueTest {
                         barrier.await();
                         if (noWait) {
                             new SendAndReceiveRequestBuilder()
-                                    .withPauseBetweenSendAndReceive(10)
+                                    .withPauseBetweenSendAndReceive(100)
                                     .execute(
                                     "GET /query?query=" + httpAlterQuery + " HTTP/1.1\r\n"
                                             + SendAndReceiveRequestBuilder.RequestHeaders,
