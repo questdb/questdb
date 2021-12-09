@@ -178,7 +178,6 @@ public class LogAlertSocketTest {
                 final MockAlertTarget server = new MockAlertTarget(port, () -> {
                     haltLatch.countDown();
                 });
-                server.setBreakOnDeathPill(false);
                 server.start();
 
                 // connect to server
@@ -193,13 +192,6 @@ public class LogAlertSocketTest {
                                 .put(CRLF)
                                 .$(),
                         ack -> Assert.assertEquals(MockAlertTarget.ACK, ack));
-
-                server.setBreakOnDeathPill(true);
-                builder.clear();
-                alertSkt.send(
-                        builder.put(MockAlertTarget.DEATH_PILL).put(CRLF).$(),
-                        ack -> Assert.assertEquals(MockAlertTarget.ACK, ack)
-                );
 
                 // wait for haltness
                 Assert.assertTrue(haltLatch.await(20_000_000_000L));

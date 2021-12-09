@@ -38,23 +38,14 @@ class MockAlertTarget extends Thread {
 
     private final int portNumber;
     private final Runnable onTargetEnd;
-    private volatile boolean breakOnDeathPill;
-    private volatile AtomicBoolean isRunning;
+    private final AtomicBoolean isRunning;
 
     MockAlertTarget(int portNumber, Runnable onTargetEnd) {
-        this(portNumber, true, onTargetEnd);
-    }
-
-    MockAlertTarget(int portNumber, boolean breakOnDeathPill, Runnable onTargetEnd) {
         this.portNumber = portNumber;
-        this.breakOnDeathPill = breakOnDeathPill;
         this.onTargetEnd = onTargetEnd;
         this.isRunning = new AtomicBoolean();
     }
 
-    void setBreakOnDeathPill(boolean breakOnDeathPill) {
-        this.breakOnDeathPill = breakOnDeathPill;
-    }
 
     boolean isRunning() {
         return isRunning.get();
@@ -82,21 +73,16 @@ class MockAlertTarget extends Thread {
                 clientSkt.setSoLinger(false, 0);
 
                 // read until end or until death pill is read
-                while (true) {
-                    String line = in.readLine();
-                    while (line != null) {
-                        if (line.equals(DEATH_PILL)) {
-                            break;
-                        }
-                        line = in.readLine();
-                    }
-                    // send ACK, equivalent to status: ok in http
-                    out.print(ACK);
-                    out.flush();
-                    if (breakOnDeathPill) {
+                String line = in.readLine();
+                while (line != null) {
+                    if (line.equals(DEATH_PILL)) {
                         break;
                     }
+                    line = in.readLine();
                 }
+                // send ACK, equivalent to status: ok in http
+                out.print(ACK);
+                out.flush();
             } catch (IOException e) {
                 Assert.fail(e.getMessage());
             } finally {
