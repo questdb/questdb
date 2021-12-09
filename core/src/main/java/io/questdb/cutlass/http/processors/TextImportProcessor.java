@@ -84,14 +84,13 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     @Override
-    public void onChunk(long lo, long hi, boolean expectMore)
+    public void onChunk(long lo, long hi)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         if (hi > lo) {
             try {
-                transientState.expectMore = expectMore;
                 transientState.lo = lo;
                 transientState.hi = hi;
-                transientState.textLoader.parse(lo, hi, expectMore, transientContext.getCairoSecurityContext());
+                transientState.textLoader.parse(lo, hi, transientContext.getCairoSecurityContext());
                 if (transientState.messagePart == MESSAGE_DATA && !transientState.analysed) {
                     transientState.analysed = true;
                     transientState.textLoader.setState(TextLoader.LOAD_DATA);
@@ -170,6 +169,10 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
             transientState.textLoader.setForceHeaders(Chars.equalsNc("true", rh.getUrlParam("forceHeader")));
             transientState.textLoader.setSkipRowsWithExtraValues(Chars.equalsNc("true", rh.getUrlParam("skipLev")));
+            CharSequence delimiter = rh.getUrlParam("delimiter");
+            if (delimiter != null && delimiter.length() == 1) {
+                transientState.textLoader.configureColumnDelimiter((byte) delimiter.charAt(0));
+            }
             transientState.textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
 
             transientState.forceHeader = Chars.equalsNc("true", rh.getUrlParam("forceHeader"));
@@ -234,7 +237,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         this.transientContext = context;
         this.transientState = LV.get(context);
-        onChunk(transientState.lo, transientState.hi, transientState.expectMore);
+        onChunk(transientState.lo, transientState.hi);
     }
 
     @Override

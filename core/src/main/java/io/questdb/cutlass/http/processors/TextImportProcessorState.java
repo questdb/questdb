@@ -42,7 +42,6 @@ class TextImportProcessorState implements Mutable, Closeable {
     long lo;
     String stateMessage;
     boolean analysed = false;
-    boolean expectMore = true;
     int messagePart = TextImportProcessor.MESSAGE_UNKNOWN;
     int responseState = TextImportProcessor.RESPONSE_PREFIX;
     boolean forceHeader = false;
@@ -60,7 +59,6 @@ class TextImportProcessorState implements Mutable, Closeable {
         columnIndex = 0;
         messagePart = TextImportProcessor.MESSAGE_UNKNOWN;
         analysed = false;
-        expectMore = true;
         state = STATE_OK;
         textLoader.clear();
         errorMessage = null;

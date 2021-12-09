@@ -1662,12 +1662,12 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSingleLineNothingExpectMore() throws Exception {
+    public void testSingleRowImport() throws Exception {
         assertNoLeak(textLoader -> {
-            String text = "test,test,test\n";
+            String text = "value1,value2,value3\n";
             configureLoaderDefaults(textLoader);
             try {
-                playText0(textLoader, text, 512, ENTITY_MANIPULATOR, true);
+                playText0(textLoader, text, 512, ENTITY_MANIPULATOR);
             } catch (NotEnoughLinesException e) {
                 return;
             }
@@ -1676,15 +1676,11 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSingleLineNothingMoreExpected() throws Exception {
+    public void testSingleRowImportWithSpecifiedDelimiter() throws Exception {
         assertNoLeak(textLoader -> {
-            String text = "test,test,test\n";
-            configureLoaderDefaults(textLoader);
-            try {
-                playText0(textLoader, text, 512, ENTITY_MANIPULATOR, false);
-            } catch (NotEnoughLinesException e) {
-                Assert.fail();
-            }
+            String text = "value1,value2,value3\n";
+            configureLoaderDefaults(textLoader, (byte) ',');
+            playText0(textLoader, text, 512, ENTITY_MANIPULATOR);
         });
     }
 
@@ -2947,10 +2943,6 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     private static void playText0(TextLoader textLoader, String text, int firstBufSize, ByteManipulator manipulator) throws TextException {
-        playText0(textLoader, text, firstBufSize, manipulator, true);
-    }
-
-    private static void playText0(TextLoader textLoader, String text, int firstBufSize, ByteManipulator manipulator, boolean expectMore) throws TextException {
         byte[] bytes = text.getBytes(Files.UTF_8);
         int len = bytes.length;
         long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
@@ -2961,15 +2953,15 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
 
             if (firstBufSize < len) {
-                textLoader.parse(buf, buf + firstBufSize, expectMore, AllowAllCairoSecurityContext.INSTANCE);
+                textLoader.parse(buf, buf + firstBufSize, AllowAllCairoSecurityContext.INSTANCE);
                 textLoader.setState(TextLoader.LOAD_DATA);
 
                 for (int i = firstBufSize; i < len; i++) {
                     Unsafe.getUnsafe().putByte(smallBuf, Unsafe.getUnsafe().getByte(buf + i));
-                    textLoader.parse(smallBuf, smallBuf + 1, expectMore, AllowAllCairoSecurityContext.INSTANCE);
+                    textLoader.parse(smallBuf, smallBuf + 1, AllowAllCairoSecurityContext.INSTANCE);
                 }
             } else {
-                textLoader.parse(buf, buf + len, expectMore, AllowAllCairoSecurityContext.INSTANCE);
+                textLoader.parse(buf, buf + len, AllowAllCairoSecurityContext.INSTANCE);
             }
             textLoader.wrapUp();
         } finally {
@@ -3243,7 +3235,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
             for (int i = 0; i < len; i++) {
                 Unsafe.getUnsafe().putByte(smallBuf, Unsafe.getUnsafe().getByte(buf + i));
-                textLoader.parse(smallBuf, smallBuf + 1, true, AllowAllCairoSecurityContext.INSTANCE);
+                textLoader.parse(smallBuf, smallBuf + 1, AllowAllCairoSecurityContext.INSTANCE);
             }
             textLoader.wrapUp();
         } finally {

@@ -1684,7 +1684,7 @@ public class SqlCompiler implements Closeable {
                     if (n > 0) {
                         textLoader.setForceHeaders(model.isHeader());
                         textLoader.setSkipRowsWithExtraValues(false);
-                        textLoader.parse(buf, buf + n, true, executionContext.getCairoSecurityContext());
+                        textLoader.parse(buf, buf + n, executionContext.getCairoSecurityContext());
                         textLoader.setState(TextLoader.LOAD_DATA);
                         int read;
                         while (n < fileLen) {
@@ -1692,7 +1692,7 @@ public class SqlCompiler implements Closeable {
                             if (read < 1) {
                                 throw SqlException.$(model.getFileName().position, "could not read file [errno=").put(ff.errno()).put(']');
                             }
-                            textLoader.parse(buf, buf + read, true, executionContext.getCairoSecurityContext());
+                            textLoader.parse(buf, buf + read, executionContext.getCairoSecurityContext());
                             n += read;
                         }
                         textLoader.wrapUp();

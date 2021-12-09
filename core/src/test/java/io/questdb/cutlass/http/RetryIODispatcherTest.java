@@ -132,47 +132,6 @@ public class RetryIODispatcherTest {
             "\r\n" +
             "00\r\n" +
             "\r\n";
-
-    private final String ValidSingleRowImportRequest = "POST /upload HTTP/1.1\r\n" +
-            "Host: localhost:9001\r\n" +
-            "User-Agent: curl/7.64.0\r\n" +
-            "Accept: */*\r\n" +
-            "Content-Length: 252\r\n" +
-            "Content-Type: multipart/form-data; boundary=------------------------af41c30bab413e07\r\n" +
-            "Expect: 100-continue\r\n" +
-            "\r\n" +
-            "--------------------------af41c30bab413e07\r\n" +
-            "Content-Disposition: form-data; name=\"data\"; filename=\"test.csv\"\r\n" +
-            "Content-Type: application/octet-stream\r\n" +
-            "\r\n" +
-            "test,test,test,1.52E+18,2018-01-12T19:28:48.127800Z\r\n" +
-            "\r\n" +
-            "--------------------------af41c30bab413e07--";
-    private final String ValidSingleRowImportResponse = "HTTP/1.1 200 OK\r\n" +
-            "Server: questDB/1.0\r\n" +
-            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-            "Transfer-Encoding: chunked\r\n" +
-            "Content-Type: text/plain; charset=utf-8\r\n" +
-            "\r\n" +
-            "0666\r\n" +
-            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-            "|      Location:  |                                          test.csv  |        Pattern  | Locale  |      Errors  |\r\n" +
-            "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
-            "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
-            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-            "|   Rows handled  |                                                 1  |                 |         |              |\r\n" +
-            "|  Rows imported  |                                                 1  |                 |         |              |\r\n" +
-            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-            "|              0  |                                                f0  |                   STRING  |           0  |\r\n" +
-            "|              1  |                                                f1  |                   STRING  |           0  |\r\n" +
-            "|              2  |                                                f2  |                   STRING  |           0  |\r\n" +
-            "|              3  |                                                f3  |                   STRING  |           0  |\r\n" +
-            "|              4  |                                                f4  |                TIMESTAMP  |           0  |\r\n" +
-            "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-            "\r\n" +
-            "00\r\n" +
-            "\r\n";
-
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
 
@@ -215,18 +174,6 @@ public class RetryIODispatcherTest {
                             ),
                     500, ValidImportRequest, ValidImportResponse
                     , true, false);
-            temp.delete();
-            temp.create();
-        }
-    }
-
-    @Test
-    public void testSingleRowImportWhenReceiveBufferIsSmallAndSenderSlow() throws Exception {
-        for (int i = 0; i < 5; i++) {
-            System.out.println("*************************************************************************************");
-            System.out.println("**************************         Run " + i + "            ********************************");
-            System.out.println("*************************************************************************************");
-            testSingleImportWaitsWhenWriterLocked();
             temp.delete();
             temp.create();
         }
@@ -659,68 +606,6 @@ public class RetryIODispatcherTest {
                                     "00\r\n" +
                                     "\r\n");
 
-                });
-    }
-
-    public void testSingleImportWaitsWhenWriterLocked() throws Exception {
-        final int slowServerReceiveNetAfterSending = 200;
-        final int parallelCount = 2;
-        new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withWorkerCount(parallelCount)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withReceiveBufferSize(256))
-                .withTelemetry(false)
-                .run(engine -> {
-                    // create table and do 1 import
-                    new SendAndReceiveRequestBuilder().execute(ValidSingleRowImportRequest, ValidSingleRowImportResponse);
-
-                    TableWriter writer = lockWriter(engine, "test.csv");
-                    final int validRequestRecordCount = 1;
-                    final int insertCount = 1;
-                    CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
-                    AtomicInteger successRequests = new AtomicInteger();
-                    for (int i = 0; i < parallelCount; i++) {
-                        int finalI = i;
-                        new Thread(() -> {
-                            try {
-                                for (int r = 0; r < insertCount; r++) {
-                                    // insert one record
-                                    try {
-                                        SendAndReceiveRequestBuilder sendAndReceiveRequestBuilder = new SendAndReceiveRequestBuilder()
-                                                .withNetworkFacade(getSendDelayNetworkFacade(slowServerReceiveNetAfterSending))
-                                                .withCompareLength(ValidSingleRowImportResponse.length());
-                                        sendAndReceiveRequestBuilder
-                                                .execute(ValidSingleRowImportRequest, ValidSingleRowImportResponse);
-                                        successRequests.incrementAndGet();
-                                    } catch (AssertionError e) {
-                                        LOG.info().$("Failed execute insert http request. Comparison failed").$();
-                                    } catch (Exception e) {
-                                        LOG.error().$("Failed execute insert http request.").$(e).$();
-                                    }
-                                }
-                            } finally {
-                                countDownLatch.countDown();
-                            }
-                            LOG.info().$("Stopped thread ").$(finalI).$();
-                        }).start();
-                    }
-
-                    Os.sleep(100);
-                    writer.close();
-
-                    if (!countDownLatch.await(50000, TimeUnit.MILLISECONDS)) {
-                        Assert.fail("Imports did not finish within reasonable time");
-                    }
-
-                    // check if we have parallelCount x insertCount  records
-                    LOG.info().$("Requesting row count").$();
-                    int rowsExpected = (successRequests.get() + 1) * validRequestRecordCount;
-                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                            "GET /query?query=select+count(*)+from+%22test.csv%22&count=true HTTP/1.1\r\n",
-                            "72\r\n" +
-                                    "{\"query\":\"select count(*) from \\\"test.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + rowsExpected + "]],\"count\":1}\r\n" +
-                                    "00\r\n" +
-                                    "\r\n");
                 });
     }
 

@@ -1002,7 +1002,7 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testImportSingleRow() throws Exception {
+    public void testImportSingleRowWithConfiguredDelimiter() throws Exception {
         testImport(
                 "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
@@ -1028,7 +1028,7 @@ public class IODispatcherTest {
                         "\r\n" +
                         "00\r\n" +
                         "\r\n",
-                "POST /upload HTTP/1.1\r\n" +
+                "POST /upload?delimiter=%2C HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
                         "User-Agent: curl/7.64.0\r\n" +
                         "Accept: */*\r\n" +

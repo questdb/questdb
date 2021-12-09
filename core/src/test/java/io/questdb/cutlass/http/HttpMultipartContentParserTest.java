@@ -297,7 +297,7 @@ public class HttpMultipartContentParserTest {
         }
 
         @Override
-        public void onChunk(long lo, long hi, boolean expectMore) {
+        public void onChunk(long lo, long hi) {
             onChunkCount++;
             for (long p = lo; p < hi; p++) {
                 sink.put((char) Unsafe.getUnsafe().getByte(p));
