@@ -24,40 +24,17 @@
 
 package io.questdb.cutlass.line.tcp;
 
-public class AggressiveRecvLineTcpConnectionContext extends LineTcpConnectionContext {
+import io.questdb.mp.Job;
+import io.questdb.std.ObjList;
 
-    private final int aggressiveReadRetryCount;
+interface NetworkIOJob extends Job {
+    void addTableUpdateDetails(String tableNameUtf8, TableUpdateDetails tableUpdateDetails);
 
-    AggressiveRecvLineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler) {
-        super(configuration, scheduler);
-        this.aggressiveReadRetryCount = configuration.getAggressiveReadRetryCount();
-    }
+    void close();
 
-    @Override
-    IOContextResult handleIO(NetworkIOJob netIoJob) {
-        IOContextResult rc;
-        read();
-        do {
-            rc = parseMeasurements(netIoJob);
-        } while (rc == IOContextResult.NEEDS_READ && read());
-        return rc;
-    }
+    TableUpdateDetails getLocalTableDetails(CharSequence tableName);
 
-    @Override
-    protected boolean read() {
-        if (super.read()) {
-            return true;
-        }
+    ObjList<SymbolCache> getUnusedSymbolCaches();
 
-        int remaining = aggressiveReadRetryCount;
-
-        while (remaining > 0) {
-            if (super.read()) {
-                return true;
-            }
-            remaining--;
-        }
-
-        return false;
-    }
+    int getWorkerId();
 }

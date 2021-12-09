@@ -48,12 +48,12 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     static final Log LOG = LogFactory.getLog(BaseLineTcpContextTest.class);
     static final int FD = 1_000_000;
     protected final AtomicInteger netMsgBufferSize = new AtomicInteger();
-    protected final LineTcpMeasurementScheduler.NetworkIOJob NO_NETWORK_IO_JOB = new LineTcpMeasurementScheduler.NetworkIOJob() {
-        private final CharSequenceObjHashMap<LineTcpMeasurementScheduler.TableUpdateDetails> localTableUpdateDetailsByTableName = new CharSequenceObjHashMap<>();
+    protected final NetworkIOJob NO_NETWORK_IO_JOB = new NetworkIOJob() {
+        private final CharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new CharSequenceObjHashMap<>();
         private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
 
         @Override
-        public void addTableUpdateDetails(String tableNameUtf8, LineTcpMeasurementScheduler.TableUpdateDetails tableUpdateDetails) {
+        public void addTableUpdateDetails(String tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
             localTableUpdateDetailsByTableName.put(tableNameUtf8, tableUpdateDetails);
         }
 
@@ -62,7 +62,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
 
         @Override
-        public LineTcpMeasurementScheduler.TableUpdateDetails getLocalTableDetails(CharSequence tableName) {
+        public TableUpdateDetails getLocalTableDetails(CharSequence tableName) {
             return localTableUpdateDetailsByTableName.get(tableName);
         }
 
@@ -262,11 +262,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            boolean tryButCouldNotCommit(NetworkIOJob netIoJob, LineTcpParser protoParser, FloatingDirectCharSink charSink) {
+            boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser, FloatingDirectCharSink floatingDirectCharSink) {
                 if (null != onCommitNewEvent) {
                     onCommitNewEvent.run();
                 }
-                return super.tryButCouldNotCommit(netIoJob, protoParser, charSink);
+                return super.scheduleEvent(netIoJob, parser, floatingDirectCharSink);
             }
         };
         if (authDb == null) {

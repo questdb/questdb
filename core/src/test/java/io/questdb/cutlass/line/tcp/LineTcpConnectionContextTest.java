@@ -1689,7 +1689,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                 } while (recvBuffer.length() > 0);
             }
             waitForIOCompletion();
-            rebalanceNLoadCheckCycles = scheduler.getNLoadCheckCycles();
+            rebalanceNLoadCheckCycles = scheduler.getLoadCheckCycles();
             rebalanceNRebalances = scheduler.getReshuffleCount();
             rebalanceLoadByThread = scheduler.getLoadByWriterThread();
             closeContext();
