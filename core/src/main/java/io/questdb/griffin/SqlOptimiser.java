@@ -1706,7 +1706,7 @@ class SqlOptimiser {
                     tempList.clear();
                     for (int j = 0; j < literalCollectorAIndexes.size(); j++) {
                         int tableExpressionReference = literalCollectorAIndexes.get(j);
-                        int position = tempList.binarySearch(tableExpressionReference);
+                        int position = tempList.binarySearchUniqueList(tableExpressionReference);
                         if (position < 0) {
                             tempList.insert(-(position + 1), tableExpressionReference);
                         }
