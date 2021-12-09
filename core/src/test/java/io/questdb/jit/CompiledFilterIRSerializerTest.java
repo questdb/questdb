@@ -31,6 +31,7 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.BaseFunctionFactoryTest;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
@@ -50,6 +51,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
     private static TableReader reader;
     private static RecordMetadata metadata;
+    private static IntList columnIndexes;
     private static MemoryCARW irMemory;
     private static CompiledFilterIRSerializer serializer;
 
@@ -87,6 +89,10 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
         reader = new TableReader(configuration, "x");
         metadata = reader.getMetadata();
+        columnIndexes = new IntList();
+        for (int i = 0; i < reader.getMetadata().getColumnCount(); i++) {
+            columnIndexes.add(i);
+        }
         irMemory = Vm.getCARWInstance(1024, 1, MemoryTag.NATIVE_DEFAULT);
         serializer = new CompiledFilterIRSerializer();
     }
@@ -548,7 +554,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
     private int serialize(CharSequence seq, boolean scalar, boolean debug) throws SqlException {
         ExpressionNode node = expr(seq);
-        return serializer.of(irMemory, metadata, reader).serialize(node, scalar, debug);
+        return serializer.of(irMemory, metadata, reader, columnIndexes).serialize(node, scalar, debug);
     }
 
     private void assertIR(String message, String expectedIR) {

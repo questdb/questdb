@@ -733,10 +733,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         model.getTableId(),
                         model.getTableVersion())
                 ) {
-                    final boolean forceScalar = executionContext.getJitMode() == SqlExecutionContext.JIT_MODE_FORCE_SCALAR;
-                    final boolean debugJit = LOG.isDebugEnabled();
-                    jitIRSerializer.of(jitIRMem, factory.getMetadata(), reader);
-                    int jitOptions = jitIRSerializer.serialize(filter, forceScalar, debugJit);
                     // Restore column indexes from the base factory. We have to use table reader's
                     // metadata, since factory's metadata is always a GenericRecordMetadata.
                     final IntList columnIndexes = new IntList();
@@ -746,7 +742,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         int columnIndex = readerMetadata.getColumnIndexQuiet(factory.getMetadata().getColumnName(i));
                         columnIndexes.add(columnIndex);
                     }
-                    // Try to compile the filter.
+                    // Serialize IR and try to compile the filter.
+                    final boolean forceScalar = executionContext.getJitMode() == SqlExecutionContext.JIT_MODE_FORCE_SCALAR;
+                    final boolean debugJit = LOG.isDebugEnabled();
+                    jitIRSerializer.of(jitIRMem, factory.getMetadata(), reader, columnIndexes);
+                    int jitOptions = jitIRSerializer.serialize(filter, forceScalar, debugJit);
                     final CompiledFilter jitFilter = new CompiledFilter();
                     jitFilter.compile(jitIRMem, jitOptions);
                     LOG.info()

@@ -95,11 +95,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private MemoryCARW memory;
     private RecordMetadata metadata;
     private TableReader tableReader;
+    private IntList columnIndexes;
 
-    public CompiledFilterIRSerializer of(MemoryCARW memory, RecordMetadata metadata, TableReader tableReader) {
+    public CompiledFilterIRSerializer of(MemoryCARW memory, RecordMetadata metadata, TableReader tableReader, IntList columnIndexes) {
         this.memory = memory;
         this.metadata = metadata;
         this.tableReader = tableReader;
+        this.columnIndexes = columnIndexes;
         return this;
     }
 
@@ -147,6 +149,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         memory = null;
         metadata = null;
         tableReader = null;
+        columnIndexes = null;
         arithmeticContext.clear();
         backfillNodes.clear();
     }
@@ -728,7 +731,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 globalTypesObserver.observe(code);
 
                 if (ExpressionType.SYMBOL == expressionType) {
-                    symbolMapReader = tableReader.getSymbolMapReader(index);
+                    symbolMapReader = tableReader.getSymbolMapReader(columnIndexes.getQuick(index));
                 }
             }
 
