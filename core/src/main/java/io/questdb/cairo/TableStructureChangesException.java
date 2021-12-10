@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2022 QuestDB
+ *  Copyright (c) 2019-2020 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,32 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http;
+package io.questdb.cairo;
 
-import java.io.Closeable;
+public class TableStructureChangesException extends Exception {
+    public static final TableStructureChangesException INSTANCE = new TableStructureChangesException();
 
-public interface Retry extends Closeable {
-    /**
-     * Notify client that re-run failed
-     *
-     * @param selector processor selector
-     * @param e        exception information
-     */
-    void fail(HttpRequestProcessorSelector selector, HttpException e);
-
-    /**
-     * Provides retry information
-     *
-     * @return retry attributes
-     */
-    RetryAttemptAttributes getAttemptDetails();
-
-    /**
-     * Retries context that could not acquire resource during regular execution.
-     *
-     * @param selector          processor selector
-     * @param rescheduleContext context to be retried
-     * @return success indicator
-     */
-    boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext);
+    private TableStructureChangesException() {
+    }
 }

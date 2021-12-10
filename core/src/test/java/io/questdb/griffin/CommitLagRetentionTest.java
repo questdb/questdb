@@ -34,7 +34,7 @@ public class CommitLagRetentionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             createTable();
             assertCommitLagValues();
-            compiler.compile("alter table my_table rename column x to y", sqlExecutionContext);
+            compile("alter table my_table rename column x to y", sqlExecutionContext);
             assertCommitLagValues();
         });
     }
@@ -44,7 +44,7 @@ public class CommitLagRetentionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             createTable();
             assertCommitLagValues();
-            compiler.compile("alter table my_table add column y symbol", sqlExecutionContext);
+            compile("alter table my_table add column y symbol", sqlExecutionContext);
             assertCommitLagValues();
         });
     }
@@ -54,7 +54,7 @@ public class CommitLagRetentionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             createTable();
             assertCommitLagValues();
-            compiler.compile("alter table my_table drop column x", sqlExecutionContext);
+            compile("alter table my_table drop column x", sqlExecutionContext);
             assertCommitLagValues();
         });
     }
@@ -64,7 +64,7 @@ public class CommitLagRetentionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             createTable();
             assertCommitLagValues();
-            compiler.compile("ALTER TABLE my_table ALTER COLUMN s ADD INDEX", sqlExecutionContext);
+            compile("alter TABLE my_table ALTER COLUMN s ADD INDEX", sqlExecutionContext);
             assertCommitLagValues();
         });
     }
@@ -75,7 +75,7 @@ public class CommitLagRetentionTest extends AbstractGriffinTest {
             createTable();
             assertCommitLagValues();
             executeInsert("insert into my_table values(0, 1000, 'a')");
-            compiler.compile("ALTER TABLE my_table ALTER COLUMN s ADD INDEX", sqlExecutionContext);
+            compile("alter TABLE my_table ALTER COLUMN s ADD INDEX", sqlExecutionContext);
             assertCommitLagValues();
         });
     }
@@ -88,7 +88,7 @@ public class CommitLagRetentionTest extends AbstractGriffinTest {
             executeInsert("insert into my_table values(to_timestamp('1970-01-01', 'yyyy-dd-MM'), 2000, 'a')");
             executeInsert("insert into my_table values(to_timestamp('1970-01-02', 'yyyy-dd-MM'), 2000, 'a')");
             assertCommitLagValues();
-            compiler.compile("ALTER TABLE my_table DROP PARTITION LIST '1970-01-01'", sqlExecutionContext);
+            compile("alter TABLE my_table DROP PARTITION LIST '1970-01-01'", sqlExecutionContext);
             assertCommitLagValues();
         });
     }
