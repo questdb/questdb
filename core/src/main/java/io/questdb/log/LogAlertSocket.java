@@ -61,9 +61,9 @@ public class LogAlertSocket implements Closeable {
     private final Log log;
     private final Rnd rand;
     private final NetworkFacade nf;
-    private final StringSink sink = new StringSink();
     private final String[] alertHosts = new String[HOSTS_LIMIT]; // indexed by alertHostIdx < alertHostsCount
     private final int[] alertPorts = new int[HOSTS_LIMIT]; // indexed by alertHostIdx < alertHostsCount
+    private final StringSink receiveDecodeSink = new StringSink();
     private final int outBufferSize;
     private final int inBufferSize;
     private final long reconnectDelay;
@@ -153,7 +153,7 @@ public class LogAlertSocket implements Closeable {
         return send(len, null);
     }
 
-    public boolean send(int len, Consumer<String> ackReceiver) {
+    public boolean send(int len, Consumer<CharSequence> ackReceiver) {
         if (len < 1) {
             return false;
         }
@@ -171,15 +171,13 @@ public class LogAlertSocket implements Closeable {
                         remaining -= n;
                         p += n;
                     } else {
-                        sink.clear();
-                        Chars.utf8Decode(outBufferPtr, outBufferPtr + len, sink);
                         $currentAlertHost(log.info().$("Could not send"))
                                 .$(" [errno=")
                                 .$(nf.errno())
                                 .$(", size=")
                                 .$(n)
                                 .$(", log=")
-                                .$(sink)
+                                .$utf8(outBufferPtr, outBufferPtr + len)
                                 .I$();
                         sendFail = true;
                         // do fail over, could not send
@@ -191,9 +189,9 @@ public class LogAlertSocket implements Closeable {
                     p = inBufferPtr;
                     final int n = nf.recv(fdSocket, p, inBufferSize);
                     if (n > 0) {
-                        sink.clear();
-                        Chars.utf8Decode(inBufferPtr, inBufferPtr + n, sink);
-                        String response = filterHttpHeader(sink);
+                        receiveDecodeSink.clear();
+                        Chars.utf8Decode(inBufferPtr, inBufferPtr + n, receiveDecodeSink);
+                        CharSequence response = filterHttpHeader(receiveDecodeSink);
                         if (ackReceiver != null) {
                             ackReceiver.accept(response);
                         } else {
@@ -234,7 +232,7 @@ public class LogAlertSocket implements Closeable {
                     .$("Giving up sending after ")
                     .$(maxSendAttempts)
                     .$(" attempts: [")
-                    .$(Chars.stringFromUtf8Bytes(outBufferPtr, outBufferPtr + len))
+                    .$utf8(outBufferPtr, outBufferPtr + len)
                     .I$();
             if (ackReceiver != null) {
                 ackReceiver.accept(NACK);
@@ -308,7 +306,7 @@ public class LogAlertSocket implements Closeable {
     }
 
     @TestOnly
-    static String filterHttpHeader(StringSink message) {
+    static CharSequence filterHttpHeader(StringSink message) {
         final int messageLen = message.length();
         int contentLength = 0;
         int lineStart = 0;
@@ -355,7 +353,7 @@ public class LogAlertSocket implements Closeable {
             }
         }
         boolean wasHttpResponse = headerEndFound && contentLength == messageLen - lineStart;
-        return message.subSequence(wasHttpResponse ? lineStart : 0, messageLen).toString();
+        return wasHttpResponse ? message.subSequence(lineStart, messageLen) : message;
     }
 
     private static boolean isContentLength(CharSequence tok, int lo, int hi) {

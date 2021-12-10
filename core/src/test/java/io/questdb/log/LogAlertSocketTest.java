@@ -191,7 +191,7 @@ public class LogAlertSocketTest {
                                 .put(MockAlertTarget.DEATH_PILL)
                                 .put(CRLF)
                                 .$(),
-                        ack -> Assert.assertEquals(MockAlertTarget.ACK, ack));
+                        ack -> TestUtils.assertEquals(MockAlertTarget.ACK, ack));
 
                 // wait for haltness
                 Assert.assertTrue(haltLatch.await(20_000_000_000L));
@@ -199,7 +199,7 @@ public class LogAlertSocketTest {
 
                 // send and fail after a reconnect delay
                 final long start = System.nanoTime();
-                alertSkt.send(builder.length(), ack -> Assert.assertEquals(LogAlertSocket.NACK, ack));
+                alertSkt.send(builder.length(), ack -> TestUtils.assertEquals(LogAlertSocket.NACK, ack));
                 Assert.assertTrue(System.nanoTime() - start >= 2 * LogAlertSocket.RECONNECT_DELAY_NANO);
             }
         });
