@@ -33,7 +33,10 @@ import io.questdb.griffin.update.InplaceUpdateExecution;
 import io.questdb.griffin.update.UpdateStatement;
 import io.questdb.std.Misc;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
 
 public class UpdateBasicTest extends AbstractGriffinTest {
     private InplaceUpdateExecution inplaceUpdate;
@@ -408,8 +411,8 @@ public class UpdateBasicTest extends AbstractGriffinTest {
                     " timestamp(ts) partition by DAY", sqlExecutionContext);
 
             // Bump table version
-            compiler.compile("alter table up add column y long", sqlExecutionContext);
-            compiler.compile("alter table up drop column y", sqlExecutionContext);
+            compile("alter table up add column y long", sqlExecutionContext);
+            compile("alter table up drop column y", sqlExecutionContext);
 
             executeUpdate("UPDATE up SET x = 1");
 
@@ -432,8 +435,8 @@ public class UpdateBasicTest extends AbstractGriffinTest {
                     " timestamp(ts) partition by DAY", sqlExecutionContext);
 
             // Bump table version
-            compiler.compile("alter table up add column y long", sqlExecutionContext);
-            compiler.compile("alter table up drop column y", sqlExecutionContext);
+            compile("alter table up add column y long", sqlExecutionContext);
+            compile("alter table up drop column y", sqlExecutionContext);
 
             executeUpdate("UPDATE up SET x = 1");
 
@@ -456,8 +459,8 @@ public class UpdateBasicTest extends AbstractGriffinTest {
 
             try (UpdateStatement updateStatement = cc.getUpdateStatement()) {
                 // Bump table version
-                compiler.compile("alter table up add column y long", sqlExecutionContext);
-                compiler.compile("alter table up drop column y", sqlExecutionContext);
+                compile("alter table up add column y long", sqlExecutionContext);
+                compile("alter table up drop column y", sqlExecutionContext);
 
                 applyUpdate(updateStatement);
                 Assert.fail();
