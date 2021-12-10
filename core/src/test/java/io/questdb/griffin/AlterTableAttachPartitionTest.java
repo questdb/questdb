@@ -144,6 +144,86 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAttachFailsInvalidFormatPartitionsAnnually() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel dst = new TableModel(configuration, "dst", PartitionBy.YEAR)) {
+
+                CairoTestUtils.create(dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+
+                String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '2020-01-01'";
+                try {
+                    compile(alterCommand, sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals("[38] 'YYYY' expected[errno=0]", e.getMessage());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachFailsInvalidFormatPartitionsMonthly() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel dst = new TableModel(configuration, "dst", PartitionBy.MONTH)) {
+
+                CairoTestUtils.create(dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+
+                String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '2020-01-01'";
+                try {
+                    compile(alterCommand, sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals("[38] 'YYYY-MM' expected[errno=0]", e.getMessage());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachFailsInvalidFormat() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel dst = new TableModel(configuration, "dst", PartitionBy.MONTH)) {
+
+                CairoTestUtils.create(dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+
+                String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '202A-01'";
+                try {
+                    compile(alterCommand, sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals("[38] 'YYYY-MM' expected[errno=0]", e.getMessage());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachFailsInvalidSepartorFormat() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel dst = new TableModel(configuration, "dst", PartitionBy.MONTH)) {
+
+                CairoTestUtils.create(dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+
+                String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '2020-01'.'2020-02'";
+                try {
+                    compile(alterCommand, sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals("[47] ',' expected", e.getMessage());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAttachMissingPartition() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY)) {
@@ -153,10 +233,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                 String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '2020-01-01'";
                 try {
-                    compiler.compile(alterCommand, sqlExecutionContext);
+                    compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals("[38] attach partition failed, folder '2020-01-01' does not exist", e.getMessage());
+                    Assert.assertEquals("[23] attach partition failed, folder '2020-01-01' does not exist", e.getMessage());
                 }
             }
         });
@@ -173,10 +253,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '2020-01-01'";
 
                 try {
-                    compiler.compile(alterCommand, sqlExecutionContext);
+                    compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals("[38] attach partition failed, folder '2020-01-01' does not exist", e.getMessage());
+                    Assert.assertEquals("[23] attach partition failed, folder '2020-01-01' does not exist", e.getMessage());
                 }
             }
         });
@@ -203,10 +283,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 copyPartitionToBackup(src.getName(), "2020-01-01", dst.getName(), "2020-01-02");
                 try {
                     String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '2020-01-02'";
-                    compiler.compile(alterCommand, sqlExecutionContext);
+                    compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (io.questdb.griffin.SqlException e) {
-                    TestUtils.assertEquals("[38] failed to attach partition '2020-01-02', data does not correspond to the partition folder or partition is empty", e.getMessage());
+                    TestUtils.assertContains(e.getMessage(), "failed to attach partition '2020-01-02', data does not correspond to the partition folder or partition is empty");
                 }
             }
         });
@@ -310,7 +390,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     copyAttachPartition(src, dst, 0, "2020-01-09");
                     Assert.fail();
                 } catch (SqlException e) {
-                    TestUtils.assertEquals("[38] table is not partitioned[errno=0]", e.getMessage());
+                    TestUtils.assertEquals("[23] table is not partitioned", e.getMessage());
                 }
             }
         });
@@ -383,7 +463,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     copyAttachPartition(src, dst, 0, "2020-01-09");
                     Assert.fail();
                 } catch (SqlException e) {
-                    TestUtils.assertEquals("[38] attaching partitions to tables with symbol columns not supported", e.getMessage());
+                    TestUtils.assertEquals("[23] attaching partitions to tables with symbol columns not supported", e.getMessage());
                 }
             }
         });
@@ -412,10 +492,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '2020-01-09'";
 
                 try {
-                    compiler.compile(alterCommand, sqlExecutionContext);
+                    compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals("[38] failed to attach partition '2020-01-09', partition already attached to the table", e.getMessage());
+                    Assert.assertEquals("[23] failed to attach partition '2020-01-09', partition already attached to the table", e.getMessage());
                 }
             }
         });
@@ -462,7 +542,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "table 'dst' could not be altered: [", "]: could not open");
+        testSqlFailedOnFsOperation(ff, "table 'dst' could not be altered: [", "] could not open");
     }
 
     @Test
@@ -478,7 +558,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "table 'dst' could not be altered: [0]: Doesn't exist:");
+        testSqlFailedOnFsOperation(ff, "table 'dst' could not be altered: [0] Doesn't exist:");
     }
 
     @Test
@@ -494,7 +574,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "table 'dst' could not be altered: [", "]: File system error on trying to rename [from=");
+        testSqlFailedOnFsOperation(ff, "table 'dst' could not be altered: ", " File system error on trying to rename [");
     }
 
     private void assertSchemaMatch(AddColumn tm) throws Exception {
@@ -584,7 +664,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
 
             // Alter table
-            compiler.compile(alterCommand, sqlExecutionContext);
+            compile(alterCommand, sqlExecutionContext);
 
             // Assert existing reader reloads new partition
             Assert.assertTrue(tableReader.reload());
@@ -603,7 +683,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
             long timestamp = 0;
             for (String s : partitionList) {
-                long ts = TimestampFormatUtils.parseTimestamp(s + "T23:59:59.999z");
+                long ts = TimestampFormatUtils.parseTimestamp(s
+                        + (src.getPartitionBy() == PartitionBy.YEAR ? "-01-01" : "")
+                        + (src.getPartitionBy() == PartitionBy.MONTH ? "-01" : "")
+                        + "T23:59:59.999z");
                 if (ts > timestamp) {
                     timestamp = ts;
                 }

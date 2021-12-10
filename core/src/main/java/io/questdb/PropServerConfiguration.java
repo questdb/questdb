@@ -353,7 +353,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinListenBacklog;
     private int httpMinRcvBufSize;
     private int httpMinSndBufSize;
+    private final long writerAsyncCommandBusyWaitTimeout;
+    private final int writerAsyncCommandQueueCapcity;
     private long symbolCacheWaitUsBeforeReload;
+    private final int writerTockRowsCountMod;
+    private final long writerAsyncCommandMaxWaitTimeout;
 
     public PropServerConfiguration(
             String root,
@@ -416,10 +420,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                 });
 
                 this.httpMinEventCapacity = getInt(properties, env, "http.min.net.event.capacity", 16);
-                this.httpMinIOQueueCapacity = getInt(properties, env, "http.min.net.io.queue.capacity", 16);
+                this.httpMinIOQueueCapacity = getQueueCapacity(properties, env, "http.min.net.io.queue.capacity", 16);
                 this.httpMinIdleConnectionTimeout = getLong(properties, env, "http.min.net.idle.connection.timeout", 5 * 60 * 1000L);
                 this.httpMinQueuedConnectionTimeout = getLong(properties, env, "http.min.net.queued.connection.timeout", 5 * 1000L);
-                this.httpMinInterestQueueCapacity = getInt(properties, env, "http.min.net.interest.queue.capacity", 16);
+                this.httpMinInterestQueueCapacity = getQueueCapacity(properties, env, "http.min.net.interest.queue.capacity", 16);
                 this.httpMinListenBacklog = getInt(properties, env, "http.min.net.listen.backlog", 64);
                 this.httpMinSndBufSize = getIntSize(properties, env, "http.min.net.snd.buf.size", 1024);
                 this.httpMinRcvBufSize = getIntSize(properties, env, "http.net.rcv.buf.size", 1024);
@@ -469,10 +473,10 @@ public class PropServerConfiguration implements ServerConfiguration {
 
                 this.httpActiveConnectionLimit = getInt(properties, env, "http.net.active.connection.limit", 256);
                 this.httpEventCapacity = getInt(properties, env, "http.net.event.capacity", 1024);
-                this.httpIOQueueCapacity = getInt(properties, env, "http.net.io.queue.capacity", 1024);
+                this.httpIOQueueCapacity = getQueueCapacity(properties, env, "http.net.io.queue.capacity", 1024);
                 this.httpIdleConnectionTimeout = getLong(properties, env, "http.net.idle.connection.timeout", 5 * 60 * 1000L);
                 this.httpQueuedConnectionTimeout = getLong(properties, env, "http.net.queued.connection.timeout", 5 * 1000L);
-                this.httpInterestQueueCapacity = getInt(properties, env, "http.net.interest.queue.capacity", 1024);
+                this.httpInterestQueueCapacity = getQueueCapacity(properties, env, "http.net.interest.queue.capacity", 1024);
                 this.httpListenBacklog = getInt(properties, env, "http.net.listen.backlog", 256);
                 this.httpSndBufSize = getIntSize(properties, env, "http.net.snd.buf.size", 2 * 1024 * 1024);
                 this.httpRcvBufSize = getIntSize(properties, env, "http.net.rcv.buf.size", 2 * 1024 * 1024);
@@ -525,10 +529,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                 });
 
                 this.pgNetEventCapacity = getInt(properties, env, "pg.net.event.capacity", 1024);
-                this.pgNetIOQueueCapacity = getInt(properties, env, "pg.net.io.queue.capacity", 1024);
+                this.pgNetIOQueueCapacity = getQueueCapacity(properties, env, "pg.net.io.queue.capacity", 1024);
                 this.pgNetIdleConnectionTimeout = getLong(properties, env, "pg.net.idle.timeout", 300_000);
                 this.pgNetQueuedConnectionTimeout = getLong(properties, env, "pg.net.idle.timeout", 5_000);
-                this.pgNetInterestQueueCapacity = getInt(properties, env, "pg.net.interest.queue.capacity", 1024);
+                this.pgNetInterestQueueCapacity = getQueueCapacity(properties, env, "pg.net.interest.queue.capacity", 1024);
                 this.pgNetListenBacklog = getInt(properties, env, "pg.net.listen.backlog", 50_000);
                 this.pgNetRcvBufSize = getIntSize(properties, env, "pg.net.recv.buf.size", -1);
                 this.pgNetSndBufSize = getIntSize(properties, env, "pg.net.send.buf.size", -1);
@@ -680,7 +684,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.latestByQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.latestby.queue.capacity", 32));
             this.telemetryEnabled = getBoolean(properties, env, "telemetry.enabled", true);
             this.telemetryDisableCompletely = getBoolean(properties, env, "telemetry.disable.completely", false);
-            this.telemetryQueueCapacity = getInt(properties, env, "telemetry.queue.capacity", 512);
+            this.telemetryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "telemetry.queue.capacity", 512));
 
             parseBindTo(properties, env, "line.udp.bind.to", "0.0.0.0:9009", (a, p) -> {
                 this.lineUdpBindIPV4Address = a;
@@ -722,7 +726,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     throw new IllegalArgumentException(
                             "line.tcp.max.measurement.size (" + this.lineTcpMaxMeasurementSize + ") cannot be more than line.tcp.msg.buffer.size (" + this.lineTcpMsgBufferSize + ")");
                 }
-                this.lineTcpWriterQueueCapacity = getInt(properties, env, "line.tcp.writer.queue.capacity", 128);
+                this.lineTcpWriterQueueCapacity = getQueueCapacity(properties, env, "line.tcp.writer.queue.capacity", 128);
                 this.lineTcpWriterWorkerCount = getInt(properties, env, "line.tcp.writer.worker.count", 1);
                 cpuUsed += this.lineTcpWriterWorkerCount;
                 this.lineTcpWriterWorkerAffinity = getAffinity(properties, env, "line.tcp.writer.worker.affinity", lineTcpWriterWorkerCount);
@@ -769,6 +773,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sharedWorkerSleepThreshold = getLong(properties, env, "shared.worker.sleep.threshold", 10000);
 
             this.metricsEnabled = getBoolean(properties, env, "metrics.enabled", false);
+            this.writerAsyncCommandBusyWaitTimeout = getLong(properties, env, "cairo.writer.alter.busy.wait.timeout.micro", 500_000);
+            this.writerAsyncCommandMaxWaitTimeout = getLong(properties, env, "cairo.writer.alter.max.wait.timeout.micro", 30_000_000L);
+            this.writerTockRowsCountMod = Numbers.ceilPow2(getInt(properties, env, "cairo.writer.tick.rows.count", 1024)) - 1;
+            this.writerAsyncCommandQueueCapcity = Numbers.ceilPow2(getInt(properties, env, "cairo.writer.command.queue.capacity", 32));
 
             this.buildInformation = buildInformation;
             this.binaryEncodingMaxLength = getInt(properties, env, "binarydata.encoding.maxlength", 32768);
@@ -936,6 +944,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         } catch (NumericException e) {
             throw new ServerConfigurationException(key, value);
         }
+    }
+
+    private int getQueueCapacity(Properties properties, @Nullable Map<String, String> env, String key, int defaultValue) throws ServerConfigurationException {
+        final int value = getInt(properties, env, key, defaultValue);
+        if (!Numbers.isPow2(value)) {
+            throw new ServerConfigurationException(key, "Value must be power of 2, e.g. 1,2,4,8,16,32,64...");
+        }
+        return value;
     }
 
     protected int getIntSize(Properties properties, @Nullable Map<String, String> env, String key, int defaultValue) throws ServerConfigurationException {
@@ -1784,11 +1800,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getRenameTableModelPoolCapacity() {
-            return sqlRenameTableModelPoolCapacity;
-        }
-
-        @Override
         public CharSequence getRoot() {
             return root;
         }
@@ -1909,16 +1920,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlJoinMetadataMaxResizes() {
-            return sqlJoinMetadataMaxResizes;
-        }
-
-        @Override
-        public int getSqlJoinMetadataPageSize() {
-            return sqlJoinMetadataPageSize;
-        }
-
-        @Override
         public long getSqlLatestByRowCount() {
             return sqlLatestByRowCount;
         }
@@ -1974,18 +1975,53 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlSortValueMaxPages() {
-            return sqlSortValueMaxPages;
-        }
-
-        @Override
         public int getSqlSortValuePageSize() {
             return sqlSortValuePageSize;
         }
 
         @Override
+        public int getSqlSortValueMaxPages() {
+            return sqlSortValueMaxPages;
+        }
+
+        @Override
+        public long getWriterAsyncCommandBusyWaitTimeout() {
+            return writerAsyncCommandBusyWaitTimeout;
+        }
+
+        @Override
+        public long getWriterAsyncCommandMaxTimeout() {
+            return writerAsyncCommandMaxWaitTimeout;
+        }
+
+        @Override
+        public int getWriterCommandQueueCapacity() {
+            return writerAsyncCommandQueueCapcity;
+        }
+
+        @Override
+        public int getWriterTickRowsCountMod() {
+            return writerTockRowsCountMod;
+        }
+
+        @Override
+        public int getSqlJoinMetadataPageSize() {
+            return sqlJoinMetadataPageSize;
+        }
+
+        @Override
+        public int getSqlJoinMetadataMaxResizes() {
+            return sqlJoinMetadataMaxResizes;
+        }
+
+        @Override
         public int getSqlJitMode() {
             return sqlJitMode;
+        }
+
+        @Override
+        public int getRenameTableModelPoolCapacity() {
+            return sqlRenameTableModelPoolCapacity;
         }
 
         @Override
