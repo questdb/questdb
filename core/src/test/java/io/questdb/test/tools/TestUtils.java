@@ -26,6 +26,7 @@ package io.questdb.test.tools;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;

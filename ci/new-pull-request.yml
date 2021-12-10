@@ -33,6 +33,10 @@ stages:
               imageName: "ubuntu-latest"
               os: Linux
               jdk: "1.8"
+            linux-jdk17:
+              imageName: "ubuntu-latest"
+              os: Linux
+              jdk: "1.17"
         pool:
           vmImage: $(imageName)
         timeoutInMinutes: 30
