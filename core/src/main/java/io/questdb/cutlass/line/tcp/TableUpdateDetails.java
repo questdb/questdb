@@ -45,6 +45,7 @@ public class TableUpdateDetails implements Closeable {
     private final int columnCount;
     private final CairoEngine engine;
     private final MillisecondClock millisecondClock;
+    private final long writerTickRowsCountMod;
     private int writerThreadId;
     // Number of rows processed since the last reshuffle, this is an estimate because it is incremented by
     // multiple threads without synchronisation
@@ -69,7 +70,9 @@ public class TableUpdateDetails implements Closeable {
         for (int i = 0; i < n; i++) {
             this.localDetailsArray[i] = new ThreadLocalDetails(configuration, netIoJobs[i].getUnusedSymbolCaches());
         }
-        this.millisecondClock = engine.getConfiguration().getMillisecondClock();
+        CairoConfiguration cairoConfiguration = engine.getConfiguration();
+        this.millisecondClock = cairoConfiguration.getMillisecondClock();
+        this.writerTickRowsCountMod = cairoConfiguration.getWriterTickRowsCountMod();
         this.lastCommitMillis = millisecondClock.getTicks();
         this.writer = writer;
         this.timestampIndex = writer.getMetadata().getTimestampIndex();
@@ -85,6 +88,12 @@ public class TableUpdateDetails implements Closeable {
                 .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
                 .$(']').$();
 
+    }
+
+    public void tick() {
+        if (writer != null) {
+            writer.tick(false);
+        }
     }
 
     @Override
@@ -194,9 +203,24 @@ public class TableUpdateDetails implements Closeable {
     }
 
     void handleRowAppended() {
-        if (writer.checkMaxAndCommitLag(engine.getConfiguration().getCommitMode())) {
+        if (checkMaxAndCommitLag(writer)) {
             lastCommitMillis = millisecondClock.getTicks();
         }
+    }
+
+    private boolean checkMaxAndCommitLag(TableWriter writer) {
+        final long rowsSinceCommit = writer.getUncommittedRowCount();
+        if (rowsSinceCommit < writer.getMetadata().getMaxUncommittedRows()) {
+            if ((rowsSinceCommit & writerTickRowsCountMod) == 0) {
+                // Tick without commit. Some tick commands may force writer to commit though.
+                writer.tick(false);
+            }
+            return false;
+        }
+        writer.commitWithLag(engine.getConfiguration().getCommitMode());
+        // Tick after commit.
+        writer.tick(false);
+        return true;
     }
 
     void handleWriterThreadMaintenance(long ticks, long maintenanceInterval) {

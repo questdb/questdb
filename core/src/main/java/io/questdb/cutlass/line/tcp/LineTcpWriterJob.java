@@ -87,19 +87,28 @@ class LineTcpWriterJob implements Job, Closeable {
     public boolean run(int workerId) {
         assert this.workerId == workerId;
         boolean busy = drainQueue();
-        doMaintenance();
+        if (!busy && !doMaintenance()) {
+            tickWriters();
+        }
         return busy;
     }
 
-    private void doMaintenance() {
+    private boolean doMaintenance() {
         final long ticks = millisecondClock.getTicks();
         if (ticks - lastMaintenanceMillis < maintenanceInterval) {
-            return;
+            return false;
         }
 
         lastMaintenanceMillis = ticks;
         for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
             assignedTables.getQuick(n).handleWriterThreadMaintenance(ticks, maintenanceInterval);
+        }
+        return true;
+    }
+
+    private void tickWriters() {
+        for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
+            assignedTables.getQuick(n).tick();
         }
     }
 
