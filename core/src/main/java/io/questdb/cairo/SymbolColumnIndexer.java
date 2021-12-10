@@ -34,7 +34,7 @@ import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-class SymbolColumnIndexer implements ColumnIndexer, Closeable {
+public class SymbolColumnIndexer implements ColumnIndexer, Closeable {
 
     private static final long SEQUENCE_OFFSET;
     private final BitmapIndexWriter writer = new BitmapIndexWriter();

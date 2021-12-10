@@ -1122,7 +1122,6 @@ public class TableWriter implements Closeable {
                                 path.trimTo(plen),
                                 columnName,
                                 plen,
-                                tempMem16b,
                                 true
                         );
 
@@ -2370,7 +2369,7 @@ public class TableWriter implements Closeable {
                             createIndexFiles(columnName, indexValueBlockSize, plen, true);
 
                             final long partitionSize = txWriter.getPartitionSizeByPartitionTimestamp(timestamp);
-                            final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem16b, true);
+                            final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, true);
 
                             if (partitionSize > columnTop) {
                                 TableUtils.dFile(path.trimTo(plen), columnName);
@@ -2396,7 +2395,7 @@ public class TableWriter implements Closeable {
 
         createIndexFiles(columnName, indexValueBlockSize, plen, true);
 
-        final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, tempMem16b, true);
+        final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, true);
 
         // set indexer up to continue functioning as normal
         indexer.configureFollowerAndWriter(configuration, path.trimTo(plen), columnName, getPrimaryColumn(columnIndex), columnTop);
@@ -3789,7 +3788,7 @@ public class TableWriter implements Closeable {
                 }
 
                 openColumnFiles(name, i, plen);
-                columnTop = readColumnTop(ff, path, name, plen, tempMem16b, true);
+                columnTop = readColumnTop(ff, path, name, plen, true);
                 columnTops.extendAndSet(i, columnTop);
 
                 if (indexer != null) {

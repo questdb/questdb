@@ -533,13 +533,13 @@ public final class TableUtils {
      *
      * @return number of rows column doesn't have when column was added to table that already had data.
      */
-    public static long readColumnTop(FilesFacade ff, Path path, CharSequence name, int plen, long buf, boolean failIfCouldNotRead) {
+    public static long readColumnTop(FilesFacade ff, Path path, CharSequence name, int plen, boolean failIfCouldNotRead) {
         try {
             if (ff.exists(topFile(path.chop$(), name))) {
                 final long fd = TableUtils.openRO(ff, path, LOG);
                 try {
                     long n;
-                    if ((n = ff.read(fd, buf, 8, 0)) != 8) {
+                    if ((n = ff.readUlong(fd, 0)) < 0) {
                         if (failIfCouldNotRead) {
                             throw CairoException.instance(Os.errno())
                                     .put("could not read top of column [file=").put(path)
@@ -549,10 +549,10 @@ public final class TableUtils {
                                     .$(", read=").$(n)
                                     .$(", errno=").$(ff.errno())
                                     .I$();
-                            return 0;
+                            return 0L;
                         }
                     }
-                    return Unsafe.getUnsafe().getLong(buf);
+                    return n;
                 } finally {
                     ff.close(fd);
                 }
