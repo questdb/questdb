@@ -24,10 +24,12 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.jit.JitUtil;
 import org.junit.Assume;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class CompiledFilterTest extends AbstractGriffinTest {
@@ -78,7 +80,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                 " rnd_geohash(10) hash2c," +
                 " rnd_geohash(20) hash4c," +
                 " rnd_geohash(40) hash8c" +
-                " from long_sequence(100)) timestamp(k) partition by DAY";
+                " from long_sequence(100)) timestamp(k)";
 
         assertQuery(expected,
                 query,
@@ -108,6 +110,70 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     "2\t1970-01-01T00:00:00.100000Z\n" +
                     "1\t1970-01-02T00:00:00.000000Z\n" +
                     "2\t1970-01-02T00:00:00.100000Z\n";
+
+            assertSql(query, expected);
+
+            assertSqlRunWithJit(query);
+        });
+    }
+
+    @Ignore
+    @Test
+    public void testBindVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select" +
+                    " rnd_boolean() aboolean," +
+                    " rnd_byte(2,50) abyte," +
+                    " rnd_geohash(4) ageobyte," +
+                    " rnd_short(10,1024) ashort," +
+                    " rnd_geohash(12) ageoshort," +
+                    " rnd_char() achar," +
+                    " rnd_int() anint," +
+                    " rnd_geohash(16) ageoint," +
+                    " rnd_symbol(4,4,4,2) asymbol," +
+                    " rnd_float(2) afloat," +
+                    " rnd_long() along," +
+                    " rnd_double(2) adouble," +
+                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) adate," +
+                    " rnd_geohash(32) ageolong," +
+                    " timestamp_sequence(400000000000, 500000000) atimestamp" +
+                    " from long_sequence(100)) timestamp(atimestamp)", sqlExecutionContext);
+
+            bindVariableService.clear();
+            bindVariableService.setBoolean("aboolean", false);
+            bindVariableService.setByte("abyte", (byte) 28);
+            bindVariableService.setGeoHash("ageobyte", 0, ColumnType.getGeoHashTypeWithBits(4));
+            bindVariableService.setShort("ashort", (short) 243);
+            bindVariableService.setGeoHash("ageoshort", 0b011011000010L, ColumnType.getGeoHashTypeWithBits(12));
+            bindVariableService.setChar("achar", 'O');
+            bindVariableService.setInt("anint", 2085282008);
+            bindVariableService.setGeoHash("ageoint", 0b0101011010111101L, ColumnType.getGeoHashTypeWithBits(16));
+            bindVariableService.setStr("asymbol", "HYRX");
+            bindVariableService.setFloat("afloat", 0.48820507526397705f);
+            bindVariableService.setLong("along", -4986232506486815364L);
+            bindVariableService.setDouble("adouble", 0.42281342727402726);
+            bindVariableService.setDate("adate", 1443479385706L);
+            bindVariableService.setGeoHash("ageolong", 0b11010000001110101000110100011010L, ColumnType.getGeoHashTypeWithBits(32));
+            bindVariableService.setTimestamp("atimestamp", 400500000000L);
+
+            final String query = "select * from x where" +
+                    " aboolean = :aboolean" +
+                    " and abyte = :abyte" +
+                    " and ageobyte = :ageobyte" +
+                    " and ashort = :ashort" +
+                    " and ageoshort = :ageoshort" +
+                    " and achar = :achar" +
+                    " and anint = :anint" +
+                    " and ageoint = :ageoint" +
+                    " and asymbol = :asymbol" +
+                    " and afloat = :afloat" +
+                    " and along = :along" +
+                    " and adouble = :adouble" +
+                    " and adate = :adate" +
+                    " and ageolong = :ageolong" +
+                    " and atimestamp = :atimestamp";
+            final String expected = "aboolean\tabyte\tageobyte\tashort\tageoshort\tachar\tanint\tageoint\tasymbol\tafloat\talong\tadouble\tadate\tageolong\tatimestamp\n" +
+                    "false\t28\t0000\t243\t011011000010\tO\t2085282008\t0101011010111101\tHYRX\t0.4882\t-4986232506486815364\t0.42281342727402726\t2015-09-28T22:29:45.706Z\t11010000001110101000110100011010\t1970-01-05T15:15:00.000000Z\n";
 
             assertSql(query, expected);
 
