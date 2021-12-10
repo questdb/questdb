@@ -451,10 +451,9 @@ class LineTcpMeasurementEvent implements Closeable {
                 int colIndex = localDetails.getColumnIndex(entity.getName());
                 if (colIndex < 0) {
                     final DirectByteCharSequence colName = entity.getName();
-                    if (addedCols.contains(colName)) {
+                    if (!addedCols.add(colName)) {
                         continue;
                     }
-                    addedCols.add(colName);
                     int colNameLen = colName.length();
                     Unsafe.getUnsafe().putInt(bufPos, -1 * colNameLen);
                     bufPos += Integer.BYTES;

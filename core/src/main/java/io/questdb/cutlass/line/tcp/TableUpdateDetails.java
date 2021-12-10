@@ -263,6 +263,7 @@ public class TableUpdateDetails implements Closeable {
         // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)
         private final IntList geoHashBitsSizeByColIdx = new IntList();
         private final StringSink tempSink = new StringSink();
+        private final MangledUtf8Sink mangledUtf8Sink = new MangledUtf8Sink(tempSink);
         private final BoolList processedCols = new BoolList();
         private final LowerCaseCharSequenceHashSet addedCols = new LowerCaseCharSequenceHashSet();
         private final LineTcpReceiverConfiguration configuration;
@@ -359,14 +360,16 @@ public class TableUpdateDetails implements Closeable {
                 geoHashBitsSizeByColIdx.clear();
                 geoHashBitsSizeByColIdx.add(0); // first value is for cols indexed with -1
                 for (int n = 0, sz = metadata.getColumnCount(); n < sz; n++) {
+                    String columnName = metadata.getColumnName(n);
 
                     // We cannot cache on real column name values if chars are not ASCII
                     // We need to construct non-ASCII CharSequence +representation same as DirectByteCharSequence will have
+                    CharSequence mangledUtf8Representation = mangledUtf8Sink.encodeMangledUtf8(columnName);
                     // Check if mangled UTF8 length is different from original
                     // If they are same it means column name is ASCII and DirectByteCharSequence name will be same as metadata column name
+                    String mangledColumnName = mangledUtf8Representation.length() != columnName.length() ? tempSink.toString() : columnName;
 
-                    tempSink.clear();
-                    columnIndexByNameUtf8.put(tempSink.encodeUtf8(metadata.getColumnName(n)).toString(), n);
+                    columnIndexByNameUtf8.put(mangledColumnName, n);
                     final int colType = metadata.getColumnType(n);
                     final int geoHashBits = ColumnType.getGeoHashBits(colType);
                     if (geoHashBits == 0) {

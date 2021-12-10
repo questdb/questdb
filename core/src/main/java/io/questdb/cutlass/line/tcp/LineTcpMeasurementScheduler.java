@@ -277,7 +277,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         return reshuffleCount;
     }
 
-    private TableUpdateDetails getTableUpdateDetailsFromSharedArea(NetworkIOJob netIoJob, LineTcpParser parser) {
+    private TableUpdateDetails getTableUpdateDetailsFromSharedArea(@NotNull NetworkIOJob netIoJob, @NotNull LineTcpParser parser) {
         final DirectByteCharSequence tableNameUtf8 = parser.getMeasurementName();
         final StringSink tableNameUtf16 = tableNameSinks[netIoJob.getWorkerId()];
         tableNameUtf16.clear();
