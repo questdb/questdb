@@ -189,7 +189,7 @@ public class BytecodeAssembler {
     public void endMethodCode() {
         int len = position() - codeStart;
         if (len > 64 * 1024) {
-            LOG.critical().$("Too much input to generate ").$(host.getName()).$(". Bytecode is too long").$();
+            LOG.error().$("Too much input to generate ").$(host.getName()).$(". Bytecode is too long").$();
             throw BytecodeException.INSTANCE;
         }
         putInt(codeStart - 4, position() - codeStart);
