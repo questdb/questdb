@@ -723,7 +723,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
-        boolean useJit = executionContext.getJitMode() != SqlExecutionContext.JIT_MODE_DISABLED;
+        boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED;
         if (useJit) {
             final boolean optimize = factory.supportPageFrameCursor() && JitUtil.isJitSupported();
             if (optimize) {
@@ -743,7 +743,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         columnIndexes.add(columnIndex);
                     }
                     // Serialize IR and try to compile the filter.
-                    final boolean forceScalar = executionContext.getJitMode() == SqlExecutionContext.JIT_MODE_FORCE_SCALAR;
+                    final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
                     jitIRSerializer.of(jitIRMem, factory.getMetadata(), reader, columnIndexes);
                     int jitOptions = jitIRSerializer.serialize(filter, forceScalar, false);
                     final CompiledFilter jitFilter = new CompiledFilter();

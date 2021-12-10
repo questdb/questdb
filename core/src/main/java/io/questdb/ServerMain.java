@@ -33,6 +33,7 @@ import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -127,6 +128,24 @@ public class ServerMain {
                 break;
         }
         log.advisory().$("available CPUs: ").$(Runtime.getRuntime().availableProcessors()).$();
+
+        if (JitUtil.isJitSupported()) {
+            final int jitMode = configuration.getCairoConfiguration().getSqlJitMode();
+            switch (jitMode) {
+                case SqlJitMode.JIT_MODE_ENABLED:
+                    log.advisory().$("SQL JIT mode: on").$();
+                    break;
+                case SqlJitMode.JIT_MODE_DISABLED:
+                    log.advisory().$("SQL JIT mode: off").$();
+                    break;
+                case SqlJitMode.JIT_MODE_FORCE_SCALAR:
+                    log.advisory().$("SQL JIT mode: scalar").$();
+                    break;
+                default:
+                    log.error().$("Unknown SQL JIT mode: ").$(jitMode).$();
+                    break;
+            }
+        }
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
         final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(

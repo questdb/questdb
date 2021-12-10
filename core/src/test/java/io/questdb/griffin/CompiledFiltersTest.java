@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.jit.JitUtil;
 import org.junit.Assume;
 import org.junit.Before;
@@ -40,7 +41,7 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
         // Disable the test suite on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
         // Enable JIT.
-        sqlExecutionContext.setJitMode(SqlExecutionContext.JIT_MODE_ENABLED);
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
         super.setUp();
     }
 
@@ -128,7 +129,7 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
                 "16\t1970-01-01T00:01:55.000000Z\t-4474835130332302712\n" +
                 "17\t1970-01-01T00:01:56.000000Z\t-6943924477733600060\n";
 
-        testFilterWithColTops(query, expected, SqlExecutionContext.JIT_MODE_FORCE_SCALAR);
+        testFilterWithColTops(query, expected, SqlJitMode.JIT_MODE_FORCE_SCALAR);
     }
 
     @Test
@@ -145,7 +146,7 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
                 "16\t1970-01-01T00:01:55.000000Z\t-4474835130332302712\n" +
                 "17\t1970-01-01T00:01:56.000000Z\t-6943924477733600060\n";
 
-        testFilterWithColTops(query, expected, SqlExecutionContext.JIT_MODE_ENABLED);
+        testFilterWithColTops(query, expected, SqlJitMode.JIT_MODE_ENABLED);
     }
 
     @Test
@@ -155,7 +156,7 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
                 "3\t1970-01-01T00:00:02.000000Z\tNaN\n" +
                 "3\t1970-01-01T00:01:42.000000Z\t7746536061816329025\n";
 
-        testFilterWithColTops(query, expected, SqlExecutionContext.JIT_MODE_FORCE_SCALAR);
+        testFilterWithColTops(query, expected, SqlJitMode.JIT_MODE_FORCE_SCALAR);
     }
 
     @Test
@@ -165,7 +166,7 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
                 "3\t1970-01-01T00:00:02.000000Z\tNaN\n" +
                 "3\t1970-01-01T00:01:42.000000Z\t7746536061816329025\n";
 
-        testFilterWithColTops(query, expected, SqlExecutionContext.JIT_MODE_ENABLED);
+        testFilterWithColTops(query, expected, SqlJitMode.JIT_MODE_ENABLED);
     }
 
     @Test
@@ -179,7 +180,7 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
                 "2\n" +
                 "3\n";
 
-        testFilterWithColTops(query, expected, SqlExecutionContext.JIT_MODE_FORCE_SCALAR);
+        testFilterWithColTops(query, expected, SqlJitMode.JIT_MODE_FORCE_SCALAR);
     }
 
     @Test
@@ -193,7 +194,7 @@ public class CompiledFiltersTest extends AbstractGriffinTest {
                 "2\n" +
                 "3\n";
 
-        testFilterWithColTops(query, expected, SqlExecutionContext.JIT_MODE_ENABLED);
+        testFilterWithColTops(query, expected, SqlJitMode.JIT_MODE_ENABLED);
     }
 
     public void testFilterWithColTops(String query, String expected, int jitMode) throws Exception {

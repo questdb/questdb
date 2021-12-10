@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -501,7 +502,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
     private long runQuery(CharSequence query, boolean forceScalarJit) throws SqlException {
         long resultSize;
 
-        sqlExecutionContext.setJitMode(SqlExecutionContext.JIT_MODE_DISABLED);
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         RecordCursorFactory factory = cc.getRecordCursorFactory();
         Assert.assertFalse("JIT was enabled for query: " + query, factory.usesCompiledFilter());
@@ -512,7 +513,7 @@ public class CompiledFiltersRegressionTest extends AbstractCairoTest {
             Misc.free(factory);
         }
 
-        int jitMode = forceScalarJit ? SqlExecutionContext.JIT_MODE_FORCE_SCALAR : SqlExecutionContext.JIT_MODE_ENABLED;
+        int jitMode = forceScalarJit ? SqlJitMode.JIT_MODE_FORCE_SCALAR : SqlJitMode.JIT_MODE_ENABLED;
         sqlExecutionContext.setJitMode(jitMode);
         cc = compiler.compile(query, sqlExecutionContext);
         factory = cc.getRecordCursorFactory();

@@ -38,7 +38,6 @@ import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.griffin.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -893,22 +892,22 @@ public class PropServerConfiguration implements ServerConfiguration {
         final String jitMode = overrideWithEnv(properties, env, key);
 
         if (jitMode == null) {
-            return SqlExecutionContext.JIT_MODE_ENABLED;
+            return SqlJitMode.JIT_MODE_ENABLED;
         }
 
         if (Chars.equalsLowerCaseAscii(jitMode, "on")) {
-            return SqlExecutionContext.JIT_MODE_ENABLED;
+            return SqlJitMode.JIT_MODE_ENABLED;
         }
 
         if (Chars.equalsLowerCaseAscii(jitMode, "off")) {
-            return SqlExecutionContext.JIT_MODE_DISABLED;
+            return SqlJitMode.JIT_MODE_DISABLED;
         }
 
         if (Chars.equalsLowerCaseAscii(jitMode, "scalar")) {
-            return SqlExecutionContext.JIT_MODE_FORCE_SCALAR;
+            return SqlJitMode.JIT_MODE_FORCE_SCALAR;
         }
 
-        return SqlExecutionContext.JIT_MODE_ENABLED;
+        return SqlJitMode.JIT_MODE_ENABLED;
     }
 
     private double getDouble(Properties properties, @Nullable Map<String, String> env, String key, double defaultValue) throws ServerConfigurationException {

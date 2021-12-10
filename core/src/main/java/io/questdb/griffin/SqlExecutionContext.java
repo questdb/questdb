@@ -41,10 +41,6 @@ import java.io.Closeable;
 
 public interface SqlExecutionContext extends Closeable {
 
-    int JIT_MODE_ENABLED = 0;
-    int JIT_MODE_FORCE_SCALAR = 1;
-    int JIT_MODE_DISABLED = 2;
-
     BindVariableService getBindVariableService();
 
     CairoSecurityContext getCairoSecurityContext();

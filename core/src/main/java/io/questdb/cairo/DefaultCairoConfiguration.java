@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.*;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
@@ -588,6 +587,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getSqlJitMode() {
-        return SqlExecutionContext.JIT_MODE_ENABLED;
+        return SqlJitMode.JIT_MODE_ENABLED;
     }
 }
