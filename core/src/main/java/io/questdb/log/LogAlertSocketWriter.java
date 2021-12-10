@@ -293,7 +293,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
             // it was not a resource ("/resource_name")
         }
         if (needsReading) {
-            StringSink sink = new StringSink();
+            sink.clear();
             readFile(
                     location,
                     socket.getInBufferPtr(),
