@@ -95,37 +95,38 @@ public class ServerMain {
         }
 
         readServerConfiguration(rootDirectory, properties, log, buildInformation);
-        log.info().$("Server config : ").$(configurationFile.getAbsoluteFile()).$();
-        log.info().$("Config changes applied:").$();
-        log.info().$("  http.enabled : ").$(configuration.getHttpServerConfiguration().isEnabled()).$();
-        log.info().$("  tcp.enabled  : ").$(configuration.getLineTcpReceiverConfiguration().isEnabled()).$();
-        log.info().$("  pg.enabled   : ").$(configuration.getPGWireConfiguration().isEnabled()).$();
+        log.advisory().$("Server config : ").$(configurationFile.getAbsoluteFile()).$();
+        log.advisory().$("Config changes applied:").$();
+        log.advisory().$("  http.enabled : ").$(configuration.getHttpServerConfiguration().isEnabled()).$();
+        log.advisory().$("  tcp.enabled  : ").$(configuration.getLineTcpReceiverConfiguration().isEnabled()).$();
+        log.advisory().$("  pg.enabled   : ").$(configuration.getPGWireConfiguration().isEnabled()).$();
 
-        log.info().$("open database [id=").$(configuration.getCairoConfiguration().getDatabaseIdLo()).$('.').$(configuration.getCairoConfiguration().getDatabaseIdHi()).$(']').$();
-        log.info().$("platform [bit=").$(System.getProperty("sun.arch.data.model")).$(']').$();
+        log.advisory().$("open database [id=").$(configuration.getCairoConfiguration().getDatabaseIdLo()).$('.').$(configuration.getCairoConfiguration().getDatabaseIdHi()).$(']').$();
+        log.advisory().$("platform [bit=").$(System.getProperty("sun.arch.data.model")).$(']').$();
         switch (Os.type) {
             case Os.WINDOWS:
-                log.info().$("OS: windows-amd64").$(Vect.getSupportedInstructionSetName()).$();
+                log.advisory().$("OS/Arch: windows/amd64").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             case Os.LINUX_AMD64:
-                log.info().$("OS: linux-amd64").$(Vect.getSupportedInstructionSetName()).$();
+                log.advisory().$("OS/Arch: linux/amd64").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             case Os.OSX_AMD64:
-                log.info().$("OS: apple-amd64").$(Vect.getSupportedInstructionSetName()).$();
+                log.advisory().$("OS/Arch: apple/amd64").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             case Os.OSX_ARM64:
-                log.info().$("OS: apple-silicon").$(Vect.getSupportedInstructionSetName()).$();
+                log.advisory().$("OS/Arch: apple/apple-silicon").$();
                 break;
             case Os.LINUX_ARM64:
-                log.info().$("OS: linux-arm64").$(Vect.getSupportedInstructionSetName()).$();
+                log.advisory().$("OS/Arch: linux/arm64").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             case Os.FREEBSD:
-                log.info().$("OS: freebsd-amd64").$(Vect.getSupportedInstructionSetName()).$();
+                log.advisory().$("OS: freebsd/amd64").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             default:
                 log.error().$("Unsupported OS").$(Vect.getSupportedInstructionSetName()).$();
                 break;
         }
+        log.advisory().$("available CPUs: ").$(Runtime.getRuntime().availableProcessors()).$();
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
         final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(
@@ -136,7 +137,7 @@ public class ServerMain {
 
         LogFactory.configureFromSystemProperties(workerPool);
         final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration());
-        workerPool.assign(cairoEngine.getWriterMaintenanceJob());
+        workerPool.assign(cairoEngine.getEngineMaintenanceJob());
         instancesToClean.add(cairoEngine);
 
         if (!configuration.getCairoConfiguration().getTelemetryConfiguration().getDisableCompletely()) {

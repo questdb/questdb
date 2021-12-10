@@ -276,6 +276,14 @@ public interface CairoConfiguration {
 
     long getWorkStealTimeoutNanos();
 
+    long getWriterAsyncCommandBusyWaitTimeout();
+
+    long getWriterAsyncCommandMaxTimeout();
+
+    int getWriterCommandQueueCapacity();
+
+    int getWriterTickRowsCountMod();
+
     boolean isO3QuickSortEnabled();
 
     boolean isParallelIndexingEnabled();

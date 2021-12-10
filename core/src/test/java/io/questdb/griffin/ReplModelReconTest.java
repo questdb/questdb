@@ -50,7 +50,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     @Test
     public void testColumnNameCaseSensitivity() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            compile(
                     "create table x as  " +
                             "(select" +
                             " cast(x + 10 as int) i," +
@@ -75,11 +75,11 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            compiler.compile("create table y as (" +
+            compile("create table y as (" +
                     "select i, sym, amt, timestamp, b, c, d, e, f, g G, ik IK, j, k K, l, m, n, o from x" +
                     ") timestamp(k) partition by DAY", sqlExecutionContext);
 
-            compiler.compile("insert into x " +
+            compile("insert into x " +
                             "select" +
                             " cast(x + 10 as int) i," +
                             " rnd_symbol('msft','ibm', 'googl') sym," +
@@ -120,7 +120,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     @Test
     public void testO3PartitionInsertedBefore() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            compile(
                     "create table x as  " +
                             "(select" +
                             " cast(x + 10 as int) i," +
@@ -145,9 +145,9 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            compiler.compile("create table y as (x) timestamp(k) partition by DAY", sqlExecutionContext);
+            compile("create table y as (x) timestamp(k) partition by DAY", sqlExecutionContext);
 
-            compiler.compile("insert into x " +
+            compile("insert into x " +
                             "select" +
                             " cast(x + 10 as int) i," +
                             " rnd_symbol('msft','ibm', 'googl') sym," +
@@ -188,7 +188,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     @Test
     public void testO3PartitionMutates() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            compile(
                     "create table x as  " +
                             "(select" +
                             " cast(x + 10 as int) i," +
@@ -213,9 +213,9 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            compiler.compile("create table y as (x) timestamp(k) partition by DAY", sqlExecutionContext);
+            compile("create table y as (x) timestamp(k) partition by DAY", sqlExecutionContext);
 
-            compiler.compile("insert into x " +
+            compile("insert into x " +
                             "select" +
                             " cast(x + 10 as int) i," +
                             " rnd_symbol('msft','ibm', 'googl') sym," +
@@ -256,7 +256,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     @Test
     public void testO3TriggerTransactionLog() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            compile(
                     "create table x as  " +
                             "(select" +
                             " cast(x + 10 as int) i," +
@@ -281,9 +281,9 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            compiler.compile("create table y as (x) timestamp(k) partition by DAY", sqlExecutionContext);
+            compile("create table y as (x) timestamp(k) partition by DAY", sqlExecutionContext);
 
-            compiler.compile("create table chunk1 as (" +
+            compile("create table chunk1 as (" +
                     "select" +
                     " cast(x + 10 as int) i," +
                     " rnd_symbol('msft','ibm', 'googl') sym," +
@@ -306,7 +306,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     ")", sqlExecutionContext
             );
 
-            compiler.compile("insert into x select * from chunk1", sqlExecutionContext);
+            compile("insert into x select * from chunk1", sqlExecutionContext);
 
             long masterId;
             try (TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test")) {
@@ -323,7 +323,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             }
 
             // O3 chunk (chunk2)
-            compiler.compile(
+            compile(
                     "create table chunk2 as (" +
                             "select" +
                             " cast(x + 10 as int) i," +
@@ -348,7 +348,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            compiler.compile(
+            compile(
                     "create table chunk3 as (" +
                             "select" +
                             " cast(x + 10 as int) i," +
@@ -373,8 +373,8 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            compiler.compile("insert batch 20000 commitLag 3d into x select * from chunk2", sqlExecutionContext);
-            compiler.compile("insert into x select * from chunk3", sqlExecutionContext);
+            compile("insert batch 20000 commitLag 3d into x select * from chunk2", sqlExecutionContext);
+            compile("insert into x select * from chunk3", sqlExecutionContext);
 
             // we should now have transaction log, which can be retrieved via function call
             // if we copy new chunk, which was outside of transaction log and transaction log itself into 'y'
@@ -388,7 +388,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     @Test
     public void testOrderedAcrossPartition() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            compile(
                     "create table x as  " +
                             "(select" +
                             " cast(x + 10 as int) i," +
@@ -413,7 +413,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            compiler.compile("create table y as (select * from x limit 80000) timestamp(k) partition by DAY", sqlExecutionContext);
+            compile("create table y as (select * from x limit 80000) timestamp(k) partition by DAY", sqlExecutionContext);
 
             try (
                     TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
@@ -433,7 +433,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     @Test
     public void testOrderedAddColumn() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            compile(
                     "create table x as  " +
                             "(select" +
                             " cast(x + 10 as int) i," +
@@ -458,9 +458,9 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            compiler.compile("create table y as (select * from x limit 80000) timestamp(k) partition by DAY", sqlExecutionContext);
+            compile("create table y as (select * from x limit 80000) timestamp(k) partition by DAY", sqlExecutionContext);
 
-            compiler.compile("alter table x add column z double", sqlExecutionContext);
+            compile("alter table x add column z double", sqlExecutionContext);
 
             try (
                     TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
@@ -579,7 +579,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     @Test
     public void testOrderedCleanPartitionBreakOnLast() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            compile(
                     "create table x as  " +
                             "(select" +
                             " cast(x + 10 as int) i," +
@@ -604,7 +604,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            compiler.compile("create table y as (select * from x where k < '2018-01-13') timestamp(k) partition by DAY", sqlExecutionContext);
+            compile("create table y as (select * from x where k < '2018-01-13') timestamp(k) partition by DAY", sqlExecutionContext);
 
             try (
                     TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
@@ -625,7 +625,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     @Test
     public void testOrderedNothingToDo() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            compile(
                     "create table x as  " +
                             "(select" +
                             " cast(x + 10 as int) i," +
@@ -650,7 +650,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            compiler.compile("create table y as (x) timestamp(k) partition by DAY", sqlExecutionContext);
+            compile("create table y as (x) timestamp(k) partition by DAY", sqlExecutionContext);
 
             try (
                     TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
@@ -674,7 +674,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     // new information is added on column metadata - the test can be uncommented and completed
     public void testOrderedRemoveAndReAddColumnSameNameNotLast() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            compile(
                     "create table x as  " +
                             "(select" +
                             " cast(x + 10 as int) i," +
@@ -700,14 +700,14 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            compiler.compile("create table y as (select * from x limit 80000) timestamp(k) partition by DAY", sqlExecutionContext);
+            compile("create table y as (select * from x limit 80000) timestamp(k) partition by DAY", sqlExecutionContext);
 
-            compiler.compile("alter table x drop column n", sqlExecutionContext);
+            compile("alter table x drop column n", sqlExecutionContext);
 
             engine.releaseAllWriters();
             engine.releaseAllReaders();
 
-            compiler.compile("alter table x add column n long256", sqlExecutionContext);
+            compile("alter table x add column n long256", sqlExecutionContext);
 
             try (
                     TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
@@ -727,7 +727,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     @Test
     public void testOrderedRemoveAndReAddColumnSameNameLast() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            compile(
                     "create table x as  " +
                             "(select" +
                             " cast(x + 10 as int) i," +
@@ -753,14 +753,14 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            compiler.compile("create table y as (select * from x limit 80000) timestamp(k) partition by DAY", sqlExecutionContext);
+            compile("create table y as (select * from x limit 80000) timestamp(k) partition by DAY", sqlExecutionContext);
 
-            compiler.compile("alter table x drop column o", sqlExecutionContext);
+            compile("alter table x drop column o", sqlExecutionContext);
 
             engine.releaseAllWriters();
             engine.releaseAllReaders();
 
-            compiler.compile("alter table x add column o long256", sqlExecutionContext);
+            compile("alter table x add column o long256", sqlExecutionContext);
 
             try (
                     TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
@@ -791,7 +791,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
         }
 
         assertMemoryLeak(() -> {
-            compiler.compile(
+            compile(
                     "create table x as  " +
                             "(select" +
                             " cast(x + 10 as int) i," +
@@ -859,8 +859,8 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                             "40\tgoogl\t16.638\t2018-01-01T08:00:00.000000Z\ttrue\t\t0.1810605823104886\t0.9209\t917\t2015-08-05T02:39:14.093Z\tHYRX\t7768501691006807692\t2018-01-10T00:01:27.000000Z\t3\t00000000 c0 55 12 44 dc 4b c0 d9 1c 71 cf 5a 8f 21 06\tMQEHDHQH\t0x1283140ab775531c12aeb931ef2626592440b62ba8918cce31a10a23dc2e0f60\n"
             );
 
-            compiler.compile("alter table x drop column o", sqlExecutionContext);
-            compiler.compile("alter table x add column o long256", sqlExecutionContext);
+            compile("alter table x drop column o", sqlExecutionContext);
+            compile("alter table x add column o long256", sqlExecutionContext);
 
             TestUtils.assertSql(
                     compiler,
@@ -920,7 +920,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
         }
 
         assertMemoryLeak(() -> {
-            compiler.compile(
+            compile(
                     "create table x as  " +
                             "(select" +
                             " cast(x + 10 as int) i," +
@@ -988,8 +988,8 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                             "40\tgoogl\t16.638\t2018-01-01T08:00:00.000000Z\ttrue\t\t0.1810605823104886\t0.9209\t917\t2015-08-05T02:39:14.093Z\tHYRX\t7768501691006807692\t2018-01-10T00:01:27.000000Z\t3\t00000000 c0 55 12 44 dc 4b c0 d9 1c 71 cf 5a 8f 21 06\tMQEHDHQH\t0x1283140ab775531c12aeb931ef2626592440b62ba8918cce31a10a23dc2e0f60\n"
             );
 
-            compiler.compile("alter table x drop column o", sqlExecutionContext);
-            compiler.compile("alter table x add column o int", sqlExecutionContext);
+            compile("alter table x drop column o", sqlExecutionContext);
+            compile("alter table x add column o int", sqlExecutionContext);
 
             TestUtils.assertSql(
                     compiler,
@@ -1049,7 +1049,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
         }
 
         assertMemoryLeak(() -> {
-            compiler.compile(
+            compile(
                     "create table x as  " +
                             "(select" +
                             " cast(x + 10 as int) i," +
@@ -1117,8 +1117,8 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                             "40\tgoogl\t16.638\t2018-01-01T08:00:00.000000Z\ttrue\t\t0.1810605823104886\t0.9209\t917\t2015-08-05T02:39:14.093Z\tHYRX\t7768501691006807692\t2018-01-10T00:01:27.000000Z\t3\t00000000 c0 55 12 44 dc 4b c0 d9 1c 71 cf 5a 8f 21 06\tMQEHDHQH\t0x1283140ab775531c12aeb931ef2626592440b62ba8918cce31a10a23dc2e0f60\n"
             );
 
-            compiler.compile("alter table x drop column n", sqlExecutionContext);
-            compiler.compile("alter table x add column n string", sqlExecutionContext);
+            compile("alter table x drop column n", sqlExecutionContext);
+            compile("alter table x add column n string", sqlExecutionContext);
 
             TestUtils.assertSql(
                     compiler,
@@ -1167,7 +1167,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     @Test
     public void testOrderedRemoveColumn() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            compile(
                     "create table x as  " +
                             "(select" +
                             " cast(x + 10 as int) i," +
@@ -1192,9 +1192,9 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            compiler.compile("create table y as (select * from x limit 80000) timestamp(k) partition by DAY", sqlExecutionContext);
+            compile("create table y as (select * from x limit 80000) timestamp(k) partition by DAY", sqlExecutionContext);
 
-            compiler.compile("alter table x drop column j", sqlExecutionContext);
+            compile("alter table x drop column j", sqlExecutionContext);
 
             try (
                     TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
@@ -1214,7 +1214,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     @Test
     public void testOrderedTruncateAndReAdd() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            compile(
                     "create table x as  " +
                             "(select" +
                             " cast(x + 10 as int) i," +
@@ -1239,11 +1239,11 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            compiler.compile("create table y as (select * from x) timestamp(k) partition by DAY", sqlExecutionContext);
+            compile("create table y as (select * from x) timestamp(k) partition by DAY", sqlExecutionContext);
 
-            compiler.compile("truncate table x", sqlExecutionContext);
+            compile("truncate table x", sqlExecutionContext);
 
-            compiler.compile("insert into x " +
+            compile("insert into x " +
                             "select" +
                             " cast(x + 10 as int) i," +
                             " rnd_symbol('msft','ibm', 'googl') sym," +
@@ -1284,7 +1284,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     @Test
     public void testOrderedTruncateToEmpty() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(
+            compile(
                     "create table x as  " +
                             "(select" +
                             " cast(x + 10 as int) i," +
@@ -1309,9 +1309,9 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            compiler.compile("create table y as (select * from x) timestamp(k) partition by DAY", sqlExecutionContext);
+            compile("create table y as (select * from x) timestamp(k) partition by DAY", sqlExecutionContext);
 
-            compiler.compile("truncate table x", sqlExecutionContext);
+            compile("truncate table x", sqlExecutionContext);
 
             try (
                     TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
@@ -1329,7 +1329,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     }
 
     private void createDataOrderedAddColumnTop() throws SqlException {
-        compiler.compile(
+        compile(
                 "create table x as  " +
                         "(select" +
                         " cast(x + 10 as int) i," +
@@ -1354,11 +1354,11 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                 sqlExecutionContext
         );
 
-        compiler.compile("create table y as (select * from x limit 80000) timestamp(k) partition by DAY", sqlExecutionContext);
+        compile("create table y as (select * from x limit 80000) timestamp(k) partition by DAY", sqlExecutionContext);
 
-        compiler.compile("alter table x add column z double", sqlExecutionContext);
+        compile("alter table x add column z double", sqlExecutionContext);
 
-        compiler.compile("insert into x " +
+        compile("insert into x " +
                         "select" +
                         " cast(x + 10 as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +

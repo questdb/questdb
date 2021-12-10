@@ -406,6 +406,26 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getWriterAsyncCommandBusyWaitTimeout() {
+        return 500_000L;
+    }
+
+    @Override
+    public long getWriterAsyncCommandMaxTimeout() {
+        return 30_000_000L;
+    }
+
+    @Override
+    public int getWriterCommandQueueCapacity() {
+        return 4;
+    }
+
+    @Override
+    public int getWriterTickRowsCountMod() {
+        return 1024 - 1;
+    }
+
+    @Override
     public boolean isParallelIndexingEnabled() {
         return true;
     }

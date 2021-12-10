@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.update.UpdateStatement;
+import io.questdb.mp.SCSequence;
 
 public interface CompiledQuery {
     short SELECT = 1;
@@ -44,6 +45,8 @@ public interface CompiledQuery {
     short RENAME_TABLE = 12;
     short BACKUP_TABLE = 13;
     short UPDATE = 14;
+    short LOCK = 14;
+    short UNLOCK = 14;
 
     RecordCursorFactory getRecordCursorFactory();
 
@@ -51,7 +54,19 @@ public interface CompiledQuery {
 
     TextLoader getTextLoader();
 
+    AlterStatement getAlterStatement();
+
     short getType();
 
     UpdateStatement getUpdateStatement();
+
+    /***
+     * Executes the query.
+     * If execution is done in sync returns an instance of QueryFuture where isDone() is true.
+     * If execution happened async, QueryFuture.await() method should be called for blocking wait
+     * or QueryFuture.await(long) for wait with specified timeout.
+     * @param eventSubSeq - temporary SCSequence instance to track completion of async ALTER command
+     * @throws SqlException - throws exception if command execution fails
+     */
+    QueryFuture execute(SCSequence eventSubSeq) throws SqlException;
 }

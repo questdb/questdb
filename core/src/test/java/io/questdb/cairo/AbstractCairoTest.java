@@ -71,6 +71,8 @@ public class AbstractCairoTest {
 
     @Rule
     public TestName testName = new TestName();
+    public static long writerAsyncCommandBusyWaitTimeout = -1;
+    public static long writerAsyncCommandMaxTimeout = -1;
 
     @BeforeClass
     public static void setUpStatic() {
@@ -137,6 +139,14 @@ public class AbstractCairoTest {
                 return defaultMapType;
             }
 
+            public long getWriterAsyncCommandBusyWaitTimeout() {
+                return writerAsyncCommandBusyWaitTimeout < 0 ? super.getWriterAsyncCommandBusyWaitTimeout() : writerAsyncCommandBusyWaitTimeout;
+            }
+
+            public long getWriterAsyncCommandMaxTimeout() {
+                return writerAsyncCommandMaxTimeout < 0 ? super.getWriterAsyncCommandMaxTimeout() : writerAsyncCommandMaxTimeout;
+            }
+
             @Override
             public boolean enableDevelopmentUpdates() {
                 return true;
@@ -172,6 +182,8 @@ public class AbstractCairoTest {
         currentMicros = -1;
         sampleByIndexSearchPageSize = -1;
         defaultMapType = null;
+        writerAsyncCommandBusyWaitTimeout = -1;
+        writerAsyncCommandMaxTimeout = -1;
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
