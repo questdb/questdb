@@ -49,7 +49,7 @@ public class BoolListTest {
         }
         assertEquals(length, list.size());
 
-        assertThrows(ArrayIndexOutOfBoundsException.class, () -> list.get(length+100));
+        assertThrows(AssertionError.class, () -> list.get(length+100));
 
         final int pos = 106;
         list.set(pos, true);
@@ -60,12 +60,8 @@ public class BoolListTest {
     @Test
     public void testSetAndSetQuick() {
         final int length = 1000;
-        final BoolList list = new BoolList(1000);
-        for (int i = 0; i < length; i++) {
-            assertFalse(list.get(i));
-        }
-
-        list.setPos(length);
+        final BoolList list = new BoolList();
+        list.setAll(length, false);
         for (int i = 0; i < length; i++) {
             assertFalse(list.get(i));
         }
@@ -94,14 +90,11 @@ public class BoolListTest {
     @Test
     public void testExtendAndSet() {
         final int length = 1000;
-        final BoolList list = new BoolList(1000);
-        for (int i = 0; i < length; i++) {
-            assertFalse(list.get(i));
-        }
+        final BoolList list = new BoolList(length);
 
         final int pos = 100;
         list.extendAndSet(pos, true);
-        for (int i = 0; i < length; i++) {
+        for (int i = 0; i < pos + 1; i++) {
             assertEquals(i == pos, list.get(i));
         }
         assertEquals(pos + 1, list.size());
@@ -226,27 +219,28 @@ public class BoolListTest {
         final BoolList list = new BoolList(32);
         assertEquals(0, list.size());
 
-        for (int i = 0; i < length; i++) {
-            list.add(rnd.nextBoolean());
-        }
-        // make sure there is at least 1 true in the list
-        list.set(10, true);
+        list.setAll(length, true);
+        assertEquals(length, list.size());
 
         list.clear();
         assertEquals(0, list.size());
-        assertTrue(list.get(10));
+        assertThrows(AssertionError.class, () -> list.get(10));
+
+        list.setAll(length, true);
+        assertEquals(length, list.size());
 
         list.clear(length);
         assertEquals(0, list.size());
-        assertFalse(list.get(10));
+        assertThrows(AssertionError.class, () -> list.get(10));
     }
 
     @Test
     public void testZeroAndPosition() {
         final int length = 100;
-        final BoolList list = new BoolList(length);
+        final BoolList list = new BoolList();
+        list.setAll(length, true);
 
-        list.zero(true);
+        list.zero(false);
         for (int i = 0; i < length; i++) {
             assertFalse(list.get(i));
         }
@@ -260,6 +254,7 @@ public class BoolListTest {
         final int pos = length - 10;
         list.setPos(pos);
         list.zero(false);
+        list.setPos(length);
         for (int i = 0; i < pos; i++) {
             assertFalse(list.get(i));
         }
