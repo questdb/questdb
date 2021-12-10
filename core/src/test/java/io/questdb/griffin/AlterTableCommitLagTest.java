@@ -44,7 +44,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
             }
             try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                 String alterCommand = "ALTER TABLE " + tableName + " SET PARAM commitLag = 111s";
-                compiler.compile(alterCommand, sqlExecutionContext);
+                compile(alterCommand, sqlExecutionContext);
 
                 assertSql("SELECT commitLag FROM tables() WHERE name = '" + tableName + "'",
                         "commitLag\n111000000\n");
@@ -96,7 +96,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
             }
             try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                 String alterCommand = "ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = 11111";
-                compiler.compile(alterCommand, sqlExecutionContext);
+                compile(alterCommand, sqlExecutionContext);
 
                 assertSql("SELECT maxUncommittedRows FROM tables() WHERE name = '" + tableName + "'",
                         "maxUncommittedRows\n11111\n");
@@ -116,9 +116,9 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
             }
             try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                 String alterCommand2 = "ALTER TABLE " + tableName + " SET PARAM CommitLag = 1s";
-                compiler.compile(alterCommand2, sqlExecutionContext);
+                compile(alterCommand2, sqlExecutionContext);
                 String alterCommand = "ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = 11111";
-                compiler.compile(alterCommand, sqlExecutionContext);
+                compile(alterCommand, sqlExecutionContext);
 
                 assertSql("SELECT maxUncommittedRows, commitLag FROM tables() WHERE name = '" + tableName + "'",
                         "maxUncommittedRows\tcommitLag\n" +
@@ -135,9 +135,9 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
 
             try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                 String alterCommand = "ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = 0";
-                compiler.compile(alterCommand, sqlExecutionContext);
+                compile(alterCommand, sqlExecutionContext);
                 String alterCommand2 = "ALTER TABLE " + tableName + " SET PARAM CommitLag = 0s";
-                compiler.compile(alterCommand2, sqlExecutionContext);
+                compile(alterCommand2, sqlExecutionContext);
 
                 assertSql("SELECT maxUncommittedRows, commitLag FROM tables() WHERE name = '" + tableName + "'",
                         "maxUncommittedRows\tcommitLag\n" +
@@ -163,7 +163,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
 
                 @Override
                 public long openRO(LPSZ path) {
-                    if (Chars.endsWith(path, TableUtils.META_FILE_NAME) && attempt++ == 1) {
+                    if (Chars.endsWith(path, TableUtils.META_FILE_NAME) && attempt++ == 2) {
                         return -1;
                     }
                     return super.openRO(path);
@@ -172,12 +172,13 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
             };
             String alterCommand = "ALTER TABLE X SET PARAM maxUncommittedRows = 11111";
             try {
-                compiler.compile(alterCommand, sqlExecutionContext);
+                compile(alterCommand, sqlExecutionContext);//.getAlterStatement().apply(writer);
                 Assert.fail("Alter table should fail");
             } catch (CairoError e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-only");
             }
 
+            engine.releaseAllReaders();
             try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
                 Assert.assertEquals(11111, rdr.getMetadata().getMaxUncommittedRows());
             }
@@ -208,7 +209,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                 };
                 String alterCommand = "ALTER TABLE X SET PARAM maxUncommittedRows = 11111";
                 try {
-                    compiler.compile(alterCommand, sqlExecutionContext);
+                    compile(alterCommand, sqlExecutionContext);
                     Assert.fail("Alter table should fail");
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table 'X' could not be altered");
@@ -220,7 +221,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
 
                 // Now try with success.
                 ff = new FilesFacadeImpl();
-                compiler.compile(alterCommand, sqlExecutionContext);
+                compile(alterCommand, sqlExecutionContext);
                 assertSql("SELECT maxUncommittedRows FROM tables() WHERE name = 'X'", "maxUncommittedRows\n11111\n");
             }
         });
@@ -246,12 +247,13 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                 };
                 String alterCommand = "ALTER TABLE X SET PARAM maxUncommittedRows = 11111";
                 try {
-                    compiler.compile(alterCommand, sqlExecutionContext);
+                    compile(alterCommand, sqlExecutionContext);
                     Assert.fail("Alter table should fail");
                 } catch (CairoError e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
                 }
 
+                engine.releaseAllReaders();
                 try (TableReader ignored = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
                     Assert.fail();
                 } catch (CairoException ignored) {
@@ -260,8 +262,63 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                 // Now try with success.
                 engine.releaseAllWriters();
                 ff = new FilesFacadeImpl();
-                compiler.compile(alterCommand, sqlExecutionContext);
+                compile(alterCommand, sqlExecutionContext);
                 assertSql("SELECT maxUncommittedRows FROM tables() WHERE name = 'X'", "maxUncommittedRows\n11111\n");
+            }
+        });
+    }
+
+    @Test
+    public void setMaxUncommittedRowsFailsToSwapMetadataUntilWriterReopen2() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
+                CairoTestUtils.create(tbl.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+
+                ff = new FilesFacadeImpl() {
+                    @Override
+                    public boolean rename(LPSZ from, LPSZ to) {
+                        if (Chars.endsWith(to, TableUtils.META_FILE_NAME)) {
+                            return false;
+                        }
+                        return super.rename(from, to);
+                    }
+
+                };
+                String alterCommand = "ALTER TABLE X SET PARAM maxUncommittedRows = 11111";
+                try {
+                    compile(alterCommand, sqlExecutionContext);
+                    Assert.fail("Alter table should fail");
+                } catch (CairoError e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
+                }
+
+                engine.releaseAllReaders();
+                try (TableReader ignored = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
+                    Assert.fail();
+                } catch (CairoException ignored) {
+                }
+
+                ff = new FilesFacadeImpl();
+                // Now try with another failure.
+                engine.releaseAllWriters();
+                ff = new FilesFacadeImpl() {
+                    @Override
+                    public boolean exists(LPSZ from) {
+                        if (Chars.endsWith(from, TableUtils.META_FILE_NAME)) {
+                            return false;
+                        }
+                        return super.exists(from);
+                    }
+
+                };
+                try {
+                    compile(alterCommand, sqlExecutionContext);
+                    Assert.fail();
+                } catch (CairoException | SqlException ex) {
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "File not found:");
+                }
             }
         });
     }
@@ -290,7 +347,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
             }
             try (TableReader ignored = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
                 try {
-                    compiler.compile("ALTER TABLE X SET PARAM vommitLag = 111s", sqlExecutionContext);
+                    compile("alter TABLE X SET PARAM vommitLag = 111s", sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "unknown parameter 'vommitLag'");
@@ -308,7 +365,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                             "create table x1(a int, b double, ts timestamp) timestamp(ts) partition by DAY",
                             sqlExecutionContext
                     );
-                    compiler.compile("alter table x1 set param maxUncommittedRows = 150", sqlExecutionContext);
+                    compile("alter table x1 set param maxUncommittedRows = 150", sqlExecutionContext);
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext,
@@ -366,7 +423,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                     compiler.compile(
                             "create table x1(a int, b double, ts timestamp) timestamp(ts) partition by DAY",
                             sqlExecutionContext);
-                    compiler.compile(sql, sqlExecutionContext);
+                    compile(sql, sqlExecutionContext);
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext,

@@ -64,6 +64,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final Path path = new Path();
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final LineTcpReceiverConfiguration configuration;
+    private final long writerTickRowsCountMod;
     private Sequence pubSeq;
     private int loadCheckCycles = 0;
     private int reshuffleCount = 0;

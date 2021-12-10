@@ -26,6 +26,7 @@ package io.questdb.std.str;
 
 import io.questdb.std.Numbers;
 import io.questdb.std.Sinkable;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 
 public interface CharSink {
@@ -88,6 +89,13 @@ public interface CharSink {
 
     default CharSink put(long value) {
         Numbers.append(this, value);
+        return this;
+    }
+
+    default CharSink put(long lo, long hi) {
+        for (long addr = lo; addr < hi; addr += Character.BYTES) {
+            put(Unsafe.getUnsafe().getChar(addr));
+        }
         return this;
     }
 

@@ -35,11 +35,13 @@ import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.text.TextUtil;
 import io.questdb.cutlass.text.Utf8Exception;
+import io.questdb.griffin.QueryFuture;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
+import io.questdb.mp.SCSequence;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.*;
@@ -70,6 +72,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final NanosecondClock nanosecondClock;
     private final int floatScale;
     private final int doubleScale;
+    private final SCSequence eventSubSequence = new SCSequence();
+    private QueryFuture continueExecution;
     private Rnd rnd;
     private RecordCursorFactory recordCursorFactory;
     private RecordCursor cursor;
@@ -130,12 +134,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         queryState = QUERY_PREFIX;
         columnIndex = 0;
         countRows = false;
+        continueExecution = Misc.free(continueExecution);
     }
 
     @Override
     public void close() {
         cursor = Misc.free(cursor);
         recordCursorFactory = Misc.free(recordCursorFactory);
+        continueExecution = Misc.free(continueExecution);
     }
 
     public void configure(
@@ -158,6 +164,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return LOG.error().$('[').$(getFd()).$("] ");
     }
 
+    public QueryFuture getContinueExecution() {
+        return continueExecution;
+    }
+
     public HttpConnectionContext getHttpConnectionContext() {
         return httpConnectionContext;
     }
@@ -170,8 +180,20 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return rnd;
     }
 
+    public SCSequence getEventSubSequence() {
+        return eventSubSequence;
+    }
+
+    public void setContinueExecution(QueryFuture execution) {
+        continueExecution = execution;
+    }
+
     public void setRnd(Rnd rnd) {
         this.rnd = rnd;
+    }
+
+    public LogRecord debug() {
+        return LOG.debug().$('[').$(getFd()).$("] ");
     }
 
     public LogRecord info() {
@@ -212,6 +234,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void startExecutionTimer() {
         this.executeStartNanos = nanosecondClock.getTicks();
+    }
+
+    public long getExecutionTime() {
+        return nanosecondClock.getTicks() - this.executeStartNanos;
     }
 
     static void prepareExceptionJson(HttpChunkedResponseSocket socket, int position, CharSequence message, CharSequence query) throws PeerDisconnectedException, PeerIsSlowToReadException {

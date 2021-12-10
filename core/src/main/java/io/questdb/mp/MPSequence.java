@@ -24,6 +24,10 @@
 
 package io.questdb.mp;
 
+/**
+ * M - multi thread
+ * C - producer
+ */
 public class MPSequence extends AbstractMSequence {
     private final int cycle;
 
