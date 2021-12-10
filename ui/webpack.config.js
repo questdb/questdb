@@ -81,6 +81,9 @@ const basePlugins = [
   new MiniCssExtractPlugin({
     filename: "qdb.css",
   }),
+  new CopyWebpackPlugin({
+    patterns: [{ from: "./assets/", to: "assets/" }, ...monacoPatterns],
+  }),
   new Webpack.DefinePlugin({
     "process.env": {
       NODE_ENV: JSON.stringify(process.env.NODE_ENV),
@@ -95,9 +98,6 @@ const devPlugins = [
       files: "./src/**/*.ts[x]",
     },
   }),
-  new CopyWebpackPlugin({
-    patterns: monacoPatterns,
-  }),
 ]
 
 const devLoaders = [
@@ -108,21 +108,11 @@ const devLoaders = [
   },
 ]
 
-const prodPlugins = [
-  new CopyWebpackPlugin({
-    patterns: [{ from: "./assets/", to: "assets/" }, ...monacoPatterns],
-  }),
-]
-
 module.exports = {
   devServer: {
     compress: true,
     host: "localhost",
     hot: false,
-    overlay: !isProdBuild && {
-      errors: true,
-      warnings: false,
-    },
     port: PORT,
     proxy: {
       context: ["/imp", "/exp", "/exec", "/chk"],
@@ -175,7 +165,7 @@ module.exports = {
     all: false,
     chunks: true,
     env: true,
-    errors: true,
+    errors: !isProdBuild,
     errorDetails: true,
   },
 }
