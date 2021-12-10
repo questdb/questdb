@@ -31,8 +31,7 @@ import SlimSelect from "slim-select"
 import * as qdb from "./globals"
 import eChartsMacarons from "./utils/macarons"
 
-echarts.use([LegendComponent])
-echarts.use([GridComponent])
+echarts.use([LegendComponent, GridComponent])
 
 //
 // this code is taken from:

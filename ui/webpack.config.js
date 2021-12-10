@@ -63,6 +63,10 @@ const monacoPatterns = [
   { from: "node_modules/monaco-editor/min/vs/base", to: "assets/vs/base" },
 ]
 
+const monacoMapPatterns = [
+  { from: "node_modules/monaco-editor/min-maps/vs/", to: "min-maps/vs" },
+]
+
 const basePlugins = [
   new CleanWebpackPlugin(),
   new HtmlWebpackPlugin({
@@ -81,9 +85,6 @@ const basePlugins = [
   new MiniCssExtractPlugin({
     filename: "qdb.css",
   }),
-  new CopyWebpackPlugin({
-    patterns: [{ from: "./assets/", to: "assets/" }, ...monacoPatterns],
-  }),
   new Webpack.DefinePlugin({
     "process.env": {
       NODE_ENV: JSON.stringify(process.env.NODE_ENV),
@@ -97,6 +98,19 @@ const devPlugins = [
       enabled: true,
       files: "./src/**/*.ts[x]",
     },
+  }),
+  new CopyWebpackPlugin({
+    patterns: [
+      { from: "./assets/", to: "assets/" },
+      ...monacoPatterns,
+      ...monacoMapPatterns,
+    ],
+  }),
+]
+
+const prodPlugins = [
+  new CopyWebpackPlugin({
+    patterns: [{ from: "./assets/", to: "assets/" }, ...monacoPatterns],
   }),
 ]
 
