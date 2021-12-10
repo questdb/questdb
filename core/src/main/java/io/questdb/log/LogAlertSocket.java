@@ -36,7 +36,6 @@ import java.io.Closeable;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.concurrent.locks.LockSupport;
-import java.util.function.Consumer;
 
 public class LogAlertSocket implements Closeable {
 
@@ -50,7 +49,6 @@ public class LogAlertSocket implements Closeable {
         }
     }
 
-    public static final String NACK = "NACK";
     public static final String DEFAULT_HOST = "127.0.0.1";
     public static final int DEFAULT_PORT = 9093;
     public static final int IN_BUFFER_SIZE = 2 * 1024 * 1024;
@@ -61,9 +59,9 @@ public class LogAlertSocket implements Closeable {
     private final Log log;
     private final Rnd rand;
     private final NetworkFacade nf;
+    private final StringSink responseSink = new StringSink();
     private final String[] alertHosts = new String[HOSTS_LIMIT]; // indexed by alertHostIdx < alertHostsCount
     private final int[] alertPorts = new int[HOSTS_LIMIT]; // indexed by alertHostIdx < alertHostsCount
-    private final StringSink receiveDecodeSink = new StringSink();
     private final int outBufferSize;
     private final int inBufferSize;
     private final long reconnectDelay;
@@ -150,10 +148,6 @@ public class LogAlertSocket implements Closeable {
     }
 
     public boolean send(int len) {
-        return send(len, null);
-    }
-
-    public boolean send(int len, Consumer<CharSequence> ackReceiver) {
         if (len < 1) {
             return false;
         }
@@ -189,14 +183,7 @@ public class LogAlertSocket implements Closeable {
                     p = inBufferPtr;
                     final int n = nf.recv(fdSocket, p, inBufferSize);
                     if (n > 0) {
-                        receiveDecodeSink.clear();
-                        Chars.utf8Decode(inBufferPtr, inBufferPtr + n, receiveDecodeSink);
-                        CharSequence response = filterHttpHeader(receiveDecodeSink);
-                        if (ackReceiver != null) {
-                            ackReceiver.accept(response);
-                        } else {
-                            $currentAlertHost(log.info().$("Received")).$(": ").$(response).$();
-                        }
+                        logResponse(n);
                         break;
                     }
                     // do fail over, ack was not received
@@ -234,9 +221,6 @@ public class LogAlertSocket implements Closeable {
                     .$(" attempts: [")
                     .$utf8(outBufferPtr, outBufferPtr + len)
                     .I$();
-            if (ackReceiver != null) {
-                ackReceiver.accept(NACK);
-            }
         }
         return success;
     }
@@ -303,75 +287,6 @@ public class LogAlertSocket implements Closeable {
     @TestOnly
     int getDefaultAlertPort() {
         return defaultPort;
-    }
-
-    @TestOnly
-    static CharSequence filterHttpHeader(StringSink message) {
-        final int messageLen = message.length();
-        int contentLength = 0;
-        int lineStart = 0;
-        int colonIdx = -1;
-        boolean headerEndFound = false;
-        for (int i = 0; i < messageLen; i++) {
-            switch (message.charAt(i)) {
-                case ':':
-                    if (colonIdx == -1) { // values may contain ':', e.g. Date: Thu, 09 Dec 2021 09:37:22 GMT
-                        colonIdx = i;
-                    }
-                    break;
-
-                case '\n':
-                    if (colonIdx != -1) {
-                        if (isContentLength(message, lineStart, colonIdx)) {
-                            int startSize = colonIdx + 1;
-                            int limSize = i - 1;
-                            while (startSize < messageLen && message.charAt(startSize) == ' ') {
-                                startSize++;
-                            }
-                            while (limSize > startSize) {
-                                char c = message.charAt(limSize);
-                                if (c == '\r' || c == ' ') {
-                                    limSize--;
-                                } else {
-                                    break;
-                                }
-                            }
-                            try {
-                                contentLength = Numbers.parseInt(message, startSize, limSize + 1);
-                            } catch (NumericException e) {
-                                return message.toString();
-                            }
-                        }
-                        colonIdx = -1;
-                    } else if (i - lineStart == 1 && message.charAt(i - 1) == '\r') {
-                        lineStart = i + 1;
-                        headerEndFound = true;
-                        break; // for loop
-                    }
-                    lineStart = i + 1;
-                    break;
-            }
-        }
-        boolean wasHttpResponse = headerEndFound && contentLength == messageLen - lineStart;
-        return wasHttpResponse ? message.subSequence(lineStart, messageLen) : message;
-    }
-
-    private static boolean isContentLength(CharSequence tok, int lo, int hi) {
-        return hi - lo > 13 &&
-                (tok.charAt(lo++) | 32) == 'c' &&
-                (tok.charAt(lo++) | 32) == 'o' &&
-                (tok.charAt(lo++) | 32) == 'n' &&
-                (tok.charAt(lo++) | 32) == 't' &&
-                (tok.charAt(lo++) | 32) == 'e' &&
-                (tok.charAt(lo++) | 32) == 'n' &&
-                (tok.charAt(lo++) | 32) == 't' &&
-                (tok.charAt(lo++) | 32) == '-' &&
-                (tok.charAt(lo++) | 32) == 'l' &&
-                (tok.charAt(lo++) | 32) == 'e' &&
-                (tok.charAt(lo++) | 32) == 'n' &&
-                (tok.charAt(lo++) | 32) == 'g' &&
-                (tok.charAt(lo++) | 32) == 't' &&
-                (tok.charAt(lo) | 32) == 'h';
     }
 
     private void freeSocketAndAddress() {
@@ -513,7 +428,82 @@ public class LogAlertSocket implements Closeable {
         alertHostsCount++;
     }
 
-    private void logNetworkConnectError(String message) {
+    private static boolean isContentLength(CharSequence tok, int lo, int hi) {
+        return hi - lo > 13 &&
+                (tok.charAt(lo++) | 32) == 'c' &&
+                (tok.charAt(lo++) | 32) == 'o' &&
+                (tok.charAt(lo++) | 32) == 'n' &&
+                (tok.charAt(lo++) | 32) == 't' &&
+                (tok.charAt(lo++) | 32) == 'e' &&
+                (tok.charAt(lo++) | 32) == 'n' &&
+                (tok.charAt(lo++) | 32) == 't' &&
+                (tok.charAt(lo++) | 32) == '-' &&
+                (tok.charAt(lo++) | 32) == 'l' &&
+                (tok.charAt(lo++) | 32) == 'e' &&
+                (tok.charAt(lo++) | 32) == 'n' &&
+                (tok.charAt(lo++) | 32) == 'g' &&
+                (tok.charAt(lo++) | 32) == 't' &&
+                (tok.charAt(lo) | 32) == 'h';
+    }
+
+    @TestOnly
+    void logResponse(int len) {
+        responseSink.clear();
+        Chars.utf8Decode(inBufferPtr, inBufferPtr + len, responseSink);
+        final int responseLen = responseSink.length();
+        int contentLength = 0;
+        int lineStart = 0;
+        int colonIdx = -1;
+        boolean headerEndFound = false;
+        for (int i = 0; i < responseLen; i++) {
+            switch (responseSink.charAt(i)) {
+                case ':':
+                    if (colonIdx == -1) { // values may contain ':', e.g. Date: Thu, 09 Dec 2021 09:37:22 GMT
+                        colonIdx = i;
+                    }
+                    break;
+
+                case '\n':
+                    if (colonIdx != -1) {
+                        if (isContentLength(responseSink, lineStart, colonIdx)) {
+                            int startSize = colonIdx + 1;
+                            int limSize = i - 1;
+                            while (startSize < responseLen && responseSink.charAt(startSize) == ' ') {
+                                startSize++;
+                            }
+                            while (limSize > startSize) {
+                                char c = responseSink.charAt(limSize);
+                                if (c == '\r' || c == ' ') {
+                                    limSize--;
+                                } else {
+                                    break;
+                                }
+                            }
+                            try {
+                                contentLength = Numbers.parseInt(responseSink, startSize, limSize + 1);
+                            } catch (NumericException e) {
+                                $currentAlertHost(log.info().$("Received")).$(": ").$(responseSink).$();
+                                return;
+                            }
+                        }
+                        colonIdx = -1;
+                    } else if (i - lineStart == 1 && responseSink.charAt(i - 1) == '\r') {
+                        lineStart = i + 1;
+                        headerEndFound = true;
+                        break; // for loop
+                    }
+                    lineStart = i + 1;
+                    break;
+            }
+        }
+        int start = headerEndFound && contentLength == responseLen - lineStart ? lineStart : 0;
+        $currentAlertHost(log.info().$("Received"))
+                .$(": ")
+                .$(responseSink, start, responseLen)
+                .$();
+    }
+
+    private void logNetworkConnectError(CharSequence message) {
         $currentAlertHost(log.info().$(message)).$(" [errno=").$(nf.errno()).I$();
     }
 
