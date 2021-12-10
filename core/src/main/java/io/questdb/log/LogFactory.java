@@ -24,12 +24,12 @@
 
 package io.questdb.log;
 
-import io.questdb.VisibleForTesting;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.*;
 import java.lang.reflect.Constructor;
@@ -263,7 +263,7 @@ public class LogFactory implements Closeable {
         return queueDepth;
     }
 
-    @VisibleForTesting
+    @TestOnly
     ObjHashSet<LogWriter> getJobs() {
         return jobs;
     }

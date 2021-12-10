@@ -24,13 +24,13 @@
 
 package io.questdb.log;
 
-import io.questdb.VisibleForTesting;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.net.InetAddress;
@@ -272,42 +272,42 @@ public class LogAlertSocket implements Closeable {
         return inBufferSize;
     }
 
-    @VisibleForTesting
+    @TestOnly
     String getAlertTargets() {
         return alertTargets;
     }
 
-    @VisibleForTesting
+    @TestOnly
     String[] getAlertHosts() {
         return alertHosts;
     }
 
-    @VisibleForTesting
+    @TestOnly
     int[] getAlertPorts() {
         return alertPorts;
     }
 
-    @VisibleForTesting
+    @TestOnly
     int getAlertHostsCount() {
         return alertHostsCount;
     }
 
-    @VisibleForTesting
+    @TestOnly
     long getReconnectDelay() {
         return reconnectDelay;
     }
 
-    @VisibleForTesting
+    @TestOnly
     String getDefaultAlertHost() {
         return defaultHost;
     }
 
-    @VisibleForTesting
+    @TestOnly
     int getDefaultAlertPort() {
         return defaultPort;
     }
 
-    @VisibleForTesting
+    @TestOnly
     static String filterHttpHeader(StringSink message) {
         final int messageLen = message.length();
         int contentLength = 0;

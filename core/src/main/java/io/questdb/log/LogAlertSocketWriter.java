@@ -24,7 +24,6 @@
 
 package io.questdb.log;
 
-import io.questdb.VisibleForTesting;
 import io.questdb.mp.QueueConsumer;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -35,6 +34,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.*;
 
@@ -162,7 +162,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         return writeSequence.consumeAll(alertsSourceQueue, alertsProcessor);
     }
 
-    @VisibleForTesting
+    @TestOnly
     static void readFile(String location, long address, long addressSize, FilesFacade ff, CharSink sink) {
         long fdTemplate = -1;
         try (Path path = new Path()) {
@@ -195,77 +195,77 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         }
     }
 
-    @VisibleForTesting
+    @TestOnly
     HttpLogRecordSink getAlertSink() {
         return alertSink;
     }
 
-    @VisibleForTesting
+    @TestOnly
     String getAlertTargets() {
         return socket.getAlertTargets();
     }
 
-    @VisibleForTesting
+    @TestOnly
     void setAlertTargets(String alertTargets) {
         this.alertTargets = alertTargets;
     }
 
-    @VisibleForTesting
+    @TestOnly
     String getDefaultAlertHost() {
         return socket.getDefaultAlertHost();
     }
 
-    @VisibleForTesting
+    @TestOnly
     void setDefaultAlertHost(String defaultAlertHost) {
         this.defaultAlertHost = defaultAlertHost;
     }
 
-    @VisibleForTesting
+    @TestOnly
     int getDefaultAlertPort() {
         return socket.getDefaultAlertPort();
     }
 
-    @VisibleForTesting
+    @TestOnly
     void setDefaultAlertPort(String defaultAlertPort) {
         this.defaultAlertPort = defaultAlertPort;
     }
 
-    @VisibleForTesting
+    @TestOnly
     int getInBufferSize() {
         return socket.getInBufferSize();
     }
 
-    @VisibleForTesting
+    @TestOnly
     void setInBufferSize(String inBufferSize) {
         this.inBufferSize = inBufferSize;
     }
 
-    @VisibleForTesting
+    @TestOnly
     String getLocation() {
         return location;
     }
 
-    @VisibleForTesting
+    @TestOnly
     void setLocation(String location) {
         this.location = location;
     }
 
-    @VisibleForTesting
+    @TestOnly
     int getOutBufferSize() {
         return socket.getOutBufferSize();
     }
 
-    @VisibleForTesting
+    @TestOnly
     void setOutBufferSize(String outBufferSize) {
         this.outBufferSize = outBufferSize;
     }
 
-    @VisibleForTesting
+    @TestOnly
     long getReconnectDelay() {
         return socket.getReconnectDelay();
     }
 
-    @VisibleForTesting
+    @TestOnly
     void setReconnectDelay(String reconnectDelay) {
         this.reconnectDelay = reconnectDelay;
     }
@@ -311,7 +311,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         alertTemplateNodesLen = alertTemplateNodes.size();
     }
 
-    @VisibleForTesting
+    @TestOnly
     void onLogRecord(LogRecordSink logRecord) {
         final int len = logRecord.length();
         if ((logRecord.getLevel() & level) != 0 && len > 0) {
