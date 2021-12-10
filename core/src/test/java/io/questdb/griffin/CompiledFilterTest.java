@@ -206,7 +206,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     " timestamp_sequence(0, 1000000) ts " +
                     "from long_sequence(20)) timestamp(ts)", sqlExecutionContext);
 
-            compiler.compile("alter table t1 add j long", sqlExecutionContext);
+            compile("alter table t1 add column j long", sqlExecutionContext);
 
             compiler.compile("insert into t1 select " +
                     " x," +
