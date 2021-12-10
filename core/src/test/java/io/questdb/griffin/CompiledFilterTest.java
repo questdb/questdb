@@ -30,7 +30,7 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
-public class CompiledFiltersTest extends AbstractGriffinTest {
+public class CompiledFilterTest extends AbstractGriffinTest {
 
     // TODO: keep this test for advanced features such as:
     //  * bind variables
