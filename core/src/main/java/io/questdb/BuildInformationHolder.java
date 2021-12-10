@@ -25,26 +25,30 @@
 package io.questdb;
 
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URL;
+import java.util.Enumeration;
+import java.util.jar.Attributes;
+import java.util.jar.Manifest;
 
 public class BuildInformationHolder implements BuildInformation, CharSequence {
+    public static final BuildInformationHolder INSTANCE = fetchBuildInformation();
+    private static final String UNKNOWN = "Unknown Version";
+
     private final CharSequence questDbVersion;
     private final CharSequence commitHash;
     private final CharSequence jdkVersion;
     private final String buildKey;
 
     public BuildInformationHolder() {
-        this(
-                "Unknown Version",
-                "Unknown Version",
-                "Unknown Version"
-        );
+        this(UNKNOWN, UNKNOWN, UNKNOWN);
     }
 
-    public BuildInformationHolder(
-            CharSequence questDbVersion,
-            CharSequence commitHash,
-            CharSequence jdkVersion
-    ) {
+    @TestOnly
+    BuildInformationHolder(CharSequence questDbVersion, CharSequence commitHash, CharSequence jdkVersion) {
         this.questDbVersion = questDbVersion;
         this.commitHash = commitHash;
         this.jdkVersion = jdkVersion;
@@ -85,5 +89,48 @@ public class BuildInformationHolder implements BuildInformation, CharSequence {
     @Override
     public CharSequence subSequence(int start, int end) {
         return buildKey.subSequence(start, end);
+    }
+
+    private static BuildInformationHolder fetchBuildInformation() {
+        try {
+            final Attributes manifestAttributes = getManifestAttributes();
+            return new BuildInformationHolder(
+                    getQuestDbVersion(manifestAttributes),
+                    getCommitHash(manifestAttributes),
+                    getJdkVersion(manifestAttributes)
+            );
+        } catch (IOException e) {
+            return new BuildInformationHolder();
+        }
+    }
+
+    private static Attributes getManifestAttributes() throws IOException {
+        final Enumeration<URL> resources = ServerMain.class.getClassLoader()
+                .getResources("META-INF/MANIFEST.MF");
+        while (resources.hasMoreElements()) {
+            try (InputStream is = resources.nextElement().openStream()) {
+                final Manifest manifest = new Manifest(is);
+                final Attributes attributes = manifest.getMainAttributes();
+                if ("org.questdb".equals(attributes.getValue("Implementation-Vendor-Id"))) {
+                    return manifest.getMainAttributes();
+                }
+            }
+        }
+        return new Attributes();
+    }
+
+    private static CharSequence getQuestDbVersion(final Attributes manifestAttributes) {
+        final CharSequence version = manifestAttributes.getValue("Implementation-Version");
+        return version != null ? version : "[DEVELOPMENT]";
+    }
+
+    private static CharSequence getJdkVersion(final Attributes manifestAttributes) {
+        final CharSequence version = manifestAttributes.getValue("Build-Jdk");
+        return version != null ? version : "Unknown Version";
+    }
+
+    private static CharSequence getCommitHash(final Attributes manifestAttributes) {
+        final CharSequence version = manifestAttributes.getValue("Build-Commit-Hash");
+        return version != null ? version : "Unknown Version";
     }
 }
