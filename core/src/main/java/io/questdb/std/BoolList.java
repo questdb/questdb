@@ -30,7 +30,7 @@ import java.util.Arrays;
 
 public class BoolList implements Mutable {
     private static final int DEFAULT_ARRAY_SIZE = 16;
-    private static final boolean noEntryValue = false;
+    private static final boolean NO_ENTRY_VALUE = false;
     private boolean[] buffer;
     private int pos = 0;
 
@@ -65,7 +65,7 @@ public class BoolList implements Mutable {
     public void clear(int capacity) {
         ensureCapacity(capacity);
         pos = 0;
-        Arrays.fill(buffer, noEntryValue);
+        Arrays.fill(buffer, NO_ENTRY_VALUE);
     }
 
     public void ensureCapacity(int capacity) {
@@ -82,6 +82,7 @@ public class BoolList implements Mutable {
     }
 
     public boolean get(int index) {
+        assert index < pos;
         return buffer[index];
     }
 
@@ -89,7 +90,7 @@ public class BoolList implements Mutable {
         if (pos > 0) {
             return buffer[pos - 1];
         }
-        return noEntryValue;
+        return NO_ENTRY_VALUE;
     }
 
     /**
@@ -104,7 +105,7 @@ public class BoolList implements Mutable {
         if (index < pos) {
             return buffer[index];
         }
-        return noEntryValue;
+        return NO_ENTRY_VALUE;
     }
 
     /**
@@ -151,10 +152,11 @@ public class BoolList implements Mutable {
             System.arraycopy(buffer, index + 1, buffer, index, move);
         }
         int index1 = --pos;
-        buffer[index1] = noEntryValue;
+        buffer[index1] = NO_ENTRY_VALUE;
     }
 
     public boolean replace(int index, boolean value) {
+        assert index < pos;
         boolean val = buffer[index];
         buffer[index] = value;
         return val;
