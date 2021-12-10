@@ -47,7 +47,7 @@ import java.util.List;
 public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     private static final Log LOG = LogFactory.getLog(CompiledFilterRegressionTest.class);
-    private static final int N_SIMD = 128;
+    private static final int N_SIMD = 512;
     private static final int N_SIMD_WITH_SCALAR_TAIL = N_SIMD + 3;
 
     @Parameterized.Parameters(name = "{0}")
