@@ -57,7 +57,6 @@ public class LogAlertSocket implements Closeable {
     public static final int OUT_BUFFER_SIZE = 4 * 1024 * 1024;
     public static final long RECONNECT_DELAY_NANO = 250_000_000; // 1/4th sec
     private static final int HOSTS_LIMIT = 12;
-    private static final char[] CONTENT_LENGTH = {'c', 'o', 'n', 't', 'e', 'n', 't', '-', 'l', 'e', 'n', 'g', 't', 'h'};
 
     private final Log log;
     private final Rnd rand;
@@ -308,20 +307,6 @@ public class LogAlertSocket implements Closeable {
         return defaultPort;
     }
 
-
-    private static boolean isContentLength(CharSequence message, int lo, int hi) {
-        int len = hi - lo;
-        if (len < CONTENT_LENGTH.length) {
-            return false;
-        }
-        for (int i = 0; i < CONTENT_LENGTH.length; i++) {
-            if ((message.charAt(lo + i) | 32) != CONTENT_LENGTH[i]) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     @VisibleForTesting
     static String filterHttpHeader(StringSink message) {
         final int messageLen = message.length();
@@ -332,7 +317,9 @@ public class LogAlertSocket implements Closeable {
         for (int i = 0; i < messageLen; i++) {
             switch (message.charAt(i)) {
                 case ':':
-                    colonIdx = i;
+                    if (colonIdx == -1) { // values may contain ':', e.g. Date: Thu, 09 Dec 2021 09:37:22 GMT
+                        colonIdx = i;
+                    }
                     break;
 
                 case '\n':
@@ -369,6 +356,24 @@ public class LogAlertSocket implements Closeable {
         }
         boolean wasHttpResponse = headerEndFound && contentLength == messageLen - lineStart;
         return message.subSequence(wasHttpResponse ? lineStart : 0, messageLen).toString();
+    }
+
+    private static boolean isContentLength(CharSequence tok, int lo, int hi) {
+        return hi - lo > 13 &&
+                (tok.charAt(lo++) | 32) == 'c' &&
+                (tok.charAt(lo++) | 32) == 'o' &&
+                (tok.charAt(lo++) | 32) == 'n' &&
+                (tok.charAt(lo++) | 32) == 't' &&
+                (tok.charAt(lo++) | 32) == 'e' &&
+                (tok.charAt(lo++) | 32) == 'n' &&
+                (tok.charAt(lo++) | 32) == 't' &&
+                (tok.charAt(lo++) | 32) == '-' &&
+                (tok.charAt(lo++) | 32) == 'l' &&
+                (tok.charAt(lo++) | 32) == 'e' &&
+                (tok.charAt(lo++) | 32) == 'n' &&
+                (tok.charAt(lo++) | 32) == 'g' &&
+                (tok.charAt(lo++) | 32) == 't' &&
+                (tok.charAt(lo) | 32) == 'h';
     }
 
     private void freeSocketAndAddress() {
