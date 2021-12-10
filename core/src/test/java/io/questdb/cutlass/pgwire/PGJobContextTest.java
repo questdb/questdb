@@ -72,6 +72,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.LockSupport;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
@@ -3069,14 +3070,14 @@ nodejs code:
 
     @Test
     public void testRunAlterWhenTableLockedWithInserts() throws Exception {
-        writerAsyncCommandBusyWaitTimeout = 1_000_000;
+        writerAsyncCommandBusyWaitTimeout = 10_000_000;
         assertMemoryLeak(() -> testAddColumnBusyWriter(true));
     }
 
     @Test
     public void testRunAlterWhenTableLockedAndAlterTakesTooLong() throws Exception {
         assertMemoryLeak(() -> {
-            writerAsyncCommandBusyWaitTimeout = 1_000_000;
+            writerAsyncCommandBusyWaitTimeout = 10_000_000;
             ff = new FilesFacadeImpl() {
                 @Override
                 public long openRW(LPSZ name) {
@@ -3163,7 +3164,7 @@ nodejs code:
                 }).start();
 
                 start.await();
-                Thread.sleep(5);
+                LockSupport.parkNanos(1);
                 connection1.commit();
                 finished.await();
 
@@ -3604,8 +3605,7 @@ nodejs code:
                     // IN NULL
                     try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts in ?")) {
                         sink.clear();
-                        String date = null;
-                        statement.setString(1, date);
+                        statement.setString(1, null);
                         statement.executeQuery();
                         try (ResultSet rs = statement.executeQuery()) {
                             String expected = "";
@@ -3616,8 +3616,7 @@ nodejs code:
                     // NOT IN NULL
                     try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts not in ?")) {
                         sink.clear();
-                        String date = null;
-                        statement.setString(1, date);
+                        statement.setString(1, null);
                         statement.executeQuery();
                         try (ResultSet rs = statement.executeQuery()) {
                             String expected = datesArr.stream()
@@ -3692,8 +3691,7 @@ nodejs code:
                     // IN NULL
                     try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts in ?")) {
                         sink.clear();
-                        String date = null;
-                        statement.setString(1, date);
+                        statement.setString(1, null);
                         statement.executeQuery();
                         try (ResultSet rs = statement.executeQuery()) {
                             String expected = "";
@@ -3704,8 +3702,7 @@ nodejs code:
                     // NOT IN NULL
                     try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts not in ?")) {
                         sink.clear();
-                        String date = null;
-                        statement.setString(1, date);
+                        statement.setString(1, null);
                         statement.executeQuery();
                         try (ResultSet rs = statement.executeQuery()) {
                             String expected = datesArr.stream()
@@ -4380,9 +4377,9 @@ nodejs code:
             ) {
                 connection.setAutoCommit(false);
                 for (int i = 0; i < 100; i++) {
-                    insert.setString(1, "0");
-                    insert.setString(2, "10");
-                    insert.setString(3, "010");
+                    insert.setString(1, "0b");
+                    insert.setString(2, "10b");
+                    insert.setString(3, "010b");
                     insert.setString(4, "x");
                     insert.setString(5, "xy");
                     insert.setString(6, "xyzw");
@@ -4397,10 +4394,10 @@ nodejs code:
                         final Record record = cursor.getRecord();
                         int count = 0;
                         while (cursor.hasNext()) {
-                            //TODO: bits geohash lliteral
-//                            Assert.assertEquals((byte)GeoHashes.fromBitString("0"), record.getGeoHashByte(0));
-//                            Assert.assertEquals((byte)GeoHashes.fromBitString("01"), record.getGeoHashByte(1));
-//                            Assert.assertEquals((byte)GeoHashes.fromBitString("010"), record.getGeoHashByte(2));
+                            //TODO: bits GeoHash literal
+//                            Assert.assertEquals((byte)GeoHashes.fromBitString("0", 0), record.getGeoByte(0));
+//                            Assert.assertEquals((byte)GeoHashes.fromBitString("01", 0), record.getGeoByte(1));
+//                            Assert.assertEquals((byte)GeoHashes.fromBitString("010", 0), record.getGeoByte(2));
                             Assert.assertEquals(GeoHashes.fromString("x", 0, 1), record.getGeoByte(3));
                             Assert.assertEquals(GeoHashes.fromString("xy", 0, 2), record.getGeoShort(4));
                             Assert.assertEquals(GeoHashes.fromString("xyzw", 0, 4), record.getGeoInt(5));
