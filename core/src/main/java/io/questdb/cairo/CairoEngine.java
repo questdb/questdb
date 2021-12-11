@@ -48,6 +48,8 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static io.questdb.cairo.pool.WriterPool.OWNERSHIP_REASON_NONE;
+
 public class CairoEngine implements Closeable, WriterSource {
     public static final String BUSY_READER = "busyReader";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
@@ -288,7 +290,7 @@ public class CairoEngine implements Closeable, WriterSource {
         securityContext.checkWritePermission();
 
         CharSequence lockedReason = writerPool.lock(tableName, lockReason);
-        if (null == lockedReason) {
+        if (lockedReason == OWNERSHIP_REASON_NONE) {
             boolean locked = readerPool.lock(tableName);
             if (locked) {
                 LOG.info().$("locked [table=`").utf8(tableName).$("`, thread=").$(Thread.currentThread().getId()).$(']').$();
