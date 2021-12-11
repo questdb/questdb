@@ -25,10 +25,11 @@
 package io.questdb.log;
 
 import io.questdb.std.Sinkable;
+import io.questdb.std.str.CharSinkBase;
 
 import java.io.File;
 
-public interface LogRecord {
+public interface LogRecord extends CharSinkBase {
     void $();
 
     default void I$() {
@@ -38,6 +39,8 @@ public interface LogRecord {
     LogRecord $(CharSequence sequence);
 
     LogRecord $(CharSequence sequence, int lo, int hi);
+
+    LogRecord $utf8(long lo, long hi);
 
     LogRecord $(int x);
 

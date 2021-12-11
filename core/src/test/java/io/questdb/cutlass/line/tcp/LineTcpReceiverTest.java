@@ -56,7 +56,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;

@@ -24,13 +24,13 @@
 
 package io.questdb.log;
 
-import io.questdb.VisibleForTesting;
 import io.questdb.std.Chars;
 import io.questdb.std.Sinkable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 public class LogRecordSink extends AbstractCharSink implements Sinkable {
     private final CharSequenceOf charSeq = new CharSequenceOf();
@@ -95,7 +95,7 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
         Chars.utf8Decode(address, _wptr, sink);
     }
 
-    @VisibleForTesting
+    @TestOnly
     static class CharSequenceOf implements CharSequence {
         private char[] chars;
         private int lo;
