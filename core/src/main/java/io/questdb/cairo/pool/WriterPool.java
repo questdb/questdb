@@ -63,7 +63,7 @@ import java.util.Iterator;
 public class WriterPool extends AbstractPool {
     private static final Log LOG = LogFactory.getLog(WriterPool.class);
     static final String OWNERSHIP_REASON_MISSING = "missing or owned by other process";
-    static final String OWNERSHIP_REASON_NONE = "not owned by anyone";
+    public static final String OWNERSHIP_REASON_NONE = null;
     static final String OWNERSHIP_REASON_WRITER_ERROR = "writer error";
     private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
     private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
