@@ -65,6 +65,7 @@ public class WriterPool extends AbstractPool {
     static final String OWNERSHIP_REASON_MISSING = "missing or owned by other process";
     public static final String OWNERSHIP_REASON_NONE = null;
     public static final String OWNERSHIP_REASON_UNKNOWN = "unknown";
+    public static final String OWNERSHIP_REASON_RELEASED = "released";
     static final String OWNERSHIP_REASON_WRITER_ERROR = "writer error";
     private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
     private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
@@ -233,9 +234,7 @@ public class WriterPool extends AbstractPool {
     }
 
     private TableWriter checkClosedAndGetWriter(CharSequence tableName, Entry e, CharSequence lockReason) {
-        if (null == lockReason) {
-            throw new NullPointerException();
-        }
+        assertLockReason(lockReason);
         if (isClosed()) {
             // pool closed, but we somehow managed to lock writer
             // make sure that interceptor cleared to allow calling thread close writer normally
@@ -381,6 +380,7 @@ public class WriterPool extends AbstractPool {
             w.setLifecycleManager(DefaultLifecycleManager.INSTANCE);
             w.close();
             e.writer = null;
+            e.ownershipReason = OWNERSHIP_REASON_RELEASED;
             LOG.info().$("closed [table=`").utf8(name).$("`, reason=").$(PoolConstants.closeReasonText(reason)).$(", by=").$(thread).$(']').$();
             notifyListener(thread, name, ev);
         }
@@ -422,9 +422,7 @@ public class WriterPool extends AbstractPool {
     }
 
     private boolean lockAndNotify(long thread, Entry e, CharSequence tableName, CharSequence lockReason) {
-        if (null == lockReason) {
-            throw new NullPointerException();
-        }
+        assertLockReason(lockReason);
         TableUtils.lockName(path.of(root).concat(tableName));
         e.lockFd = TableUtils.lock(ff, path);
         if (e.lockFd == -1L) {
@@ -437,6 +435,12 @@ public class WriterPool extends AbstractPool {
         notifyListener(thread, tableName, PoolListener.EV_LOCK_SUCCESS);
         e.ownershipReason = lockReason;
         return true;
+    }
+
+    private void assertLockReason(CharSequence lockReason) {
+        if (lockReason == OWNERSHIP_REASON_NONE) {
+            throw new NullPointerException();
+        }
     }
 
     private TableWriter logAndReturn(Entry e, short event) {

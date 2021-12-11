@@ -247,7 +247,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         } catch (AssertionError e) {
                             int releasedCount = -tableIndex.get(tableName).getCount();
                             // Wait one more writer release before re-trying to compare
-                            wait(tableIndex.get(tableName), releasedCount + 1, minIdleMsBeforeWriterRelease);
+                            wait(tableIndex.get(tableName), releasedCount + 3, minIdleMsBeforeWriterRelease);
                             assertTable(expectedSB, tableName);
                         }
                     } catch (Throwable err) {

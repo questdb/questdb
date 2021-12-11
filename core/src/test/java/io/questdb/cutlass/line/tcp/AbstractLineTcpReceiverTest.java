@@ -155,12 +155,18 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     }
 
     protected void runInContext(LineTcpReceiverTest.LineTcpServerAwareContext r) throws Exception {
+        runInContext(r, false);
+    }
+
+    protected void runInContext(LineTcpReceiverTest.LineTcpServerAwareContext r, boolean needMaintenanceJob) throws Exception {
         minIdleMsBeforeWriterRelease = 250;
         assertMemoryLeak(() -> {
             final Path path = new Path(4096);
             try (LineTcpReceiver receiver = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine)) {
                 sharedWorkerPool.assignCleaner(Path.CLEANER);
-                sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
+                if (needMaintenanceJob) {
+                    sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
+                }
                 sharedWorkerPool.start(LOG);
                 try {
                     r.run(receiver);
