@@ -1332,7 +1332,7 @@ public class TableWriter implements Closeable {
                 LOG.info().$("tx rollback complete [name=").$(tableName).$(']').$();
                 processCommandQueue(false);
             } catch (Throwable e) {
-                LOG.error().$("could not perform rollback [name=").$(tableName).$(", msg=").$(e.getMessage()).$(']').$();
+                LOG.critical().$("could not perform rollback [name=").$(tableName).$(", msg=").$(e.getMessage()).$(']').$();
                 distressed = true;
             }
         }
@@ -1524,7 +1524,7 @@ public class TableWriter implements Closeable {
             indexer.refreshSourceAndIndex(lo, hi);
         } catch (CairoException e) {
             indexer.distress();
-            LOG.error().$("index error [fd=").$(indexer.getFd()).$(']').$('{').$((Sinkable) e).$('}').$();
+            LOG.critical().$("index error [fd=").$(indexer.getFd()).$(']').$('{').$((Sinkable) e).$('}').$();
         } finally {
             latch.countDown();
         }
@@ -2830,7 +2830,7 @@ public class TableWriter implements Closeable {
         try {
             setAppendPosition(txWriter.getTransientRowCount(), true);
         } catch (Throwable e) {
-            LOG.error().$("data is committed but writer failed to update its state `").$(e).$('`').$();
+            LOG.critical().$("data is committed but writer failed to update its state `").$(e).$('`').$();
             distressed = true;
             throw e;
         }
@@ -4796,7 +4796,7 @@ public class TableWriter implements Closeable {
                 denseIndexers.getQuick(i).refreshSourceAndIndex(lo, hi);
             } catch (CairoException e) {
                 // this is pretty severe, we hit some sort of limit
-                LOG.error().$("index error {").$((Sinkable) e).$('}').$();
+                LOG.critical().$("index error {").$((Sinkable) e).$('}').$();
                 throwDistressException(e);
             }
         }

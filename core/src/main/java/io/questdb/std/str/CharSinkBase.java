@@ -22,7 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.std.str;
 
-public @interface VisibleForTesting {
+public interface CharSinkBase {
+    CharSinkBase put(char c);
 }

@@ -29,7 +29,7 @@ import io.questdb.std.Sinkable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 
-public interface CharSink {
+public interface CharSink extends CharSinkBase {
 
     int encodeSurrogate(char c, CharSequence in, int pos, int hi);
 
@@ -80,6 +80,7 @@ public interface CharSink {
         return this;
     }
 
+    @Override
     CharSink put(char c);
 
     default CharSink put(int value) {
