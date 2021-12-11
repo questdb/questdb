@@ -64,6 +64,7 @@ public class WriterPool extends AbstractPool {
     private static final Log LOG = LogFactory.getLog(WriterPool.class);
     static final String OWNERSHIP_REASON_MISSING = "missing or owned by other process";
     public static final String OWNERSHIP_REASON_NONE = null;
+    public static final String OWNERSHIP_REASON_UNKNOWN = "unknown";
     static final String OWNERSHIP_REASON_WRITER_ERROR = "writer error";
     private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
     private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
@@ -134,7 +135,7 @@ public class WriterPool extends AbstractPool {
         } else {
             if (e.owner == thread) {
                 if (e.lockFd != -1L) {
-                    throw EntryLockedException.instance(e.ownershipReason);
+                    throw EntryLockedException.instance(reinterpretOwnershipReason(e.ownershipReason));
                 }
 
                 if (e.ex != null) {
@@ -146,7 +147,7 @@ public class WriterPool extends AbstractPool {
                 }
             }
             LOG.info().$("busy [table=`").utf8(tableName).$("`, owner=").$(owner).$(']').$();
-            throw EntryUnavailableException.instance(e.ownershipReason);
+            throw EntryUnavailableException.instance(reinterpretOwnershipReason(e.ownershipReason));
         }
     }
 
@@ -183,11 +184,10 @@ public class WriterPool extends AbstractPool {
             Entry other = entries.putIfAbsent(tableName, e);
             if (other == null) {
                 if (lockAndNotify(thread, e, tableName, lockReason)) {
-                    return null;
+                    return OWNERSHIP_REASON_NONE;
                 } else {
                     entries.remove(tableName);
-                    assert null != e.ownershipReason;
-                    return e.ownershipReason;
+                    return reinterpretOwnershipReason(e.ownershipReason);
                 }
             } else {
                 e = other;
@@ -198,16 +198,23 @@ public class WriterPool extends AbstractPool {
         if ((Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread) /*|| Unsafe.cas(e, ENTRY_OWNER, thread, thread)*/)) {
             closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);
             if (lockAndNotify(thread, e, tableName, lockReason)) {
-                return null;
+                return OWNERSHIP_REASON_NONE;
             }
-            assert null != e.ownershipReason;
-            return e.ownershipReason;
+            return reinterpretOwnershipReason(e.ownershipReason);
         }
 
         LOG.error().$("could not lock, busy [table=`").utf8(tableName).$("`, owner=").$(e.owner).$(", thread=").$(thread).$(']').$();
         notifyListener(thread, tableName, PoolListener.EV_LOCK_BUSY);
-        assert null != e.ownershipReason;
-        return e.ownershipReason;
+        return reinterpretOwnershipReason(e.ownershipReason);
+    }
+
+    private CharSequence reinterpretOwnershipReason(CharSequence providedReason) {
+        // we cannot always guarantee that ownership reason is set
+        // allocating writer and setting "reason" are non-atomic
+        // therefore we could be in a situation where we can be confident writer is locked
+        // but reason has not yet caught up. In this case we do not really know the reason
+        // but not to confuse the caller, we have to provide a non-null value
+        return providedReason == OWNERSHIP_REASON_NONE ? OWNERSHIP_REASON_UNKNOWN : providedReason;
     }
 
     /**
@@ -230,7 +237,7 @@ public class WriterPool extends AbstractPool {
             throw new NullPointerException();
         }
         if (isClosed()) {
-            // pool closed but we somehow managed to lock writer
+            // pool closed, but we somehow managed to lock writer
             // make sure that interceptor cleared to allow calling thread close writer normally
             LOG.info().$('\'').utf8(tableName).$("' born free").$();
             return e.goodbye();
@@ -294,6 +301,7 @@ public class WriterPool extends AbstractPool {
                 writer.transferLock(e.lockFd);
                 e.lockFd = -1;
                 e.ownershipReason = OWNERSHIP_REASON_NONE;
+                Unsafe.getUnsafe().storeFence();
                 Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
             }
             notifyListener(thread, name, PoolListener.EV_UNLOCKED);
@@ -461,8 +469,10 @@ public class WriterPool extends AbstractPool {
             }
 
             e.ownershipReason = OWNERSHIP_REASON_NONE;
-            e.owner = UNALLOCATED;
             e.lastReleaseTime = configuration.getMicrosecondClock().getTicks();
+            Unsafe.getUnsafe().storeFence();
+            e.owner = UNALLOCATED;
+            Unsafe.getUnsafe().storeFence();
             notifyListener(thread, name, PoolListener.EV_RETURN);
         } else {
             LOG.error().$("orphaned [table=`").utf8(name).$("`]").$();
