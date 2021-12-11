@@ -99,13 +99,6 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
         }
     }
 
-    private static int compareRetiesInQueue(Retry r1, Retry r2) {
-        // r1, r2 are always not null, null retries are not queued
-        RetryAttemptAttributes a1 = r1.getAttemptDetails();
-        RetryAttemptAttributes a2 = r2.getAttemptDetails();
-        return Long.compare(a1.nextRunTimestamp, a2.nextRunTimestamp);
-    }
-
     private long calculateNextTimestamp(RetryAttemptAttributes attemptAttributes) {
         if (attemptAttributes.attempt == 0) {
             // First retry after fixed time of 2ms
