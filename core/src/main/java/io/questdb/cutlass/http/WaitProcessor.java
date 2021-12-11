@@ -51,7 +51,7 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
         this.clock = configuration.getClock();
         this.maxWaitCapMs = configuration.getMaxWaitCapMs();
         this.exponentialWaitMultiplier = configuration.getExponentialWaitMultiplier();
-        nextRerun = new PriorityQueue<>(configuration.getInitialWaitQueueSize(), WaitProcessor::compareRetiesInQueue);
+        nextRerun = new PriorityQueue<>(configuration.getInitialWaitQueueSize(), WaitProcessor::compareRetriesInQueue);
 
         int retryQueueLength = configuration.getMaxProcessingQueueSize();
         inQueue = new RingQueue<>(RetryHolder::new, retryQueueLength);
@@ -97,13 +97,6 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
                 return useful;
             }
         }
-    }
-
-    private static int compareRetiesInQueue(Retry r1, Retry r2) {
-        // r1, r2 are always not null, null retries are not queued
-        RetryAttemptAttributes a1 = r1.getAttemptDetails();
-        RetryAttemptAttributes a2 = r2.getAttemptDetails();
-        return Long.compare(a1.nextRunTimestamp, a2.nextRunTimestamp);
     }
 
     private long calculateNextTimestamp(RetryAttemptAttributes attemptAttributes) {
@@ -231,5 +224,12 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
             outPubSequence.done(cursor);
             return true;
         }
+    }
+
+    private static int compareRetriesInQueue(Retry r1, Retry r2) {
+        // r1, r2 are always not null, null retries are not queued
+        RetryAttemptAttributes a1 = r1.getAttemptDetails();
+        RetryAttemptAttributes a2 = r2.getAttemptDetails();
+        return Long.compare(a1.nextRunTimestamp, a2.nextRunTimestamp);
     }
 }
