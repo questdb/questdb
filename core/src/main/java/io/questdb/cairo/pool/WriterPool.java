@@ -471,8 +471,8 @@ public class WriterPool extends AbstractPool {
             e.ownershipReason = OWNERSHIP_REASON_NONE;
             e.lastReleaseTime = configuration.getMicrosecondClock().getTicks();
             Unsafe.getUnsafe().storeFence();
-            e.owner = UNALLOCATED;
-            Unsafe.getUnsafe().storeFence();
+            Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
+            Unsafe.getUnsafe().fullFence();
             notifyListener(thread, name, PoolListener.EV_RETURN);
         } else {
             LOG.error().$("orphaned [table=`").utf8(name).$("`]").$();

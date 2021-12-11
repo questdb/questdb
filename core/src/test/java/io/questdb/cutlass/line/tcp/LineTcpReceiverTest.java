@@ -974,11 +974,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     private void send(LineTcpReceiver receiver, String tableName, int wait, Runnable sendToSocket) {
         SOCountDownLatch releaseLatch = new SOCountDownLatch(1);
+        final String t = tableName;
         switch (wait) {
             case WAIT_ENGINE_TABLE_RELEASE:
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                     if (Chars.equals(tableName, name)) {
-                        if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                        if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(tableName, t) ) {
                             releaseLatch.countDown();
                         }
                     }
