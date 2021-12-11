@@ -1318,7 +1318,7 @@ constexpr EList<int, N/2> largeblock_indexes(int const (&a)[N]) {
 *
 ****************************************************************************************/
 
-// Make dummy blend function templates to avoid error messages when the blend funtions are not yet defined
+// Make dummy blend function templates to avoid error messages when the blend functions are not yet defined
 template <typename dummy> void blend2(){}
 template <typename dummy> void blend4(){}
 template <typename dummy> void blend8(){}

@@ -433,7 +433,7 @@ public class BytecodeAssembler {
         try {
             return x.getDeclaredConstructor().newInstance();
         } catch (Exception e) {
-            LOG.error().$("could not create an instance of ").$(host.getName()).$(", cause: ").$(e).$();
+            LOG.critical().$("could not create an instance of ").$(host.getName()).$(", cause: ").$(e).$();
             throw BytecodeException.INSTANCE;
         }
     }

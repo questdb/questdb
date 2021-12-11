@@ -24,6 +24,8 @@
 
 package io.questdb.log;
 
+import io.questdb.BuildInformation;
+import io.questdb.BuildInformationHolder;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.NetworkError;
 import io.questdb.std.*;
@@ -75,13 +77,14 @@ public class LogAlertSocketWriterTest {
                         recordSink.put("A \"simple\" $message$\n");
 
                         writer.onLogRecord(recordSink);
+                        BuildInformation binf = BuildInformationHolder.INSTANCE;
                         TestUtils.assertEquals(
                                 "POST /api/v1/alerts HTTP/1.1\r\n" +
                                         "Host: " + LogAlertSocket.localHostIp + "\r\n" +
                                         "User-Agent: QuestDB/LogAlert\r\n" +
                                         "Accept: */*\r\n" +
                                         "Content-Type: application/json\r\n" +
-                                        "Content-Length:      498\r\n" +
+                                        "Content-Length:      564\r\n" +
                                         "\r\n" +
                                         "[\n" +
                                         "  {\n" +
@@ -91,6 +94,7 @@ public class LogAlertSocketWriterTest {
                                         "      \"service\": \"QuestDB\",\n" +
                                         "      \"category\": \"application-logs\",\n" +
                                         "      \"severity\": \"critical\",\n" +
+                                        "      \"version\": \"" + binf.getQuestDbVersion() + ":" + binf.getCommitHash() + ":" + binf.getJdkVersion() + "\",\n" +
                                         "      \"cluster\": \"GLOBAL\",\n" +
                                         "      \"orgid\": \"GLOBAL\",\n" +
                                         "      \"namespace\": \"GLOBAL\",\n" +
@@ -116,7 +120,7 @@ public class LogAlertSocketWriterTest {
                                         "User-Agent: QuestDB/LogAlert\r\n" +
                                         "Accept: */*\r\n" +
                                         "Content-Type: application/json\r\n" +
-                                        "Content-Length:      494\r\n" +
+                                        "Content-Length:      560\r\n" +
                                         "\r\n" +
                                         "[\n" +
                                         "  {\n" +
@@ -126,6 +130,7 @@ public class LogAlertSocketWriterTest {
                                         "      \"service\": \"QuestDB\",\n" +
                                         "      \"category\": \"application-logs\",\n" +
                                         "      \"severity\": \"critical\",\n" +
+                                        "      \"version\": \"" + binf.getQuestDbVersion() + ":" + binf.getCommitHash() + ":" + binf.getJdkVersion() + "\",\n" +
                                         "      \"cluster\": \"GLOBAL\",\n" +
                                         "      \"orgid\": \"GLOBAL\",\n" +
                                         "      \"namespace\": \"GLOBAL\",\n" +
