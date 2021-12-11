@@ -3070,20 +3070,14 @@ nodejs code:
     }
 
     @Test
-    @Ignore
-    // todo: unstable test that requires more work
     public void testRunAlterWhenTableLockedAndAlterTakesTooLong() throws Exception {
         assertMemoryLeak(() -> {
-            writerAsyncCommandBusyWaitTimeout = 10_000_000;
+            writerAsyncCommandBusyWaitTimeout = 1000_000;
             ff = new FilesFacadeImpl() {
                 @Override
                 public long openRW(LPSZ name) {
                     if (Chars.endsWith(name, "_meta.swp")) {
-                        try {
-                            Thread.sleep(writerAsyncCommandBusyWaitTimeout / 10000 + 100);
-                        } catch (InterruptedException e) {
-                            e.printStackTrace();
-                        }
+                        Os.sleep(writerAsyncCommandBusyWaitTimeout / 1000 / 2 + 100);
                     }
                     return super.openRW(name);
                 }
@@ -3093,8 +3087,6 @@ nodejs code:
     }
 
     @Test
-    @Ignore
-    // unstable test that requires more work
     public void testRunAlterWhenTableLockedAndAlterTakesTooLongFailsToWait() throws Exception {
         assertMemoryLeak(() -> {
             writerAsyncCommandMaxTimeout = configuration.getWriterAsyncCommandBusyWaitTimeout();
@@ -3102,11 +3094,7 @@ nodejs code:
                 @Override
                 public long openRW(LPSZ name) {
                     if (Chars.endsWith(name, "_meta.swp")) {
-                        try {
-                            Thread.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() / 1000);
-                        } catch (InterruptedException e) {
-                            e.printStackTrace();
-                        }
+                        Os.sleep(writerAsyncCommandBusyWaitTimeout / 1000 + 100);
                     }
                     return super.openRW(name);
                 }
@@ -3116,8 +3104,6 @@ nodejs code:
     }
 
     @Test
-    @Ignore
-    // todo: unstable test that requires more work
     public void testRunAlterWhenTableLockedAndAlterTimeoutsToStart() throws Exception {
         assertMemoryLeak(() -> {
             writerAsyncCommandBusyWaitTimeout = 0;
@@ -3126,8 +3112,6 @@ nodejs code:
     }
 
     @Test
-    @Ignore
-    // todo: unstable test that requires more work
     public void testRunAlterWhenTableLockedWithInserts() throws Exception {
         writerAsyncCommandBusyWaitTimeout = 10_000_000;
         assertMemoryLeak(() -> testAddColumnBusyWriter(true));
@@ -4469,6 +4453,13 @@ nodejs code:
                             Assert.assertEquals(totalCount, rdr.size());
                         }
                     }
+//                } catch (PSQLException ex) {
+//                    if (ex.getMessage().contains("writer busy")) {
+//                        // Sometimes (rarely) ALTER TABLE can win table lock and inserts fail.
+//                        //  This is not the scenario we try to test. Repeat again.
+//                        continue;
+//                    }
+//                    throw ex;
                 } finally {
                     pool.halt();
                     engine.releaseAllWriters();
