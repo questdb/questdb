@@ -1249,7 +1249,7 @@ public class TableWriter implements Closeable {
 
         CharSequence error = null;
         try {
-            replAlterTableEvent0(tableId, instance, error, TableWriterTask.TSK_ALTER_TABLE_BEGIN);
+            replAlterTableEvent0(tableId, instance, null, TableWriterTask.TSK_ALTER_TABLE_BEGIN);
             LOG.info()
                     .$("received ASYNC ALTER TABLE cmd [tableName=").$(tableName)
                     .$(", tableId=").$(tableId)
@@ -1401,7 +1401,7 @@ public class TableWriter implements Closeable {
     /***
      * Processes writer command queue to execute writer async commands such as replication and table alters.
      * Some tick calls can result into transaction commit.
-     * @param acceptStructureChange If true accpets any Alter table command, if false does not accept significant table
+     * @param acceptStructureChange If true accepts any Alter table command, if false does not accept significant table
      *                             structure changes like column drop, rename
      */
     public void tick(boolean acceptStructureChange) {

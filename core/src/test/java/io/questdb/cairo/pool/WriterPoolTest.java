@@ -162,7 +162,7 @@ public class WriterPoolTest extends AbstractCairoTest {
         assertWithPool(pool -> {
 
             // fail first time
-            Assert.assertEquals(WriterPool.UNLOCKING, pool.lock("z", "testing"));
+            Assert.assertEquals(WriterPool.OWNERSHIP_REASON_MISSING, pool.lock("z", "testing"));
 
             Assert.assertTrue(ff.wasCalled());
 
