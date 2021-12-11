@@ -62,7 +62,9 @@ import java.util.Iterator;
  */
 public class WriterPool extends AbstractPool {
     private static final Log LOG = LogFactory.getLog(WriterPool.class);
-    static final String UNLOCKING = "unlocking";
+    static final String OWNERSHIP_REASON_MISSING = "missing or owned by other process";
+    static final String OWNERSHIP_REASON_NONE = "not owned by anyone";
+    static final String OWNERSHIP_REASON_WRITER_ERROR = "writer error";
     private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
     private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
     private final CairoConfiguration configuration;
@@ -291,7 +293,7 @@ public class WriterPool extends AbstractPool {
                 writer.setLifecycleManager(e);
                 writer.transferLock(e.lockFd);
                 e.lockFd = -1;
-                e.ownershipReason = UNLOCKING;
+                e.ownershipReason = OWNERSHIP_REASON_NONE;
                 Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
             }
             notifyListener(thread, name, PoolListener.EV_UNLOCKED);
@@ -404,7 +406,7 @@ public class WriterPool extends AbstractPool {
                     .$(", errno=").$(ex.getErrno())
                     .$(']').$();
             e.ex = ex;
-            e.ownershipReason = UNLOCKING;
+            e.ownershipReason = OWNERSHIP_REASON_WRITER_ERROR;
             e.owner = UNALLOCATED;
             notifyListener(e.owner, name, PoolListener.EV_CREATE_EX);
             throw ex;
@@ -419,7 +421,7 @@ public class WriterPool extends AbstractPool {
         e.lockFd = TableUtils.lock(ff, path);
         if (e.lockFd == -1L) {
             LOG.error().$("could not lock [table=`").utf8(tableName).$("`, thread=").$(thread).$(']').$();
-            e.ownershipReason = UNLOCKING;
+            e.ownershipReason = OWNERSHIP_REASON_MISSING;
             e.owner = UNALLOCATED;
             return false;
         }
@@ -458,7 +460,7 @@ public class WriterPool extends AbstractPool {
                 return false;
             }
 
-            e.ownershipReason = UNLOCKING;
+            e.ownershipReason = OWNERSHIP_REASON_NONE;
             e.owner = UNALLOCATED;
             e.lastReleaseTime = configuration.getMicrosecondClock().getTicks();
             notifyListener(thread, name, PoolListener.EV_RETURN);
@@ -472,7 +474,7 @@ public class WriterPool extends AbstractPool {
     private class Entry implements LifecycleManager {
         // owner thread id or -1 if writer is available for hire
         private volatile long owner = Thread.currentThread().getId();
-        private volatile CharSequence ownershipReason = UNLOCKING;
+        private volatile CharSequence ownershipReason = OWNERSHIP_REASON_NONE;
         private TableWriter writer;
         // time writer was last released
         private volatile long lastReleaseTime;
