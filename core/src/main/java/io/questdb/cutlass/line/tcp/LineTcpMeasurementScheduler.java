@@ -82,6 +82,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final Path path = new Path();
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final LineTcpReceiverConfiguration configuration;
+    private final long writerTickRowsCountMod;
     private Sequence pubSeq;
     private int loadCheckCycles = 0;
     private int reshuffleCount = 0;
@@ -100,6 +101,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         this.configuration = lineConfiguration;
         this.milliClock = cairoConfiguration.getMillisecondClock();
         this.commitMode = cairoConfiguration.getCommitMode();
+        this.writerTickRowsCountMod = cairoConfiguration.getWriterTickRowsCountMod();
 
         this.netIoJobs = new NetworkIOJob[ioWorkerPool.getWorkerCount()];
         for (int i = 0; i < ioWorkerPool.getWorkerCount(); i++) {
@@ -346,7 +348,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         this.listener = listener;
     }
 
-    private TableUpdateDetails startNewMeasurementEvent(NetworkIOJob netIoJob, LineTcpParser protoParser) {
+    private TableUpdateDetails getReaderTableUpdateDetails(NetworkIOJob netIoJob, LineTcpParser protoParser) {
         final TableUpdateDetails tableUpdateDetails = netIoJob.getTableUpdateDetails(protoParser.getMeasurementName());
         if (null != tableUpdateDetails) {
             return tableUpdateDetails;
@@ -391,7 +393,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     boolean tryButCouldNotCommit(NetworkIOJob netIoJob, LineTcpParser protoParser, FloatingDirectCharSink charSink) {
         TableUpdateDetails tableUpdateDetails;
         try {
-            tableUpdateDetails = startNewMeasurementEvent(netIoJob, protoParser);
+            tableUpdateDetails = getReaderTableUpdateDetails(netIoJob, protoParser);
         } catch (EntryUnavailableException ex) {
             // Table writer is locked
             LOG.info().$("could not get table writer [tableName=").$(protoParser.getMeasurementName()).$(", ex=").$(ex.getFlyweightMessage()).I$();
@@ -1033,6 +1035,12 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
         }
 
+        public void tick() {
+            if (writer != null) {
+                writer.tick(false);
+            }
+        }
+
         private void closeLocals() {
             for (int n = 0; n < localDetailsArray.length; n++) {
                 LOG.info().$("closing table parsers [tableName=").$(tableName).$(']').$();
@@ -1072,9 +1080,24 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         void handleRowAppended() {
-            if (writer.checkMaxAndCommitLag(commitMode)) {
+            if (checkMaxAndCommitLag(writer, commitMode)) {
                 lastCommitMillis = milliClock.getTicks();
             }
+        }
+
+        private boolean checkMaxAndCommitLag(TableWriter writer, int commitMode) {
+            final long rowsSinceCommit = writer.getUncommittedRowCount();
+            if (rowsSinceCommit < writer.getMetadata().getMaxUncommittedRows()) {
+                if ((rowsSinceCommit & writerTickRowsCountMod) == 0) {
+                    // Tick without commit. Some tick commands may force writer to commit though.
+                    writer.tick(false);
+                }
+                return false;
+            }
+            writer.commitWithLag(commitMode);
+            // Tick after commit.
+            writer.tick(false);
+            return true;
         }
 
         void handleWriterRelease(boolean commit) {
@@ -1272,7 +1295,9 @@ class LineTcpMeasurementScheduler implements Closeable {
         public boolean run(int workerId) {
             assert this.workerId == workerId;
             boolean busy = drainQueue();
-            doMaintenance();
+            if (!busy && !doMaintenance()) {
+                tickWriters();
+            }
             return busy;
         }
 
@@ -1292,15 +1317,22 @@ class LineTcpMeasurementScheduler implements Closeable {
             assignedTables.clear();
         }
 
-        private void doMaintenance() {
+        private boolean doMaintenance() {
             final long millis = milliClock.getTicks();
             if (millis - lastMaintenanceMillis < maintenanceInterval) {
-                return;
+                return false;
             }
 
             lastMaintenanceMillis = millis;
             for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
                 assignedTables.getQuick(n).handleWriterThreadMaintenance(millis);
+            }
+            return true;
+        }
+
+        private void tickWriters() {
+            for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
+                assignedTables.getQuick(n).tick();
             }
         }
 

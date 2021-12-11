@@ -24,22 +24,20 @@
 
 package io.questdb.log;
 
-import io.questdb.VisibleForTesting;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.concurrent.locks.LockSupport;
-import java.util.function.Consumer;
 
 public class LogAlertSocket implements Closeable {
-
-    public static final String NACK = "NACK";
 
     public static final String localHostIp;
 
@@ -61,6 +59,7 @@ public class LogAlertSocket implements Closeable {
     private final Log log;
     private final Rnd rand;
     private final NetworkFacade nf;
+    private final StringSink responseSink = new StringSink();
     private final String[] alertHosts = new String[HOSTS_LIMIT]; // indexed by alertHostIdx < alertHostsCount
     private final int[] alertPorts = new int[HOSTS_LIMIT]; // indexed by alertHostIdx < alertHostsCount
     private final int outBufferSize;
@@ -149,10 +148,6 @@ public class LogAlertSocket implements Closeable {
     }
 
     public boolean send(int len) {
-        return send(len, null);
-    }
-
-    public boolean send(int len, Consumer<String> ackReceiver) {
         if (len < 1) {
             return false;
         }
@@ -176,7 +171,7 @@ public class LogAlertSocket implements Closeable {
                                 .$(", size=")
                                 .$(n)
                                 .$(", log=")
-                                .$(Chars.stringFromUtf8Bytes(outBufferPtr, len))
+                                .$utf8(outBufferPtr, outBufferPtr + len)
                                 .I$();
                         sendFail = true;
                         // do fail over, could not send
@@ -188,14 +183,7 @@ public class LogAlertSocket implements Closeable {
                     p = inBufferPtr;
                     final int n = nf.recv(fdSocket, p, inBufferSize);
                     if (n > 0) {
-                        if (ackReceiver != null) {
-                            ackReceiver.accept(Chars.stringFromUtf8Bytes(inBufferPtr, inBufferPtr + n));
-                        } else {
-                            $currentAlertHost(log.info().$("Received"))
-                                    .$(": ")
-                                    .$(Chars.stringFromUtf8Bytes(inBufferPtr, inBufferPtr + n))
-                                    .$();
-                        }
+                        logResponse(n);
                         break;
                     }
                     // do fail over, ack was not received
@@ -206,20 +194,20 @@ public class LogAlertSocket implements Closeable {
             freeSocketAndAddress();
             int alertHostIdx = this.alertHostIdx;
             this.alertHostIdx = (this.alertHostIdx + 1) % alertHostsCount;
-            LogRecord logRecord = $alertHost(
+            LogRecord logFailOver = $alertHost(
                     this.alertHostIdx,
                     $alertHost(
                             alertHostIdx,
                             log.info().$("Failing over from")
                     ).$(" to"));
             if (alertHostIdx == this.alertHostIdx) {
-                logRecord.$(" with a delay of ")
+                logFailOver.$(" with a delay of ")
                         .$(reconnectDelay / 1000000)
                         .$(" millis (as it is the same alert manager)")
                         .$();
                 LockSupport.parkNanos(reconnectDelay);
             } else {
-                logRecord.$();
+                logFailOver.$();
             }
             connect();
             sendAttempts--;
@@ -230,12 +218,9 @@ public class LogAlertSocket implements Closeable {
                     .$("None of the configured alert managers are accepting alerts.\n")
                     .$("Giving up sending after ")
                     .$(maxSendAttempts)
-                    .$(" attempts: ")
-                    .$(Chars.stringFromUtf8Bytes(outBufferPtr, len))
-                    .$();
-            if (ackReceiver != null) {
-                ackReceiver.accept(NACK);
-            }
+                    .$(" attempts: [")
+                    .$utf8(outBufferPtr, outBufferPtr + len)
+                    .I$();
         }
         return success;
     }
@@ -269,37 +254,37 @@ public class LogAlertSocket implements Closeable {
         return inBufferSize;
     }
 
-    @VisibleForTesting
+    @TestOnly
     String getAlertTargets() {
         return alertTargets;
     }
 
-    @VisibleForTesting
+    @TestOnly
     String[] getAlertHosts() {
         return alertHosts;
     }
 
-    @VisibleForTesting
+    @TestOnly
     int[] getAlertPorts() {
         return alertPorts;
     }
 
-    @VisibleForTesting
+    @TestOnly
     int getAlertHostsCount() {
         return alertHostsCount;
     }
 
-    @VisibleForTesting
+    @TestOnly
     long getReconnectDelay() {
         return reconnectDelay;
     }
 
-    @VisibleForTesting
+    @TestOnly
     String getDefaultAlertHost() {
         return defaultHost;
     }
 
-    @VisibleForTesting
+    @TestOnly
     int getDefaultAlertPort() {
         return defaultPort;
     }
@@ -443,7 +428,82 @@ public class LogAlertSocket implements Closeable {
         alertHostsCount++;
     }
 
-    private void logNetworkConnectError(String message) {
+    private static boolean isContentLength(CharSequence tok, int lo, int hi) {
+        return hi - lo > 13 &&
+                (tok.charAt(lo++) | 32) == 'c' &&
+                (tok.charAt(lo++) | 32) == 'o' &&
+                (tok.charAt(lo++) | 32) == 'n' &&
+                (tok.charAt(lo++) | 32) == 't' &&
+                (tok.charAt(lo++) | 32) == 'e' &&
+                (tok.charAt(lo++) | 32) == 'n' &&
+                (tok.charAt(lo++) | 32) == 't' &&
+                (tok.charAt(lo++) | 32) == '-' &&
+                (tok.charAt(lo++) | 32) == 'l' &&
+                (tok.charAt(lo++) | 32) == 'e' &&
+                (tok.charAt(lo++) | 32) == 'n' &&
+                (tok.charAt(lo++) | 32) == 'g' &&
+                (tok.charAt(lo++) | 32) == 't' &&
+                (tok.charAt(lo) | 32) == 'h';
+    }
+
+    @TestOnly
+    void logResponse(int len) {
+        responseSink.clear();
+        Chars.utf8Decode(inBufferPtr, inBufferPtr + len, responseSink);
+        final int responseLen = responseSink.length();
+        int contentLength = 0;
+        int lineStart = 0;
+        int colonIdx = -1;
+        boolean headerEndFound = false;
+        for (int i = 0; i < responseLen; i++) {
+            switch (responseSink.charAt(i)) {
+                case ':':
+                    if (colonIdx == -1) { // values may contain ':', e.g. Date: Thu, 09 Dec 2021 09:37:22 GMT
+                        colonIdx = i;
+                    }
+                    break;
+
+                case '\n':
+                    if (colonIdx != -1) {
+                        if (isContentLength(responseSink, lineStart, colonIdx)) {
+                            int startSize = colonIdx + 1;
+                            int limSize = i - 1;
+                            while (startSize < responseLen && responseSink.charAt(startSize) == ' ') {
+                                startSize++;
+                            }
+                            while (limSize > startSize) {
+                                char c = responseSink.charAt(limSize);
+                                if (c == '\r' || c == ' ') {
+                                    limSize--;
+                                } else {
+                                    break;
+                                }
+                            }
+                            try {
+                                contentLength = Numbers.parseInt(responseSink, startSize, limSize + 1);
+                            } catch (NumericException e) {
+                                $currentAlertHost(log.info().$("Received")).$(": ").$(responseSink).$();
+                                return;
+                            }
+                        }
+                        colonIdx = -1;
+                    } else if (i - lineStart == 1 && responseSink.charAt(i - 1) == '\r') {
+                        lineStart = i + 1;
+                        headerEndFound = true;
+                        break; // for loop
+                    }
+                    lineStart = i + 1;
+                    break;
+            }
+        }
+        int start = headerEndFound && contentLength == responseLen - lineStart ? lineStart : 0;
+        $currentAlertHost(log.info().$("Received"))
+                .$(": ")
+                .$(responseSink, start, responseLen)
+                .$();
+    }
+
+    private void logNetworkConnectError(CharSequence message) {
         $currentAlertHost(log.info().$(message)).$(" [errno=").$(nf.errno()).I$();
     }
 

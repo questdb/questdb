@@ -63,10 +63,6 @@ public class SCSequence extends AbstractSSequence {
         return value;
     }
 
-    public void clear() {
-        setBarrier(OpenBarrier.INSTANCE);
-    }
-
     public <T> boolean consumeAll(RingQueue<T> queue, QueueConsumer<T> consumer) {
         long cursor = next();
         if (cursor < 0) {

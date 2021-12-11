@@ -32,6 +32,8 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -42,6 +44,7 @@ import java.net.URL;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
+@Ignore
 public class EngineMigrationTest extends AbstractGriffinTest {
 
     public static void replaceDbContent(String path) throws IOException {

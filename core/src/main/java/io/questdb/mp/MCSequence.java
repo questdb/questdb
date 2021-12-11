@@ -24,6 +24,10 @@
 
 package io.questdb.mp;
 
+/**
+ * M - multi thread
+ * C - consumer
+ */
 public class MCSequence extends AbstractMSequence {
 
     public MCSequence(int cycle) {

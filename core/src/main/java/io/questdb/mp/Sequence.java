@@ -28,6 +28,10 @@ public interface Sequence extends Barrier {
 
     void done(long cursor);
 
+    /***
+     * Returns next position to publish to / fetch from
+     * @return Queue index to use. Returns -1 if full or -2 if empty
+     */
     long next();
 
     long nextBully();

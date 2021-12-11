@@ -35,6 +35,7 @@ import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.SCSequence;
 import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateLocale;
@@ -165,6 +166,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private long maxRows;
     private final PGResumeProcessor resumeCursorExecuteRef = this::resumeCursorExecute;
     private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
+    private final SCSequence tempSequence = new SCSequence();
 
     public PGConnectionContext(CairoEngine engine, PGWireConfiguration configuration, int workerCount) {
         this.engine = engine;
@@ -1065,6 +1067,10 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 case CompiledQuery.SET:
                     configureContextForSet();
                     break;
+                case CompiledQuery.ALTER:
+                   try(QueryFuture cf = cc.execute(tempSequence)) {
+                       cf.await();
+                   }
                 default:
                     // DDL SQL
                     queryTag = TAG_OK;
