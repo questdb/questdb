@@ -464,9 +464,11 @@ public class WriterPool extends AbstractPool {
             closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_DISTRESSED);
             return true;
         }
+
         if (e.owner != UNALLOCATED) {
             LOG.info().$("<< [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
             if (isClosed()) {
+                e.writer = null;
                 LOG.info().$("allowing '").utf8(name).$("' to close [thread=").$(e.owner).$(']').$();
                 notifyListener(thread, name, PoolListener.EV_OUT_OF_POOL_CLOSE);
                 return false;
@@ -477,6 +479,11 @@ public class WriterPool extends AbstractPool {
             Unsafe.getUnsafe().storeFence();
             Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
             Unsafe.getUnsafe().fullFence();
+            if (isClosed()) {
+                e.writer = null;
+                notifyListener(thread, name, PoolListener.EV_OUT_OF_POOL_CLOSE);
+                return false;
+            }
             notifyListener(thread, name, PoolListener.EV_RETURN);
         } else {
             LOG.error().$("orphaned [table=`").utf8(name).$("`]").$();
