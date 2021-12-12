@@ -67,7 +67,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final CairoConfiguration cairoConfiguration;
     private final MillisecondClock milliClock;
     private final RingQueue<LineTcpMeasurementEvent> queue;
-    private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();
+    private final ReadWriteLock tableUpdateDetailsLock = new BiasedReadWriteLock();
     private final CharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsByTableName;
     private final CharSequenceObjHashMap<TableUpdateDetails> idleTableUpdateDetailsByTableName;
     private final int[] loadByWriterThread;
