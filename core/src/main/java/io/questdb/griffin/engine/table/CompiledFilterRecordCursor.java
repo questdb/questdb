@@ -277,7 +277,8 @@ class CompiledFilterRecordCursor implements RecordCursor {
                 // TODO
                 return;
             case ColumnType.FLOAT:
-                bindVarMemory.putDouble(function.getFloat(null));
+                bindVarMemory.putFloat(function.getFloat(null));
+                bindVarMemory.putFloat(Float.NaN);
                 return;
             case ColumnType.LONG:
                 bindVarMemory.putLong(function.getLong(null));
