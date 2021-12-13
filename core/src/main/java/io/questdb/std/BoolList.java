@@ -162,8 +162,7 @@ public class BoolList implements Mutable {
 
     public boolean extendAndReplace(int index, boolean value) {
         if (index >= pos) {
-            pos = index + 1;
-            ensureCapacity(pos);
+            setPos(index + 1);
         }
         return replace0(index, value);
     }
