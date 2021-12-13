@@ -198,7 +198,7 @@ public class AbstractCairoTest {
             AbstractCairoTest.ff = ff2;
             try {
                 code.run();
-                engine.releaseInactive();
+                engine.releaseAllWriters();
                 Assert.assertEquals(0, engine.getBusyWriterCount());
                 Assert.assertEquals(0, engine.getBusyReaderCount());
             } finally {
