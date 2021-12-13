@@ -82,7 +82,7 @@ namespace questdb::x86 {
         c.mov(address, ptr(vars_ptr, 8 * idx, 8));
         auto shift = type_shift(type);
         auto type_size  = 1 << shift;
-        return {Mem(address, 0, type_size), type, data_kind_t::kMemory};
+        return {Mem(vars_ptr, 8*idx, type_size), type, data_kind_t::kMemory};
     }
 
     jit_value_t
