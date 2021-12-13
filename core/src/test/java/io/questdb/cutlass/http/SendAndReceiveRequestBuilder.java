@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.http;
 
-import java.nio.charset.StandardCharsets;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.locks.LockSupport;
 

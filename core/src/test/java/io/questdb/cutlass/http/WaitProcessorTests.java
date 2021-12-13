@@ -77,6 +77,10 @@ public class WaitProcessorTests {
 
             processor.reschedule(
                     new Retry() {
+                        @Override
+                        public void close() {
+                        }
+
                         private final RetryAttemptAttributes attemptAttributes = new RetryAttemptAttributes();
 
                         @Override
@@ -116,6 +120,10 @@ public class WaitProcessorTests {
     @NotNull
     private Retry createRetry() {
         return new Retry() {
+            @Override
+            public void close() {
+            }
+
             private final RetryAttemptAttributes attemptAttributes = new RetryAttemptAttributes();
 
             @Override

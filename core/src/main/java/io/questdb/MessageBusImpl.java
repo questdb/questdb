@@ -128,7 +128,7 @@ public class MessageBusImpl implements MessageBus {
         this.tableWriterCommandQueue = new RingQueue<>(
                 TableWriterTask::new,
                 2048,
-                4,
+                configuration.getWriterCommandQueueCapacity(),
                 MemoryTag.NATIVE_REPL
         );
         this.tableWriterCommandPubSeq = new MPSequence(this.tableWriterCommandQueue.getCycle());
@@ -138,7 +138,7 @@ public class MessageBusImpl implements MessageBus {
         this.tableWriterEventQueue = new RingQueue<>(
                 TableWriterTask::new,
                 2048,
-                4,
+                configuration.getWriterCommandQueueCapacity(),
                 MemoryTag.NATIVE_REPL
 
         );

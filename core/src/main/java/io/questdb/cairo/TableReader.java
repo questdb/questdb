@@ -274,6 +274,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         return end / PARTITIONS_SLOT_SIZE;
     }
 
+    public long getPartitionTimestampByIndex(int partitionIndex) {
+        return txFile.getPartitionTimestamp(partitionIndex);
+    }
+
     public int getPartitionedBy() {
         return metadata.getPartitionBy();
     }
@@ -754,7 +758,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
     }
 
-    long getTransientRowCount() {
+    public long getTransientRowCount() {
         return txFile.getTransientRowCount();
     }
 
@@ -1292,5 +1296,4 @@ public class TableReader implements Closeable, SymbolTableSource {
         BitmapIndexReader forwardReader;
         long top;
     }
-
 }

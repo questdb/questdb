@@ -33,8 +33,10 @@ import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.griffin.AlterStatement;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -44,6 +46,9 @@ import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicLong;
+
+import static io.questdb.cairo.pool.WriterPool.OWNERSHIP_REASON_NONE;
 
 public class CairoEngine implements Closeable, WriterSource {
     public static final String BUSY_READER = "busyReader";
@@ -51,7 +56,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final WriterPool writerPool;
     private final ReaderPool readerPool;
     private final CairoConfiguration configuration;
-    private final WriterMaintenanceJob writerMaintenanceJob;
+    private final EngineMaintenanceJob engineMaintenanceJob;
     private final MessageBus messageBus;
     private final RingQueue<TelemetryTask> telemetryQueue;
     private final MPSequence telemetryPubSeq;
@@ -59,6 +64,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final RingQueue<TableWriterTask> tableWriterCmdQueue;
     private final MCSequence tableWriterCmdSubSeq;
     private final long tableIdMemSize;
+    private final AtomicLong alterCommandCommandCorrelationId = new AtomicLong();
     private long tableIdFd = -1;
     private long tableIdMem = 0;
 
@@ -67,7 +73,7 @@ public class CairoEngine implements Closeable, WriterSource {
         this.messageBus = new MessageBusImpl(configuration);
         this.writerPool = new WriterPool(configuration, messageBus);
         this.readerPool = new ReaderPool(configuration);
-        this.writerMaintenanceJob = new WriterMaintenanceJob(configuration);
+        this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
         if (configuration.getTelemetryConfiguration().getEnabled()) {
             this.telemetryQueue = new RingQueue<>(TelemetryTask::new, configuration.getTelemetryConfiguration().getQueueCapacity());
             this.telemetryPubSeq = new MPSequence(telemetryQueue.getCycle());
@@ -183,6 +189,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return configuration;
     }
 
+    public Job getEngineMaintenanceJob() {
+        return engineMaintenanceJob;
+    }
+
     public MessageBus getMessageBus() {
         return messageBus;
     }
@@ -271,10 +281,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.get(tableName, lockReason);
     }
 
-    public Job getWriterMaintenanceJob() {
-        return writerMaintenanceJob;
-    }
-
     public CharSequence lock(
             CairoSecurityContext securityContext,
             CharSequence tableName,
@@ -284,7 +290,7 @@ public class CairoEngine implements Closeable, WriterSource {
         securityContext.checkWritePermission();
 
         CharSequence lockedReason = writerPool.lock(tableName, lockReason);
-        if (null == lockedReason) {
+        if (lockedReason == OWNERSHIP_REASON_NONE) {
             boolean locked = readerPool.lock(tableName);
             if (locked) {
                 LOG.info().$("locked [table=`").utf8(tableName).$("`, thread=").$(Thread.currentThread().getId()).$(']').$();
@@ -314,6 +320,35 @@ public class CairoEngine implements Closeable, WriterSource {
         } catch (Throwable e) {
             close();
             throw e;
+        }
+    }
+
+    public long publishTableWriterCommand(AlterStatement alterTableStatement) {
+        CharSequence tableName = alterTableStatement.getTableName();
+        final MPSequence commandPubSeq = messageBus.getTableWriterCommandPubSeq();
+
+        while (true) {
+            long pubCursor = commandPubSeq.next();
+            long correlationId = alterCommandCommandCorrelationId.incrementAndGet();
+            if (pubCursor > -1) {
+                final TableWriterTask command = tableWriterCmdQueue.get(pubCursor);
+                alterTableStatement.serialize(command);
+                command.setInstance(correlationId);
+                commandPubSeq.done(pubCursor);
+                LOG.info()
+                        .$("published ASYNC writer ALTER TABLE task [table=").$(tableName)
+                        .$(",instance=").$(correlationId)
+                        .I$();
+                return correlationId;
+            } else if (pubCursor == -1) {
+                // Queue is full
+                LOG.error()
+                        .$("could not publish writer task [table=").$(tableName)
+                        .$(",instance").$(correlationId)
+                        .$(",seqCursor=").$(pubCursor)
+                        .I$();
+                throw CairoException.instance(0).put("Could not publish writer ALTER TABLE task [table=").put(tableName).put(']');
+            }
         }
     }
 
@@ -387,55 +422,45 @@ public class CairoEngine implements Closeable, WriterSource {
         Unsafe.getUnsafe().putLong(tableIdMem, 0);
     }
 
-    public void tick() {
+    public boolean tick() {
         final long cursor = tableWriterCmdSubSeq.next();
         if (cursor > -1) {
-            TableWriterTask cmd = tableWriterCmdQueue.get(cursor);
-            switch (cmd.getType()) {
-                case TableWriterTask.TSK_SLAVE_SYNC:
+            final TableWriterTask cmd = tableWriterCmdQueue.get(cursor);
+            final String tableName = cmd.getTableName();
+            boolean done = false;
+            LOG.info().$("received table command cmd [tableName=").$(tableName)
+                    .$(", type=").$(cmd.getType())
+                    .$(", instance=").$(cmd.getInstance())
+                    .$(", ip=").$ip(cmd.getIp())
+                    .I$();
 
-                    final long dst = cmd.getInstance();
-                    final long dstIP = cmd.getIp();
-                    final long tableId = cmd.getTableId();
-
-                    LOG.info()
-                            .$("received replication SYNC cmd [tableName=").$(cmd.getTableName())
-                            .$(", tableId=").$(cmd.getTableId())
-                            .$(", src=").$(cmd.getInstance())
-                            .$(", srcIP=").$ip(cmd.getIp())
-                            .$(", cursor=").$(cursor)
-                            .I$();
-
-                    try (TableWriter writer = writerPool.get(cmd.getTableName(), "slave sync")) {
-                        final TableSyncModel syncModel = writer.replHandleSyncCmd(cmd);
-                        // release command queue slot not to hold both queues
-                        tableWriterCmdSubSeq.done(cursor);
-                        if (syncModel != null) {
-                            writer.replPublishSyncEvent0(syncModel, tableId, dst, dstIP);
-                        }
-                    } catch (EntryUnavailableException e) {
-                        // ignore command, writer is busy
-                        // it will tick on its way back to pool or earlier
-                        tableWriterCmdSubSeq.done(cursor);
-                    } catch (Throwable e) {
-                        tableWriterCmdSubSeq.done(cursor);
-                        if (e instanceof Sinkable) {
-                            LOG.error()
-                                    .$("could not create table writer [tableName=").$(cmd.getTableName())
-                                    .$(", tableId=").$(cmd.getTableId())
-                                    .$(", ex=`").$((Sinkable) e).$('`')
-                                    .I$();
-                        } else {
-                            LOG.error()
-                                    .$("could not create table writer [tableName=").$(cmd.getTableName())
-                                    .$(", tableId=").$(cmd.getTableId())
-                                    .$(", ex=`").$(e).$('`')
-                                    .I$();
-                        }
+            if (tableName != null) {
+                try (TableWriter writer = writerPool.get(tableName, "async writer cmd")) {
+                    done = true; // next line must call done() on the sequence
+                    writer.processCommandQueue(cmd, tableWriterCmdSubSeq, cursor, true);
+                } catch (EntryUnavailableException e) {
+                    // ignore command, writer is busy
+                    // it will tick on its way back to pool or earlier
+                } catch (Throwable e) {
+                    LogRecord record = LOG.error()
+                            .$("could not create table writer or execute writer command [tableName=").$(tableName)
+                            .$(", tableId=").$(cmd.getTableId()).$(", ex=`");
+                    if (e instanceof Sinkable) {
+                        record.$((Sinkable) e).$('`').I$();
+                    } else {
+                        record.$(e).$('`').I$();
                     }
-
+                } finally {
+                    if (!done) {
+                        tableWriterCmdSubSeq.done(cursor);
+                    }
+                }
+            } else {
+                tableWriterCmdSubSeq.done(cursor);
             }
+            return true;
         }
+        return false;
     }
 
     public void unlock(
@@ -481,13 +506,13 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    private class WriterMaintenanceJob extends SynchronizedJob {
+    private class EngineMaintenanceJob extends SynchronizedJob {
 
         private final MicrosecondClock clock;
         private final long checkInterval;
         private long last = 0;
 
-        public WriterMaintenanceJob(CairoConfiguration configuration) {
+        public EngineMaintenanceJob(CairoConfiguration configuration) {
             this.clock = configuration.getMicrosecondClock();
             this.checkInterval = configuration.getIdleCheckInterval() * 1000;
         }
@@ -495,11 +520,16 @@ public class CairoEngine implements Closeable, WriterSource {
         @Override
         protected boolean runSerially() {
             long t = clock.getTicks();
+            boolean useful = false;
+            while (tick()) {
+                // process and drain cmd queue
+                useful = true;
+            }
             if (last + checkInterval < t) {
                 last = t;
-                return releaseInactive();
+                return useful | releaseInactive();
             }
-            return false;
+            return useful;
         }
     }
 }

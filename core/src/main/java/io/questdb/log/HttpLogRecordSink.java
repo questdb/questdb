@@ -24,9 +24,8 @@
 
 package io.questdb.log;
 
-import io.questdb.VisibleForTesting;
 import io.questdb.std.*;
-
+import org.jetbrains.annotations.TestOnly;
 
 public class HttpLogRecordSink extends LogRecordSink {
 
@@ -34,7 +33,6 @@ public class HttpLogRecordSink extends LogRecordSink {
     private static final String CL_MARKER = "#########"; // with 9 digits, max content length = 999999999 bytes (953MB)
     private static final int CL_MARKER_LEN = CL_MARKER.length(); // number of digits available for contentLength
     private static final int MARK_NOT_SET = -1;
-
 
     private long mark = MARK_NOT_SET;
     private boolean hasContentLengthMarker;
@@ -175,7 +173,7 @@ public class HttpLogRecordSink extends LogRecordSink {
         return Chars.stringFromUtf8Bytes(address, _wptr);
     }
 
-    @VisibleForTesting
+    @TestOnly
     void putContentLengthMarker() {
         put("Content-Length:").put(CL_MARKER);
         contentLengthEnd = _wptr - 1; // will scan backwards from here

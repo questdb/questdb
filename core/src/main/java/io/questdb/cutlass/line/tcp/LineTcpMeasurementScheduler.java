@@ -84,6 +84,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final Path path = new Path();
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final LineTcpReceiverConfiguration configuration;
+    private final long writerTickRowsCountMod;
     private Sequence pubSeq;
     private int loadCheckCycles = 0;
     private int reshuffleCount = 0;
@@ -102,6 +103,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         this.configuration = lineConfiguration;
         this.milliClock = cairoConfiguration.getMillisecondClock();
         this.commitMode = cairoConfiguration.getCommitMode();
+        this.writerTickRowsCountMod = cairoConfiguration.getWriterTickRowsCountMod();
 
         int n = ioWorkerPool.getWorkerCount();
         this.netIoJobs = new NetworkIOJob[n];
@@ -1086,6 +1088,12 @@ class LineTcpMeasurementScheduler implements Closeable {
             return columnCount;
         }
 
+        public void tick() {
+            if (writer != null) {
+                writer.tick(false);
+            }
+        }
+
         private void closeLocals() {
             for (int n = 0; n < localDetailsArray.length; n++) {
                 LOG.info().$("closing table parsers [tableName=").$(tableNameUtf16).$(']').$();
@@ -1131,9 +1139,24 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         void handleRowAppended() {
-            if (writer.checkMaxAndCommitLag(commitMode)) {
+            if (checkMaxAndCommitLag(writer, commitMode)) {
                 lastCommitMillis = milliClock.getTicks();
             }
+        }
+
+        private boolean checkMaxAndCommitLag(TableWriter writer, int commitMode) {
+            final long rowsSinceCommit = writer.getUncommittedRowCount();
+            if (rowsSinceCommit < writer.getMetadata().getMaxUncommittedRows()) {
+                if ((rowsSinceCommit & writerTickRowsCountMod) == 0) {
+                    // Tick without commit. Some tick commands may force writer to commit though.
+                    writer.tick(false);
+                }
+                return false;
+            }
+            writer.commitWithLag(commitMode);
+            // Tick after commit.
+            writer.tick(false);
+            return true;
         }
 
         void handleWriterRelease(boolean commit) {
@@ -1332,7 +1355,9 @@ class LineTcpMeasurementScheduler implements Closeable {
         public boolean run(int workerId) {
             assert this.workerId == workerId;
             boolean busy = drainQueue();
-            doMaintenance();
+            if (!busy && !doMaintenance()) {
+                tickWriters();
+            }
             return busy;
         }
 
@@ -1352,15 +1377,22 @@ class LineTcpMeasurementScheduler implements Closeable {
             assignedTables.clear();
         }
 
-        private void doMaintenance() {
+        private boolean doMaintenance() {
             final long millis = milliClock.getTicks();
             if (millis - lastMaintenanceMillis < maintenanceInterval) {
-                return;
+                return false;
             }
 
             lastMaintenanceMillis = millis;
             for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
                 assignedTables.getQuick(n).handleWriterThreadMaintenance(millis);
+            }
+            return true;
+        }
+
+        private void tickWriters() {
+            for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
+                assignedTables.getQuick(n).tick();
             }
         }
 

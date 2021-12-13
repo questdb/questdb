@@ -254,6 +254,10 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getAggressiveReadRetryCount());
         Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getWriterIdleTimeout());
         Assert.assertEquals(0, configuration.getCairoConfiguration().getSampleByIndexSearchPageSize());
+        Assert.assertEquals(32, configuration.getCairoConfiguration().getWriterCommandQueueCapacity());
+        Assert.assertEquals(500_000, configuration.getCairoConfiguration().getWriterAsyncCommandBusyWaitTimeout());
+        Assert.assertEquals(30_000_000, configuration.getCairoConfiguration().getWriterAsyncCommandMaxTimeout());
+        Assert.assertEquals(1023, configuration.getCairoConfiguration().getWriterTickRowsCountMod());
 
         Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());
         Assert.assertEquals("HTTP/1.1 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());
@@ -540,6 +544,10 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(256, configuration.getCairoConfiguration().getColumnCastModelPoolCapacity());
             Assert.assertEquals(64, configuration.getCairoConfiguration().getCreateTableModelPoolCapacity());
             Assert.assertEquals(2001, configuration.getCairoConfiguration().getSampleByIndexSearchPageSize());
+            Assert.assertEquals(16, configuration.getCairoConfiguration().getWriterCommandQueueCapacity());
+            Assert.assertEquals(333000, configuration.getCairoConfiguration().getWriterAsyncCommandBusyWaitTimeout());
+            Assert.assertEquals(7770001, configuration.getCairoConfiguration().getWriterAsyncCommandMaxTimeout());
+            Assert.assertEquals(15, configuration.getCairoConfiguration().getWriterTickRowsCountMod());
 
             Assert.assertEquals(2_000_000, configuration.getCairoConfiguration().getCommitLag());
             Assert.assertEquals(100000, configuration.getCairoConfiguration().getMaxUncommittedRows());
@@ -612,7 +620,7 @@ public class PropServerConfigurationTest {
 
     @Test
     public void testSetAllInternalProperties() throws ServerConfigurationException, JsonException {
-        final BuildInformation buildInformation = new BuildInformationHolder("5.0.6", "11.0.9.1", "0fff7d46fd13b4705770f1fb126dd9b889768643");
+        final BuildInformation buildInformation = new BuildInformationHolder("5.0.6", "0fff7d46fd13b4705770f1fb126dd9b889768643", "11.0.9.1");
         final PropServerConfiguration configuration = new PropServerConfiguration(root, new Properties(), null, LOG, buildInformation);
 
         Assert.assertEquals("5.0.6", configuration.getCairoConfiguration().getBuildInformation().getQuestDbVersion());
