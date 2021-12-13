@@ -230,7 +230,7 @@ public class TextDelimiterScanner implements Closeable {
                     // when stddev of this is less than last - use this
                     // when stddev of this is the same as last then
                     //    choose on priority (higher is better)
-                    //    when priority is the same choose on mean (higher is better
+                    //    when priority is the same choose on mean (higher is better)
                     if (stdDev < lastDelimiterStdDev
                             || (
                             (Math.abs(stdDev - lastDelimiterStdDev) < DOUBLE_TOLERANCE)
