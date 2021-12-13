@@ -199,7 +199,7 @@ public class TemplateParser implements Sinkable {
         templateNodes.add(new TemplateNode(TemplateNode.TYPE_ENV, envKey) {
             @Override
             public void toSink(CharSink sink) {
-                sink.put(envVal);
+                sink.encodeUtf8(envVal);
             }
         });
     }

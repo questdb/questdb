@@ -24,7 +24,9 @@
 
 package io.questdb.log;
 
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Sinkable;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.TestOnly;
 
 public class HttpLogRecordSink extends LogRecordSink {
@@ -147,6 +149,12 @@ public class HttpLogRecordSink extends LogRecordSink {
     @Override
     public HttpLogRecordSink put(CharSequence cs) {
         super.put(cs);
+        return this;
+    }
+
+    @Override
+    public HttpLogRecordSink encodeUtf8(CharSequence cs) {
+        super.encodeUtf8(cs);
         return this;
     }
 

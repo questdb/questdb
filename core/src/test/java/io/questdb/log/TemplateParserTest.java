@@ -188,6 +188,7 @@ public class TemplateParserTest {
     public void testParseTemplate() throws IOException {
         try (InputStream is = LogAlertSocketWriter.class.getResourceAsStream("/alert-manager-tpt-international.json")) {
             byte[] buff = new byte[1024];
+            Assert.assertNotNull(is);
             int len = is.read(buff, 0, buff.length);
             String template = new String(buff, 0, len, Files.UTF_8);
             parser.parse(template, 0, LogAlertSocketWriter.ALERT_PROPS);
