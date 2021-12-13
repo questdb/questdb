@@ -136,8 +136,8 @@ public class WriterPool extends AbstractPool {
                 }
                 return checkClosedAndGetWriter(tableName, e, lockReason);
             } else {
-                if (owner < 0) {
-                    // writer is about to be released from the pool by relaseAll method.
+                if (owner < -1L) {
+                    // writer is about to be released from the pool by releaseAll method.
                     // try again, it should become available soon.
                     LockSupport.parkNanos(1);
                     continue;
@@ -368,7 +368,7 @@ public class WriterPool extends AbstractPool {
                     iterator.remove();
                     removed = true;
                 }
-            } else if (e.lockFd != -1L) {
+            } else if (e.lockFd != -1L && deadline == Long.MAX_VALUE) {
                 if (ff.close(e.lockFd)) {
                     e.lockFd = -1L;
                     iterator.remove();
