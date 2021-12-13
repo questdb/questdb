@@ -3077,7 +3077,7 @@ nodejs code:
                 @Override
                 public long openRW(LPSZ name) {
                     if (Chars.endsWith(name, "_meta.swp")) {
-                        Os.sleep(writerAsyncCommandBusyWaitTimeout / 1000 / 2 + 100);
+                        Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() / 1000 / 2 + 200);
                     }
                     return super.openRW(name);
                 }
@@ -3094,7 +3094,7 @@ nodejs code:
                 @Override
                 public long openRW(LPSZ name) {
                     if (Chars.endsWith(name, "_meta.swp")) {
-                        Os.sleep(writerAsyncCommandBusyWaitTimeout / 1000 + 100);
+                        Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() / 1000 + 200);
                     }
                     return super.openRW(name);
                 }
@@ -4370,52 +4370,50 @@ nodejs code:
 
     private void testAddColumnBusyWriter(boolean alterRequestReturnSuccess) throws SQLException, InterruptedException, BrokenBarrierException, SqlException {
         AtomicLong errors = new AtomicLong();
-        int iteration = 0;
-        do {
-            String tableName = "xyz" + iteration++;
-            compiler.compile("create table " + tableName + " (a int)", sqlExecutionContext);
+        final int[] affinity = new int[2];
+        Arrays.fill(affinity, -1);
 
-            final int[] affinity = new int[2];
-            Arrays.fill(affinity, -1);
+        final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
+            @Override
+            public Rnd getRandom() {
+                return new Rnd();
+            }
 
-            final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
-                @Override
-                public Rnd getRandom() {
-                    return new Rnd();
-                }
+            @Override
+            public int[] getWorkerAffinity() {
+                return affinity;
+            }
 
-                @Override
-                public int[] getWorkerAffinity() {
-                    return affinity;
-                }
+            @Override
+            public int getWorkerCount() {
+                return 2;
+            }
+        };
 
-                @Override
-                public int getWorkerCount() {
-                    return 2;
-                }
-            };
+        WorkerPool pool = new WorkerPool(conf);
+        pool.assign(engine.getEngineMaintenanceJob());
+        try (
+                final PGWireServer ignored = PGWireServer.create(
+                        conf,
+                        pool,
+                        LOG,
+                        engine,
+                        compiler.getFunctionFactoryCache(),
+                        metrics
+                )
+        ) {
+            pool.start(LOG);
+            int iteration = 0;
 
-            WorkerPool pool = new WorkerPool(conf);
-            pool.assign(engine.getEngineMaintenanceJob());
-            try (
-                    final PGWireServer ignored = PGWireServer.create(
-                            conf,
-                            pool,
-                            LOG,
-                            engine,
-                            compiler.getFunctionFactoryCache(),
-                            metrics
-                    )
-            ) {
-                pool.start(LOG);
+            do {
+                final String tableName = "xyz" + iteration++;
+                compiler.compile("create table " + tableName + " (a int)", sqlExecutionContext);
+
                 try (
                         final Connection connection1 = getConnection(false, true);
                         final Connection connection2 = getConnection(false, true);
                         final PreparedStatement insert = connection1.prepareStatement(
                                 "insert into " + tableName + " values (?)"
-                        );
-                        final PreparedStatement alter = connection2.prepareStatement(
-                                "alter table " + tableName + " add column b long"
                         )
                 ) {
                     connection1.setAutoCommit(false);
@@ -4431,7 +4429,13 @@ nodejs code:
                     new Thread(() -> {
                         try {
                             start.await();
-                            alter.execute();
+                            try (
+                                    final PreparedStatement alter = connection2.prepareStatement(
+                                            "alter table " + tableName + " add column b long"
+                                    )
+                            ) {
+                                alter.execute();
+                            }
                         } catch (Throwable e) {
                             e.printStackTrace();
                             errors.incrementAndGet();
@@ -4453,21 +4457,14 @@ nodejs code:
                             Assert.assertEquals(totalCount, rdr.size());
                         }
                     }
-//                } catch (PSQLException ex) {
-//                    if (ex.getMessage().contains("writer busy")) {
-//                        // Sometimes (rarely) ALTER TABLE can win table lock and inserts fail.
-//                        //  This is not the scenario we try to test. Repeat again.
-//                        continue;
-//                    }
-//                    throw ex;
                 } finally {
                     pool.halt();
                     engine.releaseAllWriters();
                 }
-            }
-            // Failure may not happen if we're lucky, even when they are expected
-            // When alterRequestReturnSuccess if false and errors are 0, repeat
-        } while (!alterRequestReturnSuccess && errors.get() == 0);
+                // Failure may not happen if we're lucky, even when they are expected
+                // When alterRequestReturnSuccess if false and errors are 0, repeat
+            } while (!alterRequestReturnSuccess && errors.get() == 0);
+        }
     }
 
     private void testAllTypesSelect(boolean simple) throws Exception {

@@ -145,7 +145,7 @@ public class WriterPool extends AbstractPool {
                     throw e.ex;
                 }
             }
-            LOG.info().$("busy [table=`").utf8(tableName).$("`, owner=").$(owner).$(']').$();
+            LOG.info().$("busy [table=`").utf8(tableName).$("`, owner=").$(owner).$(", thread=").$(thread).I$();
             throw EntryUnavailableException.instance(e.ownershipReason);
         }
     }
@@ -297,7 +297,7 @@ public class WriterPool extends AbstractPool {
                 Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
             }
             notifyListener(thread, name, PoolListener.EV_UNLOCKED);
-            LOG.debug().$("unlocked [table=`").utf8(name).$("`]").$();
+            LOG.debug().$("unlocked [table=`").utf8(name).$("`, thread=").$(thread).I$();
         } else {
             notifyListener(thread, name, PoolListener.EV_NOT_LOCK_OWNER);
             throw CairoException.instance(0).put("Not lock owner of ").put(name);
