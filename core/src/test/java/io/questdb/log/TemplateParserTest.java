@@ -191,7 +191,7 @@ public class TemplateParserTest {
             Assert.assertNotNull(is);
             int len = is.read(buff, 0, buff.length);
             String template = new String(buff, 0, len, Files.UTF_8);
-            parser.parse(template, 0, LogAlertSocketWriter.ALERT_PROPS);
+            parser.parseUtf8(template, 0, LogAlertSocketWriter.ALERT_PROPS);
             TestUtils.assertEquals(
                     "[\n" +
                             "  {\n" +

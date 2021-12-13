@@ -112,7 +112,7 @@ public class LogRecordSinkTest {
             final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
             try {
                 LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
-                recordSink.put(expected.toCharArray(), 1, len - 1);
+                recordSink.encodeUtf8(expected.toCharArray(), 1, len - 1);
                 recordSink.toSink(sink);
                 Assert.assertEquals(expected.substring(1, len - 1), sink.toString());
             } finally {

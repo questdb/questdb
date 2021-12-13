@@ -56,14 +56,27 @@ public class TemplateParser implements Sinkable {
     private CharSequence originalTxt;
 
     public TemplateParser parseEnv(CharSequence txt, long dateValue) {
-        return parse(txt, dateValue, adaptMap(System.getenv()));
-    }
-
-    public TemplateParser parse(CharSequence txt, long dateValue, Map<String, String> props) {
-        return parse(txt, dateValue, adaptMap(props));
+        return parse(txt, dateValue, adaptMap(System.getenv()), true);
     }
 
     public TemplateParser parse(CharSequence txt, long dateValue, CharSequenceObjHashMap<CharSequence> props) {
+        return parse(txt, dateValue, props, true);
+    }
+
+    public TemplateParser parse(CharSequence txt, long dateValue, Map<String, String> props) {
+        return parse(txt, dateValue, adaptMap(props), true);
+    }
+
+    public TemplateParser parseUtf8(CharSequence txt, long dateValue, CharSequenceObjHashMap<CharSequence> props) {
+        return parse(txt, dateValue, props, false);
+    }
+
+    private TemplateParser parse(
+            CharSequence txt,
+            long dateValue,
+            CharSequenceObjHashMap<CharSequence> props,
+            boolean needsUtf8Encoding
+    ) {
         originalTxt = txt;
         this.dateValue.set(dateValue);
         this.props = props;
@@ -87,7 +100,7 @@ public class TemplateParser implements Sinkable {
                         }
                     } else {
                         if (i - lastExprEnd > 0) {
-                            addStaticTemplateNode(lastExprEnd, i);
+                            addStaticTemplateNode(lastExprEnd, i, needsUtf8Encoding);
                             lastExprEnd = i + 1;
                         }
                     }
@@ -130,7 +143,7 @@ public class TemplateParser implements Sinkable {
                 throw new LogError("Mismatched '{}' at position " + lastExprEnd);
             }
             if (locationLen - lastExprEnd > 0) {
-                addStaticTemplateNode(lastExprEnd, locationLen);
+                addStaticTemplateNode(lastExprEnd, locationLen, needsUtf8Encoding);
             }
         } else {
             if (keyStart != NIL) {
@@ -228,11 +241,15 @@ public class TemplateParser implements Sinkable {
         });
     }
 
-    private void addStaticTemplateNode(int start, int end) {
+    private void addStaticTemplateNode(int start, int end, boolean needsUtf8Encoding) {
         templateNodes.add(new TemplateNode(TemplateNode.TYPE_STATIC, null) {
             @Override
             public void toSink(CharSink sink) {
-                sink.put(originalTxt, start, end);
+                if (needsUtf8Encoding) {
+                    sink.encodeUtf8(originalTxt, start, end);
+                } else {
+                    sink.put(originalTxt, start, end);
+                }
             }
         });
     }

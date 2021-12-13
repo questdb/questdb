@@ -66,12 +66,7 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
 
     @Override
     public CharSink put(CharSequence cs) {
-        int rem = (int) (lim - _wptr);
-        int len = cs.length();
-        int n = Math.min(rem, len);
-        Chars.asciiStrCpy(cs, n, _wptr);
-        _wptr += n;
-        return this;
+        return put(cs, 0, cs.length());
     }
 
     @Override
@@ -81,12 +76,6 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
         int n = Math.min(rem, len);
         Chars.asciiStrCpy(cs, lo, n, _wptr);
         _wptr += n;
-        return this;
-    }
-
-    @Override
-    public CharSink put(char[] chars, int lo, int hi) {
-        encodeUtf8(charSeq.of(chars, lo, hi));
         return this;
     }
 
@@ -101,6 +90,10 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
     @Override
     public void toSink(CharSink sink) {
         Chars.utf8Decode(address, _wptr, sink);
+    }
+
+    public CharSink encodeUtf8(char [] chars, int lo, int hi) {
+        return super.encodeUtf8(charSeq.of(chars, lo, hi));
     }
 
     @TestOnly
