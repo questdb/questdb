@@ -430,7 +430,7 @@ class LineTcpMeasurementEvent implements Closeable {
         final TableUpdateDetails.ThreadLocalDetails localDetails = tableUpdateDetails.getThreadLocalDetails(workerId);
         final BoolList processedCols = localDetails.getProcessedCols();
         final LowerCaseCharSequenceHashSet addedCols = localDetails.getAddedCols();
-        processedCols.setAll(tableUpdateDetails.getColumnCount(), false);
+        processedCols.setAll(localDetails.getColumnCount(), false);
         addedCols.clear();
         this.tableUpdateDetails = tableUpdateDetails;
         long timestamp = parser.getTimestamp();
