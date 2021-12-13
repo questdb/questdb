@@ -26,39 +26,31 @@ package io.questdb.std;
 
 import org.jetbrains.annotations.NotNull;
 
+import java.lang.ref.WeakReference;
+import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicIntegerArray;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReadWriteLock;
 
 /**
- * Non-reentrant, unfair reader-writer lock based on sharded reader atomic counters and a writer spinlock.
+ * Non-reentrant, unfair reader-writer lock based on thread-local atomic reader counters and a writer spinlock.
  * TODO document me.
  */
-public class XBiasedReadWriteLock implements ReadWriteLock {
+public class TLBiasedReadWriteLock implements ReadWriteLock {
 
-    private static final int CACHE_LINE_BYTES = 128;
-    private static final int SLOTS_PER_CACHE_LINE = CACHE_LINE_BYTES / Integer.BYTES;
-    private static final int CACHE_LINES_PER_READER = 8;
-
-    private final int rSlotsNum; // number of reader slots; must be a power of two
-    private final AtomicIntegerArray rSlots;
+    private final ThreadLocal<PaddedAtomicLong> tlReaderCounter = new ThreadLocal<>(this::newReaderCounter);
+    // guarded by wLock
+    private final ArrayList<WeakReference<PaddedAtomicLong>> readerCounters = new ArrayList<>();
+    // writer spinlock
     private final AtomicBoolean wLock = new AtomicBoolean();
 
     private final ReadLock readLock = new ReadLock();
     private final WriteLock writeLock = new WriteLock();
-
-    public XBiasedReadWriteLock() {
-        this(Runtime.getRuntime().availableProcessors());
-    }
-
-    public XBiasedReadWriteLock(int concurrency) {
-        this.rSlotsNum = Numbers.ceilPow2(concurrency) * SLOTS_PER_CACHE_LINE * CACHE_LINES_PER_READER;
-        this.rSlots = new AtomicIntegerArray(rSlotsNum);
-    }
 
     @Override
     public Lock readLock() {
@@ -70,21 +62,32 @@ public class XBiasedReadWriteLock implements ReadWriteLock {
         return writeLock;
     }
 
+    private PaddedAtomicLong newReaderCounter() {
+        PaddedAtomicLong counter = new PaddedAtomicLong();
+        writeLock.lock0();
+        try {
+            readerCounters.add(new WeakReference<>(counter));
+        } finally {
+            writeLock.unlock();
+        }
+        return counter;
+    }
+
     private class ReadLock implements Lock {
 
         @Override
         public void lock() {
-            final int index = readerIndex();
+            PaddedAtomicLong readerCounter = tlReaderCounter.get();
             for (;;) {
                 if (!wLock.get()) {
-                    if (rSlots.addAndGet(index, 1) < 0) {
-                        throw new IllegalMonitorStateException("max number of readers reached");
+                    if (readerCounter.incrementAndGet() > 1) {
+                        throw new IllegalMonitorStateException("reentrant lock calls are not supported");
                     }
                     if (!wLock.get()) {
                         break;
                     }
                     // attempt failed, go for another spin
-                    rSlots.addAndGet(index, -1);
+                    readerCounter.decrementAndGet();
                 }
                 LockSupport.parkNanos(10);
             }
@@ -92,8 +95,8 @@ public class XBiasedReadWriteLock implements ReadWriteLock {
 
         @Override
         public void unlock() {
-            final int index = readerIndex();
-            if (rSlots.addAndGet(index, -1) < 0) {
+            PaddedAtomicLong readerCounter = tlReaderCounter.get();
+            if (readerCounter.decrementAndGet() < 0) {
                 throw new IllegalMonitorStateException("uneven lock-unlock calls");
             }
         }
@@ -117,24 +120,48 @@ public class XBiasedReadWriteLock implements ReadWriteLock {
         public Condition newCondition() {
             throw new UnsupportedOperationException();
         }
-
-        private int readerIndex() {
-            final long tid = Thread.currentThread().getId();
-            return (int) mix64(tid) & (rSlotsNum - 1);
-        }
     }
 
     private class WriteLock implements Lock {
 
         @Override
         public void lock() {
-            while (!wLock.compareAndSet(false, true)) {
-                LockSupport.parkNanos(10);
-            }
-            for (int i = 0; i < rSlotsNum; i++) {
-                while (rSlots.get(i) != 0) {
+            lock0();
+
+            // fast-path: just wait for readers
+            boolean cleanup = false;
+            for (WeakReference<PaddedAtomicLong> ref : readerCounters) {
+                PaddedAtomicLong counter = ref.get();
+                if (counter == null) {
+                    // a reader thread stopped: need to clean the reference
+                    cleanup = true;
+                    break;
+                }
+                while (counter.get() != 0) {
                     LockSupport.parkNanos(10);
                 }
+            }
+
+            // slow-path: wait for readers and clear weak references
+            if (cleanup) {
+                Iterator<WeakReference<PaddedAtomicLong>> iterator = readerCounters.iterator();
+                while (iterator.hasNext()) {
+                    WeakReference<PaddedAtomicLong> ref = iterator.next();
+                    PaddedAtomicLong counter = ref.get();
+                    if (counter == null) {
+                        iterator.remove();
+                        continue;
+                    }
+                    while (counter.get() != 0) {
+                        LockSupport.parkNanos(10);
+                    }
+                }
+            }
+        }
+
+        private void lock0() {
+            while (!wLock.compareAndSet(false, true)) {
+                LockSupport.parkNanos(10);
             }
         }
 
@@ -166,9 +193,8 @@ public class XBiasedReadWriteLock implements ReadWriteLock {
         }
     }
 
-    private static long mix64(long z) {
-        z = (z ^ (z >>> 33)) * 0xff51afd7ed558ccdL;
-        z = (z ^ (z >>> 33)) * 0xc4ceb9fe1a85ec53L;
-        return z ^ (z >>> 33);
+    private static class PaddedAtomicLong extends AtomicLong {
+        @SuppressWarnings("unused")
+        private long l1, l2, l3, l4, l5, l6, l7;
     }
 }

@@ -24,10 +24,7 @@
 
 package org.questdb;
 
-import io.questdb.std.BiasedReadWriteLock;
-import io.questdb.std.Rnd;
-import io.questdb.std.SimpleReadWriteLock;
-import io.questdb.std.XBiasedReadWriteLock;
+import io.questdb.std.*;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 import org.openjdk.jmh.runner.Runner;
@@ -87,7 +84,7 @@ public class ReadWriteLockBenchmark {
     @State(Scope.Benchmark)
     public static class BenchmarkState {
 
-        @Param({"JUC", "SIMPLE", "BIASED", "XBIASED"})
+        @Param({"JUC", "SIMPLE", "BIASED", "XBIASED", "TLBIASED"})
         public LockType type;
         public ReadWriteLock lock;
 
@@ -106,6 +103,9 @@ public class ReadWriteLockBenchmark {
                 case XBIASED:
                     lock = new XBiasedReadWriteLock();
                     break;
+                case TLBIASED:
+                    lock = new TLBiasedReadWriteLock();
+                    break;
                 default:
                     throw new IllegalStateException("unknown lock type: " + type);
             }
@@ -113,6 +113,6 @@ public class ReadWriteLockBenchmark {
     }
 
     public enum LockType {
-        JUC, SIMPLE, BIASED, XBIASED
+        JUC, SIMPLE, BIASED, XBIASED, TLBIASED
     }
 }

@@ -127,7 +127,7 @@ public class BiasedReadWriteLock implements ReadWriteLock {
                 readerBias.set(false);
                 final long start = System.nanoTime();
                 for (int i = 0; i < READER_SLOTS; i++) {
-                    while (readerSlots.get(i) == 1) {
+                    while (readerSlots.get(i) != 0) {
                         LockSupport.parkNanos(10);
                     }
                 }
