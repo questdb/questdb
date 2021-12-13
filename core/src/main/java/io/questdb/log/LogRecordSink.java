@@ -29,11 +29,8 @@ import io.questdb.std.Sinkable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.TestOnly;
 
 public class LogRecordSink extends AbstractCharSink implements Sinkable {
-    private final CharSequenceOf charSeq = new CharSequenceOf();
     protected final long address;
     protected final long lim;
     protected long _wptr;
@@ -90,42 +87,5 @@ public class LogRecordSink extends AbstractCharSink implements Sinkable {
     @Override
     public void toSink(CharSink sink) {
         Chars.utf8Decode(address, _wptr, sink);
-    }
-
-    public CharSink encodeUtf8(char [] chars, int lo, int hi) {
-        return super.encodeUtf8(charSeq.of(chars, lo, hi));
-    }
-
-    @TestOnly
-    static class CharSequenceOf implements CharSequence {
-        private char[] chars;
-        private int lo;
-        private int len;
-
-        CharSequenceOf of(char[] chars, int lo, int hi) {
-            this.chars = chars;
-            this.lo = lo;
-            this.len = hi - lo;
-            return this;
-        }
-
-        @Override
-        public int length() {
-            return len;
-        }
-
-        @Override
-        public char charAt(int index) {
-            if (index > -1 && index < len) {
-                return chars[lo + index];
-            }
-            throw new IndexOutOfBoundsException("Index out of range: " + index);
-        }
-
-        @NotNull
-        @Override
-        public CharSequence subSequence(int start, int end) {
-            throw new UnsupportedOperationException();
-        }
     }
 }
