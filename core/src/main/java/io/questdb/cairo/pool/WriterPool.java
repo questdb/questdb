@@ -362,7 +362,7 @@ public class WriterPool extends AbstractPool {
                 // looks like this one can be released
                 // try to lock it
                 // Lock with negative owner to indicate it's about to be released
-                if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, -thread)) {
+                if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, UNALLOCATED - thread)) {
                     // lock successful
                     closeWriter(thread, e, PoolListener.EV_EXPIRE, reason);
                     iterator.remove();
