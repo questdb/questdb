@@ -472,7 +472,7 @@ class LineTcpMeasurementEvent implements Closeable {
                         timestamp = timestampAdapter.getMicros(entity.getLongValue());
                         continue;
                     }
-                    if (!processedCols.replace(colIndex, true)) {
+                    if (!processedCols.extendAndReplace(colIndex, true)) {
                         Unsafe.getUnsafe().putInt(bufPos, colIndex);
                         bufPos += Integer.BYTES;
                     } else {

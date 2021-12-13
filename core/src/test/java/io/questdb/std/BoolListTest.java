@@ -134,6 +134,12 @@ public class BoolListTest {
         assertTrue(list.replace(pos, false));
         assertFalse(list.replace(pos, true));
         assertTrue(list.replace(pos, true));
+        assertThrows(AssertionError.class, () -> list.replace(1000, false));
+
+        assertFalse(list.extendAndReplace(1000, true));
+        assertFalse(list.extendAndReplace(6003, true));
+        assertTrue(list.replace(6003, true));
+        assertThrows(AssertionError.class, () -> list.replace(6004, false));
     }
 
     @Test
