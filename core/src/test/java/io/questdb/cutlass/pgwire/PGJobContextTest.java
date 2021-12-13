@@ -73,7 +73,6 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.LockSupport;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
@@ -4391,6 +4390,7 @@ nodejs code:
         };
 
         WorkerPool pool = new WorkerPool(conf);
+        inactiveWriterTTL = 1000000;
         pool.assign(engine.getEngineMaintenanceJob());
         try (
                 final PGWireServer ignored = PGWireServer.create(
@@ -4445,7 +4445,7 @@ nodejs code:
                     }).start();
 
                     start.await();
-                    LockSupport.parkNanos(1);
+                    Os.sleep(100);
                     connection1.commit();
                     finished.await();
 

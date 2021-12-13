@@ -39,6 +39,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Iterator;
+import java.util.concurrent.locks.LockSupport;
 
 /**
  * This class maintains cache of open writers to avoid OS overhead of
@@ -109,44 +110,52 @@ public class WriterPool extends AbstractPool {
 
         long thread = Thread.currentThread().getId();
 
-        Entry e = entries.get(tableName);
-        if (e == null) {
-            // We are racing to create new writer!
-            e = new Entry(clock.getTicks());
-            Entry other = entries.putIfAbsent(tableName, e);
-            if (other == null) {
-                // race won
-                return createWriter(tableName, e, thread, lockReason);
+        while (true) {
+            Entry e = entries.get(tableName);
+            if (e == null) {
+                // We are racing to create new writer!
+                e = new Entry(clock.getTicks());
+                Entry other = entries.putIfAbsent(tableName, e);
+                if (other == null) {
+                    // race won
+                    return createWriter(tableName, e, thread, lockReason);
+                } else {
+                    e = other;
+                }
+            }
+
+            long owner = e.owner;
+            // try to change owner
+            if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
+                // in an extreme race condition it is possible that e.writer will be null
+                // in this case behaviour should be identical to entry missing entirely
+                if (e.writer == null) {
+                    return createWriter(tableName, e, thread, lockReason);
+                }
+                return checkClosedAndGetWriter(tableName, e, lockReason);
             } else {
-                e = other;
-            }
-        }
-
-        long owner = e.owner;
-        // try to change owner
-        if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
-            // in an extreme race condition it is possible that e.writer will be null
-            // in this case behaviour should be identical to entry missing entirely
-            if (e.writer == null) {
-                return createWriter(tableName, e, thread, lockReason);
-            }
-            return checkClosedAndGetWriter(tableName, e, lockReason);
-        } else {
-            if (e.owner == thread) {
-                if (e.lockFd != -1L) {
-                    throw EntryLockedException.instance(e.ownershipReason);
+                if (owner < 0) {
+                    // writer is about to be released from the pool by relaseAll method.
+                    // try again, it should become available soon.
+                    LockSupport.parkNanos(1);
+                    continue;
                 }
+                if (e.owner == thread) {
+                    if (e.lockFd != -1L) {
+                        throw EntryLockedException.instance(e.ownershipReason);
+                    }
 
-                if (e.ex != null) {
-                    notifyListener(thread, tableName, PoolListener.EV_EX_RESEND);
-                    // this writer failed to allocate by this very thread
-                    // ensure consistent response
-                    entries.remove(tableName);
-                    throw e.ex;
+                    if (e.ex != null) {
+                        notifyListener(thread, tableName, PoolListener.EV_EX_RESEND);
+                        // this writer failed to allocate by this very thread
+                        // ensure consistent response
+                        entries.remove(tableName);
+                        throw e.ex;
+                    }
                 }
+                LOG.info().$("busy [table=`").utf8(tableName).$("`, owner=").$(owner).$(", thread=").$(thread).I$();
+                throw EntryUnavailableException.instance(e.ownershipReason);
             }
-            LOG.info().$("busy [table=`").utf8(tableName).$("`, owner=").$(owner).$(", thread=").$(thread).I$();
-            throw EntryUnavailableException.instance(e.ownershipReason);
         }
     }
 
@@ -345,7 +354,8 @@ public class WriterPool extends AbstractPool {
             if ((deadline > e.lastReleaseTime && e.owner == UNALLOCATED)) {
                 // looks like this one can be released
                 // try to lock it
-                if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
+                // Lock with negative owner to indicate it's about to be released
+                if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, -thread)) {
                     // lock successful
                     closeWriter(thread, e, PoolListener.EV_EXPIRE, reason);
                     iterator.remove();
