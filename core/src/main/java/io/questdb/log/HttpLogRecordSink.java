@@ -68,7 +68,7 @@ public class HttpLogRecordSink extends LogRecordSink {
         if (hasContentLengthMarker) {
             // take the body length and format it into the ###### contentLength marker
             int bodyLen = (int) (_wptr - bodyStart);
-            long p = contentLengthEnd; // note, we replace # from lowest significant digit (right to left)
+            long p = contentLengthEnd; // note, we replace # from the lowest significant digit (right to left)
             if (bodyLen == 0) {
                 Unsafe.getUnsafe().putByte(p--, (byte) '0');
             } else {
