@@ -48,8 +48,6 @@ import java.io.*;
 import java.net.*;
 import java.util.*;
 import java.util.concurrent.locks.LockSupport;
-import java.util.jar.Attributes;
-import java.util.jar.Manifest;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -60,7 +58,7 @@ public class ServerMain {
 
     public ServerMain(String[] args) throws Exception {
         //properties fetched from sources other than server.conf
-        final BuildInformation buildInformation = fetchBuildInformation();
+        final BuildInformation buildInformation = BuildInformationHolder.INSTANCE;
 
         System.err.printf(
                 "QuestDB server %s%nCopyright (C) 2014-%d, all rights reserved.%n%n",
@@ -124,7 +122,7 @@ public class ServerMain {
                 log.advisory().$("OS: freebsd/amd64").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             default:
-                log.error().$("Unsupported OS").$(Vect.getSupportedInstructionSetName()).$();
+                log.critical().$("Unsupported OS").$(Vect.getSupportedInstructionSetName()).$();
                 break;
         }
         log.advisory().$("available CPUs: ").$(Runtime.getRuntime().availableProcessors()).$();
@@ -448,47 +446,6 @@ public class ServerMain {
     protected static void shutdownQuestDb(final WorkerPool workerPool, final ObjList<? extends Closeable> instancesToClean) {
         workerPool.halt();
         Misc.freeObjList(instancesToClean);
-    }
-
-    private static CharSequence getQuestDbVersion(final Attributes manifestAttributes) {
-        final CharSequence version = manifestAttributes.getValue("Implementation-Version");
-        return version != null ? version : "[DEVELOPMENT]";
-    }
-
-    private static CharSequence getJdkVersion(final Attributes manifestAttributes) {
-        final CharSequence version = manifestAttributes.getValue("Build-Jdk");
-        return version != null ? version : "Unknown Version";
-    }
-
-    private static CharSequence getCommitHash(final Attributes manifestAttributes) {
-        final CharSequence version = manifestAttributes.getValue("Build-Commit-Hash");
-        return version != null ? version : "Unknown Version";
-    }
-
-    private static BuildInformation fetchBuildInformation() throws IOException {
-        final Attributes manifestAttributes = getManifestAttributes();
-
-        return new BuildInformationHolder(
-                getQuestDbVersion(manifestAttributes),
-                getJdkVersion(manifestAttributes),
-                getCommitHash(manifestAttributes)
-        );
-    }
-
-    private static Attributes getManifestAttributes() throws IOException {
-        final Enumeration<URL> resources = ServerMain.class.getClassLoader()
-                .getResources("META-INF/MANIFEST.MF");
-        while (resources.hasMoreElements()) {
-            try (InputStream is = resources.nextElement().openStream()) {
-                final Manifest manifest = new Manifest(is);
-                final Attributes attributes = manifest.getMainAttributes();
-                if ("org.questdb".equals(attributes.getValue("Implementation-Vendor-Id"))) {
-                    return manifest.getMainAttributes();
-                }
-            }
-        }
-
-        return new Attributes();
     }
 
     protected HttpServer createHttpServer(

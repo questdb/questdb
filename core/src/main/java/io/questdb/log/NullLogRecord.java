@@ -50,6 +50,11 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
+    public LogRecord $utf8(long lo, long hi) {
+        return this;
+    }
+
+    @Override
     public LogRecord $(int x) {
         return this;
     }
@@ -126,6 +131,11 @@ final class NullLogRecord implements LogRecord {
 
     @Override
     public LogRecord utf8(CharSequence sequence) {
+        return this;
+    }
+
+    @Override
+    public LogRecord put(char c) {
         return this;
     }
 }

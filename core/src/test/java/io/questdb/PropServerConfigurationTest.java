@@ -625,7 +625,7 @@ public class PropServerConfigurationTest {
 
     @Test
     public void testSetAllInternalProperties() throws ServerConfigurationException, JsonException {
-        final BuildInformation buildInformation = new BuildInformationHolder("5.0.6", "11.0.9.1", "0fff7d46fd13b4705770f1fb126dd9b889768643");
+        final BuildInformation buildInformation = new BuildInformationHolder("5.0.6", "0fff7d46fd13b4705770f1fb126dd9b889768643", "11.0.9.1");
         final PropServerConfiguration configuration = new PropServerConfiguration(root, new Properties(), null, LOG, buildInformation);
 
         Assert.assertEquals("5.0.6", configuration.getCairoConfiguration().getBuildInformation().getQuestDbVersion());

@@ -41,7 +41,6 @@ import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
@@ -1659,6 +1658,29 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 return;
             }
             Assert.fail();
+        });
+    }
+
+    @Test
+    public void testSingleRowImport() throws Exception {
+        assertNoLeak(textLoader -> {
+            String text = "value1,value2,value3\n";
+            configureLoaderDefaults(textLoader);
+            try {
+                playText0(textLoader, text, 512, ENTITY_MANIPULATOR);
+            } catch (NotEnoughLinesException e) {
+                return;
+            }
+            Assert.fail();
+        });
+    }
+
+    @Test
+    public void testSingleRowImportWithSpecifiedDelimiter() throws Exception {
+        assertNoLeak(textLoader -> {
+            String text = "value1,value2,value3\n";
+            configureLoaderDefaults(textLoader, (byte) ',');
+            playText0(textLoader, text, 512, ENTITY_MANIPULATOR);
         });
     }
 
