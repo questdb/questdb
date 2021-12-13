@@ -42,6 +42,7 @@ public class TableUpdateDetails implements Closeable {
     private final String tableNameUtf16;
     private final ThreadLocalDetails[] localDetailsArray;
     private final int timestampIndex;
+    private final int columnCount;
     private final CairoEngine engine;
     private final MillisecondClock millisecondClock;
     private final long writerTickRowsCountMod;
@@ -75,6 +76,7 @@ public class TableUpdateDetails implements Closeable {
         this.lastCommitMillis = millisecondClock.getTicks();
         this.writer = writer;
         this.timestampIndex = writer.getMetadata().getTimestampIndex();
+        this.columnCount = writer.getMetadata().getColumnCount();
         this.tableNameUtf16 = writer.getTableName();
     }
 
@@ -127,7 +129,7 @@ public class TableUpdateDetails implements Closeable {
     }
 
     public int getColumnCount() {
-        return writer.getMetadata().getColumnCount();
+        return columnCount;
     }
 
     public int getEventsProcessedSinceReshuffle() {
