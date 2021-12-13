@@ -119,7 +119,30 @@ public class CompiledFilterTest extends AbstractGriffinTest {
 
     @Ignore
     @Test
-    public void testBindVariables() throws Exception {
+    public void testBindVariablesSingle() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select" +
+                    " rnd_boolean() aboolean," +
+                    " timestamp_sequence(400000000000, 500000000) atimestamp" +
+                    " from long_sequence(100)) timestamp(atimestamp)", sqlExecutionContext);
+
+            bindVariableService.clear();
+            bindVariableService.setBoolean("aboolean", false);
+
+            final String query = "select * from x where" +
+                    " aboolean = :aboolean";
+            final String expected = "aboolean\n" +
+                    "false\n";
+
+            assertSql(query, expected);
+
+            assertSqlRunWithJit(query);
+        });
+    }
+
+    @Ignore
+    @Test
+    public void testBindVariablesAllTypes() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select" +
                     " rnd_boolean() aboolean," +

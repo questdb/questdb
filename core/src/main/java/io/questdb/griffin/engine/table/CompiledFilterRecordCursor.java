@@ -24,14 +24,17 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderSelectedColumnRecord;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
@@ -52,6 +55,8 @@ class CompiledFilterRecordCursor implements RecordCursor {
     private CompiledFilter compiledFilter;
     private DirectLongList rows;
     private DirectLongList columns;
+    private MemoryCARW bindVarMemory;
+    private int bindVarCount;
 
     private int partitionIndex;
     // The following fields are used for table iteration:
@@ -77,6 +82,8 @@ class CompiledFilterRecordCursor implements RecordCursor {
             CompiledFilter compiledFilter,
             DirectLongList rows,
             DirectLongList columns,
+            ObjList<Function> bindVarFunctions,
+            MemoryCARW bindVarMemory,
             SqlExecutionContext executionContext
     ) throws SqlException {
         this.colTopsFilter = filter;
@@ -88,7 +95,18 @@ class CompiledFilterRecordCursor implements RecordCursor {
         this.recordB.of(pageFrameCursor.getTableReader());
         this.metadata = factory.getMetadata();
         this.next = nextPage;
+        this.bindVarMemory = bindVarMemory;
+        this.bindVarCount = bindVarFunctions.size();
+        prepareBindVarMemory(bindVarFunctions);
         colTopsFilter.init(this, executionContext);
+    }
+
+    private void prepareBindVarMemory(ObjList<Function> functions) throws SqlException {
+        bindVarMemory.truncate();
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            Function function = functions.getQuick(i);
+            writeBindVarFunction(function);
+        }
     }
 
     @Override
@@ -209,8 +227,8 @@ class CompiledFilterRecordCursor implements RecordCursor {
             hi = compiledFilter.call(
                     columns.getAddress(),
                     columns.size(),
-                    0,
-                    0, //todo: add bind variables support
+                    bindVarMemory.getAddress(),
+                    bindVarCount,
                     rows.getAddress(),
                     rowCount,
                     frame.getPartitionLo()
@@ -225,5 +243,59 @@ class CompiledFilterRecordCursor implements RecordCursor {
             }
         }
         return false;
+    }
+
+    private void writeBindVarFunction(Function function) throws SqlException {
+        final int columnType = function.getType();
+        final int columnTypeTag = ColumnType.tagOf(columnType);
+        switch (columnTypeTag) {
+            case ColumnType.BOOLEAN:
+                bindVarMemory.putLong(function.getBool(null) ? 1 : 0);
+                return;
+            case ColumnType.BYTE:
+                bindVarMemory.putLong(function.getByte(null));
+                return;
+            case ColumnType.GEOBYTE:
+                bindVarMemory.putLong(function.getGeoByte(null));
+                return;
+            case ColumnType.SHORT:
+                bindVarMemory.putLong(function.getShort(null));
+                return;
+            case ColumnType.GEOSHORT:
+                bindVarMemory.putLong(function.getGeoShort(null));
+                return;
+            case ColumnType.CHAR:
+                bindVarMemory.putLong(function.getChar(null));
+                return;
+            case ColumnType.INT:
+                bindVarMemory.putLong(function.getInt(null));
+                return;
+            case ColumnType.GEOINT:
+                bindVarMemory.putLong(function.getGeoInt(null));
+                return;
+            case ColumnType.STRING: // symbol variables are represented with string type
+                // TODO
+                return;
+            case ColumnType.FLOAT:
+                bindVarMemory.putDouble(function.getFloat(null));
+                return;
+            case ColumnType.LONG:
+                bindVarMemory.putLong(function.getLong(null));
+                return;
+            case ColumnType.GEOLONG:
+                bindVarMemory.putLong(function.getGeoLong(null));
+                return;
+            case ColumnType.DATE:
+                bindVarMemory.putLong(function.getDate(null));
+                return;
+            case ColumnType.TIMESTAMP:
+                bindVarMemory.putLong(function.getTimestamp(null));
+                return;
+            case ColumnType.DOUBLE:
+                bindVarMemory.putDouble(function.getDouble(null));
+                return;
+            default:
+                throw SqlException.position(0).put("unsupported bind variable type: ").put(ColumnType.nameOf(columnTypeTag));
+        }
     }
 }

@@ -742,16 +742,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         int columnIndex = readerMetadata.getColumnIndexQuiet(factory.getMetadata().getColumnName(i));
                         columnIndexes.add(columnIndex);
                     }
+
                     // Serialize IR and try to compile the filter.
+                    final ObjList<Function> bindVarFunctions = new ObjList<>();
                     final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
-                    jitIRSerializer.of(jitIRMem, factory.getMetadata(), reader, columnIndexes);
+                    jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), reader, columnIndexes, bindVarFunctions);
                     int jitOptions = jitIRSerializer.serialize(filter, forceScalar, false);
                     final CompiledFilter jitFilter = new CompiledFilter();
                     jitFilter.compile(jitIRMem, jitOptions);
+
                     LOG.info()
                             .$("JIT enabled for (sub)query [tableName=").utf8(model.getName())
                             .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
-                    return new CompiledFilterRecordCursorFactory(factory, columnIndexes, f, jitFilter);
+                    return new CompiledFilterRecordCursorFactory(factory, columnIndexes, bindVarFunctions, f, jitFilter);
                 } catch (SqlException | LimitOverflowException ex) {
                     LOG.debug()
                             .$("JIT cannot be applied to (sub)query [tableName=").utf8(model.getName())

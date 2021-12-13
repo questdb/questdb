@@ -28,24 +28,32 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class CompiledFilterRecordCursorFactory implements RecordCursorFactory {
+
     private final RecordCursorFactory factory;
     private final Function filter;
     private final CompiledFilter compiledFilter;
     private final CompiledFilterRecordCursor cursor;
+    private final ObjList<Function> bindVarFunctions;
+    private final MemoryCARW bindVarMemory;
     private final DirectLongList rows;
     private final DirectLongList columns;
 
     public CompiledFilterRecordCursorFactory(
             @NotNull RecordCursorFactory factory,
             @NotNull IntList columnIndexes,
+            @NotNull ObjList<Function> bindVarFunctions,
             @NotNull Function filter,
             @NotNull CompiledFilter compiledFilter
     ) {
@@ -55,6 +63,8 @@ public class CompiledFilterRecordCursorFactory implements RecordCursorFactory {
         this.filter = filter;
         this.compiledFilter = compiledFilter;
         this.cursor = new CompiledFilterRecordCursor(columnIndexes);
+        this.bindVarFunctions = bindVarFunctions;
+        this.bindVarMemory = Vm.getCARWInstance(2048, 16, MemoryTag.NATIVE_DEFAULT);
         this.rows = new DirectLongList(1024);
         this.columns = new DirectLongList(16);
     }
@@ -64,13 +74,14 @@ public class CompiledFilterRecordCursorFactory implements RecordCursorFactory {
         factory.close();
         filter.close();
         compiledFilter.close();
+        bindVarMemory.close();
         rows.close();
         columns.close();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        this.cursor.of(factory, filter, compiledFilter, rows, columns, executionContext);
+        this.cursor.of(factory, filter, compiledFilter, rows, columns, bindVarFunctions, bindVarMemory, executionContext);
         return this.cursor;
     }
 

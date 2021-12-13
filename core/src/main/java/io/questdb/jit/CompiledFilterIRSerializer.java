@@ -27,13 +27,12 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.griffin.GeoHashUtil;
-import io.questdb.griffin.PostOrderTreeTraversalAlgo;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.*;
@@ -101,15 +100,26 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
 
     private MemoryCARW memory;
+    private SqlExecutionContext executionContext;
     private RecordMetadata metadata;
     private TableReader tableReader;
     private IntList columnIndexes;
+    private ObjList<Function> bindVarFunctions;
 
-    public CompiledFilterIRSerializer of(MemoryCARW memory, RecordMetadata metadata, TableReader tableReader, IntList columnIndexes) {
+    public CompiledFilterIRSerializer of(
+            MemoryCARW memory,
+            SqlExecutionContext executionContext,
+            RecordMetadata metadata,
+            TableReader tableReader,
+            IntList columnIndexes,
+            ObjList<Function> bindVarFunctions
+    ) {
         this.memory = memory;
+        this.executionContext = executionContext;
         this.metadata = metadata;
         this.tableReader = tableReader;
         this.columnIndexes = columnIndexes;
+        this.bindVarFunctions = bindVarFunctions;
         return this;
     }
 
@@ -194,6 +204,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 case ExpressionNode.LITERAL:
                     serializeColumn(node.position, node.token);
                     break;
+                case ExpressionNode.BIND_VARIABLE:
+                    serializeBindVariable(node.position, node.token);
+                    break;
                 case ExpressionNode.CONSTANT:
                     // Write stub values to be backfilled later
                     serializeConstantStub(node);
@@ -264,6 +277,65 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         memory.putByte(typeCode);
         memory.putLong(index);
+    }
+
+    private void serializeBindVariable(int position, final CharSequence token) throws SqlException {
+        if (!arithmeticContext.isActive()) {
+            throw SqlException.position(position)
+                    .put("bind variable outside of arithmetic expression: ")
+                    .put(token);
+        }
+
+        Function varFunction = getBindVariableFunction(position, token);
+
+        final int columnType = varFunction.getType();
+        final int columnTypeTag = ColumnType.tagOf(columnType);
+        byte typeCode = bindVariableTypeCode(columnTypeTag);
+        if (typeCode == UNDEFINED_CODE) {
+            throw SqlException.position(position)
+                    .put("unsupported bind variable type: ")
+                    .put(ColumnType.nameOf(columnTypeTag));
+        }
+
+        bindVarFunctions.add(varFunction);
+        int index = bindVarFunctions.size() - 1;
+
+        memory.putByte(typeCode);
+        memory.putLong(index);
+    }
+
+    private Function getBindVariableFunction(int position, CharSequence token) throws SqlException {
+        Function varFunction;
+
+        if (token.charAt(0) == ':') {
+            // name bind variable case
+            varFunction = getBindVariableService().getFunction(token);
+        } else {
+            // indexed bind variable case
+            try {
+                final int variableIndex = Numbers.parseInt(token, 1, token.length());
+                if (variableIndex < 1) {
+                    throw SqlException.$(position, "invalid bind variable index [value=").put(variableIndex).put(']');
+                }
+                varFunction = getBindVariableService().getFunction(variableIndex);
+            } catch (NumericException e) {
+                throw SqlException.$(position, "invalid bind variable index [value=").put(token).put(']');
+            }
+        }
+
+        if (varFunction == null) {
+            throw SqlException.position(position).put("failed to find function for bind variable: ").put(token);
+        }
+
+        return varFunction;
+    }
+
+    private BindVariableService getBindVariableService() throws SqlException {
+        final BindVariableService bindVariableService = executionContext.getBindVariableService();
+        if (bindVariableService == null) {
+            throw SqlException.$(0, "bind variable service is not provided");
+        }
+        return bindVariableService;
     }
 
     private void serializeConstantStub(final ExpressionNode node) throws SqlException {
@@ -621,6 +693,34 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
+    private static byte bindVariableTypeCode(int columnTypeTag) {
+        switch (columnTypeTag) {
+            case ColumnType.BOOLEAN:
+            case ColumnType.BYTE:
+            case ColumnType.GEOBYTE:
+                return VAR_I1;
+            case ColumnType.SHORT:
+            case ColumnType.GEOSHORT:
+            case ColumnType.CHAR:
+                return VAR_I2;
+            case ColumnType.INT:
+            case ColumnType.GEOINT:
+            case ColumnType.STRING: // symbol variables are represented with string type
+                return VAR_I4;
+            case ColumnType.FLOAT:
+                return VAR_F4;
+            case ColumnType.LONG:
+            case ColumnType.GEOLONG:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+                return VAR_I8;
+            case ColumnType.DOUBLE:
+                return VAR_F8;
+            default:
+                return UNDEFINED_CODE;
+        }
+    }
+
     private static boolean isTopLevelOperation(ExpressionNode node) {
         final CharSequence token = node.token;
         if (SqlKeywords.isNotKeyword(token)) {
@@ -723,13 +823,27 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 contextLeft = true;
             }
 
+            int columnType = ColumnType.UNDEFINED;
             if (node.type == ExpressionNode.LITERAL) {
-                final int index = metadata.getColumnIndexQuiet(node.token);
-                if (index == -1) {
+                final int columnIndex = metadata.getColumnIndexQuiet(node.token);
+                if (columnIndex == -1) {
                     throw SqlException.invalidColumn(node.position, node.token);
                 }
+                columnType = metadata.getColumnType(columnIndex);
+                if (columnType == ColumnType.SYMBOL) {
+                    symbolMapReader = tableReader.getSymbolMapReader(columnIndexes.getQuick(columnIndex));
+                }
+            } else if (node.type == ExpressionNode.BIND_VARIABLE) {
+                Function varFunction = getBindVariableFunction(node.position, node.token);
+                // We treat bind variables as columns here for the sake of simplicity
+                columnType = varFunction.getType();
+                // Treat string bind variable to be of symbol type
+                if (columnType == ColumnType.STRING) {
+                    columnType = ColumnType.SYMBOL;
+                }
+            }
 
-                final int columnType = metadata.getColumnType(index);
+            if (columnType != ColumnType.UNDEFINED) {
                 final int columnTypeTag = ColumnType.tagOf(columnType);
 
                 updateExpressionType(node.position, columnTypeTag);
@@ -737,10 +851,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 byte code = columnTypeCode(columnTypeTag);
                 localTypesObserver.observe(code);
                 globalTypesObserver.observe(code);
-
-                if (ExpressionType.SYMBOL == expressionType) {
-                    symbolMapReader = tableReader.getSymbolMapReader(columnIndexes.getQuick(index));
-                }
             }
 
             return contextLeft;
