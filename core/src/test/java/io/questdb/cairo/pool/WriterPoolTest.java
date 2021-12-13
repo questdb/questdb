@@ -27,6 +27,7 @@ package io.questdb.cairo.pool;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
@@ -262,6 +263,30 @@ public class WriterPoolTest extends AbstractCairoTest {
                 pool.get("z", "testing");
                 Assert.fail();
             } catch (PoolClosedException ignored) {
+            }
+        });
+    }
+
+    @Test
+    public void testWriterPingPong() throws Exception {
+        assertWithPool(pool -> {
+            for (int i = 0; i < 10_000; i++) {
+                final SOCountDownLatch next = new SOCountDownLatch(1);
+
+                // listener will release the latch
+                pool.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                    if (event == PoolListener.EV_RETURN) {
+                        next.countDown();
+                    }
+                });
+
+                new Thread(() -> {
+                    // trigger the release
+                    pool.get("z", "test").close();
+                }).start();
+
+                next.await();
+                pool.get("z", "test2").close();
             }
         });
     }

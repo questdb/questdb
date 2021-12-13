@@ -37,6 +37,7 @@ import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -113,7 +114,8 @@ public class LineTcpReceiver implements Closeable {
         Misc.free(dispatcher);
     }
 
-    public void setSchedulerListener(SchedulerListener listener) {
+    @TestOnly
+    void setSchedulerListener(SchedulerListener listener) {
         scheduler.setListener(listener);
     }
 

@@ -28,26 +28,26 @@ import io.questdb.std.str.CharSink;
 
 import java.util.Arrays;
 
-public class IntList implements Mutable {
+public class BoolList implements Mutable {
     private static final int DEFAULT_ARRAY_SIZE = 16;
-    private static final int NO_ENTRY_VALUE = -1;
-    private int[] buffer;
+    private static final boolean NO_ENTRY_VALUE = false;
+    private boolean[] buffer;
     private int pos = 0;
 
-    public IntList() {
+    public BoolList() {
         this(DEFAULT_ARRAY_SIZE);
     }
 
-    public IntList(int capacity) {
-        this.buffer = new int[Math.max(capacity, DEFAULT_ARRAY_SIZE)];
+    public BoolList(int capacity) {
+        this.buffer = new boolean[Math.max(capacity, DEFAULT_ARRAY_SIZE)];
     }
 
-    public void add(int value) {
+    public void add(boolean value) {
         ensureCapacity0(pos + 1);
         buffer[pos++] = value;
     }
 
-    public void addAll(IntList that) {
+    public void addAll(BoolList that) {
         int p = pos;
         int s = that.size();
         ensureCapacity(p + s);
@@ -56,24 +56,6 @@ public class IntList implements Mutable {
 
     public void arrayCopy(int srcPos, int dstPos, int length) {
         System.arraycopy(buffer, srcPos, buffer, dstPos, length);
-    }
-
-    public int binarySearchUniqueList(int v) {
-        int low = 0;
-        int high = pos - 1;
-        while (high - low > 65) {
-            int mid = (low + high) / 2;
-            int midVal = buffer[mid];
-
-            if (midVal < v)
-                low = mid + 1;
-            else if (midVal > v)
-                high = mid - 1;
-            else {
-                return mid;
-            }
-        }
-        return scanSearch(v, low, high + 1);
     }
 
     public void clear() {
@@ -91,7 +73,7 @@ public class IntList implements Mutable {
         pos = capacity;
     }
 
-    public void extendAndSet(int index, int value) {
+    public void extendAndSet(int index, boolean value) {
         ensureCapacity0(index + 1);
         if (index >= pos) {
             pos = index + 1;
@@ -99,29 +81,16 @@ public class IntList implements Mutable {
         buffer[index] = value;
     }
 
-    public int get(int index) {
-        return getQuick(index);
+    public boolean get(int index) {
+        assert index < pos;
+        return buffer[index];
     }
 
-    public int getLast() {
+    public boolean getLast() {
         if (pos > 0) {
             return buffer[pos - 1];
         }
         return NO_ENTRY_VALUE;
-    }
-
-    /**
-     * Returns element at the specified position. This method does not do
-     * bounds check and may cause memory corruption if index is out of bounds.
-     * Instead the responsibility to check bounds is placed on application code,
-     * which is often the case anyway, for example in indexed for() loop.
-     *
-     * @param index of the element
-     * @return element at the specified position.
-     */
-    public int getQuick(int index) {
-        assert index < pos;
-        return buffer[index];
     }
 
     /**
@@ -132,7 +101,7 @@ public class IntList implements Mutable {
      * @param index position of element
      * @return element at the specified position.
      */
-    public int getQuiet(int index) {
+    public boolean getQuiet(int index) {
         if (index < pos) {
             return buffer[index];
         }
@@ -143,21 +112,8 @@ public class IntList implements Mutable {
      * {@inheritDoc}
      */
     @Override
-    public int hashCode() {
-        int hashCode = 1;
-        for (int i = 0, n = pos; i < n; i++) {
-            int v = getQuick(i);
-            hashCode = 31 * hashCode + (v == NO_ENTRY_VALUE ? 0 : v);
-        }
-        return hashCode;
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
     public boolean equals(Object that) {
-        return this == that || that instanceof IntList && equals((IntList) that);
+        return this == that || that instanceof BoolList && equals((BoolList) that);
     }
 
     /**
@@ -178,35 +134,10 @@ public class IntList implements Mutable {
         return b.toString();
     }
 
-    public void increment(int index) {
-        buffer[index] = buffer[index] + 1;
-    }
-
-    public int indexOf(int v, int low, int high) {
-        assert high <= pos;
-
-        for (int i = low; i < high; i++) {
-            int f = buffer[i];
-            if (f == v) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    public void insert(int index, int element) {
+    public void insert(int index, boolean element) {
         ensureCapacity(++pos);
         System.arraycopy(buffer, index, buffer, index + 1, pos - index - 1);
         buffer[index] = element;
-    }
-
-    public void remove(int key) {
-        for (int i = 0, n = size(); i < n; i++) {
-            if (key == getQuick(i)) {
-                removeIndex(i);
-                return;
-            }
-        }
     }
 
     /**
@@ -224,7 +155,14 @@ public class IntList implements Mutable {
         buffer[index1] = NO_ENTRY_VALUE;
     }
 
-    public void set(int index, int element) {
+    public boolean replace(int index, boolean value) {
+        assert index < pos;
+        boolean val = buffer[index];
+        buffer[index] = value;
+        return val;
+    }
+
+    public void set(int index, boolean element) {
         if (index < pos) {
             buffer[index] = element;
             return;
@@ -232,7 +170,7 @@ public class IntList implements Mutable {
         throw new ArrayIndexOutOfBoundsException(index);
     }
 
-    public void setAll(int capacity, int value) {
+    public void setAll(int capacity, boolean value) {
         ensureCapacity0(capacity);
         pos = capacity;
         Arrays.fill(buffer, 0, pos, value);
@@ -243,7 +181,7 @@ public class IntList implements Mutable {
         pos = capacity;
     }
 
-    public void setQuick(int index, int value) {
+    public void setQuick(int index, boolean value) {
         assert index < pos;
         buffer[index] = value;
     }
@@ -252,7 +190,7 @@ public class IntList implements Mutable {
         return pos;
     }
 
-    public void zero(int value) {
+    public void zero(boolean value) {
         Arrays.fill(buffer, 0, pos, value);
     }
 
@@ -260,36 +198,22 @@ public class IntList implements Mutable {
         int l = buffer.length;
         if (capacity > l) {
             int newCap = Math.max(l << 1, capacity);
-            int[] buf = new int[newCap];
+            boolean[] buf = new boolean[newCap];
             System.arraycopy(buffer, 0, buf, 0, l);
             this.buffer = buf;
         }
     }
 
-    private boolean equals(IntList that) {
+    private boolean equals(BoolList that) {
         if (this.pos != that.pos) {
             return false;
         }
 
         for (int i = 0, n = pos; i < n; i++) {
-            if (this.getQuick(i) != that.getQuick(i)) {
+            if (buffer[i] != that.buffer[i]) {
                 return false;
             }
         }
         return true;
     }
-
-    private int scanSearch(int v, int low, int high) {
-        for (int i = low; i < high; i++) {
-            int f = buffer[i];
-            if (f == v) {
-                return i;
-            }
-            if (f > v) {
-                return -(i + 1);
-            }
-        }
-        return -(high + 1);
-    }
-
 }
