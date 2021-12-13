@@ -3135,9 +3135,6 @@ nodejs code:
                     final Connection connection2 = getConnection(false, true);
                     final PreparedStatement insert = connection1.prepareStatement(
                             "insert into " + tableName + " values (?)"
-                    );
-                    final PreparedStatement alter = connection2.prepareStatement(
-                            "alter table " + tableName + " add column b long"
                     )
             ) {
                 connection1.setAutoCommit(false);
@@ -3153,7 +3150,13 @@ nodejs code:
                 new Thread(() -> {
                     try {
                         start.await();
-                        alter.execute();
+                        try (
+                                final PreparedStatement alter = connection2.prepareStatement(
+                                        "alter table " + tableName + " add column b long"
+                                )
+                        ) {
+                            alter.execute();
+                        }
                     } catch (Throwable e) {
                         e.printStackTrace();
                         errors.incrementAndGet();
