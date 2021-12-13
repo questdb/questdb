@@ -102,7 +102,7 @@ public class LineTcpParser implements Closeable {
         return timestamp;
     }
 
-    public int getnEntities() {
+    public int getEntityCount() {
         return nEntities;
     }
 
