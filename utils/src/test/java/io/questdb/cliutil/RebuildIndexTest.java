@@ -26,6 +26,8 @@ package io.questdb.cliutil;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.RebuildIndex;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -119,14 +121,28 @@ public class RebuildIndexTest {
                 "rnd_symbol('A', 'B', 'C') as sym1," +
                 "rnd_symbol(4,4,4,2) as sym2," +
                 "x," +
-                "timestamp_sequence(0, 1000000000000) ts " +
-                "from long_sequence(10)" +
+                "timestamp_sequence(0, 100000000) ts " +
+                "from long_sequence(10000)" +
                 "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
 
-        checkRebuildIndexes(createTableSql);
+        checkRebuildIndexes(createTableSql, PartitionBy.DAY);
     }
 
-    private void checkRebuildIndexes(String createTableSql) throws SqlException {
+    @Test
+    public void testPartitionedNone() throws SqlException {
+        String createTableSql = "create table xxx as (" +
+                "select " +
+                "rnd_symbol('A', 'B', 'C') as sym1," +
+                "rnd_symbol(4,4,4,2) as sym2," +
+                "x," +
+                "timestamp_sequence(0, 100000000) ts " +
+                "from long_sequence(10000)" +
+                "), index(sym1), index(sym2) timestamp(ts)";
+
+        checkRebuildIndexes(createTableSql, PartitionBy.NONE);
+    }
+
+    private void checkRebuildIndexes(String createTableSql, int partitionBy) throws SqlException {
         compiler.compile(createTableSql, sqlExecutionContext);
         int sym1A = countByFullScan("select * from xxx where sym1 = 'A'");
         int sym1B = countByFullScan("select * from xxx where sym1 = 'B'");
@@ -135,7 +151,16 @@ public class RebuildIndexTest {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
 
-        try (RebuildIndex ri = new RebuildIndex(root.toString() + Files.SEPARATOR + "xxx", configuration)) {
+        String tablePath = root.toString() + Files.SEPARATOR + "xxx";
+        try (Path path = new Path()) {
+            path.concat(tablePath);
+            path.put(Files.SEPARATOR);
+            PartitionBy.setSinkForPartition(path, partitionBy, 0, false);
+            path.concat("sym1.v");
+            Assert.assertTrue(Files.remove(path.$()));
+        }
+
+        try (RebuildIndex ri = new RebuildIndex().of(tablePath, configuration)) {
             ri.rebuildAllPartitions();
 
             int sym1A2 = countByFullScan("select * from xxx where sym1 = 'A'");
