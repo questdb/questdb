@@ -247,7 +247,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         } catch (AssertionError e) {
                             int releasedCount = -tableIndex.get(tableName).getCount();
                             // Wait one more writer release before re-trying to compare
-                            wait(tableIndex.get(tableName), releasedCount + 1, minIdleMsBeforeWriterRelease);
+                            wait(tableIndex.get(tableName), releasedCount + 3, minIdleMsBeforeWriterRelease);
                             assertTable(expectedSB, tableName);
                         }
                     } catch (Throwable err) {
@@ -974,11 +974,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     private void send(LineTcpReceiver receiver, String tableName, int wait, Runnable sendToSocket) {
         SOCountDownLatch releaseLatch = new SOCountDownLatch(1);
+        final String t = tableName;
         switch (wait) {
             case WAIT_ENGINE_TABLE_RELEASE:
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                     if (Chars.equals(tableName, name)) {
-                        if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                        if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(tableName, t) ) {
                             releaseLatch.countDown();
                         }
                     }
