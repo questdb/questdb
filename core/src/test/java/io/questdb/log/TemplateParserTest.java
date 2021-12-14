@@ -24,7 +24,6 @@
 
 package io.questdb.log;
 
-import io.questdb.std.Files;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -160,7 +159,7 @@ public class TemplateParserTest {
     @Test
     public void testChangeFileTimestamp() {
         parser.parseEnv("${date:y}", 0);
-        parser.setDateValue(1637091363010000L); // time always in micros
+        parser.setDateValue(1637091363010000L); // time is always in micros
         TestUtils.assertEquals("2021", parser);
     }
 
@@ -179,7 +178,7 @@ public class TemplateParserTest {
     @Test
     public void testToString() {
         parser.parseEnv("calendar:${date:y}!", 0);
-        parser.setDateValue(1637091363010000L); // time always in micros
+        parser.setDateValue(1637091363010000L); // time is always in micros
         String str = parser.toString();
         TestUtils.assertEquals("calendar:2021!", str);
     }
@@ -188,9 +187,10 @@ public class TemplateParserTest {
     public void testParseTemplate() throws IOException {
         try (InputStream is = LogAlertSocketWriter.class.getResourceAsStream("/alert-manager-tpt-international.json")) {
             byte[] buff = new byte[1024];
+            Assert.assertNotNull(is);
             int len = is.read(buff, 0, buff.length);
-            String template = new String(buff, 0, len, Files.UTF_8);
-            parser.parse(template, 0, LogAlertSocketWriter.ALERT_PROPS);
+            String template = new String(buff, 0, len);
+            parser.parseUtf8(template, 0, LogAlertSocketWriter.ALERT_PROPS);
             TestUtils.assertEquals(
                     "[\n" +
                             "  {\n" +
