@@ -24,7 +24,9 @@
 
 package io.questdb.log;
 
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Sinkable;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.TestOnly;
 
 public class HttpLogRecordSink extends LogRecordSink {
@@ -66,7 +68,7 @@ public class HttpLogRecordSink extends LogRecordSink {
         if (hasContentLengthMarker) {
             // take the body length and format it into the ###### contentLength marker
             int bodyLen = (int) (_wptr - bodyStart);
-            long p = contentLengthEnd; // note, we replace # from lowest significant digit (right to left)
+            long p = contentLengthEnd; // note, we replace # from the lowest significant digit (right to left)
             if (bodyLen == 0) {
                 Unsafe.getUnsafe().putByte(p--, (byte) '0');
             } else {
@@ -147,6 +149,12 @@ public class HttpLogRecordSink extends LogRecordSink {
     @Override
     public HttpLogRecordSink put(CharSequence cs) {
         super.put(cs);
+        return this;
+    }
+
+    @Override
+    public HttpLogRecordSink encodeUtf8(CharSequence cs) {
+        super.encodeUtf8(cs);
         return this;
     }
 
