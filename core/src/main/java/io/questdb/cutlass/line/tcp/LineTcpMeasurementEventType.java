@@ -22,55 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.log;
+package io.questdb.cutlass.line.tcp;
 
-import io.questdb.std.Sinkable;
-import io.questdb.std.str.CharSinkBase;
+class LineTcpMeasurementEventType {
+    // A reshuffle event is used to redistribute load across threads
+    static final int ALL_WRITERS_RESHUFFLE = -1;
 
-import java.io.File;
+    // An incomplete event is used when the queue producer has grabbed an event but is not able
+    // to populate it for some reason, the event needs to be committed to the queue incomplete
+    static final int ALL_WRITERS_INCOMPLETE_EVENT = -2;
 
-public interface LogRecord extends CharSinkBase {
-    void $();
-
-    default void I$() {
-        $(']').$();
-    }
-
-    LogRecord $(CharSequence sequence);
-
-    LogRecord $(CharSequence sequence, int lo, int hi);
-
-    LogRecord $utf8(long lo, long hi);
-
-    LogRecord $(int x);
-
-    LogRecord $(double x);
-
-    LogRecord $(long x);
-
-    LogRecord $(boolean x);
-
-    LogRecord $(char c);
-
-    LogRecord $(Throwable e);
-
-    LogRecord $(File x);
-
-    LogRecord $(Object x);
-
-    LogRecord $(Sinkable x);
-
-    LogRecord $ip(long ip);
-
-    LogRecord $ts(long x);
-
-    LogRecord $256(long a, long b, long c, long d);
-
-    boolean isEnabled();
-
-    LogRecord ts();
-
-    LogRecord microTime(long x);
-
-    LogRecord utf8(CharSequence sequence);
+    static final int ALL_WRITERS_RELEASE_WRITER = -3;
 }

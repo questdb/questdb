@@ -22,55 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.log;
+package io.questdb.std.str;
 
-import io.questdb.std.Sinkable;
-import io.questdb.std.str.CharSinkBase;
-
-import java.io.File;
-
-public interface LogRecord extends CharSinkBase {
-    void $();
-
-    default void I$() {
-        $(']').$();
-    }
-
-    LogRecord $(CharSequence sequence);
-
-    LogRecord $(CharSequence sequence, int lo, int hi);
-
-    LogRecord $utf8(long lo, long hi);
-
-    LogRecord $(int x);
-
-    LogRecord $(double x);
-
-    LogRecord $(long x);
-
-    LogRecord $(boolean x);
-
-    LogRecord $(char c);
-
-    LogRecord $(Throwable e);
-
-    LogRecord $(File x);
-
-    LogRecord $(Object x);
-
-    LogRecord $(Sinkable x);
-
-    LogRecord $ip(long ip);
-
-    LogRecord $ts(long x);
-
-    LogRecord $256(long a, long b, long c, long d);
-
-    boolean isEnabled();
-
-    LogRecord ts();
-
-    LogRecord microTime(long x);
-
-    LogRecord utf8(CharSequence sequence);
+public interface CharSinkBase {
+    CharSinkBase put(char c);
 }
