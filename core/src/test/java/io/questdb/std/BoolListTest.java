@@ -107,6 +107,11 @@ public class BoolListTest {
             assertEquals(i == pos2, list.get(i));
         }
         assertEquals(pos2 + 1, list.size());
+
+        list.setAll(pos, false);
+        list.extendAndSet(pos2 + 1, true);
+        assertFalse(list.get(pos2));
+        assertEquals(pos2 + 2, list.size());
     }
 
     @Test
@@ -136,10 +141,16 @@ public class BoolListTest {
         assertTrue(list.replace(pos, true));
         assertThrows(AssertionError.class, () -> list.replace(1000, false));
 
-        assertFalse(list.extendAndReplace(1000, true));
-        assertFalse(list.extendAndReplace(6003, true));
-        assertTrue(list.replace(6003, true));
-        assertThrows(AssertionError.class, () -> list.replace(6004, false));
+        final int pos2 = 6003;
+        assertFalse(list.extendAndReplace(length, true));
+        assertFalse(list.extendAndReplace(pos2, true));
+        assertTrue(list.replace(pos2, true));
+        assertThrows(AssertionError.class, () -> list.replace(pos2 + 1, false));
+
+        list.setAll(pos2 - 700, false);
+        assertEquals(pos2 - 700, list.size());
+        assertFalse(list.extendAndReplace(pos2, true));
+        assertEquals(pos2 + 1, list.size());
     }
 
     @Test
