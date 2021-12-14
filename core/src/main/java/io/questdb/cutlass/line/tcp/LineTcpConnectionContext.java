@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.NetworkIOJob;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -47,8 +46,8 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     private final LineTcpMeasurementScheduler scheduler;
     private final MillisecondClock milliClock;
     private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
-    private final LineTcpParser protoParser = new LineTcpParser();
-    private final FloatingDirectCharSink charSink = new FloatingDirectCharSink();
+    private final LineTcpParser parser = new LineTcpParser();
+    private final FloatingDirectCharSink floatingDirectCharSink = new FloatingDirectCharSink();
     protected long fd;
     protected IODispatcher<LineTcpConnectionContext> dispatcher;
     protected long recvBufStart;
@@ -80,8 +79,8 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         this.fd = -1;
         Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_DEFAULT);
         recvBufStart = recvBufEnd = recvBufPos = 0;
-        protoParser.close();
-        charSink.close();
+        parser.close();
+        floatingDirectCharSink.close();
     }
 
     @Override
@@ -125,7 +124,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
             if (len > 0) {
                 Vect.memmove(recvBufStart, recvBufStartOfMeasurement, len); // Use memmove, there may be an overlap
                 final long shl = recvBufStartOfMeasurement - recvBufStart;
-                protoParser.shl(shl);
+                parser.shl(shl);
                 this.recvBufStartOfMeasurement -= shl;
             } else {
                 assert len == 0;
@@ -138,7 +137,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     }
 
     private void doHandleDisconnectEvent() {
-        if (protoParser.getBufferAddress() == recvBufEnd) {
+        if (parser.getBufferAddress() == recvBufEnd) {
             LOG.error().$('[').$(fd).$("] buffer overflow [line.tcp.msg.buffer.size=").$(recvBufEnd - recvBufStart).$(']').$();
             return;
         }
@@ -168,11 +167,11 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     protected final IOContextResult parseMeasurements(NetworkIOJob netIoJob) {
         while (true) {
             try {
-                ParseResult rc = goodMeasurement ? protoParser.parseMeasurement(recvBufPos) : protoParser.skipMeasurement(recvBufPos);
+                ParseResult rc = goodMeasurement ? parser.parseMeasurement(recvBufPos) : parser.skipMeasurement(recvBufPos);
                 switch (rc) {
                     case MEASUREMENT_COMPLETE: {
                         if (goodMeasurement) {
-                            if (scheduler.tryButCouldNotCommit(netIoJob, protoParser, charSink)) {
+                            if (scheduler.scheduleEvent(netIoJob, parser, floatingDirectCharSink)) {
                                 // Waiting for writer threads to drain queue, request callback as soon as possible
                                 if (checkQueueFullLogHysteresis()) {
                                     LOG.debug().$('[').$(fd).$("] queue full").$();
@@ -180,10 +179,10 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                                 return IOContextResult.QUEUE_FULL;
                             }
                         } else {
-                            int position = (int) (protoParser.getBufferAddress() - recvBufStartOfMeasurement);
-                            LOG.error().$('[').$(fd).$("] could not parse measurement, code ").$(protoParser.getErrorCode()).$(" at ").$(position)
+                            int position = (int) (parser.getBufferAddress() - recvBufStartOfMeasurement);
+                            LOG.error().$('[').$(fd).$("] could not parse measurement, code ").$(parser.getErrorCode()).$(" at ").$(position)
                                     .$(" line (may be mangled due to partial parsing) is ")
-                                    .$(byteCharSequence.of(recvBufStartOfMeasurement, protoParser.getBufferAddress())).$();
+                                    .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress())).$();
                             goodMeasurement = true;
                         }
 
@@ -214,25 +213,25 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                 }
             } catch (CairoException ex) {
                 LOG.error().
-                        $('[').$(fd).$("] could not process line data [table=").$(protoParser.getMeasurementName())
+                        $('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
                         .$(", msg=").$(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();
                 return IOContextResult.NEEDS_DISCONNECT;
             } catch (Throwable ex) {
-                LOG.error().$('[').$(fd).$("] could not process line data [table=").$(protoParser.getMeasurementName()).$(", ex=").$(ex).I$();
+                LOG.error().$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName()).$(", ex=").$(ex).I$();
                 return IOContextResult.NEEDS_DISCONNECT;
             }
         }
     }
 
     private void startNewMeasurement() {
-        protoParser.startNextMeasurement();
-        recvBufStartOfMeasurement = protoParser.getBufferAddress();
+        parser.startNextMeasurement();
+        recvBufStartOfMeasurement = parser.getBufferAddress();
         // we ran out of buffer, move to start and start parsing new data from socket
         if (recvBufStartOfMeasurement == recvBufPos) {
             recvBufPos = recvBufStart;
-            protoParser.of(recvBufStart);
+            parser.of(recvBufStart);
         }
     }
 
@@ -253,7 +252,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     }
 
     protected void resetParser() {
-        protoParser.of(recvBufStart);
+        parser.of(recvBufStart);
         goodMeasurement = true;
         recvBufStartOfMeasurement = recvBufStart;
     }

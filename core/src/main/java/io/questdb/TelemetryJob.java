@@ -63,6 +63,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
     private TableWriter writer;
     private final QueueConsumer<TelemetryTask> myConsumer = this::newRowConsumer;
     private TableWriter configWriter;
+    private final SCSequence tempSequence = new SCSequence();
 
     public TelemetryJob(CairoEngine engine) throws SqlException {
         this(engine, null);
@@ -84,10 +85,11 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             compiler.compile(
                     "CREATE TABLE IF NOT EXISTS " + configTableName + " (id long256, enabled boolean, version symbol, os symbol, package symbol)",
                     sqlExecutionContext);
+
             tryAddColumn(compiler, sqlExecutionContext, "version symbol");
             tryAddColumn(compiler, sqlExecutionContext, "os symbol");
             tryAddColumn(compiler, sqlExecutionContext, "package symbol");
-            
+
             if (enabled) {
                 try {
                     this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, WRITER_LOCK_REASON);
@@ -127,11 +129,15 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
 
     private void tryAddColumn(SqlCompiler compiler, SqlExecutionContext executionContext, CharSequence columnDetails) {
         try {
-            compiler.compile(
-                    "ALTER TABLE " + configTableName + " ADD COLUMN " + columnDetails + ")",
-                    executionContext);
+            CompiledQuery cc = compiler.compile(
+                    "ALTER TABLE " + configTableName + " ADD COLUMN " + columnDetails,
+                    executionContext
+            );
+            try (QueryFuture execution = cc.execute(tempSequence)) {
+                execution.await();
+            }
         } catch (SqlException ex) {
-            // Ignore
+            LOG.info().$("Failed to alter telemetry table [table=").$(configTableName).$(",error=").$(ex.getFlyweightMessage()).I$();
         }
     }
 

@@ -40,41 +40,6 @@ public class LogRecordSinkTest {
         sink = new StringSink();
     }
 
-
-    @Test
-    public void testCharSequenceOf() {
-        char[] iCanEatGlass = "ᛖᚴ ᚷᛖᛏ ᛖᛏᛁ ᚧ ᚷᛚᛖᚱ ᛘᚾ ᚦᛖᛋᛋ ᚨᚧ ᚡᛖ ᚱᚧᚨ ᛋᚨᚱ".toCharArray();
-        LogRecordSink.CharSequenceOf charSeq = new LogRecordSink.CharSequenceOf();
-        charSeq.of(iCanEatGlass, 0, iCanEatGlass.length);
-        Assert.assertEquals(iCanEatGlass.length, charSeq.length());
-        for (int i = 0; i < iCanEatGlass.length; i++) {
-            Assert.assertEquals(iCanEatGlass[i], charSeq.charAt(i));
-        }
-    }
-
-    @Test
-    public void testOffsetCharSequenceOf() {
-        CharSequence sample = "Aš galiu valgyti stiklą ir jis manęs nežeidžia".subSequence(9, 18);
-        char[] iCanEatGlass = "Aš galiu valgyti stiklą ir jis manęs nežeidžia".toCharArray();
-        LogRecordSink.CharSequenceOf charSeq = new LogRecordSink.CharSequenceOf();
-        charSeq.of(iCanEatGlass, 9, 18);
-        Assert.assertEquals(sample.length(), charSeq.length());
-        for (int i = 0; i < sample.length(); i++) {
-            Assert.assertEquals(sample.charAt(i), charSeq.charAt(i));
-            Assert.assertEquals(iCanEatGlass[9 + i], charSeq.charAt(i));
-        }
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testCharSequenceOfSubsequenceNotSupported() {
-        new LogRecordSink.CharSequenceOf().subSequence(0, 0);
-    }
-
-    @Test(expected = IndexOutOfBoundsException.class)
-    public void testCharSequenceOfOutOfBounds() {
-        new LogRecordSink.CharSequenceOf().charAt(1);
-    }
-
     @Test
     public void testConvoluted() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -87,7 +52,7 @@ public class LogRecordSinkTest {
                 recordSink.setLevel(LogLevel.ERROR);
                 Assert.assertEquals(LogLevel.ERROR, recordSink.getLevel());
                 Assert.assertEquals(buffPtr, recordSink.getAddress());
-                recordSink.put(expected);
+                recordSink.encodeUtf8(expected);
                 recordSink.toSink(sink);
                 Assert.assertEquals(expected, sink.toString());
                 Assert.assertEquals(recordSink.length(), sink.length() * 2);
@@ -112,9 +77,9 @@ public class LogRecordSinkTest {
             final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
             try {
                 LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
-                recordSink.put(expected.toCharArray(), 1, len - 1);
+                recordSink.encodeUtf8(expected.substring(1, len - 1));
                 recordSink.toSink(sink);
-                Assert.assertEquals(expected.substring(1, len - 1), sink.toString());
+                TestUtils.assertEquals(expected.substring(1, len - 1), sink);
             } finally {
                 Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
             }
@@ -130,7 +95,7 @@ public class LogRecordSinkTest {
             final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
             try {
                 LogRecordSink recordSink = new LogRecordSink(buffPtr, buffSize);
-                recordSink.put(expected, 2, len - 1);
+                recordSink.encodeUtf8(expected, 2, len - 1);
                 recordSink.toSink(sink);
                 Assert.assertEquals(expected.substring(2, len - 1), sink.toString());
             } finally {

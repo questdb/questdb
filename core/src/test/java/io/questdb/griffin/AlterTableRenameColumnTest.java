@@ -72,13 +72,41 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testRenameColumnEndsWithSemicolon() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            createX();
+            compile("alter table x rename column i to i1;", sqlExecutionContext);
+            engine.clear();
+        });
+    }
+
+    @Test
+    public void testRenameColumnEndsWithSemicolonEndingWithWhitesace() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            createX();
+            compile("alter table x rename column i to i1; \n", sqlExecutionContext);
+            engine.clear();
+        });
+    }
+
+    @Test
+    public void testRenameWithSemicolonHalfWay() throws Exception {
+        assertFailure("alter table x rename column l; to b", 29, "'to' expected");
+    }
+
+    @Test
+    public void testRenameWithSemicolonHalfWay2() throws Exception {
+        assertFailure("alter table x rename column l to l2; c to d", 35, "',' expected");
+    }
+
+    @Test
     public void testRenameColumn() throws Exception {
         TestUtils.assertMemoryLeak(
                 () -> {
                     try {
                         createX();
 
-                        Assert.assertEquals(ALTER, compiler.compile("alter table x rename column e to z", sqlExecutionContext).getType());
+                        Assert.assertEquals(ALTER, compile("alter table x rename column e to z", sqlExecutionContext).getType());
 
                         String expected = "{\"columnCount\":16,\"columns\":[{\"index\":0,\"name\":\"i\",\"type\":\"INT\"},{\"index\":1,\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"amt\",\"type\":\"DOUBLE\"},{\"index\":3,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"index\":4,\"name\":\"b\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"c\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"d\",\"type\":\"DOUBLE\"},{\"index\":7,\"name\":\"z\",\"type\":\"FLOAT\"},{\"index\":8,\"name\":\"f\",\"type\":\"SHORT\"},{\"index\":9,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":10,\"name\":\"ik\",\"type\":\"SYMBOL\"},{\"index\":11,\"name\":\"j\",\"type\":\"LONG\"},{\"index\":12,\"name\":\"k\",\"type\":\"TIMESTAMP\"},{\"index\":13,\"name\":\"l\",\"type\":\"BYTE\"},{\"index\":14,\"name\":\"m\",\"type\":\"BINARY\"},{\"index\":15,\"name\":\"n\",\"type\":\"STRING\"}],\"timestampIndex\":3}";
                         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION, TableUtils.ANY_TABLE_VERSION)) {
@@ -177,7 +205,7 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
                         createX();
 
                         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
-                            Assert.assertEquals(ALTER, compiler.compile("alter table x rename column e to z", sqlExecutionContext).getType());
+                            Assert.assertEquals(ALTER, compile("alter table x rename column e to z", sqlExecutionContext).getType());
                             String expected = "{\"columnCount\":16,\"columns\":[{\"index\":0,\"name\":\"i\",\"type\":\"INT\"},{\"index\":1,\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"amt\",\"type\":\"DOUBLE\"},{\"index\":3,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"index\":4,\"name\":\"b\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"c\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"d\",\"type\":\"DOUBLE\"},{\"index\":7,\"name\":\"z\",\"type\":\"FLOAT\"},{\"index\":8,\"name\":\"f\",\"type\":\"SHORT\"},{\"index\":9,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":10,\"name\":\"ik\",\"type\":\"SYMBOL\"},{\"index\":11,\"name\":\"j\",\"type\":\"LONG\"},{\"index\":12,\"name\":\"k\",\"type\":\"TIMESTAMP\"},{\"index\":13,\"name\":\"l\",\"type\":\"BYTE\"},{\"index\":14,\"name\":\"m\",\"type\":\"BINARY\"},{\"index\":15,\"name\":\"n\",\"type\":\"STRING\"}],\"timestampIndex\":3}";
                             sink.clear();
                             reader.reload();
@@ -305,7 +333,7 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 createX();
-                compiler.compile(sql, sqlExecutionContext);
+                compile(sql, sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(position, e.getPosition());

@@ -125,6 +125,13 @@ public final class Files {
         return getLastModified(lpsz.address());
     }
 
+    public static String getOpenFdDebugInfo() {
+        if (openFds != null) {
+            return openFds.toString();
+        }
+        return null;
+    }
+
     public static long getOpenFileCount() {
         return OPEN_FILE_COUNT.get();
     }

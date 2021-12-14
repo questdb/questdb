@@ -26,6 +26,7 @@ package io.questdb.test.tools;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -413,7 +414,9 @@ public final class TestUtils {
         Assert.assertTrue("Initial file count should be >= 0", fileCount >= 0);
         runnable.run();
         Path.clearThreadLocals();
-        Assert.assertEquals(fileCount, Files.getOpenFileCount());
+        if (fileCount != Files.getOpenFileCount()) {
+            Assert.assertEquals(Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
+        }
         Assert.assertEquals(mem, Unsafe.getMemUsed());
 
         // Checks that the same tag used for allocation and freeing native memory

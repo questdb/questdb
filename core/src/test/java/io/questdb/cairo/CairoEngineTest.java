@@ -106,7 +106,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 assertWriter(engine, "x");
                 assertReader(engine, "x");
 
-                Job job = engine.getWriterMaintenanceJob();
+                Job job = engine.getEngineMaintenanceJob();
                 Assert.assertNotNull(job);
 
                 Assert.assertTrue(job.run(0));

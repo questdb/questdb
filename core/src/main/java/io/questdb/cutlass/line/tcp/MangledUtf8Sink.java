@@ -52,4 +52,3 @@ class MangledUtf8Sink extends AbstractCharSink {
         throw new UnsupportedOperationException();
     }
 }
-

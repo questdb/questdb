@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.TestBinarySequence;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.BinarySequence;
@@ -305,7 +306,7 @@ public class InsertTest extends AbstractGriffinTest {
                 Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
                 InsertStatement insertStatement = cq.getInsertStatement();
 
-                compiler.compile("alter table balances drop column ccy", sqlExecutionContext);
+                compile("alter table balances drop column ccy", sqlExecutionContext);
 
                 insertStatement.createMethod(sqlExecutionContext);
                 Assert.fail();

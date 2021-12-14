@@ -751,6 +751,25 @@
         "code",
         "userTesting"
       ]
+    },
+    {
+      "login": "mkaruza",
+      "name": "mkaruza",
+      "avatar_url": "https://avatars.githubusercontent.com/u/3676457?v=4",
+      "profile": "https://github.com/mkaruza",
+      "contributions": [
+        "code"
+      ]
+    },
+    {
+      "login": "DylanDKnight",
+      "name": "Dylan",
+      "avatar_url": "https://avatars.githubusercontent.com/u/17187287?v=4",
+      "profile": "https://github.com/DylanDKnight",
+      "contributions": [
+        "userTesting",
+        "bug"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",

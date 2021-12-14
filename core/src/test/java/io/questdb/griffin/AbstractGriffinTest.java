@@ -28,7 +28,9 @@ import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.mp.SCSequence;
 import io.questdb.std.*;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -45,6 +47,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     protected static SqlExecutionContext sqlExecutionContext;
     protected static SqlCompiler compiler;
     protected static Metrics metrics = Metrics.enabled();
+    private static final SCSequence tempSequence = new SCSequence();
 
     @BeforeClass
     public static void setUpStatic() {
@@ -155,7 +158,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     ) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
-                compiler.compile(ddl, sqlExecutionContext);
+                compile(ddl, sqlExecutionContext);
             }
             CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
             RecordCursorFactory factory = cc.getRecordCursorFactory();
@@ -168,7 +171,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 assertVariableColumns(factory, checkSameStr);
 
                 if (ddl2 != null) {
-                    compiler.compile(ddl2, sqlExecutionContext);
+                    compile(ddl2, sqlExecutionContext);
 
                     int count = 3;
                     while (count > 0) {
@@ -594,7 +597,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             assertVariableColumns(factory, checkSameStr);
 
             if (ddl2 != null) {
-                compiler.compile(ddl2, sqlExecutionContext);
+                compile(ddl2, sqlExecutionContext);
 
                 int count = 3;
                 while (count > 0) {
@@ -627,7 +630,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                                             boolean sizeCanBeVariable) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
-                compiler.compile(ddl, sqlExecutionContext);
+                compile(ddl, sqlExecutionContext);
             }
             printSqlResult(
                     expected,
@@ -878,10 +881,10 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 if (ddl != null) {
-                    compiler.compile(ddl, sqlExecutionContext);
+                    compile(ddl, sqlExecutionContext);
                 }
                 try {
-                    compiler.compile(query, sqlExecutionContext);
+                    compile(query, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
                     Assert.assertEquals(Chars.toString(query), expectedPosition, e.getPosition());
@@ -1125,6 +1128,18 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 sink,
                 expected
         );
+    }
+
+    @NotNull
+    protected static CompiledQuery compile(CharSequence query) throws SqlException {
+        return compile(query, sqlExecutionContext);
+    }
+
+    @NotNull
+    protected static CompiledQuery compile(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
+        CompiledQuery cc = compiler.compile(query, executionContext);
+        cc.execute(null).await();
+        return cc;
     }
 
     protected void createPopulateTable(
