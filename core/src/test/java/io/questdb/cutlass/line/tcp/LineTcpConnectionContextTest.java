@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
@@ -595,6 +596,35 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
                     "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
             assertTable(expected, table);
+        });
+    }
+
+    @Test
+    public void testNewTableNullType() throws Exception {
+        runInContext(() -> {
+            recvBuffer =
+                    "vbw water_speed_longitudinal=0.07,water_speed_transveral=,water_speed_status=\"A\",ground_speed_longitudinal=0,ground_speed_transveral=0,ground_speed_status=\"A\",water_speed_stern_transversal=,water_speed_stern_transversal_status=\"V\",ground_speed_stern_transversal=0,ground_speed_stern_transversal_status=\"V\" 1627046637414969856\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            closeContext();
+
+            try(SqlCompiler compiler = new SqlCompiler(engine)) {
+                try {
+                    // must not create table
+                    TestUtils.assertSql(
+                            compiler,
+                            new SqlExecutionContextImpl(engine, 1),
+                            "tables()",
+                            sink,
+                            "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n"
+                    );
+                } catch (SqlException e) {
+                    Assert.fail();
+                }
+            }
+
         });
     }
 
