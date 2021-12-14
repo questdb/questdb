@@ -89,27 +89,6 @@ public class LogAlertSocket implements Closeable {
     }
 
     public LogAlertSocket(
-            String alertTargets,
-            int inBufferSize,
-            int outBufferSize,
-            long reconnectDelay,
-            String defaultHost,
-            int defaultPort,
-            Log log
-    ) {
-        this(
-                NetworkFacadeImpl.INSTANCE,
-                alertTargets,
-                inBufferSize,
-                outBufferSize,
-                reconnectDelay,
-                defaultHost,
-                defaultPort,
-                log
-        );
-    }
-
-    private LogAlertSocket(
             NetworkFacade nf,
             String alertTargets,
             int inBufferSize,

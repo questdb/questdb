@@ -28,6 +28,8 @@ import io.questdb.BuildInformation;
 import io.questdb.BuildInformationHolder;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.NetworkError;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -147,7 +149,7 @@ public class LogAlertSocketWriterTest {
                                 writer.getAlertSink()
                         );
 
-                        Assert.assertTrue(haltLatch.await(10_000_000_000L));
+                        haltLatch.await();
                         Assert.assertFalse(alertsTarget[0].isRunning());
                         Assert.assertFalse(alertsTarget[1].isRunning());
                     } finally {
@@ -171,6 +173,7 @@ public class LogAlertSocketWriterTest {
                         alertTarget.start();
                         writer.setLocation("/alert-manager-tpt-international.json");
                         writer.setAlertTargets("localhost:1234");
+                        writer.setReconnectDelay("100");
                         writer.bindProperties(LogFactory.INSTANCE);
 
                         LogRecordSink recordSink = new LogRecordSink(logRecordBuffPtr, logRecordBuffSize);
@@ -219,7 +222,7 @@ public class LogAlertSocketWriterTest {
     }
 
     @Test
-    public void test_BindProperties_BadTemplateFile() throws Exception {
+    public void testBindPropertiesBadTemplateFile() throws Exception {
         withLogAlertSocketWriter(writer -> {
             writer.bindProperties(LogFactory.INSTANCE);
             Assert.assertEquals(LogAlertSocket.OUT_BUFFER_SIZE, writer.getOutBufferSize());
@@ -246,7 +249,7 @@ public class LogAlertSocketWriterTest {
     }
 
     @Test
-    public void test_BindProperties_TemplateFileDoesNotExist() throws Exception {
+    public void testBindPropertiesTemplateFileDoesNotExist() throws Exception {
         withLogAlertSocketWriter(writer -> {
             writer.setLocation("some-silly-path.conf");
             try {
@@ -259,7 +262,7 @@ public class LogAlertSocketWriterTest {
     }
 
     @Test
-    public void test_BindProperties_TemplateFileDoesNotHaveMessageKey() throws Exception {
+    public void testBindPropertiesTemplateFileDoesNotHaveMessageKey() throws Exception {
         withLogAlertSocketWriter(writer -> {
             writer.setLocation("/alert-manager-tpt-test-missing-message-key.json");
             try {
@@ -275,7 +278,7 @@ public class LogAlertSocketWriterTest {
     }
 
     @Test
-    public void test_BindProperties_Location_Default() throws Exception {
+    public void testBindPropertiesLocationDefault() throws Exception {
         withLogAlertSocketWriter(writer -> {
             writer.setAlertTargets("");
             writer.setLocation("");
@@ -285,7 +288,7 @@ public class LogAlertSocketWriterTest {
     }
 
     @Test
-    public void test_BindProperties_AlertTargets_Default() throws Exception {
+    public void testBindPropertiesAlertTargetsDefault() throws Exception {
         withLogAlertSocketWriter(writer -> {
             writer.setOutBufferSize(String.valueOf(1024));
             writer.setAlertTargets("\"\"");
@@ -296,7 +299,7 @@ public class LogAlertSocketWriterTest {
     }
 
     @Test
-    public void test_BindProperties_ReconnectDelay() throws Exception {
+    public void testBindPropertiesReconnectDelay() throws Exception {
         withLogAlertSocketWriter(writer -> {
             writer.setReconnectDelay(String.valueOf(50));
             writer.setAlertTargets("\"\"");
@@ -307,7 +310,7 @@ public class LogAlertSocketWriterTest {
     }
 
     @Test
-    public void test_BindProperties_ReconnectDelay_BadValue() throws Exception {
+    public void testBindPropertiesReconnectDelayBadValue() throws Exception {
         withLogAlertSocketWriter(writer -> {
             writer.setReconnectDelay("banana");
             writer.setAlertTargets("\"\"");
@@ -320,7 +323,7 @@ public class LogAlertSocketWriterTest {
     }
 
     @Test
-    public void test_BindProperties_InBufferSize() throws Exception {
+    public void testBindPropertiesInBufferSize() throws Exception {
         withLogAlertSocketWriter(writer -> {
             writer.setInBufferSize(String.valueOf(12));
             writer.setAlertTargets("\"\"");
@@ -331,7 +334,7 @@ public class LogAlertSocketWriterTest {
     }
 
     @Test
-    public void test_BindProperties_InBufferSize_BadValue() throws Exception {
+    public void testBindPropertiesInBufferSizeBadValue() throws Exception {
         withLogAlertSocketWriter(writer -> {
             writer.setInBufferSize("anaconda");
             writer.setAlertTargets("\"\"");
@@ -344,7 +347,7 @@ public class LogAlertSocketWriterTest {
     }
 
     @Test
-    public void test_BindProperties_DefaultAlertHost() throws Exception {
+    public void testBindPropertiesDefaultAlertHost() throws Exception {
         withLogAlertSocketWriter(writer -> {
             writer.setDefaultAlertHost("127.0.0.1");
             writer.setAlertTargets("\"\"");
@@ -355,7 +358,7 @@ public class LogAlertSocketWriterTest {
     }
 
     @Test
-    public void test_BindProperties_DefaultAlertHost_BadValue() throws Exception {
+    public void testBindPropertiesDefaultAlertHostBadValue() throws Exception {
         withLogAlertSocketWriter(writer -> {
             writer.setDefaultAlertHost("pineapple");
             writer.setAlertTargets("\"\"");
@@ -368,7 +371,7 @@ public class LogAlertSocketWriterTest {
     }
 
     @Test
-    public void test_BindProperties_DefaultAlertPort() throws Exception {
+    public void testBindPropertiesDefaultAlertPort() throws Exception {
         withLogAlertSocketWriter(writer -> {
             writer.setDefaultAlertPort(String.valueOf(12));
             writer.setAlertTargets("\"\"");
@@ -379,7 +382,7 @@ public class LogAlertSocketWriterTest {
     }
 
     @Test
-    public void test_BindProperties_DefaultAlertPort_BadValue() throws Exception {
+    public void testBindPropertiesDefaultAlertPortBadValue() throws Exception {
         withLogAlertSocketWriter(writer -> {
             writer.setDefaultAlertPort("pineapple");
             writer.setAlertTargets("\"\"");
@@ -392,7 +395,7 @@ public class LogAlertSocketWriterTest {
     }
 
     @Test
-    public void test_BindProperties_OutBufferSize() throws Exception {
+    public void testBindPropertiesOutBufferSize() throws Exception {
         withLogAlertSocketWriter(writer -> {
             writer.setOutBufferSize(String.valueOf(12));
             writer.setAlertTargets("\"\"");
@@ -403,7 +406,7 @@ public class LogAlertSocketWriterTest {
     }
 
     @Test
-    public void test_BindProperties_OutBufferSize_BadValue() throws Exception {
+    public void testBindPropertiesOutBufferSize_BadValue() throws Exception {
         withLogAlertSocketWriter(writer -> {
             writer.setOutBufferSize("coconut");
             writer.setAlertTargets("\"\"");
@@ -518,10 +521,17 @@ public class LogAlertSocketWriterTest {
             MicrosecondClock clock,
             Consumer<LogAlertSocketWriter> consumer
     ) throws Exception {
+        final NetworkFacade nf = new NetworkFacadeImpl() {
+            @Override
+            public long connect(long fd, long sockaddr) {
+                return -1;
+            }
+        };
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log-silent.conf");
         TestUtils.assertMemoryLeak(() -> {
             try (LogAlertSocketWriter writer = new LogAlertSocketWriter(
                     FilesFacadeImpl.INSTANCE,
+                    nf,
                     clock,
                     null,
                     null,

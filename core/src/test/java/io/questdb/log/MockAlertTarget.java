@@ -62,11 +62,11 @@ class MockAlertTarget extends Thread {
                 // setup server socket and accept client
                 serverSkt = new ServerSocket(portNumber);
                 serverSkt.setReuseAddress(true);
-                serverSkt.setSoTimeout(5000);
+                serverSkt.setSoTimeout(50);
                 clientSkt = serverSkt.accept();
                 in = new BufferedReader(new InputStreamReader(clientSkt.getInputStream()));
                 out = new PrintWriter(clientSkt.getOutputStream(), true);
-                clientSkt.setSoTimeout(5000);
+                clientSkt.setSoTimeout(50);
                 clientSkt.setReuseAddress(true);
                 clientSkt.setTcpNoDelay(true);
                 clientSkt.setKeepAlive(false);
