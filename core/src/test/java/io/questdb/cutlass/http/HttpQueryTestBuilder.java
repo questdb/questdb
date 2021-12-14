@@ -30,7 +30,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cutlass.http.processors.*;
-import io.questdb.griffin.SqlException;
+import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -56,6 +56,7 @@ public class HttpQueryTestBuilder {
     private long startWriterWaitTimeout = 500_000;
     private long maxWriterWaitTimeout = 30_000_000L;
     private FilesFacade filesFacade = new FilesFacadeImpl();
+    private QueryFutureUpdateListener queryFutureUpdateListener;
 
     public int getWorkerCount() {
         return this.workerCount;
@@ -149,6 +150,13 @@ public class HttpQueryTestBuilder {
                     }
                 });
 
+                SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount) {
+                    @Override
+                    public QueryFutureUpdateListener getQueryFutureUpdateListener() {
+                        return queryFutureUpdateListener != null ? queryFutureUpdateListener : QueryFutureUpdateListener.EMPTY;
+                    }
+                };
+
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -156,7 +164,9 @@ public class HttpQueryTestBuilder {
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
                                 workerPool.getWorkerCount(),
-                                Metrics.enabled()
+                                new SqlCompiler(engine, null),
+                                Metrics.enabled(),
+                                sqlExecutionContext
                         );
                     }
 
@@ -266,6 +276,11 @@ public class HttpQueryTestBuilder {
 
     public HttpQueryTestBuilder withWorkerCount(int workerCount) {
         this.workerCount = workerCount;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withQueryFutureUpdateListener(QueryFutureUpdateListener queryFutureUpdateListener) {
+        this.queryFutureUpdateListener = queryFutureUpdateListener;
         return this;
     }
 

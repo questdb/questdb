@@ -104,7 +104,7 @@ public class CompiledQueryImpl implements CompiledQuery {
                 if (eventSubSeq == null) {
                     throw busyException;
                 }
-                alterFuture.of(eventSubSeq);
+                alterFuture.of(defaultSqlExecutionContext, eventSubSeq);
                 return alterFuture;
             } catch (TableStructureChangesException e) {
                 assert false : "This must never happen when parameter acceptChange=true";
@@ -206,6 +206,7 @@ public class CompiledQueryImpl implements CompiledQuery {
         private SCSequence eventSubSeq;
         private int status;
         private long commandId;
+        private QueryFutureUpdateListener queryFutureUpdateListener;
 
         @Override
         public void await() throws SqlException {
@@ -245,9 +246,10 @@ public class CompiledQueryImpl implements CompiledQuery {
          * Initializes instance of AlterTableQueryFuture with the parameters to wait for the new command
          * @param eventSubSeq - event sequence used to wait for the command execution to be signaled as complete
          */
-        public void of(SCSequence eventSubSeq) {
+        public void of(SqlExecutionContext executionContext, SCSequence eventSubSeq) {
             assert eventSubSeq != null : "event subscriber sequence must be provided";
 
+            this.queryFutureUpdateListener = executionContext.getQueryFutureUpdateListener();
             // Set up execution wait sequence to listen to the Engine async writer events
             final FanOut writerEventFanOut = engine.getMessageBus().getTableWriterEventFanOut();
             writerEventFanOut.and(eventSubSeq);
@@ -256,6 +258,7 @@ public class CompiledQueryImpl implements CompiledQuery {
             try {
                 // Publish new command and get published Command Id
                 commandId = engine.publishTableWriterCommand(alterStatement);
+                queryFutureUpdateListener.reportStart(alterStatement.getTableName(), commandId);
                 status = QUERY_NO_RESPONSE;
             } catch (Throwable ex) {
                 close();
@@ -304,9 +307,11 @@ public class CompiledQueryImpl implements CompiledQuery {
                         if (strLen > -1) {
                             throw SqlException.$(queryTableNamePosition, event.getData() + 4L, event.getData() + 4L + 2L * strLen);
                         }
+                        queryFutureUpdateListener.reportProgress(commandId, QUERY_COMPLETE);
                         return QUERY_COMPLETE;
                     } else {
                         status = QUERY_STARTED;
+                        queryFutureUpdateListener.reportProgress(commandId, QUERY_STARTED);
                         LOG.info().$("writer command QUERY_STARTED response received [instance=").$(commandId).I$();
                     }
                 } finally {
