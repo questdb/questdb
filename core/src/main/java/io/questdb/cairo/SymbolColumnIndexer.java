@@ -29,12 +29,13 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-public class SymbolColumnIndexer implements ColumnIndexer, Closeable {
+public class SymbolColumnIndexer implements ColumnIndexer, Closeable, Mutable {
 
     private static final long SEQUENCE_OFFSET;
     private final BitmapIndexWriter writer = new BitmapIndexWriter();
@@ -43,6 +44,11 @@ public class SymbolColumnIndexer implements ColumnIndexer, Closeable {
     @SuppressWarnings({"unused", "FieldCanBeLocal", "FieldMayBeFinal"})
     private volatile long sequence = 0L;
     private volatile boolean distressed = false;
+
+    @Override
+    public void clear() {
+        writer.clear();
+    }
 
     @Override
     public void close() {
