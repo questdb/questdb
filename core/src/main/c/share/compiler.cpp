@@ -78,8 +78,6 @@ namespace questdb::x86 {
     jit_value_t
     read_vars_mem(Compiler &c, data_type_t type, const uint8_t *istream, size_t size, uint32_t &pos, const Gp &vars_ptr) {
         auto idx = static_cast<int32_t>(read<int64_t>(istream, size, pos));
-        Gp address = c.newInt64("bind_variables");
-        c.mov(address, ptr(vars_ptr, 8 * idx, 8));
         auto shift = type_shift(type);
         auto type_size  = 1 << shift;
         return {Mem(vars_ptr, 8*idx, type_size), type, data_kind_t::kMemory};
