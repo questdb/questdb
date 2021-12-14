@@ -117,22 +117,45 @@ public class CompiledFilterTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore
     @Test
-    public void testBindVariablesSingle() throws Exception {
+    public void testBindVariablesSingleScalar() throws Exception {
         assertMemoryLeak(() -> {
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_FORCE_SCALAR);
+
             compiler.compile("create table x as (select" +
-                    " rnd_boolean() aboolean," +
+                    " rnd_long() along," +
                     " timestamp_sequence(400000000000, 500000000) atimestamp" +
                     " from long_sequence(100)) timestamp(atimestamp)", sqlExecutionContext);
 
             bindVariableService.clear();
-            bindVariableService.setBoolean("aboolean", false);
+            bindVariableService.setLong("along", 3614738589890112276L);
 
             final String query = "select * from x where" +
-                    " aboolean = :aboolean";
-            final String expected = "aboolean\n" +
-                    "false\n";
+                    " along = :along";
+            final String expected = "along\tatimestamp\n" +
+                    "3614738589890112276\t1970-01-05T16:38:20.000000Z\n";
+
+            assertSql(query, expected);
+
+            assertSqlRunWithJit(query);
+        });
+    }
+
+    @Test
+    public void testBindVariablesSingleVectorized() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select" +
+                    " rnd_long() along," +
+                    " timestamp_sequence(400000000000, 500000000) atimestamp" +
+                    " from long_sequence(100)) timestamp(atimestamp)", sqlExecutionContext);
+
+            bindVariableService.clear();
+            bindVariableService.setLong("along", 3614738589890112276L);
+
+            final String query = "select * from x where" +
+                    " along = :along";
+            final String expected = "along\tatimestamp\n" +
+                    "3614738589890112276\t1970-01-05T16:38:20.000000Z\n";
 
             assertSql(query, expected);
 
@@ -201,6 +224,21 @@ public class CompiledFilterTest extends AbstractGriffinTest {
             assertSql(query, expected);
 
             assertSqlRunWithJit(query);
+        });
+    }
+
+    @Test
+    public void testBindVariablesWithColTops() throws Exception {
+        assertMemoryLeak(() -> {
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 3);
+
+            final String query = "select * from t1 where x = $1";
+            final String expected = "x\tts\tj\n" +
+                    "3\t1970-01-01T00:00:02.000000Z\tNaN\n" +
+                    "3\t1970-01-01T00:01:42.000000Z\t7746536061816329025\n";
+
+            testFilterWithColTops(query, expected, SqlJitMode.JIT_MODE_ENABLED);
         });
     }
 

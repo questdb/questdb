@@ -277,6 +277,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
                 // TODO
                 return;
             case ColumnType.FLOAT:
+                // compiled filter function will read only the first word
                 bindVarMemory.putFloat(function.getFloat(null));
                 bindVarMemory.putFloat(Float.NaN);
                 return;

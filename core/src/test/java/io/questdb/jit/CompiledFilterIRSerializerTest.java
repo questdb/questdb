@@ -450,7 +450,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     public void testBindVariablesMixed() throws Exception {
         bindVariableService.clear();
         bindVariableService.setInt("anint", 1);
-        bindVariableService.setLong(1, 2);
+        bindVariableService.setLong(0, 2);
 
         serialize("anint = :anint or along = $1");
         assertIR("(i64 :0)(i64 along)(=)(i32 :1)(i32 anint)(=)(||)(ret)");

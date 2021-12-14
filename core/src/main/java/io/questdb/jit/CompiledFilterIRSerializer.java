@@ -317,7 +317,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 if (variableIndex < 1) {
                     throw SqlException.$(position, "invalid bind variable index [value=").put(variableIndex).put(']');
                 }
-                varFunction = getBindVariableService().getFunction(variableIndex);
+                varFunction = getBindVariableService().getFunction(variableIndex - 1);
             } catch (NumericException e) {
                 throw SqlException.$(position, "invalid bind variable index [value=").put(token).put(']');
             }
