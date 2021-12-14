@@ -747,7 +747,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final ObjList<Function> bindVarFunctions = new ObjList<>();
                     final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
                     jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), reader, columnIndexes, bindVarFunctions);
-                    int jitOptions = jitIRSerializer.serialize(filter, forceScalar, false);
+                    int jitOptions = jitIRSerializer.serialize(filter, forceScalar, false, true);
                     final CompiledFilter jitFilter = new CompiledFilter();
                     jitFilter.compile(jitIRMem, jitOptions);
 

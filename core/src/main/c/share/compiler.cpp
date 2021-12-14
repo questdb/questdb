@@ -78,8 +78,6 @@ namespace questdb::x86 {
     jit_value_t
     read_vars_mem(Compiler &c, data_type_t type, const uint8_t *istream, size_t size, uint32_t &pos, const Gp &vars_ptr) {
         auto idx = static_cast<int32_t>(read<int64_t>(istream, size, pos));
-        Gp address = c.newInt64("bind_variables");
-        c.mov(address, ptr(vars_ptr, 8 * idx, 8));
         auto shift = type_shift(type);
         auto type_size  = 1 << shift;
         return {Mem(vars_ptr, 8*idx, type_size), type, data_kind_t::kMemory};
@@ -1205,8 +1203,8 @@ struct JitCompiler {
 
         uint32_t type_size = (options >> 1) & 3; // 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B
         uint32_t exec_hint = (options >> 3) & 3; // 0 - scalar, 1 - single size type, 2 - mixed size types, ...
+        bool null_check    = (options >> 5) & 1; // 1 - with null check
 
-        bool null_check = true;
         if (exec_hint == single_size && features.hasAVX2()) {
             auto step = 256 / ((1 << type_size) * 8);
             c.func()->frame().setAvxEnabled();
