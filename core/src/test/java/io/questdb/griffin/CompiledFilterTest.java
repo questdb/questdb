@@ -29,13 +29,11 @@ import io.questdb.cairo.SqlJitMode;
 import io.questdb.jit.JitUtil;
 import org.junit.Assume;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class CompiledFilterTest extends AbstractGriffinTest {
 
     // TODO: keep this test for advanced features such as:
-    //  * bind variables
     //  * deferred symbol literals
 
     @Before
@@ -123,16 +121,15 @@ public class CompiledFilterTest extends AbstractGriffinTest {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_FORCE_SCALAR);
 
             compiler.compile("create table x as (select" +
-                    " rnd_long() along," +
-                    " timestamp_sequence(400000000000, 500000000) atimestamp" +
-                    " from long_sequence(100)) timestamp(atimestamp)", sqlExecutionContext);
+                    " rnd_long() l," +
+                    " timestamp_sequence(400000000000, 500000000) ts" +
+                    " from long_sequence(100)) timestamp(ts)", sqlExecutionContext);
 
             bindVariableService.clear();
-            bindVariableService.setLong("along", 3614738589890112276L);
+            bindVariableService.setLong("l", 3614738589890112276L);
 
-            final String query = "select * from x where" +
-                    " along = :along";
-            final String expected = "along\tatimestamp\n" +
+            final String query = "select * from x where l = :l";
+            final String expected = "l\tts\n" +
                     "3614738589890112276\t1970-01-05T16:38:20.000000Z\n";
 
             assertSql(query, expected);
@@ -145,16 +142,15 @@ public class CompiledFilterTest extends AbstractGriffinTest {
     public void testBindVariablesSingleVectorized() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select" +
-                    " rnd_long() along," +
-                    " timestamp_sequence(400000000000, 500000000) atimestamp" +
-                    " from long_sequence(100)) timestamp(atimestamp)", sqlExecutionContext);
+                    " rnd_long() l," +
+                    " timestamp_sequence(400000000000, 500000000) ts" +
+                    " from long_sequence(100)) timestamp(ts)", sqlExecutionContext);
 
             bindVariableService.clear();
-            bindVariableService.setLong("along", 3614738589890112276L);
+            bindVariableService.setLong("l", 3614738589890112276L);
 
-            final String query = "select * from x where" +
-                    " along = :along";
-            final String expected = "along\tatimestamp\n" +
+            final String query = "select * from x where l = :l";
+            final String expected = "l\tts\n" +
                     "3614738589890112276\t1970-01-05T16:38:20.000000Z\n";
 
             assertSql(query, expected);
@@ -163,7 +159,6 @@ public class CompiledFilterTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore
     @Test
     public void testBindVariablesAllTypes() throws Exception {
         assertMemoryLeak(() -> {
@@ -220,6 +215,29 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     " and atimestamp = :atimestamp";
             final String expected = "aboolean\tabyte\tageobyte\tashort\tageoshort\tachar\tanint\tageoint\tasymbol\tafloat\talong\tadouble\tadate\tageolong\tatimestamp\n" +
                     "false\t28\t0000\t243\t011011000010\tO\t2085282008\t0101011010111101\tHYRX\t0.4882\t-4986232506486815364\t0.42281342727402726\t2015-09-28T22:29:45.706Z\t11010000001110101000110100011010\t1970-01-05T15:15:00.000000Z\n";
+
+            assertSql(query, expected);
+
+            assertSqlRunWithJit(query);
+        });
+    }
+
+    @Test
+    public void testBindVariablesSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select" +
+                    " rnd_symbol('A','B','C') sym," +
+                    " timestamp_sequence(400000000000, 500000000) ts" +
+                    " from long_sequence(5)) timestamp(ts)", sqlExecutionContext);
+
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "B");
+
+            // The column order is important here, since we want
+            // query and table column indexes to be different.
+            final String query = "select ts from x where sym = :sym";
+            final String expected = "ts\n" +
+                    "1970-01-05T15:23:20.000000Z\n";
 
             assertSql(query, expected);
 

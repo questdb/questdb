@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
@@ -97,15 +98,15 @@ class CompiledFilterRecordCursor implements RecordCursor {
         this.next = nextPage;
         this.bindVarMemory = bindVarMemory;
         this.bindVarCount = bindVarFunctions.size();
-        prepareBindVarMemory(bindVarFunctions);
         colTopsFilter.init(this, executionContext);
+        prepareBindVarMemory(bindVarFunctions, executionContext);
     }
 
-    private void prepareBindVarMemory(ObjList<Function> functions) throws SqlException {
+    private void prepareBindVarMemory(ObjList<Function> functions, SqlExecutionContext executionContext) throws SqlException {
         bindVarMemory.truncate();
         for (int i = 0, n = functions.size(); i < n; i++) {
             Function function = functions.getQuick(i);
-            writeBindVarFunction(function);
+            writeBindVarFunction(function, executionContext);
         }
     }
 
@@ -245,7 +246,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
         return false;
     }
 
-    private void writeBindVarFunction(Function function) throws SqlException {
+    private void writeBindVarFunction(Function function, SqlExecutionContext executionContext) throws SqlException {
         final int columnType = function.getType();
         final int columnTypeTag = ColumnType.tagOf(columnType);
         switch (columnTypeTag) {
@@ -273,8 +274,10 @@ class CompiledFilterRecordCursor implements RecordCursor {
             case ColumnType.GEOINT:
                 bindVarMemory.putLong(function.getGeoInt(null));
                 return;
-            case ColumnType.STRING: // symbol variables are represented with string type
-                // TODO
+            case ColumnType.SYMBOL:
+                assert function instanceof CompiledFilterSymbolBindVariable;
+                function.init(this, executionContext);
+                bindVarMemory.putLong(function.getInt(null));
                 return;
             case ColumnType.FLOAT:
                 // compiled filter function will read only the first word

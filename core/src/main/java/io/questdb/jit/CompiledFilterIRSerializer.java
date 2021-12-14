@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.*;
+import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.*;
@@ -205,7 +206,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     serializeColumn(node.position, node.token);
                     break;
                 case ExpressionNode.BIND_VARIABLE:
-                    serializeBindVariable(node.position, node.token);
+                    serializeBindVariable(node);
                     break;
                 case ExpressionNode.CONSTANT:
                     // Write stub values to be backfilled later
@@ -222,12 +223,24 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         boolean contextLeft = arithmeticContext.onNodeVisited(node);
 
-        // We're out of arithmetic expression: backfill constants and clean up
+        // We're out of arithmetic expression: backfill constants and symbol bind variables and clean up
         if (contextLeft) {
             try {
                 backfillNodes.forEach((key, value) -> {
                     try {
-                        backfillConstant(key, value);
+                        switch (value.type) {
+                            case ExpressionNode.CONSTANT:
+                            case ExpressionNode.OPERATION: // constant negation case
+                                backfillConstant(key, value);
+                                break;
+                            case ExpressionNode.BIND_VARIABLE:
+                                backfillSymbolBindVariable(key, value);
+                                break;
+                            default:
+                                throw SqlException.position(value.position)
+                                        .put("unexpected backfill token: ")
+                                        .put(value.token);
+                        }
                     } catch (SqlException e) {
                         throw new SqlWrapperException(e);
                     }
@@ -279,20 +292,31 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         memory.putLong(index);
     }
 
-    private void serializeBindVariable(int position, final CharSequence token) throws SqlException {
+    private void serializeBindVariable(final ExpressionNode node) throws SqlException {
         if (!arithmeticContext.isActive()) {
-            throw SqlException.position(position)
+            throw SqlException.position(node.position)
                     .put("bind variable outside of arithmetic expression: ")
-                    .put(token);
+                    .put(node.token);
         }
 
-        Function varFunction = getBindVariableFunction(position, token);
+        Function varFunction = getBindVariableFunction(node.position, node.token);
 
         final int columnType = varFunction.getType();
+        // Treat string bind variable to be of symbol type
+        if (columnType == ColumnType.STRING) {
+            // We're going to backfill this variable later since we may
+            // not have symbol column index at this point
+            long offset = memory.getAppendOffset();
+            backfillNodes.put(offset, node);
+            memory.putByte(UNDEFINED_CODE);
+            memory.putLong(0);
+            return;
+        }
+
         final int columnTypeTag = ColumnType.tagOf(columnType);
         byte typeCode = bindVariableTypeCode(columnTypeTag);
         if (typeCode == UNDEFINED_CODE) {
-            throw SqlException.position(position)
+            throw SqlException.position(node.position)
                     .put("unsupported bind variable type: ")
                     .put(ColumnType.nameOf(columnTypeTag));
         }
@@ -302,6 +326,43 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         memory.putByte(typeCode);
         memory.putLong(index);
+    }
+
+    private void backfillSymbolBindVariable(long offset, final ExpressionNode node) throws SqlException {
+        if (arithmeticContext.symbolColumnIndex == -1) {
+            throw SqlException.position(node.position)
+                    .put("symbol column index is missing for bind variable: ")
+                    .put(node.token);
+        }
+
+        Function varFunction = getBindVariableFunction(node.position, node.token);
+
+        final int columnType = varFunction.getType();
+        // Treat string bind variable to be of symbol type
+        if (columnType != ColumnType.STRING) {
+            throw SqlException.position(node.position)
+                    .put("unexpected symbol bind variable type: ")
+                    .put(ColumnType.nameOf(columnType));
+        }
+
+        byte typeCode = bindVariableTypeCode(columnType);
+        if (typeCode == UNDEFINED_CODE) {
+            throw SqlException.position(node.position)
+                    .put("unsupported bind variable type: ")
+                    .put(ColumnType.nameOf(columnType));
+        }
+
+        bindVarFunctions.add(new CompiledFilterSymbolBindVariable(varFunction, arithmeticContext.symbolColumnIndex));
+        int index = bindVarFunctions.size() - 1;
+
+        long originalOffset = memory.getAppendOffset();
+        try {
+            memory.jumpTo(offset);
+            memory.putByte(typeCode);
+            memory.putLong(index);
+        } finally {
+            memory.jumpTo(originalOffset);
+        }
     }
 
     private Function getBindVariableFunction(int position, CharSequence token) throws SqlException {
@@ -777,7 +838,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         private ExpressionNode rootNode;
         ExpressionType expressionType;
-        SymbolMapReader symbolMapReader;
+        SymbolMapReader symbolMapReader; // used for known symbol constant lookups
+        int symbolColumnIndex; // used for symbol deferred constants and bind variables
         boolean singleBooleanColumn;
 
         final TypesObserver localTypesObserver = new TypesObserver();
@@ -793,6 +855,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             rootNode = null;
             expressionType = null;
             symbolMapReader = null;
+            symbolColumnIndex = -1;
             singleBooleanColumn = false;
             localTypesObserver.clear();
         }
@@ -831,7 +894,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 }
                 columnType = metadata.getColumnType(columnIndex);
                 if (columnType == ColumnType.SYMBOL) {
-                    symbolMapReader = tableReader.getSymbolMapReader(columnIndexes.getQuick(columnIndex));
+                    final int tableColumnIndex = columnIndexes.getQuick(columnIndex);
+                    symbolMapReader = tableReader.getSymbolMapReader(tableColumnIndex);
+                    symbolColumnIndex = columnIndex;
                 }
             } else if (node.type == ExpressionNode.BIND_VARIABLE) {
                 Function varFunction = getBindVariableFunction(node.position, node.token);
