@@ -221,6 +221,9 @@
                                 <argument>--no-fund</argument>
                                 <argument>--scripts-prepend-node-path=auto</argument>
                             </arguments>
+                            <environmentVariables>
+                                <PATH>${project.basedir}/node/:${env.PATH}</PATH>
+                            </environmentVariables>
                             <workingDirectory>../ui</workingDirectory>
                         </configuration>
                     </execution>
@@ -236,6 +239,9 @@
                                 <argument>build</argument>
                                 <argument>--scripts-prepend-node-path=auto</argument>
                             </arguments>
+                            <environmentVariables>
+                                <PATH>${project.basedir}/node/:${env.PATH}</PATH>
+                            </environmentVariables>
                             <workingDirectory>../ui</workingDirectory>
                         </configuration>
                     </execution>
