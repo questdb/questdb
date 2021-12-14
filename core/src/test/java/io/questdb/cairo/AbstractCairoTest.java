@@ -68,7 +68,6 @@ public class AbstractCairoTest {
     protected static int sampleByIndexSearchPageSize;
     protected static int binaryEncodingMaxLength = -1;
     protected static CharSequence defaultMapType;
-    protected static long inactiveWriterTTL = -10000;
 
     @Rule
     public TestName testName = new TestName();
@@ -147,11 +146,6 @@ public class AbstractCairoTest {
             public long getWriterAsyncCommandMaxTimeout() {
                 return writerAsyncCommandMaxTimeout < 0 ? super.getWriterAsyncCommandMaxTimeout() : writerAsyncCommandMaxTimeout;
             }
-
-            @Override
-            public long getInactiveWriterTTL() {
-                return inactiveWriterTTL;
-            }
         };
         engine = new CairoEngine(configuration);
         messageBus = engine.getMessageBus();
@@ -185,7 +179,6 @@ public class AbstractCairoTest {
         defaultMapType = null;
         writerAsyncCommandBusyWaitTimeout = -1;
         writerAsyncCommandMaxTimeout = -1;
-        inactiveWriterTTL = -10000;
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {

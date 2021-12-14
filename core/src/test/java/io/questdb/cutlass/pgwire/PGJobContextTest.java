@@ -4390,7 +4390,6 @@ nodejs code:
         };
 
         WorkerPool pool = new WorkerPool(conf);
-        inactiveWriterTTL = 1000000;
         pool.assign(engine.getEngineMaintenanceJob());
         try (
                 final PGWireServer ignored = PGWireServer.create(

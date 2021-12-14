@@ -509,10 +509,12 @@ public class CairoEngine implements Closeable, WriterSource {
     private class EngineMaintenanceJob extends SynchronizedJob {
 
         private final MicrosecondClock clock;
+        private final long checkInterval;
         private long last = 0;
 
         public EngineMaintenanceJob(CairoConfiguration configuration) {
             this.clock = configuration.getMicrosecondClock();
+            this.checkInterval = configuration.getIdleCheckInterval() * 1000;
         }
 
         @Override
@@ -523,7 +525,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 // process and drain cmd queue
                 useful = true;
             }
-            if (last + configuration.getIdleCheckInterval() < t) {
+            if (last + checkInterval < t) {
                 last = t;
                 return useful | releaseInactive();
             }
