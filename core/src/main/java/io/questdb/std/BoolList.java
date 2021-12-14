@@ -43,14 +43,14 @@ public class BoolList implements Mutable {
     }
 
     public void add(boolean value) {
-        ensureCapacity0(pos + 1);
+        ensureCapacity(pos + 1);
         buffer[pos++] = value;
     }
 
     public void addAll(BoolList that) {
         int p = pos;
         int s = that.size();
-        ensureCapacity(p + s);
+        setPos(p + s);
         System.arraycopy(that.buffer, 0, this.buffer, p, s);
     }
 
@@ -68,17 +68,17 @@ public class BoolList implements Mutable {
         Arrays.fill(buffer, NO_ENTRY_VALUE);
     }
 
-    public void ensureCapacity(int capacity) {
-        ensureCapacity0(capacity);
-        pos = capacity;
+    public void extendAndSet(int index, boolean value) {
+        extendCapacity(index + 1);
+        buffer[index] = value;
     }
 
-    public void extendAndSet(int index, boolean value) {
-        ensureCapacity0(index + 1);
-        if (index >= pos) {
-            pos = index + 1;
+    private void extendCapacity(int newPos) {
+        if (newPos > pos) {
+            ensureCapacity(newPos);
+            Arrays.fill(buffer, pos, newPos, NO_ENTRY_VALUE);
+            pos = newPos;
         }
-        buffer[index] = value;
     }
 
     public boolean get(int index) {
@@ -157,6 +157,15 @@ public class BoolList implements Mutable {
 
     public boolean replace(int index, boolean value) {
         assert index < pos;
+        return replace0(index, value);
+    }
+
+    public boolean extendAndReplace(int index, boolean value) {
+        extendCapacity(index + 1);
+        return replace0(index, value);
+    }
+
+    private boolean replace0(int index, boolean value) {
         boolean val = buffer[index];
         buffer[index] = value;
         return val;
@@ -171,8 +180,7 @@ public class BoolList implements Mutable {
     }
 
     public void setAll(int capacity, boolean value) {
-        ensureCapacity0(capacity);
-        pos = capacity;
+        setPos(capacity);
         Arrays.fill(buffer, 0, pos, value);
     }
 
@@ -194,7 +202,7 @@ public class BoolList implements Mutable {
         Arrays.fill(buffer, 0, pos, value);
     }
 
-    private void ensureCapacity0(int capacity) {
+    private void ensureCapacity(int capacity) {
         int l = buffer.length;
         if (capacity > l) {
             int newCap = Math.max(l << 1, capacity);
