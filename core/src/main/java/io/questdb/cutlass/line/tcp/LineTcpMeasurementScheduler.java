@@ -292,8 +292,15 @@ class LineTcpMeasurementScheduler implements Closeable {
             } else {
                 int status = engine.getStatus(securityContext, path, tableNameUtf16, 0, tableNameUtf16.length());
                 if (status != TableUtils.TABLE_EXISTS) {
+                    // validate that parser entities do not contain NULLs
+                    TableStructureAdapter tsa = tableStructureAdapter.of(tableNameUtf16, parser);
+                    for (int i = 0, n = tsa.getColumnCount(); i < n; i++) {
+                        if (tsa.getColumnType(i) == LineTcpParser.ENTITY_TYPE_NULL) {
+                            throw CairoException.instance(0).put("unknown column type [columnName=").put(tsa.getColumnName(i)).put(']');
+                        }
+                    }
                     LOG.info().$("creating table [tableName=").$(tableNameUtf16).$(']').$();
-                    engine.createTable(securityContext, ddlMem, path, tableStructureAdapter.of(tableNameUtf16, parser));
+                    engine.createTable(securityContext, ddlMem, path, tsa);
                 }
 
                 final int idleTudKeyIndex = idleTableUpdateDetailsUtf16.keyIndex(tableNameUtf16);
@@ -434,14 +441,14 @@ class LineTcpMeasurementScheduler implements Closeable {
             }
         } catch (EntryUnavailableException ex) {
             // Table writer is locked
-            LOG.info().$("could not get table writer [tableName=").$(parser.getMeasurementName()).$(", ex=").$(ex.getFlyweightMessage()).I$();
+            LOG.info().$("could not get table writer [tableName=").$(parser.getMeasurementName()).$(", ex=`").$(ex.getFlyweightMessage()).$("`]").$();
             return true;
         } catch (CairoException ex) {
             // Table could not be created
             LOG.info()
                     .$("could not create table [tableName=").$(parser.getMeasurementName())
-                    .$(", ex=").$(ex.getFlyweightMessage())
-                    .$(", errno=").$(ex.getErrno())
+                    .$(", ex=`").$(ex.getFlyweightMessage())
+                    .$("`, errno=").$(ex.getErrno())
                     .I$();
             return false;
         }

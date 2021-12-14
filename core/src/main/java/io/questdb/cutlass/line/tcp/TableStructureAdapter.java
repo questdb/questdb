@@ -125,13 +125,12 @@ class TableStructureAdapter implements TableStructure {
         return cairoConfiguration.getCommitLag();
     }
 
-    TableStructureAdapter of(CharSequence tableName, LineTcpParser protoParser) {
+    TableStructureAdapter of(CharSequence tableName, LineTcpParser parser) {
         this.tableName = tableName;
-
         entityNames.clear();
         entities.clear();
-        for (int i = 0; i < protoParser.getEntityCount(); i++) {
-            final LineTcpParser.ProtoEntity entity = protoParser.getEntity(i);
+        for (int i = 0; i < parser.getEntityCount(); i++) {
+            final LineTcpParser.ProtoEntity entity = parser.getEntity(i);
             final CharSequence name = entity.getName();
             if (entityNames.add(name)) {
                 if (Chars.equals(name, DEFAULT_TIMESTAMP_FIELD)) {
