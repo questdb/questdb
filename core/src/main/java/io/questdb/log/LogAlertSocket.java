@@ -408,24 +408,28 @@ public class LogAlertSocket implements Closeable {
                 .$("Added alert manager [")
                 .$(alertHostsCount)
                 .$("]: ");
-        if (!hostResolved) {
-            String host = alertTargets.substring(hostIdx, hostEnd).trim();
-            try {
-                alertHosts[alertHostsCount] = InetAddress.getByName(host).getHostAddress();
-                logRecord.$(host).$(" (").$(alertHosts[alertHostsCount]).$(')');
-            } catch (UnknownHostException e) {
-                throw new LogError(String.format(
-                        "Invalid host value [%s] at position %d for alertTargets: %s",
-                        host,
-                        hostIdx,
-                        alertTargets
-                ));
+        try {
+            if (!hostResolved) {
+                String host = alertTargets.substring(hostIdx, hostEnd).trim();
+                try {
+                    alertHosts[alertHostsCount] = InetAddress.getByName(host).getHostAddress();
+                    logRecord.$(host).$(" (").$(alertHosts[alertHostsCount]).$(')');
+                } catch (UnknownHostException e) {
+                    throw new LogError(String.format(
+                            "Invalid host value [%s] at position %d for alertTargets: %s",
+                            host,
+                            hostIdx,
+                            alertTargets
+                    ));
+                }
+            } else {
+                logRecord.$(alertHosts[alertHostsCount]);
             }
-        } else {
-            logRecord.$(alertHosts[alertHostsCount]);
+            logRecord.$(':').$(alertPorts[alertHostsCount]);
+            alertHostsCount++;
+        } finally {
+            logRecord.$();
         }
-        logRecord.$(':').$(alertPorts[alertHostsCount]).$();
-        alertHostsCount++;
     }
 
     private static boolean isContentLength(CharSequence tok, int lo, int hi) {

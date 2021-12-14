@@ -74,7 +74,7 @@ public class DispatcherWriterQueueTest {
                 },
                 1,
                 0,
-                "alter+table+x+add+column+y+int");
+                "alter+table+<x>+add+column+y+int");
     }
 
     @Test
@@ -87,7 +87,7 @@ public class DispatcherWriterQueueTest {
                 },
                 1,
                 0,
-                "alter+table+x+add+column+y+int");
+                "alter+table+<x>+add+column+y+int");
     }
 
     @Test
@@ -103,8 +103,8 @@ public class DispatcherWriterQueueTest {
                 },
                 2,
                 0,
-                "alter+table+x+add+column+y+int",
-                "alter+table+x+add+column+s2+symbol+capacity+512+nocache+index");
+                "alter+table+<x>+add+column+y+int",
+                "alter+table+<x>+add+column+s2+symbol+capacity+512+nocache+index");
     }
 
     @Test
@@ -117,7 +117,7 @@ public class DispatcherWriterQueueTest {
                 },
                 1,
                 0,
-                "alter+table+x+alter+column+s+nocache");
+                "alter+table+<x>+alter+column+s+nocache");
     }
 
     @Test
@@ -130,7 +130,7 @@ public class DispatcherWriterQueueTest {
                 },
                 1,
                 0,
-                "alter+table+x+alter+column+s+cache");
+                "alter+table+<x>+alter+column+s+cache");
     }
 
     @Test
@@ -145,8 +145,8 @@ public class DispatcherWriterQueueTest {
                 },
                 2,
                 1,
-                "alter+table+x+rename+column+s+to+y",
-                "alter+table+x+rename+column+s+to+x");
+                "alter+table+<x>+rename+column+s+to+y",
+                "alter+table+<x>+rename+column+s+to+x");
     }
 
     @Test
@@ -161,42 +161,8 @@ public class DispatcherWriterQueueTest {
                 },
                 1,
                 0,
-                "alter+table+x+add+y+long256,x+timestamp",
-                "alter+table+x+drop+column+s");
-    }
-
-    @Test
-    public void testShouldFailWithTimeout() throws Exception {
-        new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(
-                        new HttpServerConfigurationBuilder()
-                                .withReceiveBufferSize(50)
-                )
-                .withAlterTableStartWaitTimeout(10)
-                .run((engine) -> {
-            setupSql(engine);
-            try {
-                compiler.compile("create table x as (" +
-                        " select rnd_symbol('a', 'b', 'c') as s" +
-                        " from long_sequence(10)" +
-                        " )", sqlExecutionContext);
-
-                try (TableWriter ignored = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "test lock")) {
-                    // Writer locked, supposed to return timeout error
-                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                            "GET /query?query=alter+table+x+add+column+y+int HTTP/1.1\r\n",
-                            "80\r\n" +
-                                    "{\"query\":\"alter table x add column y int\",\"error\":\"Timeout expired on waiting for the ALTER TABLE execution start\",\"position\":0}\r\n" +
-                                    "00\r\n" +
-                                    "\r\n"
-                    );
-                }
-            } finally {
-                compiler.close();
-            }
-        });
+                "alter+table+<x>+add+y+long256,x+timestamp",
+                "alter+table+<x>+drop+column+s");
     }
 
     @Test
@@ -237,7 +203,7 @@ public class DispatcherWriterQueueTest {
                 0,
                 queryTestBuilder,
                 true,
-                "alter+table+x+alter+column+s+add+index");
+                "alter+table+<x>+alter+column+s+add+index");
     }
 
     @Test
@@ -253,12 +219,8 @@ public class DispatcherWriterQueueTest {
                 .withFilesFacade(new FilesFacadeImpl() {
                     @Override
                     public long openRW(LPSZ name) {
-                        if (Chars.endsWith(name, "x/default/s.v")) {
-                            try {
-                                Thread.sleep(600);
-                            } catch (InterruptedException e) {
-                                e.printStackTrace();
-                            }
+                        if (Chars.endsWith(name, "/default/s.v") || Chars.endsWith(name, "\\default\\s.v")) {
+                            Os.sleep(600);
                         }
                         return super.openRW(name);
                     }
@@ -273,7 +235,7 @@ public class DispatcherWriterQueueTest {
                 0,
                 queryTestBuilder,
                 false,
-                "alter+table+x+alter+column+s+add+index");
+                "alter+table+<x>+alter+column+s+add+index");
     }
 
     @Test
@@ -289,12 +251,8 @@ public class DispatcherWriterQueueTest {
                 .withFilesFacade(new FilesFacadeImpl() {
                     @Override
                     public long openRW(LPSZ name) {
-                        if (Chars.endsWith(name, "x/default/s.v") || Chars.endsWith(name, "x\\default\\s.v")) {
-                            try {
-                                Thread.sleep(1000);
-                            } catch (InterruptedException e) {
-                                e.printStackTrace();
-                            }
+                        if (Chars.endsWith(name, "/default/s.v") || Chars.endsWith(name, "\\default\\s.v")) {
+                            Os.sleep(1_000);
                         }
                         return super.openRW(name);
                     }
@@ -309,7 +267,7 @@ public class DispatcherWriterQueueTest {
                 1,
                 queryTestBuilder,
                 false,
-                "alter+table+x+alter+column+s+add+index");
+                "alter+table+<x>+alter+column+s+add+index");
     }
 
     private void runAlterOnBusyTable(
@@ -337,79 +295,97 @@ public class DispatcherWriterQueueTest {
             boolean noWait,
             final String... httpAlterQueries
     ) throws Exception {
-        queryTestBuilder.run((engine) -> {
-            setupSql(engine);
-            compiler.compile("create table IF NOT EXISTS x as (" +
-                    " select rnd_symbol('a', 'b', 'c') as s," +
-                    " cast(x as timestamp) ts" +
-                    " from long_sequence(10)" +
-                    " )", sqlExecutionContext);
-            TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "test lock");
-            SOCountDownLatch finished = new SOCountDownLatch(httpAlterQueries.length);
-            AtomicInteger errors = new AtomicInteger();
-            CyclicBarrier barrier = new CyclicBarrier(httpAlterQueries.length);
+        AtomicInteger maxAttempts = new AtomicInteger(5);
 
-            for (int i = 0; i < httpAlterQueries.length; i++) {
-                String httpAlterQuery = httpAlterQueries[i];
-                Thread thread = new Thread(() -> {
-                    try {
-                        barrier.await();
-                        if (noWait) {
-                            new SendAndReceiveRequestBuilder()
-                                    .withPauseBetweenSendAndReceive(100)
-                                    .execute(
-                                    "GET /query?query=" + httpAlterQuery + " HTTP/1.1\r\n"
-                                            + SendAndReceiveRequestBuilder.RequestHeaders,
-                                    ""
-                            );
-                        } else {
-                            new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                                    "GET /query?query=" + httpAlterQuery + " HTTP/1.1\r\n",
-                                    "0d\r\n" +
-                                            "{\"ddl\":\"OK\"}\n\r\n" +
-                                            "00\r\n" +
-                                            "\r\n"
-                            );
-                        }
-                    } catch (Error e) {
-                        if (errorsExpected == 0) {
-                            error = e;
-                        }
-                        errors.getAndIncrement();
-                    } catch (Throwable e) {
-                        errors.getAndIncrement();
-                    } finally {
-                        finished.countDown();
-                    }
-                });
-                thread.start();
-            }
+        int attempt = 0;
+        while (maxAttempts.get() > 0) {
+            final int currentAttempt = attempt++;
+            queryTestBuilder.run((engine) -> {
+                setupSql(engine);
+                String tableName = "x" + currentAttempt;
+                compiler.compile("create table IF NOT EXISTS " + tableName + " as (" +
+                        " select rnd_symbol('a', 'b', 'c') as s," +
+                        " cast(x as timestamp) ts" +
+                        " from long_sequence(10)" +
+                        " )", sqlExecutionContext);
+                TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test lock");
+                SOCountDownLatch finished = new SOCountDownLatch(httpAlterQueries.length);
+                AtomicInteger errors = new AtomicInteger();
+                CyclicBarrier barrier = new CyclicBarrier(httpAlterQueries.length);
 
-            if (httpAlterQueries.length > 1 && httpAlterQueries.length <= httpWorkers) {
-                // Allow all queries to trigger commands before start processing them
-                MPSequence tableWriterCommandPubSeq = engine.getMessageBus().getTableWriterCommandPubSeq();
-                while (tableWriterCommandPubSeq.current() < httpAlterQueries.length - 1) {
-                    LockSupport.parkNanos(10_000_000L);
+                for (int i = 0; i < httpAlterQueries.length; i++) {
+                    String httpAlterQuery = httpAlterQueries[i].replace("<x>", tableName);
+                    Thread thread = new Thread(() -> {
+                        try {
+                            barrier.await();
+                            if (noWait) {
+                                new SendAndReceiveRequestBuilder()
+                                        .withPauseBetweenSendAndReceive(100)
+                                        .execute(
+                                                "GET /query?query=" + httpAlterQuery + " HTTP/1.1\r\n"
+                                                        + SendAndReceiveRequestBuilder.RequestHeaders,
+                                                ""
+                                        );
+                            } else {
+                                new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                        "GET /query?query=" + httpAlterQuery + " HTTP/1.1\r\n",
+                                        "0d\r\n" +
+                                                "{\"ddl\":\"OK\"}\n\r\n" +
+                                                "00\r\n" +
+                                                "\r\n"
+                                );
+                            }
+                        } catch (Error e) {
+                            if (errorsExpected == 0) {
+                                error = e;
+                            }
+                            errors.getAndIncrement();
+                        } catch (Throwable e) {
+                            errors.getAndIncrement();
+                        } finally {
+                            finished.countDown();
+                        }
+                    });
+                    thread.start();
                 }
-            }
 
-            for (int i = 0; i < 100 && finished.getCount() > 0 && errors.get() <= errorsExpected; i++) {
-                writer.tick(true);
-                finished.await(1_000_000);
-            }
-            if (error != null) {
-                throw error;
-            }
+                if (httpAlterQueries.length > 1 && httpAlterQueries.length <= httpWorkers) {
+                    // Allow all queries to trigger commands before start processing them
+                    MPSequence tableWriterCommandPubSeq = engine.getMessageBus().getTableWriterCommandPubSeq();
+                    while (tableWriterCommandPubSeq.current() < httpAlterQueries.length - 1) {
+                        LockSupport.parkNanos(10_000_000L);
+                    }
+                }
 
-            Assert.assertEquals(errorsExpected, errors.get());
-            Assert.assertEquals(0, finished.getCount());
-            engine.releaseAllReaders();
-            try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
-                alterVerifyAction.run(writer, rdr);
-            }
-            writer.close();
-            compiler.close();
-        });
+                for (int i = 0; i < 100 && finished.getCount() > 0 && errors.get() <= errorsExpected; i++) {
+                    writer.tick(true);
+                    finished.await(1_000_000);
+                }
+
+                if (errorsExpected != errors.get() && maxAttempts.decrementAndGet() > 0) {
+                    // These tests are a balance between running fast and
+                    // hitting correct execution paths. If this run didn't hit expected path
+                    // run few more
+                    writer.close();
+                    compiler.close();
+                    engine.releaseAllReaders();
+                    return;
+                }
+
+                if (error != null) {
+                    throw error;
+                }
+                Assert.assertEquals(errorsExpected, errors.get());
+                Assert.assertEquals(0, finished.getCount());
+                engine.releaseAllReaders();
+                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                    alterVerifyAction.run(writer, rdr);
+                }
+                writer.close();
+                compiler.close();
+                maxAttempts.set(0);
+            });
+        }
     }
 
     @FunctionalInterface
