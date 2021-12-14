@@ -139,7 +139,7 @@ class LineTcpMeasurementEvent implements Closeable {
                         row.cancel();
                         row = null;
                         int colType = DefaultColumnTypes.DEFAULT_COLUMN_TYPES[entityType];
-                        if (colType != ENTITY_TYPE_NULL && TableUtils.isValidInfluxColumnName(charSink)) {
+                        if (TableUtils.isValidInfluxColumnName(charSink)) {
                             writer.addColumn(charSink, colType);
                         } else {
                             throw CairoException.instance(0)
