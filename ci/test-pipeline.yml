@@ -46,7 +46,8 @@ stages:
               payload: |
                 {
                   "pool": "arm64",
-                  "buildid": "$(Build.BuildId)"
+                  "buildid": "$(Build.BuildId)",
+                  "shutdownflag": "noshutdown"
                 }
               outputVariable: 'functionResult'
           - bash: |
