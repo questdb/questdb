@@ -278,9 +278,19 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testSymbolKnownConstant() throws Exception {
+    public void testKnownSymbolConstant() throws Exception {
         serialize("asymbol = '" + KNOWN_SYMBOL_1 + "' or anothersymbol = '" + KNOWN_SYMBOL_2 + "'");
         assertIR("(i32 0L)(i32 anothersymbol)(=)(i32 0L)(i32 asymbol)(=)(||)(ret)");
+    }
+
+    @Test
+    public void testUnknownSymbolConstant() throws Exception {
+        serialize("asymbol = '" + UNKNOWN_SYMBOL + "'");
+        assertIR("(i32 :0)(i32 asymbol)(=)(ret)");
+
+        Assert.assertEquals(1, bindVarFunctions.size());
+        Assert.assertEquals(ColumnType.SYMBOL, bindVarFunctions.get(0).getType());
+        Assert.assertEquals(UNKNOWN_SYMBOL, bindVarFunctions.get(0).getStr(null));
     }
 
     @Test
@@ -503,11 +513,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test(expected = SqlException.class)
     public void testUnsupportedStringConstant() throws Exception {
         serialize("achar = 'abc'");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedUnknownSymbolConstant() throws Exception {
-        serialize("asymbol = " + UNKNOWN_SYMBOL);
     }
 
     @Test(expected = SqlException.class)

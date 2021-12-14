@@ -33,9 +33,6 @@ import org.junit.Test;
 
 public class CompiledFilterTest extends AbstractGriffinTest {
 
-    // TODO: keep this test for advanced features such as:
-    //  * deferred symbol literals
-
     @Before
     public void setUp() {
         // Disable the test suite on ARM64.
@@ -85,7 +82,6 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                 ddl,
                 "k",
                 true);
-
         assertSqlRunWithJit(query);
     }
 
@@ -110,13 +106,12 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     "2\t1970-01-02T00:00:00.100000Z\n";
 
             assertSql(query, expected);
-
             assertSqlRunWithJit(query);
         });
     }
 
     @Test
-    public void testBindVariablesSingleScalar() throws Exception {
+    public void testSingleBindVariableSingleScalar() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_FORCE_SCALAR);
 
@@ -133,13 +128,12 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     "3614738589890112276\t1970-01-05T16:38:20.000000Z\n";
 
             assertSql(query, expected);
-
             assertSqlRunWithJit(query);
         });
     }
 
     @Test
-    public void testBindVariablesSingleVectorized() throws Exception {
+    public void testSingleBindVariableVectorized() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select" +
                     " rnd_long() l," +
@@ -154,13 +148,12 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     "3614738589890112276\t1970-01-05T16:38:20.000000Z\n";
 
             assertSql(query, expected);
-
             assertSqlRunWithJit(query);
         });
     }
 
     @Test
-    public void testBindVariablesAllTypes() throws Exception {
+    public void testAllBindVariableTypes() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select" +
                     " rnd_boolean() aboolean," +
@@ -217,13 +210,12 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     "false\t28\t0000\t243\t011011000010\tO\t2085282008\t0101011010111101\tHYRX\t0.4882\t-4986232506486815364\t0.42281342727402726\t2015-09-28T22:29:45.706Z\t11010000001110101000110100011010\t1970-01-05T15:15:00.000000Z\n";
 
             assertSql(query, expected);
-
             assertSqlRunWithJit(query);
         });
     }
 
     @Test
-    public void testBindVariablesSymbol() throws Exception {
+    public void testSymbolBindVariable() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select" +
                     " rnd_symbol('A','B','C') sym," +
@@ -240,13 +232,12 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     "1970-01-05T15:23:20.000000Z\n";
 
             assertSql(query, expected);
-
             assertSqlRunWithJit(query);
         });
     }
 
     @Test
-    public void testBindVariablesWithColTops() throws Exception {
+    public void testBindVariablesFilterWithColTops() throws Exception {
         assertMemoryLeak(() -> {
             bindVariableService.clear();
             bindVariableService.setLong(0, 3);
@@ -257,6 +248,35 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     "3\t1970-01-01T00:01:42.000000Z\t7746536061816329025\n";
 
             testFilterWithColTops(query, expected, SqlJitMode.JIT_MODE_ENABLED);
+        });
+    }
+
+    @Test
+    public void testDeferredSymbolConstants() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select" +
+                    " rnd_symbol('A','B','C') sym," +
+                    " timestamp_sequence(400000000000, 500000000) ts" +
+                    " from long_sequence(5)) timestamp(ts)", sqlExecutionContext);
+
+            final String query = "select * from x where sym = 'D' or sym = 'F'";
+            final String expected = "sym\tts\n";
+
+            assertSql(query, expected);
+            assertSqlRunWithJit(query);
+
+            compiler.compile("insert into x select " +
+                    " rnd_symbol('D','E','F') sym," +
+                    " timestamp_sequence(500000000000, 500000000) ts " +
+                    "from long_sequence(5)", sqlExecutionContext);
+
+            final String expected2 = "sym\tts\n" +
+                    "F\t1970-01-06T18:53:20.000000Z\n" +
+                    "F\t1970-01-06T19:01:40.000000Z\n" +
+                    "D\t1970-01-06T19:18:20.000000Z\n";
+
+            assertSql(query, expected2);
+            assertSqlRunWithJit(query);
         });
     }
 
@@ -360,7 +380,6 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     "from long_sequence(20)", sqlExecutionContext);
 
             assertSql(query, expected);
-
             assertSqlRunWithJit(query);
         });
     }

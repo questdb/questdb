@@ -28,19 +28,21 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 
 /**
- * String bind variable function wrapper used in SQL JIT.
+ * String bind variable function wrapper used in SQL JIT. Also used to handle deferred
+ * (unknown at compile time) symbol literals.
  */
 public class CompiledFilterSymbolBindVariable extends SymbolFunction implements ScalarFunction {
 
-    private final Function bindVarFunction;
+    private final Function symbolFunction;
     private final int columnIndex;
     private StaticSymbolTable symbolTable;
 
-    public CompiledFilterSymbolBindVariable(Function bindVarFunction, int columnIndex) {
-        assert bindVarFunction instanceof StrBindVariable;
-        this.bindVarFunction = bindVarFunction;
+    public CompiledFilterSymbolBindVariable(Function symbolFunction, int columnIndex) {
+        assert symbolFunction instanceof StrBindVariable || symbolFunction instanceof SymbolConstant;
+        this.symbolFunction = symbolFunction;
         this.columnIndex = columnIndex;
     }
 
@@ -51,18 +53,18 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction implements 
 
     @Override
     public int getInt(Record rec) {
-        final CharSequence symbolStr = bindVarFunction.getStr(null);
+        final CharSequence symbolStr = symbolFunction.getStr(null);
         return symbolTable.keyOf(symbolStr);
     }
 
     @Override
     public CharSequence getSymbol(Record rec) {
-        return bindVarFunction.getStr(null);
+        return symbolFunction.getStr(null);
     }
 
     @Override
     public CharSequence getSymbolB(Record rec) {
-        return bindVarFunction.getStrB(null);
+        return symbolFunction.getStrB(null);
     }
 
     @Override

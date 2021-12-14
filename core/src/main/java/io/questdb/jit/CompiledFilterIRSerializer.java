@@ -35,6 +35,7 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.*;
 
@@ -43,9 +44,6 @@ import java.util.Arrays;
 /**
  * Intermediate representation (IR) serializer for filters (think, WHERE clause)
  * to be used in SQL JIT compiler.
- *
- * TODO:
- *  * parse symbol literals (DeferredSymbol* + bind variables)
  */
 public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
 
@@ -449,23 +447,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (ExpressionType.SYMBOL == arithmeticContext.expressionType) {
-            CharSequence symbol = token;
-            if (Chars.isQuoted(token)) {
-                if (len < 3) {
-                    throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
-                }
-                symbol = symbol.subSequence(1, len - 1);
-            }
-
-            if (arithmeticContext.symbolMapReader != null) {
-                final int key = arithmeticContext.symbolMapReader.keyOf(symbol);
-                if (key != SymbolTable.VALUE_NOT_FOUND) {
-                    memory.putByte(IMM_I4);
-                    memory.putLong(key);
-                    return;
-                }
-            }
-            throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
+            serializeSymbolConstant(position, token);
+            return;
         }
 
         if (Chars.isQuoted(token)) {
@@ -550,6 +533,38 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             default:
                 throw SqlException.position(position).put("unexpected null type: ").put(typeCode);
         }
+    }
+
+    private void serializeSymbolConstant(int position, final CharSequence token) throws SqlException {
+        final int len = token.length();
+        CharSequence symbol = token;
+        if (Chars.isQuoted(token)) {
+            if (len < 3) {
+                throw SqlException.position(position).put("unsupported symbol constant: ").put(token);
+            }
+            symbol = symbol.subSequence(1, len - 1);
+        }
+
+        if (arithmeticContext.symbolMapReader == null || arithmeticContext.symbolColumnIndex == -1) {
+            throw SqlException.position(position).put("reader or column index is missing for symbol constant: ").put(token);
+        }
+
+        final int key = arithmeticContext.symbolMapReader.keyOf(symbol);
+        if (key != SymbolTable.VALUE_NOT_FOUND) {
+            // Known symbol constant case
+            memory.putByte(IMM_I4);
+            memory.putLong(key);
+            return;
+        }
+
+        // Unknown symbol constant case. Create a fake bind variable function to handle it.
+        final SymbolConstant function = SymbolConstant.newInstance(symbol);
+        bindVarFunctions.add(new CompiledFilterSymbolBindVariable(function, arithmeticContext.symbolColumnIndex));
+        int index = bindVarFunctions.size() - 1;
+
+        byte typeCode = bindVariableTypeCode(ColumnType.STRING);
+        memory.putByte(typeCode);
+        memory.putLong(index);
     }
 
     private void serializeGeoHash(int position, final ConstantFunction geoHashConstant, byte typeCode) throws SqlException {
