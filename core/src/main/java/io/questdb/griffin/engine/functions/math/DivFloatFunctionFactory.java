@@ -30,28 +30,33 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.ShortFunction;
+import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class AddShortFunctionFactory implements FunctionFactory {
+public class DivFloatFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "+(EE)";
+        return "/(FF)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
-        return new AddShortFunc(args.getQuick(0), args.getQuick(1));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new Func(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class AddShortFunc extends ShortFunction implements BinaryFunction {
-        final Function left;
-        final Function right;
+    private static class Func extends FloatFunction implements BinaryFunction {
+        private final Function left;
+        private final Function right;
 
-        public AddShortFunc(Function left, Function right) {
+        public Func(Function left, Function right) {
             this.left = left;
             this.right = right;
+        }
+
+        @Override
+        public float getFloat(Record rec) {
+            return left.getFloat(rec) / right.getFloat(rec);
         }
 
         @Override
@@ -62,11 +67,6 @@ public class AddShortFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return right;
-        }
-
-        @Override
-        public short getShort(Record rec) {
-            return (short) (left.getShort(rec) + right.getShort(rec));
         }
     }
 }

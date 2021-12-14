@@ -29,14 +29,24 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
-public class AddByteFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class DivFloatFunctionFactoryTest extends AbstractFunctionFactoryTest {
+    @Test
+    public void testDivByZero() throws SqlException {
+        call(10f, 0f).andAssert(Float.POSITIVE_INFINITY, 0.000001);
+    }
+
+    @Test
+    public void testNegative() throws SqlException {
+        call(-3f, 4f).andAssert(-0.75, 0.000001);
+    }
+
     @Test
     public void testSimple() throws SqlException {
-        call(2, 5).andAssert((byte) 7);
+        call(10f, 8f).andAssert(1.25, 0.000001);
     }
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new AddByteFunctionFactory();
+        return new DivFloatFunctionFactory();
     }
 }
