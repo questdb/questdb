@@ -28,6 +28,7 @@ import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.EagerThreadSetup;
@@ -37,6 +38,7 @@ import io.questdb.network.*;
 import io.questdb.std.Misc;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.WeakObjectPool;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -54,9 +56,10 @@ public class PGWireServer implements Closeable {
             CairoEngine engine,
             WorkerPool workerPool,
             boolean workerPoolLocal,
-            FunctionFactoryCache functionFactoryCache
+            FunctionFactoryCache functionFactoryCache,
+            PGConnectionContextFactory contextFactory
     ) {
-        this.contextFactory = new PGConnectionContextFactory(engine, configuration, workerPool.getWorkerCount());
+        this.contextFactory = contextFactory;
         this.dispatcher = IODispatchers.create(
                 configuration.getDispatcherConfiguration(),
                 contextFactory
@@ -110,6 +113,27 @@ public class PGWireServer implements Closeable {
             Log log,
             CairoEngine cairoEngine,
             FunctionFactoryCache functionFactoryCache,
+            Metrics metrics,
+            PGConnectionContextFactory contextFactory
+    ) {
+        return WorkerPoolAwareConfiguration.create(
+                configuration,
+                sharedWorkerPool,
+                log,
+                cairoEngine,
+                (conf, engine, workerPool, local, functionFactoryCache1, metrics1) -> new PGWireServer(conf, engine, workerPool, local, functionFactoryCache1, contextFactory),
+                functionFactoryCache,
+                metrics
+        );
+    }
+
+    @Nullable
+    public static PGWireServer create(
+            PGWireConfiguration configuration,
+            WorkerPool sharedWorkerPool,
+            Log log,
+            CairoEngine cairoEngine,
+            FunctionFactoryCache functionFactoryCache,
             Metrics metrics
     ) {
         return WorkerPoolAwareConfiguration.create(
@@ -117,7 +141,10 @@ public class PGWireServer implements Closeable {
                 sharedWorkerPool,
                 log,
                 cairoEngine,
-                (conf, engine, workerPool, local, functionFactoryCache1, metrics1) -> new PGWireServer(conf, cairoEngine, workerPool, local, functionFactoryCache1),
+                (conf, engine, workerPool, local, functionFactoryCache1, metrics1) -> {
+                    PGConnectionContextFactory contextFactory = new PGConnectionContextFactory(engine, conf, workerPool.getWorkerCount());
+                    return new PGWireServer(conf, engine, workerPool, local, functionFactoryCache1, contextFactory);
+                },
                 functionFactoryCache,
                 metrics
         );
@@ -133,13 +160,17 @@ public class PGWireServer implements Closeable {
         Misc.free(dispatcher);
     }
 
-    private static class PGConnectionContextFactory implements IOContextFactory<PGConnectionContext>, Closeable, EagerThreadSetup {
+    public static class PGConnectionContextFactory implements IOContextFactory<PGConnectionContext>, Closeable, EagerThreadSetup {
         private final ThreadLocal<WeakObjectPool<PGConnectionContext>> contextPool;
         private boolean closed = false;
 
         public PGConnectionContextFactory(CairoEngine engine, PGWireConfiguration configuration, int workerCount) {
             this.contextPool = new ThreadLocal<>(() -> new WeakObjectPool<>(() ->
-                    new PGConnectionContext(engine, configuration, workerCount), configuration.getConnectionPoolInitialCapacity()));
+                    new PGConnectionContext(engine, configuration, getSqlExecutionContext(engine, workerCount)), configuration.getConnectionPoolInitialCapacity()));
+        }
+
+        protected SqlExecutionContextImpl getSqlExecutionContext(CairoEngine engine, int workerCount) {
+            return new SqlExecutionContextImpl(engine, workerCount);
         }
 
         @Override

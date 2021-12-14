@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
@@ -31,12 +32,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.NetUtils;
-import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
@@ -3071,17 +3070,20 @@ nodejs code:
     @Test
     public void testRunAlterWhenTableLockedAndAlterTakesTooLong() throws Exception {
         assertMemoryLeak(() -> {
-            writerAsyncCommandBusyWaitTimeout = 1000_000;
+            writerAsyncCommandBusyWaitTimeout = 1_000_000;
+            writerAsyncCommandMaxTimeout = 30_000_000;
+            SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new FilesFacadeImpl() {
                 @Override
                 public long openRW(LPSZ name) {
                     if (Chars.endsWith(name, "_meta.swp")) {
-                        Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() / 1000 / 2 + 200);
+                        queryStartedCountDown.await();
+                        Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() / 1000);
                     }
                     return super.openRW(name);
                 }
             };
-            testAddColumnBusyWriter(true);
+            testAddColumnBusyWriter(true, new SOCountDownLatch());
         });
     }
 
@@ -3089,31 +3091,33 @@ nodejs code:
     public void testRunAlterWhenTableLockedAndAlterTakesTooLongFailsToWait() throws Exception {
         assertMemoryLeak(() -> {
             writerAsyncCommandMaxTimeout = configuration.getWriterAsyncCommandBusyWaitTimeout();
+            SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new FilesFacadeImpl() {
                 @Override
                 public long openRW(LPSZ name) {
                     if (Chars.endsWith(name, "_meta.swp")) {
-                        Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() / 1000 + 200);
+                        queryStartedCountDown.await();
+                        Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() / 1000);
                     }
                     return super.openRW(name);
                 }
             };
-            testAddColumnBusyWriter(false);
+            testAddColumnBusyWriter(false, queryStartedCountDown);
         });
     }
 
     @Test
     public void testRunAlterWhenTableLockedAndAlterTimeoutsToStart() throws Exception {
         assertMemoryLeak(() -> {
-            writerAsyncCommandBusyWaitTimeout = 0;
-            testAddColumnBusyWriter(false);
+            writerAsyncCommandBusyWaitTimeout = 10_000_000;
+            testAddColumnBusyWriter(false, new SOCountDownLatch());
         });
     }
 
     @Test
     public void testRunAlterWhenTableLockedWithInserts() throws Exception {
         writerAsyncCommandBusyWaitTimeout = 10_000_000;
-        assertMemoryLeak(() -> testAddColumnBusyWriter(true));
+        assertMemoryLeak(() -> testAddColumnBusyWriter(true, new SOCountDownLatch()));
     }
 
     @Test
@@ -4367,10 +4371,11 @@ nodejs code:
         }
     }
 
-    private void testAddColumnBusyWriter(boolean alterRequestReturnSuccess) throws SQLException, InterruptedException, BrokenBarrierException, SqlException {
+    private void testAddColumnBusyWriter(boolean alterRequestReturnSuccess, SOCountDownLatch queryStartedCountDownLatch) throws SQLException, InterruptedException, BrokenBarrierException, SqlException {
         AtomicLong errors = new AtomicLong();
         final int[] affinity = new int[2];
         Arrays.fill(affinity, -1);
+        int workerCount = 2;
 
         final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
             @Override
@@ -4385,7 +4390,7 @@ nodejs code:
 
             @Override
             public int getWorkerCount() {
-                return 2;
+                return workerCount;
             }
         };
 
@@ -4398,7 +4403,8 @@ nodejs code:
                         LOG,
                         engine,
                         compiler.getFunctionFactoryCache(),
-                        metrics
+                        metrics,
+                        createPGConnectionContextFactory(conf, workerCount, queryStartedCountDownLatch)
                 )
         ) {
             pool.start(LOG);
@@ -4464,6 +4470,31 @@ nodejs code:
                 // When alterRequestReturnSuccess if false and errors are 0, repeat
             } while (!alterRequestReturnSuccess && errors.get() == 0);
         }
+    }
+
+    private PGWireServer.PGConnectionContextFactory createPGConnectionContextFactory(PGWireConfiguration conf, int workerCount, SOCountDownLatch queryStartedCount) {
+        return new PGWireServer.PGConnectionContextFactory(engine,  conf, workerCount) {
+            @Override
+            protected SqlExecutionContextImpl getSqlExecutionContext(CairoEngine engine, int workerCount) {
+                return new SqlExecutionContextImpl(engine, workerCount) {
+                    @Override
+                    public QueryFutureUpdateListener getQueryFutureUpdateListener() {
+                        return new QueryFutureUpdateListener () {
+                            @Override
+                            public void reportProgress(long commandId, int status) {
+                                if (status == QueryFuture.QUERY_STARTED) {
+                                    queryStartedCount.countDown();
+                                }
+                            }
+
+                            @Override
+                            public void reportStart(CharSequence tableName, long commandId) {
+                            }
+                        };
+                    }
+                };
+            }
+        };
     }
 
     private void testAllTypesSelect(boolean simple) throws Exception {
