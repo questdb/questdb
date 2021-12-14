@@ -165,19 +165,7 @@ public class LogAlertSocketTest {
         TestUtils.assertMemoryLeak(() -> {
             final String host = "127.0.0.1";
             final int port = 1241;
-            final NetworkFacade nf = new NetworkFacadeImpl() {
-                int connectCount = 1;
-                @Override
-                public long connect(long fd, long sockaddr) {
-                    if (--connectCount == 0) {
-                        return super.connect(fd, sockaddr);
-                    } else {
-                        return -1;
-                    }
-                }
-            };
-
-            try (LogAlertSocket alertSkt = new LogAlertSocket(nf, host + ":" + port, LOG)) {
+            try (LogAlertSocket alertSkt = new LogAlertSocket(NetworkFacadeImpl.INSTANCE, host + ":" + port, LOG)) {
                 final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
                         .putHeader(host)
                         .setMark();
