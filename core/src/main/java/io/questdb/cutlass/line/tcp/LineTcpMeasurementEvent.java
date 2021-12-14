@@ -430,7 +430,7 @@ class LineTcpMeasurementEvent implements Closeable {
         final TableUpdateDetails.ThreadLocalDetails localDetails = tableUpdateDetails.getThreadLocalDetails(workerId);
         final BoolList processedCols = localDetails.getProcessedCols();
         final LowerCaseCharSequenceHashSet addedCols = localDetails.getAddedCols();
-        processedCols.setAll(tableUpdateDetails.getColumnCount(), false);
+        processedCols.setAll(localDetails.getColumnCount(), false);
         addedCols.clear();
         this.tableUpdateDetails = tableUpdateDetails;
         long timestamp = parser.getTimestamp();
@@ -472,7 +472,7 @@ class LineTcpMeasurementEvent implements Closeable {
                         timestamp = timestampAdapter.getMicros(entity.getLongValue());
                         continue;
                     }
-                    if (!processedCols.replace(colIndex, true)) {
+                    if (!processedCols.extendAndReplace(colIndex, true)) {
                         Unsafe.getUnsafe().putInt(bufPos, colIndex);
                         bufPos += Integer.BYTES;
                     } else {
