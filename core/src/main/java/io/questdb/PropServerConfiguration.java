@@ -642,7 +642,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
             this.sqlDistinctTimestampKeyCapacity = getInt(properties, env, "cairo.sql.distinct.timestamp.key.capacity", 512);
             this.sqlDistinctTimestampLoadFactor = getDouble(properties, env, "cairo.sql.distinct.timestamp.load.factor", 0.5);
-            this.sqlJitMode = getSqlJitMode(properties, env, "cairo.sql.jit.mode");
+            this.sqlJitMode = getSqlJitMode(properties, env);
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
                     new DateFormatFactory(),
@@ -896,11 +896,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         return CommitMode.NOSYNC;
     }
 
-    private int getSqlJitMode(Properties properties, @Nullable Map<String, String> env, String key) {
+    private int getSqlJitMode(Properties properties, @Nullable Map<String, String> env) {
+        final String key = "cairo.sql.jit.mode";
         final String jitMode = overrideWithEnv(properties, env, key);
 
         if (jitMode == null) {
-            return SqlJitMode.JIT_MODE_ENABLED;
+            return SqlJitMode.JIT_MODE_DISABLED;
         }
 
         if (Chars.equalsLowerCaseAscii(jitMode, "on")) {
@@ -915,7 +916,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             return SqlJitMode.JIT_MODE_FORCE_SCALAR;
         }
 
-        return SqlJitMode.JIT_MODE_ENABLED;
+        return SqlJitMode.JIT_MODE_DISABLED;
     }
 
     private double getDouble(Properties properties, @Nullable Map<String, String> env, String key, double defaultValue) throws ServerConfigurationException {

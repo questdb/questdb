@@ -131,16 +131,18 @@ public class ServerMain {
             final int jitMode = configuration.getCairoConfiguration().getSqlJitMode();
             switch (jitMode) {
                 case SqlJitMode.JIT_MODE_ENABLED:
-                    log.advisory().$("SQL JIT mode: on").$();
-                    break;
-                case SqlJitMode.JIT_MODE_DISABLED:
-                    log.advisory().$("SQL JIT mode: off").$();
+                    log.advisory().$("SQL JIT compiler mode: on").$();
+                    log.advisory().$("Note: JIT compiler mode is a beta feature.").$();
                     break;
                 case SqlJitMode.JIT_MODE_FORCE_SCALAR:
-                    log.advisory().$("SQL JIT mode: scalar").$();
+                    log.advisory().$("SQL JIT compiler mode: scalar").$();
+                    log.advisory().$("Note: JIT compiler mode is a beta feature.").$();
+                    break;
+                case SqlJitMode.JIT_MODE_DISABLED:
+                    log.advisory().$("SQL JIT compiler mode: off").$();
                     break;
                 default:
-                    log.error().$("Unknown SQL JIT mode: ").$(jitMode).$();
+                    log.error().$("Unknown SQL JIT compiler mode: ").$(jitMode).$();
                     break;
             }
         }

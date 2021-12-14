@@ -29,7 +29,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
-import io.questdb.mp.SCSequence;
 import io.questdb.std.*;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -46,7 +45,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     protected static SqlExecutionContext sqlExecutionContext;
     protected static SqlCompiler compiler;
     protected static Metrics metrics = Metrics.enabled();
-    private static final SCSequence tempSequence = new SCSequence();
 
     @BeforeClass
     public static void setUpStatic() {
@@ -60,6 +58,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                         null,
                         -1,
                         null);
+        // JIT compiler is a beta feature and thus is disabled by default,
+        // but we want to have it enabled in SQL tests.
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
         bindVariableService.clear();
     }
 
