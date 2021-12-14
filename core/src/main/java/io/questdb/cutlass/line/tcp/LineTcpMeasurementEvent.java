@@ -37,6 +37,8 @@ import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
+import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
+
 class LineTcpMeasurementEvent implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementEvent.class);
     private final MicrosecondClock clock;
@@ -397,7 +399,7 @@ class LineTcpMeasurementEvent implements Closeable {
                         break;
                     }
 
-                    case LineTcpParser.ENTITY_TYPE_NULL: {
+                    case ENTITY_TYPE_NULL: {
                         // ignored, default nulls is used
                         break;
                     }
@@ -603,7 +605,7 @@ class LineTcpMeasurementEvent implements Closeable {
                         bufPos += Byte.BYTES;
                         break;
                     }
-                    case LineTcpParser.ENTITY_TYPE_NULL: {
+                    case ENTITY_TYPE_NULL: {
                         Unsafe.getUnsafe().putByte(bufPos, entity.getType());
                         bufPos += Byte.BYTES;
                         break;
