@@ -416,7 +416,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     }
 
     private void assembleLine() {
-        int nEntities = lineTcpParser.getnEntities();
+        int nEntities = lineTcpParser.getEntityCount();
         Chars.utf8Decode(lineTcpParser.getMeasurementName().getLo(), lineTcpParser.getMeasurementName().getHi(), sink);
         int n = 0;
         boolean tagsComplete = false;
@@ -526,7 +526,6 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
                         onErrorLine = false;
                     }
                     startOfLineAddr = lineTcpParser.getBufferAddress() + 1;
-
                     lineTcpParser.startNextMeasurement();
                     break;
                 case BUFFER_UNDERFLOW:

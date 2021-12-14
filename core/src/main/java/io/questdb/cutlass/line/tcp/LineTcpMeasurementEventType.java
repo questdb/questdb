@@ -24,31 +24,13 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.std.str.AbstractCharSink;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.StringSink;
+class LineTcpMeasurementEventType {
+    // A reshuffle event is used to redistribute load across threads
+    static final int ALL_WRITERS_RESHUFFLE = -1;
 
-class MangledUtf8Sink extends AbstractCharSink {
-    private final StringSink tempSink;
+    // An incomplete event is used when the queue producer has grabbed an event but is not able
+    // to populate it for some reason, the event needs to be committed to the queue incomplete
+    static final int ALL_WRITERS_INCOMPLETE_EVENT = -2;
 
-    public MangledUtf8Sink(StringSink tempSink) {
-        this.tempSink = tempSink;
-    }
-
-    public CharSequence encodeMangledUtf8(CharSequence value) {
-        tempSink.clear();
-        encodeUtf8(value);
-        return tempSink;
-    }
-
-    @Override
-    public CharSink put(char c) {
-        tempSink.put((char)((byte)c));
-        return this;
-    }
-
-    @Override
-    public CharSink put(char[] chars, int start, int len) {
-        throw new UnsupportedOperationException();
-    }
+    static final int ALL_WRITERS_RELEASE_WRITER = -3;
 }

@@ -121,7 +121,8 @@ public class AlterStatement implements Mutable {
                     .$("' could not be altered [")
                     .$(e2.getErrno())
                     .$("] ")
-                    .$(e2.getFlyweightMessage());
+                    .$(e2.getFlyweightMessage())
+                    .$();
 
             throw SqlException.$(tableNamePosition, "table '")
                     .put(tableName)

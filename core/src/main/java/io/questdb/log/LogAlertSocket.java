@@ -363,7 +363,7 @@ public class LogAlertSocket implements Closeable {
     private void setHostPort(int hostIdx, int portLimit, int hostLimit) {
         // host0:port0, host1 : port1 , ..., host9:port9
         //              ^     ^       ^
-        //              |     |       hostLimit
+        //              |     |       hostEnd
         //              |     portLimit
         //              hostIdx
 
