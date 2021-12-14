@@ -42,7 +42,6 @@ public class TableUpdateDetails implements Closeable {
     private final String tableNameUtf16;
     private final ThreadLocalDetails[] localDetailsArray;
     private final int timestampIndex;
-    private final int columnCount;
     private final CairoEngine engine;
     private final MillisecondClock millisecondClock;
     private final long writerTickRowsCountMod;
@@ -68,7 +67,8 @@ public class TableUpdateDetails implements Closeable {
         final int n = netIoJobs.length;
         this.localDetailsArray = new ThreadLocalDetails[n];
         for (int i = 0; i < n; i++) {
-            this.localDetailsArray[i] = new ThreadLocalDetails(configuration, netIoJobs[i].getUnusedSymbolCaches());
+            this.localDetailsArray[i] = new ThreadLocalDetails(
+                    configuration, netIoJobs[i].getUnusedSymbolCaches(), writer.getMetadata().getColumnCount());
         }
         CairoConfiguration cairoConfiguration = engine.getConfiguration();
         this.millisecondClock = cairoConfiguration.getMillisecondClock();
@@ -76,7 +76,6 @@ public class TableUpdateDetails implements Closeable {
         this.lastCommitMillis = millisecondClock.getTicks();
         this.writer = writer;
         this.timestampIndex = writer.getMetadata().getTimestampIndex();
-        this.columnCount = writer.getMetadata().getColumnCount();
         this.tableNameUtf16 = writer.getTableName();
     }
 
@@ -126,10 +125,6 @@ public class TableUpdateDetails implements Closeable {
             }
             writerThreadId = Integer.MIN_VALUE;
         }
-    }
-
-    public int getColumnCount() {
-        return columnCount;
     }
 
     public int getEventsProcessedSinceReshuffle() {
@@ -267,13 +262,15 @@ public class TableUpdateDetails implements Closeable {
         private final BoolList processedCols = new BoolList();
         private final LowerCaseCharSequenceHashSet addedCols = new LowerCaseCharSequenceHashSet();
         private final LineTcpReceiverConfiguration configuration;
+        private int columnCount;
 
-        ThreadLocalDetails(LineTcpReceiverConfiguration configuration, ObjList<SymbolCache> unusedSymbolCaches) {
+        ThreadLocalDetails(LineTcpReceiverConfiguration configuration, ObjList<SymbolCache> unusedSymbolCaches, int columnCount) {
             this.configuration = configuration;
             // symbol caches are passed from the outside
             // to provide global lifecycle management for when ThreadLocalDetails cease to exist
             // the cache continue to live
             this.unusedSymbolCaches = unusedSymbolCaches;
+            this.columnCount = columnCount;
         }
 
         @Override
@@ -315,6 +312,10 @@ public class TableUpdateDetails implements Closeable {
 
         LowerCaseCharSequenceHashSet getAddedCols() {
             return addedCols;
+        }
+
+        int getColumnCount() {
+            return columnCount;
         }
 
         int getColumnIndex(DirectByteCharSequence colName) {
@@ -359,7 +360,8 @@ public class TableUpdateDetails implements Closeable {
                 columnIndexByNameUtf8.clear();
                 geoHashBitsSizeByColIdx.clear();
                 geoHashBitsSizeByColIdx.add(0); // first value is for cols indexed with -1
-                for (int n = 0, sz = metadata.getColumnCount(); n < sz; n++) {
+                columnCount = metadata.getColumnCount();
+                for (int n = 0, sz = columnCount; n < sz; n++) {
                     String columnName = metadata.getColumnName(n);
 
                     // We cannot cache on real column name values if chars are not ASCII
