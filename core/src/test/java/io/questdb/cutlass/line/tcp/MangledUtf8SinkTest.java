@@ -33,12 +33,10 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.nio.charset.StandardCharsets;
-
 public class MangledUtf8SinkTest {
     // Reuse member vars to test there are no side effects from test to test
-    private StringSink tempSink = new StringSink();
-    private MangledUtf8Sink testSink = new MangledUtf8Sink(tempSink);
+    private final StringSink tempSink = new StringSink();
+    private final MangledUtf8Sink testSink = new MangledUtf8Sink(tempSink);
 
     @Test
     public void testMangledStringEqualsToDirectCharSequenceAscii() {
@@ -82,5 +80,4 @@ public class MangledUtf8SinkTest {
         Assert.assertEquals(directByteCharSequence, result);
         Assert.assertEquals(directByteCharSequence.hashCode(), stringResult.hashCode());
     }
-
 }
