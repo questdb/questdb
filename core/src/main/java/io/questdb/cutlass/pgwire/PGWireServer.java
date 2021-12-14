@@ -38,7 +38,6 @@ import io.questdb.network.*;
 import io.questdb.std.Misc;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.WeakObjectPool;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
