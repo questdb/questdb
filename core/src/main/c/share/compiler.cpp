@@ -1203,8 +1203,8 @@ struct JitCompiler {
 
         uint32_t type_size = (options >> 1) & 3; // 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B
         uint32_t exec_hint = (options >> 3) & 3; // 0 - scalar, 1 - single size type, 2 - mixed size types, ...
+        bool null_check    = (options >> 5) & 1; // 1 - with null check
 
-        bool null_check = true;
         if (exec_hint == single_size && features.hasAVX2()) {
             auto step = 256 / ((1 << type_size) * 8);
             c.func()->frame().setAvxEnabled();

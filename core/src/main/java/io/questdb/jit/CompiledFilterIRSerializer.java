@@ -133,6 +133,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      *     <li>1 LSB - debug flag.</li>
      *     <li>2-3 LSBs - filter's arithmetic type size (widest type size): 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B.</li>
      *     <li>4-5 LSBs - filter's execution hint: 0 - scalar, 1 - single size (SIMD-friendly), 2 - mixed sizes</li>
+     *     <li>6 LSB - null check flag</li>
      * </ul>
      * <br/>
      * Examples:
@@ -142,7 +143,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * </ul>
      * @throws SqlException thrown when IR serialization failed.
      */
-    public int serialize(ExpressionNode node, boolean scalar, boolean debug) throws SqlException {
+    public int serialize(ExpressionNode node, boolean scalar, boolean debug, boolean null_check_flag) throws SqlException {
         traverseAlgo.traverse(node, this);
         memory.putByte(RET);
 
@@ -158,6 +159,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             int executionHint = typesObserver.hasMixedSizes() ? 2 : 1;
             options = options | (executionHint << 3);
         }
+
+        options = options | ( (null_check_flag ? 1 : 0) << 5);
+
         return options;
     }
 
