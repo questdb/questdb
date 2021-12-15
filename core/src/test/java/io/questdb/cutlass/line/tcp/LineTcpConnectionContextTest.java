@@ -870,6 +870,44 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
+    public void testDuplicateFieldWhenTableExistsAlreadyNonASCIIFirstRow() throws Exception {
+        String table = "dupField";
+        runInContext(() -> {
+            try (
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                compiler.compile(
+                        "create table " + table + " (terület SYMBOL, hőmérséklet DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);",
+                        sqlExecutionContext);
+            } catch (SqlException ex) {
+                throw new RuntimeException(ex);
+            }
+            recvBuffer =
+                    table + ",terület=us-midwest hőmérséklet=82,ветер=2.5,ВЕтеР=2.4 1465839830100400200\n" +
+                            table + ",terület=us-midwest hőmérséklet=83,ветер=3.0 1465839830100500200\n" +
+                            table + ",terület=us-eastcoast hőmérséklet=81,HŐMÉRSÉKLET=23,ветер=2.0 1465839830101400200\n" +
+                            table + ",terület=us-midwest ветер=2.1,hőmérséklet=85 1465839830102300200\n" +
+                            table + ",terület=us-eastcoast hőmérséklet=89 1465839830102400200\n" +
+                            table + ",terület=us-eastcoast hőmérséklet=80 1465839830102400200\n" +
+                            table + ",terület=us-westcost hőmérséklet=82,ветер=2.2 1465839830102500200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            closeContext();
+            String expected = "terület\thőmérséklet\ttimestamp\tветер\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t2.5\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\t3.0\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\t2.0\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\t2.1\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\tNaN\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\tNaN\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\t2.2\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Test
     public void testDuplicateFieldWhenTableExistsAlready() throws Exception {
         String table = "tableExistAlready";
         runInContext(() -> {

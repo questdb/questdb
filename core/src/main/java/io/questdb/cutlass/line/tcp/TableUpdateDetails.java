@@ -257,7 +257,7 @@ public class TableUpdateDetails implements Closeable {
         private final ObjList<SymbolCache> unusedSymbolCaches;
         // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)
         private final IntList geoHashBitsSizeByColIdx = new IntList();
-        private final StringSink tempSink = new StringSink();
+        final StringSink tempSink = new StringSink();
         private final MangledUtf8Sink mangledUtf8Sink = new MangledUtf8Sink(tempSink);
         private final BoolList processedCols = new BoolList();
         private final LowerCaseCharSequenceHashSet addedCols = new LowerCaseCharSequenceHashSet();
