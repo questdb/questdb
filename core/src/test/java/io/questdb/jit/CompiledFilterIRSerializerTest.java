@@ -36,10 +36,8 @@ import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
 import org.junit.*;
 
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -309,24 +307,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     public void testNegatedExpression() throws Exception {
         serialize("-(anint + 42) = -10");
         assertIR("(i32 -10L)(i32 42L)(i32 anint)(+)(neg)(=)(ret)");
-    }
-
-    @Test
-    public void testNotNullColumns() throws Exception {
-        RecordMetadata originalMetadata = metadata;
-        TestRecordMetadata metadataWrapper = new TestRecordMetadata(metadata);
-        metadataWrapper.setNotNullColumn("afloat");
-        metadataWrapper.setNotNullColumn("along");
-        metadata = metadataWrapper;
-
-        try {
-            serialize("abyte + afloat = -1 or along - anint  = 1");
-            assertIR("(i32 1L)(i32 anint)(i64 not_null along)(-)(=)" +
-                    "(i32 -1L)(f32 not_null afloat)(i8 abyte)(+)(=)" +
-                    "(||)(ret)");
-        } finally {
-            metadata = originalMetadata;
-        }
     }
 
     @Test
@@ -712,11 +692,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             offset += Long.BYTES;
             sb.append(typeName(type));
             sb.append(" ");
-            if ((NOT_NULL_COLUMN_MASK & index) != 0) {
-                sb.append("not_null");
-                sb.append(" ");
-                index &= ~NOT_NULL_COLUMN_MASK;
-            }
             sb.append(metadata.getColumnName((int) index));
             sb.append(")");
         }
@@ -825,106 +800,4 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             }
         }
     }
-
-    private static class TestRecordMetadata implements RecordMetadata {
-
-        private final RecordMetadata delegate;
-        private final boolean[] nullableColumns;
-
-        public TestRecordMetadata(RecordMetadata delegate) {
-            this.delegate = delegate;
-            nullableColumns = new boolean[delegate.getColumnCount()];
-            Arrays.fill(nullableColumns, true);
-        }
-
-        public void setNotNullColumn(CharSequence columnName) {
-            nullableColumns[delegate.getColumnIndex(columnName)] = false;
-        }
-
-        @Override
-        public boolean isColumnNullable(int columnIndex) {
-            return nullableColumns[columnIndex];
-        }
-
-        @Override
-        public int getColumnCount() {
-            return delegate.getColumnCount();
-        }
-
-        @Override
-        public int getColumnType(int columnIndex) {
-            return delegate.getColumnType(columnIndex);
-        }
-
-        @Override
-        public int getColumnIndex(CharSequence columnName) {
-            return delegate.getColumnIndex(columnName);
-        }
-
-        @Override
-        public int getColumnIndexQuiet(CharSequence columnName) {
-            return delegate.getColumnIndexQuiet(columnName);
-        }
-
-        @Override
-        public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
-            return delegate.getColumnIndexQuiet(columnName, lo, hi);
-        }
-
-        @Override
-        public String getColumnName(int columnIndex) {
-            return delegate.getColumnName(columnIndex);
-        }
-
-        @Override
-        public long getColumnHash(int columnIndex) {
-            return delegate.getColumnHash(columnIndex);
-        }
-
-        @Override
-        public int getColumnType(CharSequence columnName) {
-            return delegate.getColumnType(columnName);
-        }
-
-        @Override
-        public int getIndexValueBlockCapacity(int columnIndex) {
-            return delegate.getIndexValueBlockCapacity(columnIndex);
-        }
-
-        @Override
-        public int getIndexValueBlockCapacity(CharSequence columnName) {
-            return delegate.getIndexValueBlockCapacity(columnName);
-        }
-
-        @Override
-        public int getTimestampIndex() {
-            return delegate.getTimestampIndex();
-        }
-
-        @Override
-        public boolean isSymbolTableStatic(CharSequence columnName) {
-            return delegate.isSymbolTableStatic(columnName);
-        }
-
-        @Override
-        public RecordMetadata getMetadata(int columnIndex) {
-            return delegate.getMetadata(columnIndex);
-        }
-
-        @Override
-        public boolean isColumnIndexed(int columnIndex) {
-            return delegate.isColumnIndexed(columnIndex);
-        }
-
-        @Override
-        public boolean isSymbolTableStatic(int columnIndex) {
-            return delegate.isSymbolTableStatic(columnIndex);
-        }
-
-        @Override
-        public void toJson(CharSink sink) {
-            delegate.toJson(sink);
-        }
-    }
-
 }

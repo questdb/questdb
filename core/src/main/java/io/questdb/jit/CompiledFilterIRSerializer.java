@@ -91,8 +91,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // Temp code stub
     static final byte UNDEFINED_CODE = -1;
 
-    static final int NOT_NULL_COLUMN_MASK = 1 << 31;
-
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final ArithmeticExpressionContext arithmeticContext = new ArithmeticExpressionContext();
     // contains <memory_offset, constant_node> pairs for backfilling purposes
@@ -261,7 +259,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     .put(token);
         }
 
-        int index = metadata.getColumnIndexQuiet(token);
+        final int index = metadata.getColumnIndexQuiet(token);
         if (index == -1) {
             throw SqlException.invalidColumn(position, token);
         }
@@ -274,8 +272,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     .put("unsupported column type: ")
                     .put(ColumnType.nameOf(columnTypeTag));
         }
-
-        index = metadata.isColumnNullable(index) ? index : index | NOT_NULL_COLUMN_MASK;
 
         // In case of a top level boolean column, expand it to "boolean_column = true" expression.
         if (arithmeticContext.singleBooleanColumn && columnTypeTag == ColumnType.BOOLEAN) {

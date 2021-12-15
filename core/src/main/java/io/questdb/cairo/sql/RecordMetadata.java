@@ -166,14 +166,6 @@ public interface RecordMetadata extends ColumnTypes {
 
     /**
      * @param columnIndex numeric index of the column
-     * @return true if the column may contain null values, otherwise false
-     */
-    default boolean isColumnNullable(int columnIndex) {
-        return true;
-    }
-
-    /**
-     * @param columnIndex numeric index of the column
      * @return true if symbol table is static, otherwise false.
      */
     boolean isSymbolTableStatic(int columnIndex);
