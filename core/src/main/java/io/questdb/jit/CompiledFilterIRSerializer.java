@@ -130,20 +130,20 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * @param debug  set enable debug flag in the returned options.
      * @return JIT compiler options stored in a single int in the following way:
      * <ul>
-     *     <li>1 LSB - debug flag.</li>
-     *     <li>2-3 LSBs - filter's arithmetic type size (widest type size): 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B.</li>
+     *     <li>1 LSB - debug flag</li>
+     *     <li>2-3 LSBs - filter's arithmetic type size (widest type size): 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B</li>
      *     <li>4-5 LSBs - filter's execution hint: 0 - scalar, 1 - single size (SIMD-friendly), 2 - mixed sizes</li>
-     *     <li>6 LSB - null check flag</li>
+     *     <li>6 LSB - flag to include null checks for column values into compiled filter</li>
      * </ul>
      * <br/>
      * Examples:
      * <ul>
-     *     <li>00000000 00000000 00000000 00010100 - 4B, mixed types, debug off</li>
-     *     <li>00000000 00000000 00000000 00000111 - 8B, scalar, debug on</li>
+     *     <li>00000000 00000000 00000000 00010100 - 4B, mixed types, debug off, null checks disabled</li>
+     *     <li>00000000 00000000 00000000 00100111 - 8B, scalar, debug on, null checks enabled</li>
      * </ul>
      * @throws SqlException thrown when IR serialization failed.
      */
-    public int serialize(ExpressionNode node, boolean scalar, boolean debug, boolean null_check_flag) throws SqlException {
+    public int serialize(ExpressionNode node, boolean scalar, boolean debug, boolean nullChecks) throws SqlException {
         traverseAlgo.traverse(node, this);
         memory.putByte(RET);
 
@@ -160,7 +160,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             options = options | (executionHint << 3);
         }
 
-        options = options | ( (null_check_flag ? 1 : 0) << 5);
+        options = options | ( (nullChecks ? 1 : 0) << 5);
 
         return options;
     }

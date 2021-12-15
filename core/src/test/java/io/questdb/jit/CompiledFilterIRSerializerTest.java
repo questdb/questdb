@@ -349,13 +349,19 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testOptionsDebugFlag() throws Exception {
-        int options = serialize("abyte = 0", false, true, true);
+        int options = serialize("abyte = 0", false, true, false);
         Assert.assertEquals(0b00001001, options);
     }
 
     @Test
+    public void testOptionsNullChecksFlag() throws Exception {
+        int options = serialize("abyte = 0", false, true, true);
+        Assert.assertEquals(0b00101001, options);
+    }
+
+    @Test
     public void testOptionsScalarFlag() throws Exception {
-        int options = serialize("abyte = 0", true, false, true);
+        int options = serialize("abyte = 0", true, false, false);
         Assert.assertEquals(0b00000000, options);
     }
 
@@ -389,7 +395,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
         for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
             setUp1();
-            int options = serialize(entry.getKey(), false, false, true);
+            int options = serialize(entry.getKey(), false, false, false);
             Assert.assertEquals("options mismatch for filter: " + entry.getKey(), (int) entry.getValue(), options);
         }
     }
@@ -413,7 +419,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
         for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
             setUp1();
-            int options = serialize(entry.getKey(), false, false, true);
+            int options = serialize(entry.getKey(), false, false, false);
             Assert.assertEquals("options mismatch for filter: " + entry.getKey(), (int) entry.getValue(), options);
         }
     }
@@ -621,10 +627,10 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         serialize(seq, false, false, true);
     }
 
-    private int serialize(CharSequence seq, boolean scalar, boolean debug, boolean null_check_flag) throws SqlException {
+    private int serialize(CharSequence seq, boolean scalar, boolean debug, boolean nullChecks) throws SqlException {
         ExpressionNode node = expr(seq);
         return serializer.of(irMemory, sqlExecutionContext, metadata, reader, columnIndexes, bindVarFunctions)
-                .serialize(node, scalar, debug, null_check_flag);
+                .serialize(node, scalar, debug, nullChecks);
     }
 
     private void assertIR(String message, String expectedIR) {
