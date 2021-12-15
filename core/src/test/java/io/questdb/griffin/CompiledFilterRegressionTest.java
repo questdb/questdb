@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.jit.JitUtil;
