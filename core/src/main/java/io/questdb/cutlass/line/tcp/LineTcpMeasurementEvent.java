@@ -430,6 +430,7 @@ class LineTcpMeasurementEvent implements Closeable {
     ) {
         writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_INCOMPLETE_EVENT;
         final TableUpdateDetails.ThreadLocalDetails localDetails = tableUpdateDetails.getThreadLocalDetails(workerId);
+        final StringSink tempSink = localDetails.getTempSink();
         final BoolList processedCols = localDetails.getProcessedCols();
         final LowerCaseCharSequenceHashSet addedCols = localDetails.getAddedCols();
         processedCols.setAll(localDetails.getColumnCount(), false);
@@ -453,15 +454,15 @@ class LineTcpMeasurementEvent implements Closeable {
                 int colIndex = localDetails.getColumnIndex(entity.getName());
                 if (colIndex < 0) {
                     final DirectByteCharSequence colName = entity.getName();
-                    localDetails.tempSink.clear();
-                    if (!Chars.utf8Decode(colName.getLo(), colName.getHi(), localDetails.tempSink)) {
+                    tempSink.clear();
+                    if (!Chars.utf8Decode(colName.getLo(), colName.getHi(), tempSink)) {
                         throw CairoException.instance(0).put("invalid UTF8 in value for ").put(colName);
                     }
-                    int index = addedCols.keyIndex(localDetails.tempSink);
+                    int index = addedCols.keyIndex(tempSink);
                     if (index < 0) {
                         continue;
                     } else {
-                        addedCols.addAt(index, localDetails.tempSink);
+                        addedCols.addAt(index, tempSink);
                     }
                     int colNameLen = colName.length();
                     Unsafe.getUnsafe().putInt(bufPos, -1 * colNameLen);
