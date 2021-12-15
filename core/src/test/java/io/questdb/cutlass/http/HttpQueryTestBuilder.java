@@ -163,7 +163,6 @@ public class HttpQueryTestBuilder {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                workerPool.getWorkerCount(),
                                 new SqlCompiler(engine, null),
                                 Metrics.enabled(),
                                 sqlExecutionContext

@@ -52,7 +52,7 @@ public class CompiledQueryImpl implements CompiledQuery {
     private TextLoader textLoader;
     private AlterStatement alterStatement;
     private short type;
-    private SqlExecutionContext defaultSqlExecutionContext;
+    private SqlExecutionContext sqlExecutionContext;
 
     public CompiledQueryImpl(CairoEngine engine) {
         this.engine = engine;
@@ -93,7 +93,7 @@ public class CompiledQueryImpl implements CompiledQuery {
         if (type == ALTER) {
             try (
                     TableWriter writer = engine.getWriter(
-                            defaultSqlExecutionContext.getCairoSecurityContext(),
+                            sqlExecutionContext.getCairoSecurityContext(),
                             alterStatement.getTableName(),
                             "Alter table execute"
                     )
@@ -104,7 +104,7 @@ public class CompiledQueryImpl implements CompiledQuery {
                 if (eventSubSeq == null) {
                     throw busyException;
                 }
-                alterFuture.of(defaultSqlExecutionContext, eventSubSeq);
+                alterFuture.of(sqlExecutionContext, eventSubSeq);
                 return alterFuture;
             } catch (TableStructureChangesException e) {
                 assert false : "This must never happen when parameter acceptChange=true";
@@ -128,13 +128,13 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
-    public CompiledQueryImpl withDefaultContext(SqlExecutionContext executionContext) {
-        defaultSqlExecutionContext = executionContext;
+    public CompiledQueryImpl withContext(SqlExecutionContext executionContext) {
+        sqlExecutionContext = executionContext;
         return this;
     }
 
     private void executeInsert() throws SqlException {
-        try (InsertMethod insertMethod = insertStatement.createMethod(defaultSqlExecutionContext)) {
+        try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
             insertMethod.execute();
             insertMethod.commit();
         }

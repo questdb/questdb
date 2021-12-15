@@ -80,13 +80,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             @Nullable FunctionFactoryCache functionFactoryCache,
             Metrics metrics
     ) {
-        this(configuration, engine, workerCount, new SqlCompiler(engine, functionFactoryCache), metrics, new SqlExecutionContextImpl(engine, workerCount));
+        this(configuration, engine, new SqlCompiler(engine, functionFactoryCache), metrics, new SqlExecutionContextImpl(engine, workerCount));
     }
 
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
-            int workerCount,
             SqlCompiler sqlCompiler,
             Metrics metrics,
             SqlExecutionContextImpl sqlExecutionContext

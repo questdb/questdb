@@ -58,7 +58,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             QueryFuture cf = null;
             try {
                 try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
-                    CompiledQueryImpl cc = new CompiledQueryImpl(engine).withDefaultContext(sqlExecutionContext);
+                    CompiledQueryImpl cc = new CompiledQueryImpl(engine).withContext(sqlExecutionContext);
                     AlterStatement creepyAlterStatement = new AlterStatement();
                     creepyAlterStatement.of((short) 1000, "product", writer.getMetadata().getId(), 1000);
                     cc.ofAlter(creepyAlterStatement);
@@ -285,7 +285,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     }
                 };
                 creepyAlter.of(command, tableName, tableId, 100);
-                CompiledQueryImpl cc = new CompiledQueryImpl(engine).withDefaultContext(sqlExecutionContext);
+                CompiledQueryImpl cc = new CompiledQueryImpl(engine).withContext(sqlExecutionContext);
                 cc.ofAlter(creepyAlter);
                 cf = cc.execute(commandReplySequence);
             } // Unblock table
@@ -342,7 +342,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     AlterStatementBuilder creepyAlter = new AlterStatementBuilder();
                     creepyAlter.ofDropColumn(1, "product", writer.getMetadata().getId());
                     creepyAlter.ofDropColumn("timestamp");
-                    CompiledQueryImpl cc = new CompiledQueryImpl(engine).withDefaultContext(sqlExecutionContext);
+                    CompiledQueryImpl cc = new CompiledQueryImpl(engine).withContext(sqlExecutionContext);
                     cc.ofAlter(creepyAlter.build());
                     cf = cc.execute(commandReplySequence);
                 }
@@ -451,7 +451,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
                 AlterStatementBuilder creepyAlter = new AlterStatementBuilder();
                 creepyAlter.ofDropPartition(0, "product", writer.getMetadata().getId()).ofPartition(0);
-                CompiledQueryImpl cc = new CompiledQueryImpl(engine).withDefaultContext(sqlExecutionContext);
+                CompiledQueryImpl cc = new CompiledQueryImpl(engine).withContext(sqlExecutionContext);
                 cc.ofAlter(creepyAlter.build());
                 try (QueryFuture cf = cc.execute(commandReplySequence)) {
                     drainEngineCmdQueue(engine);
@@ -478,7 +478,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 AlterStatementBuilder creepyAlter = new AlterStatementBuilder();
                 creepyAlter.ofDropColumn(1, "product", writer.getMetadata().getId());
                 creepyAlter.ofDropColumn("timestamp").ofDropColumn("timestamp");
-                CompiledQueryImpl cc = new CompiledQueryImpl(engine).withDefaultContext(sqlExecutionContext);
+                CompiledQueryImpl cc = new CompiledQueryImpl(engine).withContext(sqlExecutionContext);
                 cc.ofAlter(creepyAlter.build());
 
                 try (QueryFuture commandFuture = cc.execute(commandReplySequence)) {
