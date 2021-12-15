@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.union;
 
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.std.Misc;
 
 class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
