@@ -26,10 +26,12 @@ package io.questdb.log;
 
 import io.questdb.BuildInformation;
 import io.questdb.BuildInformationHolder;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
+import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
@@ -43,6 +45,10 @@ import java.util.function.Consumer;
 
 public class LogAlertSocketWriterTest {
     private static final FilesFacade ff = FilesFacadeImpl.INSTANCE;
+
+    static {
+        DateLocaleFactory.load();
+    }
 
     private Rnd rand;
     private StringSink sink;
@@ -64,14 +70,12 @@ public class LogAlertSocketWriterTest {
                     try {
                         // create mock alert target servers
                         // Vlad: we are wasting time here not connecting anywhere
-/*
                         final SOCountDownLatch haltLatch = new SOCountDownLatch(2);
                         final MockAlertTarget[] alertsTarget = new MockAlertTarget[2];
                         alertsTarget[0] = new MockAlertTarget(1234, haltLatch::countDown);
                         alertsTarget[1] = new MockAlertTarget(1242, haltLatch::countDown);
                         alertsTarget[0].start();
                         alertsTarget[1].start();
-*/
 
                         writer.setAlertTargets("localhost:1234,localhost:1242");
                         writer.bindProperties(LogFactory.INSTANCE);
@@ -151,11 +155,9 @@ public class LogAlertSocketWriterTest {
                                 writer.getAlertSink()
                         );
 
-/*
                         haltLatch.await();
                         Assert.assertFalse(alertsTarget[0].isRunning());
                         Assert.assertFalse(alertsTarget[1].isRunning());
-*/
                     } finally {
                         Unsafe.free(logRecordBuffPtr, logRecordBuffSize, MemoryTag.NATIVE_DEFAULT);
                     }
@@ -171,12 +173,10 @@ public class LogAlertSocketWriterTest {
                     final int logRecordBuffSize = 1024; // plenty, to allow for encoding/escaping
                     final long logRecordBuffPtr = Unsafe.malloc(logRecordBuffSize, MemoryTag.NATIVE_DEFAULT);
                     try {
-/*
                         // create mock alert target server
                         final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
                         final MockAlertTarget alertTarget = new MockAlertTarget(1234, haltLatch::countDown);
                         alertTarget.start();
-*/
                         writer.setLocation("/alert-manager-tpt-international.json");
                         writer.setAlertTargets("localhost:1234");
                         writer.setReconnectDelay("100");
@@ -219,10 +219,8 @@ public class LogAlertSocketWriterTest {
                                 writer.getAlertSink()
                         );
 
-/*
                         Assert.assertTrue(haltLatch.await(10_000_000_000L));
                         Assert.assertFalse(alertTarget.isRunning());
-*/
                     } finally {
                         Unsafe.free(logRecordBuffPtr, logRecordBuffSize, MemoryTag.NATIVE_DEFAULT);
                     }
@@ -522,19 +520,27 @@ public class LogAlertSocketWriterTest {
     }
 
     private static void withLogAlertSocketWriter(Consumer<LogAlertSocketWriter> consumer) throws Exception {
-        withLogAlertSocketWriter(MicrosecondClockImpl.INSTANCE, consumer);
-    }
-
-    private static void withLogAlertSocketWriter(
-            MicrosecondClock clock,
-            Consumer<LogAlertSocketWriter> consumer
-    ) throws Exception {
         final NetworkFacade nf = new NetworkFacadeImpl() {
             @Override
             public long connect(long fd, long sockaddr) {
                 return -1;
             }
         };
+        withLogAlertSocketWriter(MicrosecondClockImpl.INSTANCE, consumer, nf);
+    }
+
+    private static void withLogAlertSocketWriter(
+            MicrosecondClock clock,
+            Consumer<LogAlertSocketWriter> consumer
+    ) throws Exception {
+        withLogAlertSocketWriter(clock, consumer, NetworkFacadeImpl.INSTANCE);
+    }
+
+    private static void withLogAlertSocketWriter(
+            MicrosecondClock clock,
+            Consumer<LogAlertSocketWriter> consumer,
+            NetworkFacade nf
+    ) throws Exception {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log-silent.conf");
         TestUtils.assertMemoryLeak(() -> {
             try (LogAlertSocketWriter writer = new LogAlertSocketWriter(
