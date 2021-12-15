@@ -48,6 +48,8 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
+import static io.questdb.test.tools.TestUtils.drainEngineCmdQueue;
+
 public class DispatcherWriterQueueTest {
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
@@ -384,6 +386,7 @@ public class DispatcherWriterQueueTest {
                     alterVerifyAction.run(writer, rdr);
                 }
             } finally {
+                drainEngineCmdQueue(engine);
                 if (writer != null) {
                     writer.close();
                 }

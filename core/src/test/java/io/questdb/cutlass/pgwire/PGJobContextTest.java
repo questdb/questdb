@@ -77,6 +77,7 @@ import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
 import static io.questdb.std.Numbers.hexDigits;
+import static io.questdb.test.tools.TestUtils.drainEngineCmdQueue;
 import static org.junit.Assert.*;
 
 @SuppressWarnings("SqlNoDataSourceInspection")
@@ -3109,7 +3110,16 @@ nodejs code:
     @Test
     public void testRunAlterWhenTableLockedAndAlterTimeoutsToStart() throws Exception {
         assertMemoryLeak(() -> {
-            writerAsyncCommandBusyWaitTimeout = 10_000_000;
+            writerAsyncCommandBusyWaitTimeout = 1;
+            ff = new FilesFacadeImpl() {
+                @Override
+                public long openRW(LPSZ name) {
+                    if (Chars.endsWith(name, "_meta.swp")) {
+                        Os.sleep(50);
+                    }
+                    return super.openRW(name);
+                }
+            };
             testAddColumnBusyWriter(false, new SOCountDownLatch());
         });
     }
@@ -4464,6 +4474,7 @@ nodejs code:
                     }
                 } finally {
                     pool.halt();
+                    drainEngineCmdQueue(engine);
                     engine.releaseAllWriters();
                 }
                 // Failure may not happen if we're lucky, even when they are expected

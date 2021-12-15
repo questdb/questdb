@@ -43,6 +43,7 @@ import org.junit.Test;
 import static io.questdb.griffin.AlterStatement.ADD_COLUMN;
 import static io.questdb.griffin.QueryFuture.QUERY_COMPLETE;
 import static io.questdb.griffin.QueryFuture.QUERY_NO_RESPONSE;
+import static io.questdb.test.tools.TestUtils.drainEngineCmdQueue;
 
 public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
 
@@ -108,7 +109,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 // Re-execute last query
                 try (QueryFuture qf = cc.execute(tempSequence)) {
                     qf.await(0);
-                    engine.tick();
+                    drainEngineCmdQueue(engine);
                     writer.tick();
 
                     try {
@@ -134,7 +135,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 for (int i = 0; i < engineCmdQueue; i++) {
                     CompiledQuery cc = compiler.compile("ALTER TABLE product add column column" + i + " int", sqlExecutionContext);
                     executeNoWait(tempSequence, cc);
-                    engine.tick();
+                    drainEngineCmdQueue(engine);
                 }
 
                 try {
@@ -176,7 +177,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             try (TableWriter ignored = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
                 CompiledQuery cc = compiler.compile("ALTER TABLE product drop column to_remove", sqlExecutionContext);
                 cf = cc.execute(commandReplySequence);
-                engine.tick();
+                drainEngineCmdQueue(engine);
             } // Unblock table
 
             try {
@@ -218,9 +219,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 cf.await();
                 Assert.fail();
             } catch (SqlException ex) {
-                if (cf != null) {
-                    cf.close();
-                }
+                cf.close();
                 TestUtils.assertContains(ex.getFlyweightMessage(), "could not remove partition '2020-01-01'");
             }
         });
@@ -246,7 +245,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
                 CompiledQuery cc = compiler.compile("ALTER TABLE product drop column to_remove", sqlExecutionContext);
                 try (QueryFuture queryFuture = cc.execute(new SCSequence())) {
-                    engine.tick();
+                    drainEngineCmdQueue(engine);
                     writer.tick(true);
 
                     try {
@@ -290,7 +289,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 cc.ofAlter(creepyAlter);
                 cf = cc.execute(commandReplySequence);
             } // Unblock table
-            engine.tick();
+            drainEngineCmdQueue(engine);
 
             try {
                 cf.await();
@@ -298,10 +297,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "invalid alter statement serialized to writer queue [2]");
             }
-
-            if (cf != null) {
-                cf.close();
-            }
+            cf.close();
         });
     }
 
@@ -351,7 +347,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     cf = cc.execute(commandReplySequence);
                 }
                 compile("drop table product", sqlExecutionContext);
-                engine.tick();
+                drainEngineCmdQueue(engine);
 
                 // ALTER TABLE should be executed successfully on writer.close() before engine.tick()
                 cf.await();
@@ -373,7 +369,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     CompiledQuery cc = compiler.compile("alter table product alter column name cache", sqlExecutionContext);
                     commandFuture = cc.execute(commandReplySequence);
                     writer.tick();
-                    engine.tick();
+                    drainEngineCmdQueue(engine);
                 }
 
                 commandFuture.await();
@@ -409,7 +405,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     CompiledQuery cc = compiler.compile("alter table product rename column name to name1, timestamp to timestamp1", sqlExecutionContext);
                     commandFuture = cc.execute(commandReplySequence);
                 }
-                engine.tick();
+                drainEngineCmdQueue(engine);
 
                 commandFuture.await();
 
@@ -436,7 +432,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 for (int i = 0; i < 2 * engineEventQueue; i++) {
                     CompiledQuery cc = compiler.compile("ALTER TABLE product add column column" + i + " int", sqlExecutionContext);
                     try (QueryFuture cf = cc.execute(commandReplySequence)) {
-                        engine.tick();
+                        drainEngineCmdQueue(engine);
                         writer.tick();
                         cf.await();
                     }
@@ -458,7 +454,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 CompiledQueryImpl cc = new CompiledQueryImpl(engine).withDefaultContext(sqlExecutionContext);
                 cc.ofAlter(creepyAlter.build());
                 try (QueryFuture cf = cc.execute(commandReplySequence)) {
-                    engine.tick();
+                    drainEngineCmdQueue(engine);
                     writer.tick();
 
                     try {
@@ -486,7 +482,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 cc.ofAlter(creepyAlter.build());
 
                 try (QueryFuture commandFuture = cc.execute(commandReplySequence)) {
-                    engine.tick();
+                    drainEngineCmdQueue(engine);
                     writer.tick(true);
                     try {
                         commandFuture.await();
