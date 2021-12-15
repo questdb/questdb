@@ -633,6 +633,7 @@ class LineTcpMeasurementEvent implements Closeable {
                 throw CairoException.instance(0).put("queue buffer overflow");
             }
         }
+        localDetails.updateColumnIndexCache();
         Unsafe.getUnsafe().putLong(timestampBufPos, timestamp);
         Unsafe.getUnsafe().putInt(timestampBufPos + Long.BYTES, entitiesWritten);
         writerWorkerId = tableUpdateDetails.getWriterThreadId();

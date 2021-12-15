@@ -253,12 +253,12 @@ public class TableUpdateDetails implements Closeable {
     public class ThreadLocalDetails implements Closeable {
         private final Path path = new Path();
         private final ObjIntHashMap<CharSequence> columnIndexByNameUtf8 = new ObjIntHashMap<>();
+        private final ObjHashSet<DirectByteCharSequence> unresolvedColNamesUtf8 = new ObjHashSet<>();
         private final ObjList<SymbolCache> symbolCacheByColumnIndex = new ObjList<>();
         private final ObjList<SymbolCache> unusedSymbolCaches;
         // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)
-        private final IntList geoHashBitsSizeByColIdx = new IntList();
+        private final IntList columnTypeMeta = new IntList();
         private final StringSink tempSink = new StringSink();
-        private final MangledUtf8Sink mangledUtf8Sink = new MangledUtf8Sink(tempSink);
         private final BoolList processedCols = new BoolList();
         private final LowerCaseCharSequenceHashSet addedCols = new LowerCaseCharSequenceHashSet();
         private final LineTcpReceiverConfiguration configuration;
@@ -307,7 +307,7 @@ public class TableUpdateDetails implements Closeable {
                 }
             }
             symbolCacheByColumnIndex.clear();
-            geoHashBitsSizeByColIdx.clear();
+            columnTypeMeta.clear();
         }
 
         LowerCaseCharSequenceHashSet getAddedCols() {
@@ -323,15 +323,80 @@ public class TableUpdateDetails implements Closeable {
         }
 
         int getColumnIndex(DirectByteCharSequence colName) {
-            final int colIndex = columnIndexByNameUtf8.get(colName);
-            if (colIndex != CharSequenceIntHashMap.NO_ENTRY_VALUE) {
+            int colIndex = columnIndexByNameUtf8.get(colName);
+            if (colIndex == CharSequenceIntHashMap.NO_ENTRY_VALUE) {
+                colIndex = getColumnIndexFromReader(colName);
+                if (colIndex == CharSequenceIntHashMap.NO_ENTRY_VALUE) {
+                    unresolvedColNamesUtf8.add(colName);
+                }
+            }
+            return colIndex;
+        }
+
+        private int getColumnIndexFromReader(DirectByteCharSequence colName) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16)) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                tempSink.clear();
+                if (!Chars.utf8Decode(colName.getLo(), colName.getHi(), tempSink)) {
+                    throw CairoException.instance(0).put("invalid UTF8 in value for ").put(colName);
+                }
+                int colIndex = metadata.getColumnIndexQuiet(tempSink);
+                columnIndexByNameUtf8.put(colName.toString(), colIndex);
+                updateColumTypeCache(metadata, colIndex);
                 return colIndex;
             }
-            return populateCacheAndGetColumnIndex(colName);
+        }
+
+        void updateColumnIndexCache() {
+            if (unresolvedColNamesUtf8.size() < 1) {
+                return;
+            }
+
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16)) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                boolean resolvedNewColumn = false;
+                for (int i = 0, n = unresolvedColNamesUtf8.size(); i < n; i++) {
+                    final DirectByteCharSequence colName = unresolvedColNamesUtf8.get(i);
+                    tempSink.clear();
+                    if (!Chars.utf8Decode(colName.getLo(), colName.getHi(), tempSink)) {
+                        throw CairoException.instance(0).put("invalid UTF8 in value for ").put(colName);
+                    }
+                    int colIndex = metadata.getColumnIndexQuiet(tempSink);
+                    if (colIndex > -1) {
+                        resolvedNewColumn = true;
+                        columnIndexByNameUtf8.put(colName.toString(), colIndex);
+                    }
+                }
+                unresolvedColNamesUtf8.clear();
+
+                if (!resolvedNewColumn) {
+                    return;
+                }
+
+                columnTypeMeta.clear();
+                columnTypeMeta.add(0); // first value is for cols indexed with -1
+                columnCount = metadata.getColumnCount();
+                for (int i = 0, n = columnCount; i < n; i++) {
+                    updateColumTypeCache(metadata, i);
+                }
+            }
+        }
+
+        private void updateColumTypeCache(TableReaderMetadata metadata, int colIndex) {
+            if (colIndex < 0) {
+                if (columnTypeMeta.size() < 1) {
+                    columnTypeMeta.add(0);
+                }
+                return;
+            }
+            final int colType = metadata.getColumnType(colIndex);
+            final int geoHashBits = ColumnType.getGeoHashBits(colType);
+            columnTypeMeta.extendAndSet(colIndex + 1,
+                    geoHashBits == 0 ? 0 : Numbers.encodeLowHighShorts((short) geoHashBits, ColumnType.tagOf(colType)));
         }
 
         int getColumnTypeMeta(int colIndex) {
-            return geoHashBitsSizeByColIdx.getQuick(colIndex + 1); // first val accounts for new cols, index -1
+            return columnTypeMeta.getQuick(colIndex + 1); // first val accounts for new cols, index -1
         }
 
         BoolList getProcessedCols() {
@@ -344,52 +409,6 @@ public class TableUpdateDetails implements Closeable {
                 symCache = addSymbolCache(colIndex);
             }
             return symCache.getSymbolKey(symValue);
-        }
-
-        private int populateCacheAndGetColumnIndex(DirectByteCharSequence colName) {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16)) {
-                TableReaderMetadata metadata = reader.getMetadata();
-                tempSink.clear();
-                if (!Chars.utf8Decode(colName.getLo(), colName.getHi(), tempSink)) {
-                    throw CairoException.instance(0).put("invalid UTF8 in value for ").put(colName);
-                }
-                int colIndex = metadata.getColumnIndexQuiet(tempSink);
-                if (colIndex < 0) {
-                    if (geoHashBitsSizeByColIdx.size() == 0) {
-                        geoHashBitsSizeByColIdx.add(0); // first value is for cols indexed with -1
-                    }
-                    return CharSequenceIntHashMap.NO_ENTRY_VALUE;
-                }
-                // re-cache all column names/types once
-                columnIndexByNameUtf8.clear();
-                geoHashBitsSizeByColIdx.clear();
-                geoHashBitsSizeByColIdx.add(0); // first value is for cols indexed with -1
-                columnCount = metadata.getColumnCount();
-                for (int n = 0, sz = columnCount; n < sz; n++) {
-                    String columnName = metadata.getColumnName(n);
-
-                    // We cannot cache on real column name values if chars are not ASCII
-                    // We need to construct non-ASCII CharSequence +representation same as DirectByteCharSequence will have
-                    CharSequence mangledUtf8Representation = mangledUtf8Sink.encodeMangledUtf8(columnName);
-                    // Check if mangled UTF8 length is different from original
-                    // If they are same it means column name is ASCII and DirectByteCharSequence name will be same as metadata column name
-                    String mangledColumnName = mangledUtf8Representation.length() != columnName.length() ? tempSink.toString() : columnName;
-
-                    columnIndexByNameUtf8.put(mangledColumnName, n);
-                    final int colType = metadata.getColumnType(n);
-                    final int geoHashBits = ColumnType.getGeoHashBits(colType);
-                    if (geoHashBits == 0) {
-                        geoHashBitsSizeByColIdx.add(0);
-                    } else {
-                        geoHashBitsSizeByColIdx.add(
-                                Numbers.encodeLowHighShorts(
-                                        (short) geoHashBits,
-                                        ColumnType.tagOf(colType))
-                        );
-                    }
-                }
-                return colIndex;
-            }
         }
 
         private int resolveSymbolIndex(TableReaderMetadata metadata, int colIndex) {
