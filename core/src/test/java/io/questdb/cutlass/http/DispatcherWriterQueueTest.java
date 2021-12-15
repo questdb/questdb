@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.network.Net;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
@@ -128,7 +129,7 @@ public class DispatcherWriterQueueTest {
                 2,
                 0,
                 queryTestBuilder,
-                true,
+                alterAckReceived,
                 "alter+table+<x>+alter+column+s+add+index");
     }
 
@@ -175,7 +176,7 @@ public class DispatcherWriterQueueTest {
                 1,
                 0,
                 queryTestBuilder,
-                false,
+                null,
                 "alter+table+<x>+alter+column+s+add+index");
     }
 
@@ -212,7 +213,7 @@ public class DispatcherWriterQueueTest {
                 1,
                 1,
                 queryTestBuilder,
-                false,
+                null,
                 "alter+table+<x>+alter+column+s+add+index");
     }
 
@@ -292,7 +293,7 @@ public class DispatcherWriterQueueTest {
                 )
                 .withAlterTableStartWaitTimeout(30_000_000);
 
-        runAlterOnBusyTable(alterVerifyAction, httpWorkers, errorsExpected, queryTestBuilder, false, httpAlterQueries);
+        runAlterOnBusyTable(alterVerifyAction, httpWorkers, errorsExpected, queryTestBuilder, null, httpAlterQueries);
     }
 
     private void runAlterOnBusyTable(
@@ -300,82 +301,88 @@ public class DispatcherWriterQueueTest {
             int httpWorkers,
             int errorsExpected,
             HttpQueryTestBuilder queryTestBuilder,
-            boolean noWait,
+            SOCountDownLatch waitToDisconnect,
             final String... httpAlterQueries
     ) throws Exception {
         queryTestBuilder.run((engine) -> {
             setupSql(engine);
-            String tableName = "x";
-            compiler.compile("create table IF NOT EXISTS " + tableName + " as (" +
-                    " select rnd_symbol('a', 'b', 'c') as s," +
-                    " cast(x as timestamp) ts" +
-                    " from long_sequence(10)" +
-                    " )", sqlExecutionContext);
-            TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test lock");
-            SOCountDownLatch finished = new SOCountDownLatch(httpAlterQueries.length);
-            AtomicInteger errors = new AtomicInteger();
-            CyclicBarrier barrier = new CyclicBarrier(httpAlterQueries.length);
+            TableWriter writer = null;
+            try {
+                String tableName = "x";
+                compiler.compile("create table IF NOT EXISTS " + tableName + " as (" +
+                        " select rnd_symbol('a', 'b', 'c') as s," +
+                        " cast(x as timestamp) ts" +
+                        " from long_sequence(10)" +
+                        " )", sqlExecutionContext);
+                writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test lock");
+                SOCountDownLatch finished = new SOCountDownLatch(httpAlterQueries.length);
+                AtomicInteger errors = new AtomicInteger();
+                CyclicBarrier barrier = new CyclicBarrier(httpAlterQueries.length);
 
-            for (int i = 0; i < httpAlterQueries.length; i++) {
-                String httpAlterQuery = httpAlterQueries[i].replace("<x>", tableName);
-                Thread thread = new Thread(() -> {
-                    try {
-                        barrier.await();
-                        if (noWait) {
-                            new SendAndReceiveRequestBuilder()
-                                    .withPauseBetweenSendAndReceive(100)
-                                    .execute(
-                                            "GET /query?query=" + httpAlterQuery + " HTTP/1.1\r\n"
-                                                    + SendAndReceiveRequestBuilder.RequestHeaders,
-                                            ""
-                                    );
-                        } else {
-                            new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                                    "GET /query?query=" + httpAlterQuery + " HTTP/1.1\r\n",
-                                    "0d\r\n" +
-                                            "{\"ddl\":\"OK\"}\n\r\n" +
-                                            "00\r\n" +
-                                            "\r\n"
-                            );
+                for (int i = 0; i < httpAlterQueries.length; i++) {
+                    String httpAlterQuery = httpAlterQueries[i].replace("<x>", tableName);
+                    Thread thread = new Thread(() -> {
+                        try {
+                            barrier.await();
+                            if (waitToDisconnect != null) {
+                                long fd = new SendAndReceiveRequestBuilder()
+                                        .connectAndSendRequest(
+                                                "GET /query?query=" + httpAlterQuery + " HTTP/1.1\r\n"
+                                                        + SendAndReceiveRequestBuilder.RequestHeaders
+                                        );
+                                waitToDisconnect.await();
+                                Net.close(fd);
+                            } else {
+                                new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                        "GET /query?query=" + httpAlterQuery + " HTTP/1.1\r\n",
+                                        "0d\r\n" +
+                                                "{\"ddl\":\"OK\"}\n\r\n" +
+                                                "00\r\n" +
+                                                "\r\n"
+                                );
+                            }
+                        } catch (Error e) {
+                            if (errorsExpected == 0) {
+                                error = e;
+                            }
+                            errors.getAndIncrement();
+                        } catch (Throwable e) {
+                            errors.getAndIncrement();
+                        } finally {
+                            finished.countDown();
                         }
-                    } catch (Error e) {
-                        if (errorsExpected == 0) {
-                            error = e;
-                        }
-                        errors.getAndIncrement();
-                    } catch (Throwable e) {
-                        errors.getAndIncrement();
-                    } finally {
-                        finished.countDown();
-                    }
-                });
-                thread.start();
-            }
-
-            if (httpAlterQueries.length > 1 && httpAlterQueries.length <= httpWorkers) {
-                // Allow all queries to trigger commands before start processing them
-                MPSequence tableWriterCommandPubSeq = engine.getMessageBus().getTableWriterCommandPubSeq();
-                while (tableWriterCommandPubSeq.current() < httpAlterQueries.length - 1) {
-                    LockSupport.parkNanos(10_000_000L);
+                    });
+                    thread.start();
                 }
-            }
 
-            for (int i = 0; i < 100 && finished.getCount() > 0 && errors.get() <= errorsExpected; i++) {
-                writer.tick(true);
-                finished.await(1_000_000);
-            }
+                if (httpAlterQueries.length > 1 && httpAlterQueries.length <= httpWorkers) {
+                    // Allow all queries to trigger commands before start processing them
+                    MPSequence tableWriterCommandPubSeq = engine.getMessageBus().getTableWriterCommandPubSeq();
+                    while (tableWriterCommandPubSeq.current() < httpAlterQueries.length - 1) {
+                        LockSupport.parkNanos(10_000_000L);
+                    }
+                }
 
-            if (error != null) {
-                throw error;
+                for (int i = 0; i < 100 && finished.getCount() > 0 && errors.get() <= errorsExpected; i++) {
+                    writer.tick(true);
+                    finished.await(1_000_000);
+                }
+
+                if (error != null) {
+                    throw error;
+                }
+                Assert.assertEquals(errorsExpected, errors.get());
+                Assert.assertEquals(0, finished.getCount());
+                engine.releaseAllReaders();
+                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                    alterVerifyAction.run(writer, rdr);
+                }
+            } finally {
+                if (writer != null) {
+                    writer.close();
+                }
+                compiler.close();
             }
-            Assert.assertEquals(errorsExpected, errors.get());
-            Assert.assertEquals(0, finished.getCount());
-            engine.releaseAllReaders();
-            try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                alterVerifyAction.run(writer, rdr);
-            }
-            writer.close();
-            compiler.close();
         });
     }
 
