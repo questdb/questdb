@@ -37,6 +37,7 @@ import io.questdb.network.Net;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.LPSZ;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -363,7 +364,10 @@ public class DispatcherWriterQueueTest {
                     }
                 }
 
-                for (int i = 0; i < 100 && finished.getCount() > 0 && errors.get() <= errorsExpected; i++) {
+                MicrosecondClock microsecondClock = engine.getConfiguration().getMicrosecondClock();
+                long startTimeMicro = microsecondClock.getTicks();
+                // Wait 1 min max for completion
+                while (microsecondClock.getTicks() - startTimeMicro < 60_000_000 && finished.getCount() > 0 && errors.get() <= errorsExpected) {
                     writer.tick(true);
                     finished.await(1_000_000);
                 }

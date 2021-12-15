@@ -318,47 +318,49 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testTableTableIdChangedOnRecreate() throws Exception {
-        try (SqlCompiler compiler = new SqlCompiler(engine);
-             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                     .with(
-                             AllowAllCairoSecurityContext.INSTANCE,
-                             new BindVariableServiceImpl(configuration),
-                             null,
-                             -1,
-                             null)) {
-            compiler.compile("create table weather as (" +
-                    "select x as windspeed," +
-                    "x*2 as timetocycle, " +
-                    "cast(x as timestamp) as ts " +
-                    "from long_sequence(2)) timestamp(ts) ", sqlExecutionContext);
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = new SqlCompiler(engine);
+                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                         .with(
+                                 AllowAllCairoSecurityContext.INSTANCE,
+                                 new BindVariableServiceImpl(configuration),
+                                 null,
+                                 -1,
+                                 null)) {
+                compiler.compile("create table weather as (" +
+                        "select x as windspeed," +
+                        "x*2 as timetocycle, " +
+                        "cast(x as timestamp) as ts " +
+                        "from long_sequence(2)) timestamp(ts) ", sqlExecutionContext);
 
-            CompiledQuery cq = compiler.compile("weather", sqlExecutionContext);
-            try (RecordCursorFactory cursorFactory = cq.getRecordCursorFactory()) {
-                try (RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, printer);
-                    TestUtils.assertEquals("windspeed\ttimetocycle\tts\n" +
-                            "1\t2\t1970-01-01T00:00:00.000001Z\n" +
-                            "2\t4\t1970-01-01T00:00:00.000002Z\n", sink);
-                }
+                CompiledQuery cq = compiler.compile("weather", sqlExecutionContext);
+                try (RecordCursorFactory cursorFactory = cq.getRecordCursorFactory()) {
+                    try (RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
+                        TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, printer);
+                        TestUtils.assertEquals("windspeed\ttimetocycle\tts\n" +
+                                "1\t2\t1970-01-01T00:00:00.000001Z\n" +
+                                "2\t4\t1970-01-01T00:00:00.000002Z\n", sink);
+                    }
 
-                compiler.compile("drop table weather", sqlExecutionContext);
+                    compiler.compile("drop table weather", sqlExecutionContext);
 
-                runInContext((receiver) -> {
-                    String lineData =
-                            "weather windspeed=1.0 631150000000000000\n" +
-                                    "weather windspeed=2.0 631152000000000000\n" +
-                                    "weather timetocycle=0.0,windspeed=3.0 631160000000000000\n" +
-                                    "weather windspeed=4.0 631170000000000000\n";
-                    sendLinger(receiver, lineData, "weather");
-                });
+                    runInContext((receiver) -> {
+                        String lineData =
+                                "weather windspeed=1.0 631150000000000000\n" +
+                                        "weather windspeed=2.0 631152000000000000\n" +
+                                        "weather timetocycle=0.0,windspeed=3.0 631160000000000000\n" +
+                                        "weather windspeed=4.0 631170000000000000\n";
+                        sendLinger(receiver, lineData, "weather");
+                    });
 
-                try (RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, printer);
-                    Assert.fail();
-                } catch (ReaderOutOfDateException ignored) {
+                    try (RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
+                        TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, printer);
+                        Assert.fail();
+                    } catch (ReaderOutOfDateException ignored) {
+                    }
                 }
             }
-        }
+        });
     }
 
     @Test
@@ -375,53 +377,57 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWindowsAccessDenied() throws Exception {
-        try (TableModel m = new TableModel(configuration, "table_a", PartitionBy.DAY)) {
-            m.timestamp("ReceiveTime")
-                    .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
-                    .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
-                    .col("Length", ColumnType.INT);
-            CairoTestUtils.createTable(m, ColumnType.VERSION);
-        }
+        assertMemoryLeak(() -> {
+            try (TableModel m = new TableModel(configuration, "table_a", PartitionBy.DAY)) {
+                m.timestamp("ReceiveTime")
+                        .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
+                        .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
+                        .col("Length", ColumnType.INT);
+                CairoTestUtils.createTable(m, ColumnType.VERSION);
+            }
 
-        String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
+            String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
 
-        runInContext((receiver) -> {
-            sendLinger(receiver, lineData, "table_a");
+            runInContext((receiver) -> {
+                sendLinger(receiver, lineData, "table_a");
 
-            String expected = "ReceiveTime\tSequenceNumber\tMessageType\tLength\ttest\n" +
-                    "2016-06-13T17:43:50.100400Z\t1\tB\t92\t1.5\n";
-            assertTable(expected, "table_a");
+                String expected = "ReceiveTime\tSequenceNumber\tMessageType\tLength\ttest\n" +
+                        "2016-06-13T17:43:50.100400Z\t1\tB\t92\t1.5\n";
+                assertTable(expected, "table_a");
+            });
         });
     }
 
     @Test
     public void testWithColumnAsReservedKeyword() throws Exception {
-        try (SqlCompiler compiler = new SqlCompiler(engine);
-             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                     .with(
-                             AllowAllCairoSecurityContext.INSTANCE,
-                             new BindVariableServiceImpl(configuration),
-                             null,
-                             -1,
-                             null)) {
-            String expected =
-                    "out\ttimestamp\tin\n" +
-                            "1.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
-                            "NaN\t1990-01-01T00:00:00.000000Z\t2.0\n" +
-                            "NaN\t1990-01-01T02:13:20.000000Z\t3.0\n" +
-                            "NaN\t1990-01-01T05:00:00.000000Z\t4.0\n";
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = new SqlCompiler(engine);
+                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                         .with(
+                                 AllowAllCairoSecurityContext.INSTANCE,
+                                 new BindVariableServiceImpl(configuration),
+                                 null,
+                                 -1,
+                                 null)) {
+                String expected =
+                        "out\ttimestamp\tin\n" +
+                                "1.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
+                                "NaN\t1990-01-01T00:00:00.000000Z\t2.0\n" +
+                                "NaN\t1990-01-01T02:13:20.000000Z\t3.0\n" +
+                                "NaN\t1990-01-01T05:00:00.000000Z\t4.0\n";
 
-            runInContext((receiver) -> {
-                String lineData =
-                        "up out=1.0 631150000000000000\n" +
-                                "up in=2.0 631152000000000000\n" +
-                                "up in=3.0 631160000000000000\n" +
-                                "up in=4.0 631170000000000000\n";
-                sendLinger(receiver, lineData, "up");
-            });
+                runInContext((receiver) -> {
+                    String lineData =
+                            "up out=1.0 631150000000000000\n" +
+                                    "up in=2.0 631152000000000000\n" +
+                                    "up in=3.0 631160000000000000\n" +
+                                    "up in=4.0 631170000000000000\n";
+                    sendLinger(receiver, lineData, "up");
+                });
 
-            TestUtils.assertSql(compiler, sqlExecutionContext, "up", sink, expected);
-        }
+                TestUtils.assertSql(compiler, sqlExecutionContext, "up", sink, expected);
+            }
+        });
     }
 
     @Test
