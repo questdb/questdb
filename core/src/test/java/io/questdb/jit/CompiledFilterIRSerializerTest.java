@@ -36,7 +36,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import org.junit.*;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -105,13 +108,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         irMemory.close();
     }
 
-    @Before
-    public void setUp1() {
-        irMemory.truncate();
-        serializer.clear();
-        bindVarFunctions.clear();
-    }
-
     @Test
     public void testColumnTypes() throws Exception {
         Map<String, String[]> typeToColumn = new HashMap<>();
@@ -124,7 +120,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
         for (String type : typeToColumn.keySet()) {
             for (String col : typeToColumn.get(type)) {
-                setUp1();
                 serialize(col + " < " + col);
                 assertIR("different results for " + type, "(" + type + " " + col + ")(" + type + " " + col + ")(<)(ret)");
             }
@@ -146,7 +141,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testComparisonOperators() throws Exception {
         for (String op : new String[]{"<", "<=", ">", ">=", "<>", "="}) {
-            setUp1();
             serialize("along " + op + " 0");
             assertIR("(i64 0L)(i64 along)(" + op + ")(ret)");
         }
@@ -155,7 +149,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testArithmeticOperators() throws Exception {
         for (String op : new String[]{"+", "-", "*", "/"}) {
-            setUp1();
             serialize("along " + op + " 42 != -1");
             assertIR("(i64 -1L)(i64 42L)(i64 along)(" + op + ")(<>)(ret)");
         }
@@ -199,7 +192,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         };
 
         for (String[] col : columns) {
-            setUp1();
             final String name = col[0];
             final String type = col[1];
             final String value = col[2];
@@ -258,7 +250,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         };
 
         for (String[] col : columns) {
-            setUp1();
             final String colName = col[0];
             final String colType = col[1];
             final String constStr = col[2];
@@ -323,7 +314,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         };
 
         for (String[] col : columns) {
-            setUp1();
             final String name = col[0];
             final String type = col[1];
             final String constant = col[2];
@@ -336,51 +326,57 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testOptionsDebugFlag() throws Exception {
         int options = serialize("abyte = 0", false, true, false);
-        Assert.assertEquals(0b00001001, options);
+        assertOptionsDebug(options, true);
+
+        options = serialize("abyte = 0", false, false, false);
+        assertOptionsDebug(options, false);
     }
 
     @Test
     public void testOptionsNullChecksFlag() throws Exception {
-        int options = serialize("abyte = 0", false, true, true);
-        Assert.assertEquals(0b00101001, options);
+        int options = serialize("abyte = 0", false, false, true);
+        assertOptionsNullChecks(options, true);
+
+        options = serialize("abyte = 0", false, false, false);
+        assertOptionsNullChecks(options, false);
     }
 
     @Test
     public void testOptionsScalarFlag() throws Exception {
         int options = serialize("abyte = 0", true, false, false);
-        Assert.assertEquals(0b00000000, options);
+        assertOptionsHint(options, OptionsHint.SCALAR);
     }
 
     @Test
     public void testOptionsSingleSize() throws Exception {
         Map<String, Integer> filterToOptions = new HashMap<>();
         // 1B
-        filterToOptions.put("not aboolean", 0b00001000);
-        filterToOptions.put("abyte = 0", 0b00001000);
-        filterToOptions.put("ageobyte <> null", 0b00001000);
+        filterToOptions.put("not aboolean", 1);
+        filterToOptions.put("abyte = 0", 1);
+        filterToOptions.put("ageobyte <> null", 1);
         // 2B
-        filterToOptions.put("ashort = 0", 0b00001010);
-        filterToOptions.put("ageoshort <> null", 0b00001010);
-        filterToOptions.put("achar = 'a'", 0b00001010);
+        filterToOptions.put("ashort = 0", 2);
+        filterToOptions.put("ageoshort <> null", 2);
+        filterToOptions.put("achar = 'a'", 2);
         // 4B
-        filterToOptions.put("anint = 0", 0b00001100);
-        filterToOptions.put("ageoint <> null", 0b00001100);
-        filterToOptions.put("afloat = 0", 0b00001100);
-        filterToOptions.put("asymbol <> null", 0b00001100);
-        filterToOptions.put("anint / anint = 0", 0b00001100);
-        filterToOptions.put("afloat = 0 or anint = 0", 0b00001100);
+        filterToOptions.put("anint = 0", 4);
+        filterToOptions.put("ageoint <> null", 4);
+        filterToOptions.put("afloat = 0", 4);
+        filterToOptions.put("asymbol <> null", 4);
+        filterToOptions.put("anint / anint = 0", 4);
+        filterToOptions.put("afloat = 0 or anint = 0", 4);
         // 8B
-        filterToOptions.put("along = 0", 0b00001110);
-        filterToOptions.put("ageolong <> null", 0b00001110);
-        filterToOptions.put("adate <> null", 0b00001110);
-        filterToOptions.put("atimestamp <> null", 0b00001110);
-        filterToOptions.put("adouble = 0", 0b00001110);
-        filterToOptions.put("adouble = 0 and along = 0", 0b00001110);
+        filterToOptions.put("along = 0", 8);
+        filterToOptions.put("ageolong <> null", 8);
+        filterToOptions.put("adate <> null", 8);
+        filterToOptions.put("atimestamp <> null", 8);
+        filterToOptions.put("adouble = 0", 8);
+        filterToOptions.put("adouble = 0 and along = 0", 8);
 
         for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
-            setUp1();
             int options = serialize(entry.getKey(), false, false, false);
-            Assert.assertEquals("options mismatch for filter: " + entry.getKey(), (int) entry.getValue(), options);
+            assertOptionsHint(entry.getKey(), options, OptionsHint.SINGLE_SIZE);
+            assertOptionsSize(entry.getKey(), options, entry.getValue());
         }
     }
 
@@ -388,37 +384,37 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     public void testOptionsMixedSizes() throws Exception {
         Map<String, Integer> filterToOptions = new HashMap<>();
         // 2B
-        filterToOptions.put("aboolean or ashort = 0", 0b00010010);
-        filterToOptions.put("abyte = 0 or ashort = 0", 0b00010010);
+        filterToOptions.put("aboolean or ashort = 0", 2);
+        filterToOptions.put("abyte = 0 or ashort = 0", 2);
         // 4B
-        filterToOptions.put("anint = 0 or abyte = 0", 0b00010100);
-        filterToOptions.put("afloat = 0 or abyte = 0", 0b00010100);
-        filterToOptions.put("afloat / abyte = 0", 0b00010100);
+        filterToOptions.put("anint = 0 or abyte = 0", 4);
+        filterToOptions.put("afloat = 0 or abyte = 0", 4);
+        filterToOptions.put("afloat / abyte = 0", 4);
         // 8B
-        filterToOptions.put("along = 0 or ashort = 0", 0b00010110);
-        filterToOptions.put("adouble = 0 or ashort = 0", 0b00010110);
-        filterToOptions.put("afloat = 0 or adouble = 0", 0b00010110);
-        filterToOptions.put("anint * along = 0", 0b00010110);
+        filterToOptions.put("along = 0 or ashort = 0", 8);
+        filterToOptions.put("adouble = 0 or ashort = 0", 8);
+        filterToOptions.put("afloat = 0 or adouble = 0", 8);
+        filterToOptions.put("anint * along = 0", 8);
 
         for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
-            setUp1();
             int options = serialize(entry.getKey(), false, false, false);
-            Assert.assertEquals("options mismatch for filter: " + entry.getKey(), (int) entry.getValue(), options);
+            assertOptionsHint(entry.getKey(), options, OptionsHint.MIXED_SIZES);
+            assertOptionsSize(entry.getKey(), options, entry.getValue());
         }
     }
 
     @Test
     public void testOptionsForcedScalarModeForByteOrShortArithmetics() throws Exception {
         Map<String, Integer> filterToOptions = new HashMap<>();
-        filterToOptions.put("abyte + abyte = 0", 0b00000000);
-        filterToOptions.put("ashort - ashort = 0", 0b00000010);
-        filterToOptions.put("abyte * ashort = 0", 0b00000010);
-        filterToOptions.put("1 * abyte / ashort = 0", 0b00000010);
+        filterToOptions.put("abyte + abyte = 0", 1);
+        filterToOptions.put("ashort - ashort = 0", 2);
+        filterToOptions.put("abyte * ashort = 0", 2);
+        filterToOptions.put("1 * abyte / ashort = 0", 2);
 
         for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
-            setUp1();
             int options = serialize(entry.getKey(), false, false, false);
-            Assert.assertEquals("options mismatch for filter: " + entry.getKey(), (int) entry.getValue(), options);
+            assertOptionsHint(entry.getKey(), options, OptionsHint.SCALAR);
+            assertOptionsSize(entry.getKey(), options, entry.getValue());
         }
     }
 
@@ -626,6 +622,10 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     private int serialize(CharSequence seq, boolean scalar, boolean debug, boolean nullChecks) throws SqlException {
+        irMemory.truncate();
+        serializer.clear();
+        bindVarFunctions.clear();
+
         ExpressionNode node = expr(seq);
         return serializer.of(irMemory, sqlExecutionContext, metadata, reader, columnIndexes, bindVarFunctions)
                 .serialize(node, scalar, debug, nullChecks);
@@ -639,6 +639,40 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
     private void assertIR(String expectedIR) {
         assertIR(null, expectedIR);
+    }
+
+    private void assertOptionsDebug(int options, boolean expectedFlag) {
+        int f = options & 1;
+        Assert.assertEquals(expectedFlag ? 1 : 0, f);
+    }
+
+    private void assertOptionsNullChecks(int options, boolean expectedFlag) {
+        int f = (options >> 5) & 1;
+        Assert.assertEquals(expectedFlag ? 1 : 0, f);
+    }
+
+    private void assertOptionsHint(int options, OptionsHint expectedHint) {
+        assertOptionsHint(null, options, expectedHint);
+    }
+
+    private void assertOptionsHint(String msg, int options, OptionsHint expectedHint) {
+        int code = (options >> 3) & 0b11;
+        Assert.assertEquals(msg, expectedHint.code, code);
+    }
+
+    private void assertOptionsSize(String msg, int options, int expectedSize) {
+        int size = 1 << ((options >> 1) & 0b11);
+        Assert.assertEquals(msg, expectedSize, size);
+    }
+
+    private enum OptionsHint {
+        SCALAR(0), SINGLE_SIZE(1), MIXED_SIZES(2);
+
+        final int code;
+
+        OptionsHint(int code) {
+            this.code = code;
+        }
     }
 
     private static class TestIRSerializer {
