@@ -465,6 +465,30 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         assertGeneratedQuery("select * from x", ddl, gen);
     }
 
+    @Test
+    public void testDisableNullChecks() throws Exception {
+        compiler.setEnableJitNullChecks(false);
+        try {
+            final String ddl = "create table x as " +
+                    "(select timestamp_sequence(400000000000, 500000000) as k," +
+                    " rnd_byte() i8," +
+                    " rnd_short() i16," +
+                    " rnd_int() i32," +
+                    " rnd_long() i64," +
+                    " rnd_float() f32," +
+                    " rnd_double() f64 " +
+                    " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+            FilterGenerator gen = new FilterGenerator()
+                    .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
+                    .withArithmeticOperator()
+                    .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
+                    .withAnyOf(" = 1");
+            assertGeneratedQuery("select * from x", ddl, gen);
+        } finally {
+            compiler.setEnableJitNullChecks(true);
+        }
+    }
+
     private void assertGeneratedQuery(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen) throws Exception {
         final boolean forceScalarJit = jitMode == JitMode.SCALAR;
         assertMemoryLeak(() -> {

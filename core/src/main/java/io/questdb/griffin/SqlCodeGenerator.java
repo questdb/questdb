@@ -88,6 +88,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final WhereClauseParser whereClauseParser = new WhereClauseParser();
     private final CompiledFilterIRSerializer jitIRSerializer = new CompiledFilterIRSerializer();
     private final MemoryCARW jitIRMem;
+    private boolean enableJitNullChecks = true;
     private final FunctionParser functionParser;
     private final CairoEngine engine;
     private final BytecodeAssembler asm = new BytecodeAssembler();
@@ -748,7 +749,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final ObjList<Function> bindVarFunctions = new ObjList<>();
                     final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
                     jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), reader, columnIndexes, bindVarFunctions);
-                    int jitOptions = jitIRSerializer.serialize(filter, forceScalar, false, true);
+                    int jitOptions = jitIRSerializer.serialize(filter, forceScalar, false, enableJitNullChecks);
                     final CompiledFilter jitFilter = new CompiledFilter();
                     jitFilter.compile(jitIRMem, jitOptions);
 
@@ -769,7 +770,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         return new FilteredRecordCursorFactory(factory, f);
-
     }
 
     private RecordCursorFactory generateFunctionQuery(QueryModel model) throws SqlException {
@@ -3142,6 +3142,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         return ColumnType.isString(columnType) ? Record.GET_STR : Record.GET_SYM;
+    }
+
+    // used in tests
+    void setEnableJitNullChecks(boolean value) {
+        enableJitNullChecks = value;
     }
 
     @FunctionalInterface
