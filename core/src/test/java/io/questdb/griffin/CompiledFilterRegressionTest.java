@@ -144,7 +144,6 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         assertGeneratedQuery("select * from x", ddl, gen);
     }
 
-    @Ignore("Enable once we disable SIMD for byte/short arithmetics")
     @Test
     public void testColumnArithmetics() throws Exception {
         final String ddl = "create table x as " +

@@ -92,9 +92,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     static final byte UNDEFINED_CODE = -1;
 
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
-    private final ArithmeticExpressionContext arithmeticContext = new ArithmeticExpressionContext();
+    private final PredicateContext predicateContext = new PredicateContext();
     // contains <memory_offset, constant_node> pairs for backfilling purposes
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
+
+    // internal flag used to forcefully enable scalar mode based on filter's contents
+    private boolean forceScalarMode;
 
     private MemoryCARW memory;
     private SqlExecutionContext executionContext;
@@ -145,7 +148,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         traverseAlgo.traverse(node, this);
         memory.putByte(RET);
 
-        TypesObserver typesObserver = arithmeticContext.globalTypesObserver;
+        TypesObserver typesObserver = predicateContext.globalTypesObserver;
         int options = debug ? 1 : 0;
         int typeSize = typesObserver.maxSize();
         if (typeSize > 0) {
@@ -153,7 +156,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             int log2 = Integer.numberOfTrailingZeros(typeSize);
             options = options | (log2 << 1);
         }
-        if (!scalar) {
+        if (!scalar && !forceScalarMode) {
             int executionHint = typesObserver.hasMixedSizes() ? 2 : 1;
             options = options | (executionHint << 3);
         }
@@ -169,7 +172,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         metadata = null;
         tableReader = null;
         columnIndexes = null;
-        arithmeticContext.clear();
+        forceScalarMode = false;
+        predicateContext.clear();
         backfillNodes.clear();
     }
 
@@ -182,7 +186,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         // Check if we're at the start of an arithmetic expression
-        arithmeticContext.onNodeDescended(node);
+        predicateContext.onNodeDescended(node);
 
         // Look ahead for negative const
         if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, "-")) {
@@ -221,10 +225,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             serializeOperator(node.position, node.token, argCount);
         }
 
-        boolean contextLeft = arithmeticContext.onNodeVisited(node);
+        boolean predicateLeft = predicateContext.onNodeVisited(node);
 
-        // We're out of arithmetic expression: backfill constants and symbol bind variables and clean up
-        if (contextLeft) {
+        if (predicateLeft) {
+            // We're out of a predicate
+
+            // Force scalar mode if the predicate had byte or short arithmetic operations.
+            // That's because SIMD mode uses byte/short-sized overflows for arithmetic
+            // calculations instead of implicit upcast to int like in Java SQL functions.
+            forceScalarMode |=
+                    predicateContext.hasArithmeticOperations && predicateContext.localTypesObserver.maxSize() <= 2;
+
+            // Then backfill constants and symbol bind variables and clean up
             try {
                 backfillNodes.forEach((key, value) -> {
                     try {
@@ -253,9 +265,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private void serializeColumn(int position, final CharSequence token) throws SqlException {
-        if (!arithmeticContext.isActive()) {
+        if (!predicateContext.isActive()) {
             throw SqlException.position(position)
-                    .put("non-boolean column outside of arithmetic expression: ")
+                    .put("non-boolean column outside of predicate: ")
                     .put(token);
         }
 
@@ -274,7 +286,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         // In case of a top level boolean column, expand it to "boolean_column = true" expression.
-        if (arithmeticContext.singleBooleanColumn && columnTypeTag == ColumnType.BOOLEAN) {
+        if (predicateContext.singleBooleanColumn && columnTypeTag == ColumnType.BOOLEAN) {
             // "true" constant
             memory.putByte(IMM_I1);
             memory.putLong(1);
@@ -291,9 +303,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private void serializeBindVariable(final ExpressionNode node) throws SqlException {
-        if (!arithmeticContext.isActive()) {
+        if (!predicateContext.isActive()) {
             throw SqlException.position(node.position)
-                    .put("bind variable outside of arithmetic expression: ")
+                    .put("bind variable outside of predicate: ")
                     .put(node.token);
         }
 
@@ -327,7 +339,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private void backfillSymbolBindVariable(long offset, final ExpressionNode node) throws SqlException {
-        if (arithmeticContext.symbolColumnIndex == -1) {
+        if (predicateContext.symbolColumnIndex == -1) {
             throw SqlException.position(node.position)
                     .put("symbol column index is missing for bind variable: ")
                     .put(node.token);
@@ -350,7 +362,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     .put(ColumnType.nameOf(columnType));
         }
 
-        bindVarFunctions.add(new CompiledFilterSymbolBindVariable(varFunction, arithmeticContext.symbolColumnIndex));
+        bindVarFunctions.add(new CompiledFilterSymbolBindVariable(varFunction, predicateContext.symbolColumnIndex));
         int index = bindVarFunctions.size() - 1;
 
         long originalOffset = memory.getAppendOffset();
@@ -398,9 +410,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private void serializeConstantStub(final ExpressionNode node) throws SqlException {
-        if (!arithmeticContext.isActive()) {
+        if (!predicateContext.isActive()) {
             throw SqlException.position(node.position)
-                    .put("constant outside of arithmetic expression: ")
+                    .put("constant outside of predicate: ")
                     .put(node.token);
         }
 
@@ -435,24 +447,24 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     private void serializeConstant(int position, final CharSequence token, boolean negated) throws SqlException {
         final int len = token.length();
-        final byte typeCode = arithmeticContext.localTypesObserver.constantTypeCode();
+        final byte typeCode = predicateContext.localTypesObserver.constantTypeCode();
         if (typeCode == UNDEFINED_CODE) {
             throw SqlException.position(position).put("all constants expression: ").put(token);
         }
 
         if (SqlKeywords.isNullKeyword(token)) {
-            boolean geoHashExpression = ExpressionType.GEO_HASH == arithmeticContext.expressionType;
+            boolean geoHashExpression = ExpressionType.GEO_HASH == predicateContext.expressionType;
             serializeNull(position, typeCode, geoHashExpression);
             return;
         }
 
-        if (ExpressionType.SYMBOL == arithmeticContext.expressionType) {
+        if (ExpressionType.SYMBOL == predicateContext.expressionType) {
             serializeSymbolConstant(position, token);
             return;
         }
 
         if (Chars.isQuoted(token)) {
-            if (ExpressionType.CHAR != arithmeticContext.expressionType) {
+            if (ExpressionType.CHAR != predicateContext.expressionType) {
                 throw SqlException.position(position).put("char constant in non-char expression: ").put(token);
             }
             if (len == 3) {
@@ -465,7 +477,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (SqlKeywords.isTrueKeyword(token)) {
-            if (ExpressionType.BOOLEAN != arithmeticContext.expressionType) {
+            if (ExpressionType.BOOLEAN != predicateContext.expressionType) {
                 throw SqlException.position(position).put("boolean constant in non-boolean expression: ").put(token);
             }
             memory.putByte(IMM_I1);
@@ -474,7 +486,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (SqlKeywords.isFalseKeyword(token)) {
-            if (ExpressionType.BOOLEAN != arithmeticContext.expressionType) {
+            if (ExpressionType.BOOLEAN != predicateContext.expressionType) {
                 throw SqlException.position(position).put("boolean constant in non-boolean expression: ").put(token);
             }
             memory.putByte(IMM_I1);
@@ -483,7 +495,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (len > 1 && token.charAt(0) == '#') {
-            if (ExpressionType.GEO_HASH != arithmeticContext.expressionType) {
+            if (ExpressionType.GEO_HASH != predicateContext.expressionType) {
                 throw SqlException.position(position).put("geo hash constant in non-geo hash expression: ").put(token);
             }
             ConstantFunction geoConstant = GeoHashUtil.parseGeoHashConstant(position, token, len);
@@ -493,10 +505,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
         }
 
-        if (ExpressionType.NUMERIC != arithmeticContext.expressionType) {
+        if (ExpressionType.NUMERIC != predicateContext.expressionType) {
             throw SqlException.position(position).put("numeric constant in non-numeric expression: ").put(token);
         }
-        if (arithmeticContext.localTypesObserver.hasMixedSizes()) {
+        if (predicateContext.localTypesObserver.hasMixedSizes()) {
             serializeUntypedNumber(position, token, negated);
         } else {
             serializeNumber(position, token, typeCode, negated);
@@ -545,11 +557,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             symbol = symbol.subSequence(1, len - 1);
         }
 
-        if (arithmeticContext.symbolMapReader == null || arithmeticContext.symbolColumnIndex == -1) {
+        if (predicateContext.symbolMapReader == null || predicateContext.symbolColumnIndex == -1) {
             throw SqlException.position(position).put("reader or column index is missing for symbol constant: ").put(token);
         }
 
-        final int key = arithmeticContext.symbolMapReader.keyOf(symbol);
+        final int key = predicateContext.symbolMapReader.keyOf(symbol);
         if (key != SymbolTable.VALUE_NOT_FOUND) {
             // Known symbol constant case
             memory.putByte(IMM_I4);
@@ -559,7 +571,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         // Unknown symbol constant case. Create a fake bind variable function to handle it.
         final SymbolConstant function = SymbolConstant.newInstance(symbol);
-        bindVarFunctions.add(new CompiledFilterSymbolBindVariable(function, arithmeticContext.symbolColumnIndex));
+        bindVarFunctions.add(new CompiledFilterSymbolBindVariable(function, predicateContext.symbolColumnIndex));
         int index = bindVarFunctions.size() - 1;
 
         byte typeCode = bindVariableTypeCode(ColumnType.STRING);
@@ -849,13 +861,31 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return columnTypeTag == ColumnType.BOOLEAN;
     }
 
-    private class ArithmeticExpressionContext implements Mutable {
+    private static boolean isArithmeticOperation(ExpressionNode node) {
+        final CharSequence token = node.token;
+        if (node.paramCount < 2) {
+            return false;
+        }
+        if (Chars.equals(token, "+")) {
+            return true;
+        }
+        if (Chars.equals(token, "-")) {
+            return true;
+        }
+        if (Chars.equals(token, "*")) {
+            return true;
+        }
+        return Chars.equals(token, "/");
+    }
+
+    private class PredicateContext implements Mutable {
 
         private ExpressionNode rootNode;
         ExpressionType expressionType;
         SymbolMapReader symbolMapReader; // used for known symbol constant lookups
         int symbolColumnIndex; // used for symbol deferred constants and bind variables
         boolean singleBooleanColumn;
+        boolean hasArithmeticOperations;
 
         final TypesObserver localTypesObserver = new TypesObserver();
         final TypesObserver globalTypesObserver = new TypesObserver();
@@ -872,6 +902,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             symbolMapReader = null;
             symbolColumnIndex = -1;
             singleBooleanColumn = false;
+            hasArithmeticOperations = false;
             localTypesObserver.clear();
         }
 
@@ -895,45 +926,66 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         public boolean onNodeVisited(final ExpressionNode node) throws SqlException {
-            boolean contextLeft = false;
+            boolean predicateLeft = false;
             if (node == rootNode) {
                 rootNode = null;
-                contextLeft = true;
+                predicateLeft = true;
             }
 
-            int columnType = ColumnType.UNDEFINED;
-            if (node.type == ExpressionNode.LITERAL) {
-                final int columnIndex = metadata.getColumnIndexQuiet(node.token);
-                if (columnIndex == -1) {
-                    throw SqlException.invalidColumn(node.position, node.token);
-                }
-                columnType = metadata.getColumnType(columnIndex);
-                if (columnType == ColumnType.SYMBOL) {
-                    final int tableColumnIndex = columnIndexes.getQuick(columnIndex);
-                    symbolMapReader = tableReader.getSymbolMapReader(tableColumnIndex);
-                    symbolColumnIndex = columnIndex;
-                }
-            } else if (node.type == ExpressionNode.BIND_VARIABLE) {
-                Function varFunction = getBindVariableFunction(node.position, node.token);
-                // We treat bind variables as columns here for the sake of simplicity
-                columnType = varFunction.getType();
-                // Treat string bind variable to be of symbol type
-                if (columnType == ColumnType.STRING) {
-                    columnType = ColumnType.SYMBOL;
-                }
+            switch (node.type) {
+                case ExpressionNode.LITERAL:
+                    handleColumn(node);
+                    break;
+                case ExpressionNode.BIND_VARIABLE:
+                    handleBindVariable(node);
+                    break;
+                case ExpressionNode.OPERATION:
+                    handleOperation(node);
+                    break;
             }
 
-            if (columnType != ColumnType.UNDEFINED) {
-                final int columnTypeTag = ColumnType.tagOf(columnType);
+            return predicateLeft;
+        }
 
-                updateExpressionType(node.position, columnTypeTag);
-
-                byte code = columnTypeCode(columnTypeTag);
-                localTypesObserver.observe(code);
-                globalTypesObserver.observe(code);
+        private void handleColumn(ExpressionNode node) throws SqlException {
+            final int columnIndex = metadata.getColumnIndexQuiet(node.token);
+            if (columnIndex == -1) {
+                throw SqlException.invalidColumn(node.position, node.token);
+            }
+            final int columnType = metadata.getColumnType(columnIndex);
+            final int columnTypeTag = ColumnType.tagOf(columnType);
+            if (columnTypeTag == ColumnType.SYMBOL) {
+                final int tableColumnIndex = columnIndexes.getQuick(columnIndex);
+                symbolMapReader = tableReader.getSymbolMapReader(tableColumnIndex);
+                symbolColumnIndex = columnIndex;
             }
 
-            return contextLeft;
+            updateExpressionType(node.position, columnTypeTag);
+
+            byte code = columnTypeCode(columnTypeTag);
+            localTypesObserver.observe(code);
+            globalTypesObserver.observe(code);
+        }
+
+        private void handleBindVariable(ExpressionNode node) throws SqlException {
+            Function varFunction = getBindVariableFunction(node.position, node.token);
+            // We treat bind variables as columns here for the sake of simplicity
+            final int columnType = varFunction.getType();
+            int columnTypeTag = ColumnType.tagOf(columnType);
+            // Treat string bind variable to be of symbol type
+            if (columnTypeTag == ColumnType.STRING) {
+                columnTypeTag = ColumnType.SYMBOL;
+            }
+
+            updateExpressionType(node.position, columnTypeTag);
+
+            byte code = columnTypeCode(columnTypeTag);
+            localTypesObserver.observe(code);
+            globalTypesObserver.observe(code);
+        }
+
+        private void handleOperation(ExpressionNode node) {
+            hasArithmeticOperations |= isArithmeticOperation(node);
         }
 
         private void updateExpressionType(int position, int columnTypeTag) throws SqlException {
@@ -1031,7 +1083,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             for (int i = sizes.length - 1; i > -1; i--) {
                 byte size = sizes[i];
                 if (size > 0) {
-                    // If floats are present, longs have to be cast to double.
+                    // If floats are present, we need to cast longs to double.
                     if (i == I8_INDEX && sizes[F4_INDEX] > 0) {
                         return IMM_F8;
                     }

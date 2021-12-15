@@ -358,12 +358,10 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         filterToOptions.put("not aboolean", 0b00001000);
         filterToOptions.put("abyte = 0", 0b00001000);
         filterToOptions.put("ageobyte <> null", 0b00001000);
-        filterToOptions.put("abyte + abyte = 0", 0b00001000);
         // 2B
         filterToOptions.put("ashort = 0", 0b00001010);
         filterToOptions.put("ageoshort <> null", 0b00001010);
         filterToOptions.put("achar = 'a'", 0b00001010);
-        filterToOptions.put("ashort * ashort = 0", 0b00001010);
         // 4B
         filterToOptions.put("anint = 0", 0b00001100);
         filterToOptions.put("ageoint <> null", 0b00001100);
@@ -392,7 +390,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // 2B
         filterToOptions.put("aboolean or ashort = 0", 0b00010010);
         filterToOptions.put("abyte = 0 or ashort = 0", 0b00010010);
-        filterToOptions.put("abyte + ashort = 0", 0b00010010);
         // 4B
         filterToOptions.put("anint = 0 or abyte = 0", 0b00010100);
         filterToOptions.put("afloat = 0 or abyte = 0", 0b00010100);
@@ -402,6 +399,21 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         filterToOptions.put("adouble = 0 or ashort = 0", 0b00010110);
         filterToOptions.put("afloat = 0 or adouble = 0", 0b00010110);
         filterToOptions.put("anint * along = 0", 0b00010110);
+
+        for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
+            setUp1();
+            int options = serialize(entry.getKey(), false, false, false);
+            Assert.assertEquals("options mismatch for filter: " + entry.getKey(), (int) entry.getValue(), options);
+        }
+    }
+
+    @Test
+    public void testOptionsForcedScalarModeForByteOrShortArithmetics() throws Exception {
+        Map<String, Integer> filterToOptions = new HashMap<>();
+        filterToOptions.put("abyte + abyte = 0", 0b00000000);
+        filterToOptions.put("ashort - ashort = 0", 0b00000010);
+        filterToOptions.put("abyte * ashort = 0", 0b00000010);
+        filterToOptions.put("1 * abyte / ashort = 0", 0b00000010);
 
         for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
             setUp1();
