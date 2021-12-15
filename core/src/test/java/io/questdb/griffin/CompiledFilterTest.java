@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.jit.JitUtil;
+import io.questdb.std.Numbers;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
@@ -111,30 +112,19 @@ public class CompiledFilterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSingleBindVariableSingleScalar() throws Exception {
-        assertMemoryLeak(() -> {
-            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_FORCE_SCALAR);
-
-            compiler.compile("create table x as (select" +
-                    " rnd_long() l," +
-                    " timestamp_sequence(400000000000, 500000000) ts" +
-                    " from long_sequence(100)) timestamp(ts)", sqlExecutionContext);
-
-            bindVariableService.clear();
-            bindVariableService.setLong("l", 3614738589890112276L);
-
-            final String query = "select * from x where l = :l";
-            final String expected = "l\tts\n" +
-                    "3614738589890112276\t1970-01-05T16:38:20.000000Z\n";
-
-            assertSql(query, expected);
-            assertSqlRunWithJit(query);
-        });
+    public void testSingleBindVariableScalar() throws Exception {
+        testSingleBindVariable(SqlJitMode.JIT_MODE_FORCE_SCALAR);
     }
 
     @Test
     public void testSingleBindVariableVectorized() throws Exception {
+        testSingleBindVariable(SqlJitMode.JIT_MODE_ENABLED);
+    }
+
+    private void testSingleBindVariable(int jitMode) throws Exception {
         assertMemoryLeak(() -> {
+            sqlExecutionContext.setJitMode(jitMode);
+
             compiler.compile("create table x as (select" +
                     " rnd_long() l," +
                     " timestamp_sequence(400000000000, 500000000) ts" +
@@ -237,6 +227,38 @@ public class CompiledFilterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBindVariableNullCheckScalar() throws Exception {
+        testBindVariableNullCheck(SqlJitMode.JIT_MODE_FORCE_SCALAR);
+    }
+
+    @Test
+    public void testBindVariableNullCheckVectorized() throws Exception {
+        testBindVariableNullCheck(SqlJitMode.JIT_MODE_ENABLED);
+    }
+
+    private void testBindVariableNullCheck(int jitMode) throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.setJitMode(jitMode);
+            final long value = 42;
+            compiler.compile("create table x as (select" +
+                    " " + value + " l," +
+                    " to_timestamp('1971', 'yyyy') ts" +
+                    " from long_sequence(1)) timestamp(ts)", sqlExecutionContext);
+
+            bindVariableService.clear();
+            bindVariableService.setLong("l", Numbers.LONG_NaN);
+
+            // Here we expect a NULL value on the left side of the predicate,
+            // so no rows should be returned
+            final String query = "select * from x where l + :l = " + (Numbers.LONG_NaN + value);
+            final String expected = "l\tts\n";
+
+            assertSql(query, expected);
+            assertSqlRunWithJit(query);
+        });
+    }
+
+    @Test
     public void testBindVariablesFilterWithColTops() throws Exception {
         assertMemoryLeak(() -> {
             bindVariableService.clear();
@@ -282,23 +304,15 @@ public class CompiledFilterTest extends AbstractGriffinTest {
 
     @Test
     public void testSelectAllFilterWithColTopsScalar() throws Exception {
-        final String query = "select * from t1 where j < 0";
-        final String expected = "x\tts\tj\n" +
-                "4\t1970-01-01T00:01:43.000000Z\t-6945921502384501475\n" +
-                "7\t1970-01-01T00:01:46.000000Z\t-7611843578141082998\n" +
-                "8\t1970-01-01T00:01:47.000000Z\t-5354193255228091881\n" +
-                "9\t1970-01-01T00:01:48.000000Z\t-2653407051020864006\n" +
-                "10\t1970-01-01T00:01:49.000000Z\t-1675638984090602536\n" +
-                "14\t1970-01-01T00:01:53.000000Z\t-7489826605295361807\n" +
-                "15\t1970-01-01T00:01:54.000000Z\t-4094902006239100839\n" +
-                "16\t1970-01-01T00:01:55.000000Z\t-4474835130332302712\n" +
-                "17\t1970-01-01T00:01:56.000000Z\t-6943924477733600060\n";
-
-        testFilterWithColTops(query, expected, SqlJitMode.JIT_MODE_FORCE_SCALAR);
+        testSelectAllFilterWithColTops(SqlJitMode.JIT_MODE_FORCE_SCALAR);
     }
 
     @Test
     public void testSelectAllFilterWithColTopsVectorized() throws Exception {
+        testSelectAllFilterWithColTops(SqlJitMode.JIT_MODE_ENABLED);
+    }
+
+    private void testSelectAllFilterWithColTops(int jitMode) throws Exception {
         final String query = "select * from t1 where j < 0";
         final String expected = "x\tts\tj\n" +
                 "4\t1970-01-01T00:01:43.000000Z\t-6945921502384501475\n" +
@@ -311,45 +325,39 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                 "16\t1970-01-01T00:01:55.000000Z\t-4474835130332302712\n" +
                 "17\t1970-01-01T00:01:56.000000Z\t-6943924477733600060\n";
 
-        testFilterWithColTops(query, expected, SqlJitMode.JIT_MODE_ENABLED);
+        testFilterWithColTops(query, expected, jitMode);
     }
 
     @Test
     public void testSelectAllBothPageFramesFilterWithColTopsScalar() throws Exception {
-        final String query = "select * from t1 where x = 3";
-        final String expected = "x\tts\tj\n" +
-                "3\t1970-01-01T00:00:02.000000Z\tNaN\n" +
-                "3\t1970-01-01T00:01:42.000000Z\t7746536061816329025\n";
-
-        testFilterWithColTops(query, expected, SqlJitMode.JIT_MODE_FORCE_SCALAR);
+        testSelectAllBothPageFramesFilterWithColTops(SqlJitMode.JIT_MODE_FORCE_SCALAR);
     }
 
     @Test
     public void testSelectAllBothPageFramesFilterWithColTopsVectorized() throws Exception {
+        testSelectAllBothPageFramesFilterWithColTops(SqlJitMode.JIT_MODE_ENABLED);
+    }
+
+    private void testSelectAllBothPageFramesFilterWithColTops(int jitMode) throws Exception {
         final String query = "select * from t1 where x = 3";
         final String expected = "x\tts\tj\n" +
                 "3\t1970-01-01T00:00:02.000000Z\tNaN\n" +
                 "3\t1970-01-01T00:01:42.000000Z\t7746536061816329025\n";
 
-        testFilterWithColTops(query, expected, SqlJitMode.JIT_MODE_ENABLED);
+        testFilterWithColTops(query, expected, jitMode);
     }
 
     @Test
     public void testSelectNonColTopColumnFilterWithColTopsScalar() throws Exception {
-        final String query = "select x from t1 where x < 4";
-        final String expected = "x\n" +
-                "1\n" +
-                "2\n" +
-                "3\n" +
-                "1\n" +
-                "2\n" +
-                "3\n";
-
-        testFilterWithColTops(query, expected, SqlJitMode.JIT_MODE_FORCE_SCALAR);
+        testSelectNonColTopColumnFilterWithColTops(SqlJitMode.JIT_MODE_FORCE_SCALAR);
     }
 
     @Test
     public void testSelectNonColTopColumnFilterWithColTopsVectorized() throws Exception {
+        testSelectNonColTopColumnFilterWithColTops(SqlJitMode.JIT_MODE_ENABLED);
+    }
+
+    private void testSelectNonColTopColumnFilterWithColTops(int jitMode) throws Exception {
         final String query = "select x from t1 where x < 4";
         final String expected = "x\n" +
                 "1\n" +
@@ -359,10 +367,10 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                 "2\n" +
                 "3\n";
 
-        testFilterWithColTops(query, expected, SqlJitMode.JIT_MODE_ENABLED);
+        testFilterWithColTops(query, expected, jitMode);
     }
 
-    public void testFilterWithColTops(String query, String expected, int jitMode) throws Exception {
+    private void testFilterWithColTops(String query, String expected, int jitMode) throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setJitMode(jitMode);
 

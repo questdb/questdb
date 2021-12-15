@@ -182,6 +182,12 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testOperationPriority() throws Exception {
+        serialize("(anint + 1) / (3 * anint) - 42.5 > 0.5");
+        assertIR("(f32 0.5D)(f32 42.5D)(i32 anint)(i32 3L)(*)(i32 1L)(i32 anint)(+)(/)(-)(>)(ret)");
+    }
+
+    @Test
     public void testNullConstantValues() throws Exception {
         String[][] columns = new String[][]{
                 {"anint", "i32", Numbers.INT_NaN + "L"},
