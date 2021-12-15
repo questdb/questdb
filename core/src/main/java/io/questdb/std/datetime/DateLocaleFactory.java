@@ -26,6 +26,7 @@ package io.questdb.std.datetime;
 
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.CharSequenceObjHashMap;
+import org.jetbrains.annotations.TestOnly;
 
 import java.text.DateFormatSymbols;
 
@@ -48,5 +49,9 @@ public class DateLocaleFactory {
 
     public DateLocale getLocale(CharSequence id) {
         return dateLocales.get(id);
+    }
+
+    @TestOnly
+    public static void load() {
     }
 }
