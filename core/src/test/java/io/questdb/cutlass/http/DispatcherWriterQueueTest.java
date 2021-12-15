@@ -97,6 +97,7 @@ public class DispatcherWriterQueueTest {
     @Test
     public void testAlterTableAddDisconnect() throws Exception {
         SOCountDownLatch alterAckReceived = new SOCountDownLatch(1);
+        SOCountDownLatch disconnectLatch = new SOCountDownLatch(1);
 
         HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
                 .withTempFolder(temp)
@@ -112,6 +113,7 @@ public class DispatcherWriterQueueTest {
                     public long openRW(LPSZ name) {
                         if (Chars.endsWith(name, "default/s.v") || Chars.endsWith(name, "default\\s.v")) {
                             alterAckReceived.await();
+                            disconnectLatch.countDown();
                         }
                         return super.openRW(name);
                     }
@@ -130,7 +132,7 @@ public class DispatcherWriterQueueTest {
                 2,
                 0,
                 queryTestBuilder,
-                alterAckReceived,
+                disconnectLatch,
                 "alter+table+<x>+alter+column+s+add+index");
     }
 

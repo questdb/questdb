@@ -1093,38 +1093,40 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         expectedSbs[n] = sb;
                     }
 
-                    long ts = Os.currentTimeMicros();
-                    StringSink tsSink = new StringSink();
-                    for (int nRow = 0; nRow < nRows; nRow++) {
-                        int nTable = nRow < tables.size() ? nRow : rand.nextInt(tables.size());
-                        AbstractLineSender sender = senders[nTable];
-                        StringBuilder sb = expectedSbs[nTable];
-                        CharSequence tableName = tables.get(nTable);
-                        sender.metric(tableName);
-                        String location = locations[rand.nextInt(locations.length)];
-                        sb.append(location);
-                        sb.append('\t');
-                        sender.tag("location", location);
-                        int temp = rand.nextInt(100);
-                        sb.append(temp);
-                        sb.append('\t');
-                        sender.field("temp", temp);
-                        tsSink.clear();
-                        TimestampFormatUtils.appendDateTimeUSec(tsSink, ts);
-                        sb.append(tsSink);
-                        sb.append('\n');
-                        sender.$(ts * 1000);
-                        sender.flush();
-                        if (expectDisconnect) {
-                            // To prevent all data being buffered before the expected disconnect slow sending
-                            Os.sleep(100);
+                    try {
+                        long ts = Os.currentTimeMicros();
+                        StringSink tsSink = new StringSink();
+                        for (int nRow = 0; nRow < nRows; nRow++) {
+                            int nTable = nRow < tables.size() ? nRow : rand.nextInt(tables.size());
+                            AbstractLineSender sender = senders[nTable];
+                            StringBuilder sb = expectedSbs[nTable];
+                            CharSequence tableName = tables.get(nTable);
+                            sender.metric(tableName);
+                            String location = locations[rand.nextInt(locations.length)];
+                            sb.append(location);
+                            sb.append('\t');
+                            sender.tag("location", location);
+                            int temp = rand.nextInt(100);
+                            sb.append(temp);
+                            sb.append('\t');
+                            sender.field("temp", temp);
+                            tsSink.clear();
+                            TimestampFormatUtils.appendDateTimeUSec(tsSink, ts);
+                            sb.append(tsSink);
+                            sb.append('\n');
+                            sender.$(ts * 1000);
+                            sender.flush();
+                            if (expectDisconnect) {
+                                // To prevent all data being buffered before the expected disconnect slow sending
+                                Os.sleep(100);
+                            }
+                            ts += rand.nextInt(1000);
                         }
-                        ts += rand.nextInt(1000);
-                    }
-
-                    for (int n = 0; n < senders.length; n++) {
-                        AbstractLineSender sender = senders[n];
-                        sender.close();
+                    } finally {
+                        for (int n = 0; n < senders.length; n++) {
+                            AbstractLineSender sender = senders[n];
+                            sender.close();
+                        }
                     }
 
                     Assert.assertFalse(expectDisconnect);
