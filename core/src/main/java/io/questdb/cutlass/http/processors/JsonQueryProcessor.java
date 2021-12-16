@@ -70,7 +70,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             int workerCount,
             Metrics metrics
     ) {
-        this(configuration, engine, workerCount, (FunctionFactoryCache) null, metrics);
+        this(configuration, engine, workerCount, null, metrics);
     }
 
     public JsonQueryProcessor(
@@ -80,15 +80,15 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             @Nullable FunctionFactoryCache functionFactoryCache,
             Metrics metrics
     ) {
-        this(configuration, engine, workerCount, new SqlCompiler(engine, functionFactoryCache), metrics);
+        this(configuration, engine, new SqlCompiler(engine, functionFactoryCache), metrics, new SqlExecutionContextImpl(engine, workerCount));
     }
 
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
-            int workerCount,
             SqlCompiler sqlCompiler,
-            Metrics metrics
+            Metrics metrics,
+            SqlExecutionContextImpl sqlExecutionContext
     ) {
         this.configuration = configuration;
         this.compiler = sqlCompiler;
@@ -106,7 +106,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT_AS_SELECT, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.COPY_REMOTE, JsonQueryProcessor::cannotCopyRemote);
         this.queryExecutors.extendAndSet(CompiledQuery.BACKUP_TABLE, sendConfirmation);
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount);
+        this.sqlExecutionContext = sqlExecutionContext;
         this.nanosecondClock = engine.getConfiguration().getNanosecondClock();
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration());
         this.metrics = metrics;
