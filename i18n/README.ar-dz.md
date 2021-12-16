@@ -1,50 +1,73 @@
 <div align="center">
-  <img alt="QuestDB Logo" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/logo-readme.png" width="305px"/>
+  <img
+    alt="QuestDB Logo"
+    src="https://raw.githubusercontent.com/questdb/questdb/master/.github/logo-readme.png"
+    width="305px"
+  />
 </div>
 <p>&nbsp;</p>
 
 <p align="center">
   <a href="https://slack.questdb.io">
-    <img src="https://slack.questdb.io/badge.svg" alt="QuestDB community Slack channel"/>
+    <img
+      src="https://slack.questdb.io/badge.svg"
+      alt="QuestDB community Slack channel"
+    />
   </a>
   <a href="#contribute">
-    <img src="https://img.shields.io/github/all-contributors/questdb/questdb" alt="QuestDB open source contributors"/>
+    <img
+      src="https://img.shields.io/github/all-contributors/questdb/questdb"
+      alt="QuestDB open source contributors"
+    />
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
-    <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB on Apache Maven"/>
+    <img
+      src="https://img.shields.io/maven-central/v/org.questdb/questdb"
+      alt="QuestDB on Apache Maven"
+    />
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | العربية
+[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) |
+العربية
 
 # QuestDB
+
 <div dir="rtl">
 QuestDB هي قاعدة بيانات SQL عالية الأداء ومفتوحة المصدر للتطبيقات في الخدمات المالية، إنترنت الأشياء، التعلم الآلي و DevOps وإمكانية المراقبة. يتضمن نقاط النهاية لبروتوكول الأسلاك PostgreSQL ، والابتلاع الحيادي للمخطط عالي الإنتاجية باستخدام بروتوكول خط InfluxDB ، وواجهة برمجة تطبيقات REST للاستعلامات، الواردات بالجملة والصادرات.
 
-تقوم QuestDB بتنفيذ ANSI SQL بامتدادات أصلية لميزات اللغة الموجهة للوقت. تجعل هذه الإضافات من السهل ربط البيانات من مصادر متعددة باستخدام الصلات العلائقية والمتسلسلات الزمنية.
-يحقق QuestDB أداءً عاليًا من نموذج التخزين الموجه إلى العمود، والمتجه المتوازي بشكل كبير التنفيذ ، تعليمات SIMD ، والعديد من التقنيات منخفضة الكمون. تم إنشاء قاعدة الشفرة بالكامل من الألف إلى الياء باستعمال ال Java و C ++، بدون تبعيات، وخالية 100٪ من جامع البيانات المهملة.
+تقوم QuestDB بتنفيذ ANSI SQL بامتدادات أصلية لميزات اللغة الموجهة للوقت. تجعل
+هذه الإضافات من السهل ربط البيانات من مصادر متعددة باستخدام الصلات العلائقية
+والمتسلسلات الزمنية. يحقق QuestDB أداءً عاليًا من نموذج التخزين الموجه إلى
+العمود، والمتجه المتوازي بشكل كبير التنفيذ ، تعليمات SIMD ، والعديد من التقنيات
+منخفضة الكمون. تم إنشاء قاعدة الشفرة بالكامل من الألف إلى الياء باستعمال ال Java
+و C ++، بدون تبعيات، وخالية 100٪ من جامع البيانات المهملة.
 
 <div align="center">
   <a href="https://demo.questdb.io">
-    <img alt="QuestDB Web Console showing multiple SQL statements and visualizing a query as a chart" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="600" />
+    <img
+      alt="QuestDB Web Console showing multiple SQL statements and visualizing a query as a chart"
+      src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png"
+      width="600"
+    />
   </a>
 </div>
 
 <h2>جرب QuestDB</h2>
 
-نحن نوفر <a href="https://demo.questdb.io/">عرضًا توضيحيًا مباشرًا</a> مزودًا بأحدث إصدار من QuestDB ومجموعة بيانات تقدر ب 1.6 مليار صف مع 10 سنوات من رحلات تاكسي مدينة نيويورك للاستعلام
-
+نحن نوفر <a href="https://demo.questdb.io/">عرضًا توضيحيًا مباشرًا</a> مزودًا
+بأحدث إصدار من QuestDB ومجموعة بيانات تقدر ب 1.6 مليار صف مع 10 سنوات من رحلات
+تاكسي مدينة نيويورك للاستعلام
 
 لتشغيل QuestDB، يمكن استخدام Docker للبدء بسرعة:
+
 </div>
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
 
-<div dir="rtl">
-يمكن لمستخدمي macOS استخدام Homebrew:
-</div>
+<div dir="rtl">يمكن لمستخدمي macOS استخدام Homebrew:</div>
 
 ```bash
 brew install questdb
@@ -58,44 +81,65 @@ brew services start questdb
 
 يمكنك التفاعل مع QuestDB باستخدام الواجهات التالية:
 
-- <a href="https://questdb.io/docs/reference/web-console/">وحدة تحكم الويب</a> الاستماع على المنفذ `9000`
+- <a href="https://questdb.io/docs/reference/web-console/">وحدة تحكم الويب</a> الاستماع
+  على المنفذ `9000`
 - <a href="https://questdb.io/docs/reference/api/rest/">REST API</a> في المنفذ `9000`
-- <a href="https://questdb.io/docs/reference/api/postgres/">PostgreSQL</a> بروتوكول سلكي على المنفذ `8812`
-- بروتوكول خط <a href="https://questdb.io/docs/reference/api/influxdb/">InfluxDB</a>  لبث عالي الإنتاجية على المنفذ `9009`
+- <a href="https://questdb.io/docs/reference/api/postgres/">PostgreSQL</a> بروتوكول
+  سلكي على المنفذ `8812`
+- بروتوكول خط
+  <a href="https://questdb.io/docs/reference/api/influxdb/">InfluxDB</a> لبث عالي
+  الإنتاجية على المنفذ `9009`
 
 <h2>كيف يقارن QuestDB مع TSDBs الأخرى مفتوحة المصدر</h2>
 
 فيما يلي عدد العناصر الأساسية العالية
-<a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">مجموعة معايير السلسلة الزمنية</a>
+
+<a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">
+  مجموعة معايير السلسلة الزمنية
+</a>
 النتائج باستخدام حالة استخدام `cpu-only` مع 6 عمال على AMD Ryzen 3970X:
 
 <div align="center">
   <a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">
-    <img alt="مخطط بياني يقارن الحد الأقصى من الإنتاجية لكل من QuestDB و ClickHouse و TimescaleDB و InfluxDB." src="https://raw.githubusercontent.com/questdb/questdb/master/.github/tsbs-results.png"/>
+    <img
+      alt="مخطط بياني يقارن الحد الأقصى من الإنتاجية لكل من QuestDB و ClickHouse و TimescaleDB و InfluxDB."
+      src="https://raw.githubusercontent.com/questdb/questdb/master/.github/tsbs-results.png"
+    />
   </a>
 </div>
 
-يوضح الجدول التالي وقت تنفيذ الاستعلام لمليار صف يتم تشغيلها على نسخة "c5.metal" باستخدام 16 من 96 سلسلة متاحة:
+يوضح الجدول التالي وقت تنفيذ الاستعلام لمليار صف يتم تشغيلها على نسخة "c5.metal"
+باستخدام 16 من 96 سلسلة متاحة:
 
-| الاستعلام                                                     | مدة العرض |
-| --------------------------------------------------------- | ---------- |
-| `SELECT sum(double) FROM 1bn`                             | 0.061 secs |
-| `SELECT tag, sum(double) FROM 1bn`                        | 0.179 secs |
+| الاستعلام                                                    | مدة العرض  |
+| ------------------------------------------------------------ | ---------- |
+| `SELECT sum(double) FROM 1bn`                                | 0.061 secs |
+| `SELECT tag, sum(double) FROM 1bn`                           | 0.179 secs |
 | `SELECT tag, sum(double) FROM 1bn WHERE timestamp in '2019'` | 0.05 secs  |
 
 ## التوثيق والموارد
 
-- توضح <a href="https://questdb.io/docs/introduction/">وثائق QuestDB</a> كيفية تشغيل وتهيئة QuestDB بالمراجع الفنية.
-- تعد <a href="https://slack.questdb.io">مساحة عمل Slack الخاصة بنا</a> مكانًا رائعًا للمناقشات التقنية ولقاء مستخدمين آخرين. :wave:
-- <a href="https://github.com/questdb/questdb/discussions">مناقشات GitHub</a> هي المكان الذي يشارك فيه مستخدمونا أفكارًا حول الميزات وطرح الأسئلة وإظهار ما قاموا ببنائه.
-- <a href="https://github.com/questdb/questdb/issues">قضايا GitHub</a> مخصصة لتقارير الأخطاء.
-- تسرد <a href="https://github.com/questdb/questdb/milestones">معالم المشروع</a> المهام والميزات التي نعمل عليها للإصدارات القادمة.
-- <a href="https://questdb.io/tutorial/">دروس</a> كتبها أعضاء مجتمعنا تظهر ما يمكن عمله مع QuestDB.
-- <a href="https://stackoverflow.com/questions/tagged/questdb">QuestDB على Stack Overflow</a> لديها حلول مشتركة لاستكشاف الأخطاء وإصلاحها.
+- توضح <a href="https://questdb.io/docs/introduction/">وثائق QuestDB</a> كيفية
+  تشغيل وتهيئة QuestDB بالمراجع الفنية.
+- تعد <a href="https://slack.questdb.io">مساحة عمل Slack الخاصة بنا</a> مكانًا
+  رائعًا للمناقشات التقنية ولقاء مستخدمين آخرين. :wave:
+- <a href="https://github.com/questdb/questdb/discussions">مناقشات GitHub</a> هي
+  المكان الذي يشارك فيه مستخدمونا أفكارًا حول الميزات وطرح الأسئلة وإظهار ما قاموا
+  ببنائه.
+- <a href="https://github.com/questdb/questdb/issues">قضايا GitHub</a> مخصصة لتقارير
+  الأخطاء.
+- تسرد <a href="https://github.com/questdb/questdb/milestones">معالم المشروع</a>
+  المهام والميزات التي نعمل عليها للإصدارات القادمة.
+- <a href="https://questdb.io/tutorial/">دروس</a> كتبها أعضاء مجتمعنا تظهر ما يمكن
+  عمله مع QuestDB.
+- <a href="https://stackoverflow.com/questions/tagged/questdb">
+    QuestDB على Stack Overflow
+  </a> لديها حلول مشتركة لاستكشاف الأخطاء وإصلاحها.
 
 ## المساهمة
 
-يسعدنا دائمًا أن يكون لدينا مساهمات في المشروع سواء كانت المساهمة بالكود، التوثيق، التبليغ عن الأخطاء، طلب ميزات أو التعليقات. للبدء بالمساهمة:
+يسعدنا دائمًا أن يكون لدينا مساهمات في المشروع سواء كانت المساهمة بالكود،
+التوثيق، التبليغ عن الأخطاء، طلب ميزات أو التعليقات. للبدء بالمساهمة:
 
 - ألق نظرة على مشكلات GitHub المصنفة
   "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)".
@@ -106,9 +150,10 @@ brew services start questdb
 - [أنشيء fork ](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)
   من QuestDB وإرسل طلب سحب مع التغييرات المقترحة.
 
-كدليل على امتناننا، سنرسل للمساهمين بعضًا من غنائم QuestDB مثل الملصقات والقمصان! :star2:
+كدليل على امتناننا، سنرسل للمساهمين بعضًا من غنائم QuestDB مثل الملصقات
+والقمصان! :star2:
 
-نتقدم بالشكر الجزيل إلى الأشخاص الرائعين التاليين الذين ساهموا في QuestDB: 
+نتقدم بالشكر الجزيل إلى الأشخاص الرائعين التاليين الذين ساهموا في QuestDB:
 ([مفتاح الرموز التعبيرية](https://allcontributors.org/docs/en/emoji-key)):
 
 </div>
@@ -225,5 +270,9 @@ brew services start questdb
 
 <div dir="rtl">
 
-هذا المشروع يتبع تخصيص <a href="https://github.com/all-contributors/all-contributors">كل المساهمين</a>. جميع المساهمات من أي نوع مرحب بها!
+هذا المشروع يتبع تخصيص
+
+<a href="https://github.com/all-contributors/all-contributors">كل المساهمين</a>.
+جميع المساهمات من أي نوع مرحب بها!
+
 </div>

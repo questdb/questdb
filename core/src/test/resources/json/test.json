@@ -3,10 +3,7 @@
     "requestCounter": 4
   },
   "operations": [
-    [
-      "destroy",
-      "w54"
-    ],
+    ["destroy", "w54"],
     [
       "set",
       "w2",
@@ -32,9 +29,7 @@
       "set",
       "w53",
       {
-        "children": [
-          "w95"
-        ]
+        "children": ["w95"]
       }
     ],
     [
@@ -43,26 +38,11 @@
       "rwt.widgets.Composite",
       {
         "parent": "w53",
-        "style": [
-          "NONE"
-        ],
-        "bounds": [
-          0,
-          0,
-          1008,
-          586
-        ],
-        "children": [
-          "w96",
-          "w97"
-        ],
+        "style": ["NONE"],
+        "bounds": [0, 0, 1008, 586],
+        "children": ["w96", "w97"],
         "tabIndex": -1,
-        "clientArea": [
-          0,
-          0,
-          1008,
-          586
-        ]
+        "clientArea": [0, 0, 1008, 586]
       }
     ],
     [
@@ -71,15 +51,8 @@
       "rwt.widgets.Label",
       {
         "parent": "w95",
-        "style": [
-          "NONE"
-        ],
-        "bounds": [
-          10,
-          30,
-          112,
-          26
-        ],
+        "style": ["NONE"],
+        "bounds": [10, 30, 112, 26],
         "tabIndex": -1,
         "customVariant": "variant_pageHeadline",
         "text": "TableViewer"
@@ -91,28 +64,11 @@
       "rwt.widgets.Composite",
       {
         "parent": "w95",
-        "style": [
-          "NONE"
-        ],
-        "bounds": [
-          0,
-          61,
-          1008,
-          525
-        ],
-        "children": [
-          "w98",
-          "w99",
-          "w226",
-          "w228"
-        ],
+        "style": ["NONE"],
+        "bounds": [0, 61, 1008, 525],
+        "children": ["w98", "w99", "w226", "w228"],
         "tabIndex": -1,
-        "clientArea": [
-          0,
-          0,
-          1008,
-          525
-        ]
+        "clientArea": [0, 0, 1008, 525]
       }
     ],
     [
@@ -121,23 +77,10 @@
       "rwt.widgets.Text",
       {
         "parent": "w97",
-        "style": [
-          "LEFT",
-          "SINGLE",
-          "BORDER"
-        ],
-        "bounds": [
-          10,
-          10,
-          988,
-          32
-        ],
+        "style": ["LEFT", "SINGLE", "BORDER"],
+        "bounds": [10, 10, 988, 32],
         "tabIndex": 22,
-        "activeKeys": [
-          "#13",
-          "#27",
-          "#40"
-        ]
+        "activeKeys": ["#13", "#27", "#40"]
       }
     ],
     [
@@ -154,10 +97,7 @@
       "rwt.widgets.Grid",
       {
         "parent": "w97",
-        "style": [
-          "SINGLE",
-          "BORDER"
-        ],
+        "style": ["SINGLE", "BORDER"],
         "appearance": "table",
         "indentionWidth": 0,
         "treeColumn": -1,
@@ -170,9 +110,7 @@
       "rwt.widgets.ScrollBar",
       {
         "parent": "w99",
-        "style": [
-          "HORIZONTAL"
-        ]
+        "style": ["HORIZONTAL"]
       }
     ],
     [
@@ -181,21 +119,14 @@
       "rwt.widgets.ScrollBar",
       {
         "parent": "w99",
-        "style": [
-          "VERTICAL"
-        ]
+        "style": ["VERTICAL"]
       }
     ],
     [
       "set",
       "w99",
       {
-        "bounds": [
-          10,
-          52,
-          988,
-          402
-        ],
+        "bounds": [10, 52, 988, 402],
         "children": [],
         "tabIndex": 23,
         "activeKeys": [
@@ -235,69 +166,19 @@
         "itemCount": 118,
         "itemHeight": 28,
         "itemMetrics": [
-          [
-            0,
-            0,
-            50,
-            3,
-            0,
-            3,
-            44
-          ],
-          [
-            1,
-            50,
-            50,
-            53,
-            0,
-            53,
-            44
-          ],
-          [
-            2,
-            100,
-            140,
-            103,
-            0,
-            103,
-            134
-          ],
-          [
-            3,
-            240,
-            180,
-            243,
-            0,
-            243,
-            174
-          ],
-          [
-            4,
-            420,
-            50,
-            423,
-            0,
-            423,
-            44
-          ],
-          [
-            5,
-            470,
-            50,
-            473,
-            0,
-            473,
-            44
-          ]
+          [0, 0, 50, 3, 0, 3, 44],
+          [1, 50, 50, 53, 0, 53, 44],
+          [2, 100, 140, 103, 0, 103, 134],
+          [3, 240, 180, 243, 0, 243, 174],
+          [4, 420, 50, 423, 0, 423, 44],
+          [5, 470, 50, 473, 0, 473, 44]
         ],
         "columnCount": 6,
         "headerHeight": 35,
         "headerVisible": true,
         "linesVisible": true,
         "focusItem": "w108",
-        "selection": [
-          "w108"
-        ]
+        "selection": ["w108"]
       }
     ],
     [
@@ -461,27 +342,8 @@
       {
         "parent": "w99",
         "index": 0,
-        "texts": [
-          "1",
-          "H",
-          "Hydrogen",
-          "Nonmetal",
-          "1",
-          "1"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            138,
-            226,
-            52,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["1", "H", "Hydrogen", "Nonmetal", "1", "1"],
+        "cellBackgrounds": [null, null, null, [138, 226, 52, 255], null, null]
       }
     ],
     [
@@ -491,27 +353,8 @@
       {
         "parent": "w99",
         "index": 1,
-        "texts": [
-          "2",
-          "He",
-          "Helium",
-          "Noble gas",
-          "18",
-          "1"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            114,
-            159,
-            207,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["2", "He", "Helium", "Noble gas", "18", "1"],
+        "cellBackgrounds": [null, null, null, [114, 159, 207, 255], null, null]
       }
     ],
     [
@@ -521,27 +364,8 @@
       {
         "parent": "w99",
         "index": 2,
-        "texts": [
-          "3",
-          "Li",
-          "Lithium",
-          "Alkali metal",
-          "1",
-          "2"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            239,
-            41,
-            41,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["3", "Li", "Lithium", "Alkali metal", "1", "2"],
+        "cellBackgrounds": [null, null, null, [239, 41, 41, 255], null, null]
       }
     ],
     [
@@ -551,27 +375,8 @@
       {
         "parent": "w99",
         "index": 3,
-        "texts": [
-          "4",
-          "Be",
-          "Beryllium",
-          "Alkaline earth metal",
-          "2",
-          "2"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            233,
-            185,
-            110,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["4", "Be", "Beryllium", "Alkaline earth metal", "2", "2"],
+        "cellBackgrounds": [null, null, null, [233, 185, 110, 255], null, null]
       }
     ],
     [
@@ -581,27 +386,8 @@
       {
         "parent": "w99",
         "index": 4,
-        "texts": [
-          "5",
-          "B",
-          "Boron",
-          "Metalloid",
-          "13",
-          "2"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            156,
-            159,
-            153,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["5", "B", "Boron", "Metalloid", "13", "2"],
+        "cellBackgrounds": [null, null, null, [156, 159, 153, 255], null, null]
       }
     ],
     [
@@ -611,27 +397,8 @@
       {
         "parent": "w99",
         "index": 5,
-        "texts": [
-          "6",
-          "C",
-          "Carbon",
-          "Nonmetal",
-          "14",
-          "2"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            138,
-            226,
-            52,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["6", "C", "Carbon", "Nonmetal", "14", "2"],
+        "cellBackgrounds": [null, null, null, [138, 226, 52, 255], null, null]
       }
     ],
     [
@@ -641,27 +408,8 @@
       {
         "parent": "w99",
         "index": 6,
-        "texts": [
-          "7",
-          "N",
-          "Nitrogen",
-          "Nonmetal",
-          "15",
-          "2"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            138,
-            226,
-            52,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["7", "N", "Nitrogen", "Nonmetal", "15", "2"],
+        "cellBackgrounds": [null, null, null, [138, 226, 52, 255], null, null]
       }
     ],
     [
@@ -671,27 +419,8 @@
       {
         "parent": "w99",
         "index": 7,
-        "texts": [
-          "8",
-          "O",
-          "Oxygen",
-          "Nonmetal",
-          "16",
-          "2"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            138,
-            226,
-            52,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["8", "O", "Oxygen", "Nonmetal", "16", "2"],
+        "cellBackgrounds": [null, null, null, [138, 226, 52, 255], null, null]
       }
     ],
     [
@@ -701,27 +430,8 @@
       {
         "parent": "w99",
         "index": 8,
-        "texts": [
-          "9",
-          "F",
-          "Fluorine",
-          "Halogen",
-          "17",
-          "2"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            233,
-            79,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["9", "F", "Fluorine", "Halogen", "17", "2"],
+        "cellBackgrounds": [null, null, null, [252, 233, 79, 255], null, null]
       }
     ],
     [
@@ -731,27 +441,8 @@
       {
         "parent": "w99",
         "index": 9,
-        "texts": [
-          "10",
-          "Ne",
-          "Neon",
-          "Noble gas",
-          "18",
-          "2"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            114,
-            159,
-            207,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["10", "Ne", "Neon", "Noble gas", "18", "2"],
+        "cellBackgrounds": [null, null, null, [114, 159, 207, 255], null, null]
       }
     ],
     [
@@ -761,27 +452,8 @@
       {
         "parent": "w99",
         "index": 10,
-        "texts": [
-          "11",
-          "Na",
-          "Sodium",
-          "Alkali metal",
-          "1",
-          "3"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            239,
-            41,
-            41,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["11", "Na", "Sodium", "Alkali metal", "1", "3"],
+        "cellBackgrounds": [null, null, null, [239, 41, 41, 255], null, null]
       }
     ],
     [
@@ -791,27 +463,8 @@
       {
         "parent": "w99",
         "index": 11,
-        "texts": [
-          "12",
-          "Mg",
-          "Magnesium",
-          "Alkaline earth metal",
-          "2",
-          "3"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            233,
-            185,
-            110,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["12", "Mg", "Magnesium", "Alkaline earth metal", "2", "3"],
+        "cellBackgrounds": [null, null, null, [233, 185, 110, 255], null, null]
       }
     ],
     [
@@ -821,27 +474,8 @@
       {
         "parent": "w99",
         "index": 12,
-        "texts": [
-          "13",
-          "Al",
-          "Aluminium",
-          "Poor metal",
-          "13",
-          "3"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            238,
-            238,
-            236,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["13", "Al", "Aluminium", "Poor metal", "13", "3"],
+        "cellBackgrounds": [null, null, null, [238, 238, 236, 255], null, null]
       }
     ],
     [
@@ -851,27 +485,8 @@
       {
         "parent": "w99",
         "index": 13,
-        "texts": [
-          "14",
-          "Si",
-          "Silicon",
-          "Metalloid",
-          "14",
-          "3"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            156,
-            159,
-            153,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["14", "Si", "Silicon", "Metalloid", "14", "3"],
+        "cellBackgrounds": [null, null, null, [156, 159, 153, 255], null, null]
       }
     ],
     [
@@ -881,27 +496,8 @@
       {
         "parent": "w99",
         "index": 14,
-        "texts": [
-          "15",
-          "P",
-          "Phosphorus",
-          "Nonmetal",
-          "15",
-          "3"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            138,
-            226,
-            52,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["15", "P", "Phosphorus", "Nonmetal", "15", "3"],
+        "cellBackgrounds": [null, null, null, [138, 226, 52, 255], null, null]
       }
     ],
     [
@@ -911,27 +507,8 @@
       {
         "parent": "w99",
         "index": 15,
-        "texts": [
-          "16",
-          "S",
-          "Sulfur",
-          "Nonmetal",
-          "16",
-          "3"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            138,
-            226,
-            52,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["16", "S", "Sulfur", "Nonmetal", "16", "3"],
+        "cellBackgrounds": [null, null, null, [138, 226, 52, 255], null, null]
       }
     ],
     [
@@ -941,27 +518,8 @@
       {
         "parent": "w99",
         "index": 16,
-        "texts": [
-          "17",
-          "Cl",
-          "Chlorine",
-          "Halogen",
-          "17",
-          "3"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            233,
-            79,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["17", "Cl", "Chlorine", "Halogen", "17", "3"],
+        "cellBackgrounds": [null, null, null, [252, 233, 79, 255], null, null]
       }
     ],
     [
@@ -971,27 +529,8 @@
       {
         "parent": "w99",
         "index": 17,
-        "texts": [
-          "18",
-          "Ar",
-          "Argon",
-          "Noble gas",
-          "18",
-          "3"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            114,
-            159,
-            207,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["18", "Ar", "Argon", "Noble gas", "18", "3"],
+        "cellBackgrounds": [null, null, null, [114, 159, 207, 255], null, null]
       }
     ],
     [
@@ -1001,27 +540,8 @@
       {
         "parent": "w99",
         "index": 18,
-        "texts": [
-          "19",
-          "K",
-          "Potassium",
-          "Alkali metal",
-          "1",
-          "4"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            239,
-            41,
-            41,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["19", "K", "Potassium", "Alkali metal", "1", "4"],
+        "cellBackgrounds": [null, null, null, [239, 41, 41, 255], null, null]
       }
     ],
     [
@@ -1031,27 +551,8 @@
       {
         "parent": "w99",
         "index": 19,
-        "texts": [
-          "20",
-          "Ca",
-          "Calcium",
-          "Alkaline earth metal",
-          "2",
-          "4"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            233,
-            185,
-            110,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["20", "Ca", "Calcium", "Alkaline earth metal", "2", "4"],
+        "cellBackgrounds": [null, null, null, [233, 185, 110, 255], null, null]
       }
     ],
     [
@@ -1061,27 +562,8 @@
       {
         "parent": "w99",
         "index": 20,
-        "texts": [
-          "21",
-          "Sc",
-          "Scandium",
-          "Transition metal",
-          "3",
-          "4"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["21", "Sc", "Scandium", "Transition metal", "3", "4"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -1091,27 +573,8 @@
       {
         "parent": "w99",
         "index": 21,
-        "texts": [
-          "22",
-          "Ti",
-          "Titanium",
-          "Transition metal",
-          "4",
-          "4"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["22", "Ti", "Titanium", "Transition metal", "4", "4"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -1121,27 +584,8 @@
       {
         "parent": "w99",
         "index": 22,
-        "texts": [
-          "23",
-          "V",
-          "Vanadium",
-          "Transition metal",
-          "5",
-          "4"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["23", "V", "Vanadium", "Transition metal", "5", "4"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -1151,27 +595,8 @@
       {
         "parent": "w99",
         "index": 23,
-        "texts": [
-          "24",
-          "Cr",
-          "Chromium",
-          "Transition metal",
-          "6",
-          "4"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["24", "Cr", "Chromium", "Transition metal", "6", "4"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -1181,27 +606,8 @@
       {
         "parent": "w99",
         "index": 24,
-        "texts": [
-          "25",
-          "Mn",
-          "Manganese",
-          "Transition metal",
-          "7",
-          "4"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["25", "Mn", "Manganese", "Transition metal", "7", "4"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -1211,27 +617,8 @@
       {
         "parent": "w99",
         "index": 25,
-        "texts": [
-          "26",
-          "Fe",
-          "Iron",
-          "Transition metal",
-          "8",
-          "4"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["26", "Fe", "Iron", "Transition metal", "8", "4"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -1241,27 +628,8 @@
       {
         "parent": "w99",
         "index": 26,
-        "texts": [
-          "27",
-          "Co",
-          "Cobalt",
-          "Transition metal",
-          "9",
-          "4"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["27", "Co", "Cobalt", "Transition metal", "9", "4"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -1271,27 +639,8 @@
       {
         "parent": "w99",
         "index": 27,
-        "texts": [
-          "28",
-          "Ni",
-          "Nickel",
-          "Transition metal",
-          "10",
-          "4"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["28", "Ni", "Nickel", "Transition metal", "10", "4"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -1301,27 +650,8 @@
       {
         "parent": "w99",
         "index": 28,
-        "texts": [
-          "29",
-          "Cu",
-          "Copper",
-          "Transition metal",
-          "11",
-          "4"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["29", "Cu", "Copper", "Transition metal", "11", "4"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -1331,27 +661,8 @@
       {
         "parent": "w99",
         "index": 29,
-        "texts": [
-          "30",
-          "Zn",
-          "Zinc",
-          "Transition metal",
-          "12",
-          "4"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["30", "Zn", "Zinc", "Transition metal", "12", "4"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -1361,27 +672,8 @@
       {
         "parent": "w99",
         "index": 30,
-        "texts": [
-          "31",
-          "Ga",
-          "Gallium",
-          "Poor metal",
-          "13",
-          "4"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            238,
-            238,
-            236,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["31", "Ga", "Gallium", "Poor metal", "13", "4"],
+        "cellBackgrounds": [null, null, null, [238, 238, 236, 255], null, null]
       }
     ],
     [
@@ -1391,27 +683,8 @@
       {
         "parent": "w99",
         "index": 31,
-        "texts": [
-          "32",
-          "Ge",
-          "Germanium",
-          "Metalloid",
-          "14",
-          "4"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            156,
-            159,
-            153,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["32", "Ge", "Germanium", "Metalloid", "14", "4"],
+        "cellBackgrounds": [null, null, null, [156, 159, 153, 255], null, null]
       }
     ],
     [
@@ -1421,27 +694,8 @@
       {
         "parent": "w99",
         "index": 32,
-        "texts": [
-          "33",
-          "As",
-          "Arsenic",
-          "Metalloid",
-          "15",
-          "4"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            156,
-            159,
-            153,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["33", "As", "Arsenic", "Metalloid", "15", "4"],
+        "cellBackgrounds": [null, null, null, [156, 159, 153, 255], null, null]
       }
     ],
     [
@@ -1451,27 +705,8 @@
       {
         "parent": "w99",
         "index": 33,
-        "texts": [
-          "34",
-          "Se",
-          "Selenium",
-          "Nonmetal",
-          "16",
-          "4"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            138,
-            226,
-            52,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["34", "Se", "Selenium", "Nonmetal", "16", "4"],
+        "cellBackgrounds": [null, null, null, [138, 226, 52, 255], null, null]
       }
     ],
     [
@@ -1481,27 +716,8 @@
       {
         "parent": "w99",
         "index": 34,
-        "texts": [
-          "35",
-          "Br",
-          "Bromine",
-          "Halogen",
-          "17",
-          "4"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            233,
-            79,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["35", "Br", "Bromine", "Halogen", "17", "4"],
+        "cellBackgrounds": [null, null, null, [252, 233, 79, 255], null, null]
       }
     ],
     [
@@ -1511,27 +727,8 @@
       {
         "parent": "w99",
         "index": 35,
-        "texts": [
-          "36",
-          "Kr",
-          "Krypton",
-          "Noble gas",
-          "18",
-          "4"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            114,
-            159,
-            207,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["36", "Kr", "Krypton", "Noble gas", "18", "4"],
+        "cellBackgrounds": [null, null, null, [114, 159, 207, 255], null, null]
       }
     ],
     [
@@ -1541,27 +738,8 @@
       {
         "parent": "w99",
         "index": 36,
-        "texts": [
-          "37",
-          "Rb",
-          "Rubidium",
-          "Alkali metal",
-          "1",
-          "5"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            239,
-            41,
-            41,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["37", "Rb", "Rubidium", "Alkali metal", "1", "5"],
+        "cellBackgrounds": [null, null, null, [239, 41, 41, 255], null, null]
       }
     ],
     [
@@ -1571,27 +749,8 @@
       {
         "parent": "w99",
         "index": 37,
-        "texts": [
-          "38",
-          "Sr",
-          "Strontium",
-          "Alkaline earth metal",
-          "2",
-          "5"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            233,
-            185,
-            110,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["38", "Sr", "Strontium", "Alkaline earth metal", "2", "5"],
+        "cellBackgrounds": [null, null, null, [233, 185, 110, 255], null, null]
       }
     ],
     [
@@ -1601,27 +760,8 @@
       {
         "parent": "w99",
         "index": 38,
-        "texts": [
-          "39",
-          "Y",
-          "Yttrium",
-          "Transition metal",
-          "3",
-          "5"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["39", "Y", "Yttrium", "Transition metal", "3", "5"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -1631,27 +771,8 @@
       {
         "parent": "w99",
         "index": 39,
-        "texts": [
-          "40",
-          "Zr",
-          "Zirconium",
-          "Transition metal",
-          "4",
-          "5"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["40", "Zr", "Zirconium", "Transition metal", "4", "5"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -1661,27 +782,8 @@
       {
         "parent": "w99",
         "index": 40,
-        "texts": [
-          "41",
-          "Nb",
-          "Niobium",
-          "Transition metal",
-          "5",
-          "5"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["41", "Nb", "Niobium", "Transition metal", "5", "5"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -1691,27 +793,8 @@
       {
         "parent": "w99",
         "index": 41,
-        "texts": [
-          "42",
-          "Mo",
-          "Molybdenum",
-          "Transition metal",
-          "6",
-          "5"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["42", "Mo", "Molybdenum", "Transition metal", "6", "5"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -1721,27 +804,8 @@
       {
         "parent": "w99",
         "index": 42,
-        "texts": [
-          "43",
-          "Tc",
-          "Technetium",
-          "Transition metal",
-          "7",
-          "5"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["43", "Tc", "Technetium", "Transition metal", "7", "5"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -1751,27 +815,8 @@
       {
         "parent": "w99",
         "index": 43,
-        "texts": [
-          "44",
-          "Ru",
-          "Ruthenium",
-          "Transition metal",
-          "8",
-          "5"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["44", "Ru", "Ruthenium", "Transition metal", "8", "5"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -1781,27 +826,8 @@
       {
         "parent": "w99",
         "index": 44,
-        "texts": [
-          "45",
-          "Rh",
-          "Rhodium",
-          "Transition metal",
-          "9",
-          "5"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["45", "Rh", "Rhodium", "Transition metal", "9", "5"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -1811,27 +837,8 @@
       {
         "parent": "w99",
         "index": 45,
-        "texts": [
-          "46",
-          "Pd",
-          "Palladium",
-          "Transition metal",
-          "10",
-          "5"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["46", "Pd", "Palladium", "Transition metal", "10", "5"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -1841,27 +848,8 @@
       {
         "parent": "w99",
         "index": 46,
-        "texts": [
-          "47",
-          "Ag",
-          "Silver",
-          "Transition metal",
-          "11",
-          "5"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["47", "Ag", "Silver", "Transition metal", "11", "5"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -1871,27 +859,8 @@
       {
         "parent": "w99",
         "index": 47,
-        "texts": [
-          "48",
-          "Cd",
-          "Cadmium",
-          "Transition metal",
-          "12",
-          "5"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["48", "Cd", "Cadmium", "Transition metal", "12", "5"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -1901,27 +870,8 @@
       {
         "parent": "w99",
         "index": 48,
-        "texts": [
-          "49",
-          "In",
-          "Indium",
-          "Poor metal",
-          "13",
-          "5"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            238,
-            238,
-            236,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["49", "In", "Indium", "Poor metal", "13", "5"],
+        "cellBackgrounds": [null, null, null, [238, 238, 236, 255], null, null]
       }
     ],
     [
@@ -1931,27 +881,8 @@
       {
         "parent": "w99",
         "index": 49,
-        "texts": [
-          "50",
-          "Sn",
-          "Tin",
-          "Poor metal",
-          "14",
-          "5"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            238,
-            238,
-            236,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["50", "Sn", "Tin", "Poor metal", "14", "5"],
+        "cellBackgrounds": [null, null, null, [238, 238, 236, 255], null, null]
       }
     ],
     [
@@ -1961,27 +892,8 @@
       {
         "parent": "w99",
         "index": 50,
-        "texts": [
-          "51",
-          "Sb",
-          "Antimony",
-          "Metalloid",
-          "15",
-          "5"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            156,
-            159,
-            153,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["51", "Sb", "Antimony", "Metalloid", "15", "5"],
+        "cellBackgrounds": [null, null, null, [156, 159, 153, 255], null, null]
       }
     ],
     [
@@ -1991,27 +903,8 @@
       {
         "parent": "w99",
         "index": 51,
-        "texts": [
-          "52",
-          "Te",
-          "Tellurium",
-          "Metalloid",
-          "16",
-          "5"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            156,
-            159,
-            153,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["52", "Te", "Tellurium", "Metalloid", "16", "5"],
+        "cellBackgrounds": [null, null, null, [156, 159, 153, 255], null, null]
       }
     ],
     [
@@ -2021,27 +914,8 @@
       {
         "parent": "w99",
         "index": 52,
-        "texts": [
-          "53",
-          "I",
-          "Iodine",
-          "Halogen",
-          "17",
-          "5"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            233,
-            79,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["53", "I", "Iodine", "Halogen", "17", "5"],
+        "cellBackgrounds": [null, null, null, [252, 233, 79, 255], null, null]
       }
     ],
     [
@@ -2051,27 +925,8 @@
       {
         "parent": "w99",
         "index": 53,
-        "texts": [
-          "54",
-          "Xe",
-          "Xenon",
-          "Noble gas",
-          "18",
-          "5"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            114,
-            159,
-            207,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["54", "Xe", "Xenon", "Noble gas", "18", "5"],
+        "cellBackgrounds": [null, null, null, [114, 159, 207, 255], null, null]
       }
     ],
     [
@@ -2081,27 +936,8 @@
       {
         "parent": "w99",
         "index": 54,
-        "texts": [
-          "55",
-          "Cs",
-          "Caesium",
-          "Alkali metal",
-          "1",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            239,
-            41,
-            41,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["55", "Cs", "Caesium", "Alkali metal", "1", "6"],
+        "cellBackgrounds": [null, null, null, [239, 41, 41, 255], null, null]
       }
     ],
     [
@@ -2111,27 +947,8 @@
       {
         "parent": "w99",
         "index": 55,
-        "texts": [
-          "56",
-          "Ba",
-          "Barium",
-          "Alkaline earth metal",
-          "2",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            233,
-            185,
-            110,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["56", "Ba", "Barium", "Alkaline earth metal", "2", "6"],
+        "cellBackgrounds": [null, null, null, [233, 185, 110, 255], null, null]
       }
     ],
     [
@@ -2141,27 +958,8 @@
       {
         "parent": "w99",
         "index": 56,
-        "texts": [
-          "57",
-          "La",
-          "Lanthanum",
-          "Lanthanide",
-          "3",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["57", "La", "Lanthanum", "Lanthanide", "3", "6"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -2171,27 +969,8 @@
       {
         "parent": "w99",
         "index": 57,
-        "texts": [
-          "58",
-          "Ce",
-          "Cerium",
-          "Lanthanide",
-          "3",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["58", "Ce", "Cerium", "Lanthanide", "3", "6"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -2201,27 +980,8 @@
       {
         "parent": "w99",
         "index": 58,
-        "texts": [
-          "59",
-          "Pr",
-          "Praseodymium",
-          "Lanthanide",
-          "3",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["59", "Pr", "Praseodymium", "Lanthanide", "3", "6"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -2231,27 +991,8 @@
       {
         "parent": "w99",
         "index": 59,
-        "texts": [
-          "60",
-          "Nd",
-          "Neodymium",
-          "Lanthanide",
-          "3",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["60", "Nd", "Neodymium", "Lanthanide", "3", "6"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -2261,27 +1002,8 @@
       {
         "parent": "w99",
         "index": 60,
-        "texts": [
-          "61",
-          "Pm",
-          "Promethium",
-          "Lanthanide",
-          "3",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["61", "Pm", "Promethium", "Lanthanide", "3", "6"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -2291,27 +1013,8 @@
       {
         "parent": "w99",
         "index": 61,
-        "texts": [
-          "62",
-          "Sm",
-          "Samarium",
-          "Lanthanide",
-          "3",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["62", "Sm", "Samarium", "Lanthanide", "3", "6"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -2321,27 +1024,8 @@
       {
         "parent": "w99",
         "index": 62,
-        "texts": [
-          "63",
-          "Eu",
-          "Europium",
-          "Lanthanide",
-          "3",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["63", "Eu", "Europium", "Lanthanide", "3", "6"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -2351,27 +1035,8 @@
       {
         "parent": "w99",
         "index": 63,
-        "texts": [
-          "64",
-          "Gd",
-          "Gadolinium",
-          "Lanthanide",
-          "3",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["64", "Gd", "Gadolinium", "Lanthanide", "3", "6"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -2381,27 +1046,8 @@
       {
         "parent": "w99",
         "index": 64,
-        "texts": [
-          "65",
-          "Tb",
-          "Terbium",
-          "Lanthanide",
-          "3",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["65", "Tb", "Terbium", "Lanthanide", "3", "6"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -2411,27 +1057,8 @@
       {
         "parent": "w99",
         "index": 65,
-        "texts": [
-          "66",
-          "Dy",
-          "Dysprosium",
-          "Lanthanide",
-          "3",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["66", "Dy", "Dysprosium", "Lanthanide", "3", "6"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -2441,27 +1068,8 @@
       {
         "parent": "w99",
         "index": 66,
-        "texts": [
-          "67",
-          "Ho",
-          "Holmium",
-          "Lanthanide",
-          "3",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["67", "Ho", "Holmium", "Lanthanide", "3", "6"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -2471,27 +1079,8 @@
       {
         "parent": "w99",
         "index": 67,
-        "texts": [
-          "68",
-          "Er",
-          "Erbium",
-          "Lanthanide",
-          "3",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["68", "Er", "Erbium", "Lanthanide", "3", "6"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -2501,27 +1090,8 @@
       {
         "parent": "w99",
         "index": 68,
-        "texts": [
-          "69",
-          "Tm",
-          "Thulium",
-          "Lanthanide",
-          "3",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["69", "Tm", "Thulium", "Lanthanide", "3", "6"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -2531,27 +1101,8 @@
       {
         "parent": "w99",
         "index": 69,
-        "texts": [
-          "70",
-          "Yb",
-          "Ytterbium",
-          "Lanthanide",
-          "3",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["70", "Yb", "Ytterbium", "Lanthanide", "3", "6"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -2561,27 +1112,8 @@
       {
         "parent": "w99",
         "index": 70,
-        "texts": [
-          "71",
-          "Lu",
-          "Lutetium",
-          "Lanthanide",
-          "3",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["71", "Lu", "Lutetium", "Lanthanide", "3", "6"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -2591,27 +1123,8 @@
       {
         "parent": "w99",
         "index": 71,
-        "texts": [
-          "72",
-          "Hf",
-          "Hafnium",
-          "Transition metal",
-          "4",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["72", "Hf", "Hafnium", "Transition metal", "4", "6"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -2621,27 +1134,8 @@
       {
         "parent": "w99",
         "index": 72,
-        "texts": [
-          "73",
-          "Ta",
-          "Tantalum",
-          "Transition metal",
-          "5",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["73", "Ta", "Tantalum", "Transition metal", "5", "6"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -2651,27 +1145,8 @@
       {
         "parent": "w99",
         "index": 73,
-        "texts": [
-          "74",
-          "W",
-          "Tungsten",
-          "Transition metal",
-          "6",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["74", "W", "Tungsten", "Transition metal", "6", "6"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -2681,27 +1156,8 @@
       {
         "parent": "w99",
         "index": 74,
-        "texts": [
-          "75",
-          "Re",
-          "Rhenium",
-          "Transition metal",
-          "7",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["75", "Re", "Rhenium", "Transition metal", "7", "6"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -2711,27 +1167,8 @@
       {
         "parent": "w99",
         "index": 75,
-        "texts": [
-          "76",
-          "Os",
-          "Osmium",
-          "Transition metal",
-          "8",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["76", "Os", "Osmium", "Transition metal", "8", "6"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -2741,27 +1178,8 @@
       {
         "parent": "w99",
         "index": 76,
-        "texts": [
-          "77",
-          "Ir",
-          "Iridium",
-          "Transition metal",
-          "9",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["77", "Ir", "Iridium", "Transition metal", "9", "6"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -2771,27 +1189,8 @@
       {
         "parent": "w99",
         "index": 77,
-        "texts": [
-          "78",
-          "Pt",
-          "Platinum",
-          "Transition metal",
-          "10",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["78", "Pt", "Platinum", "Transition metal", "10", "6"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -2801,27 +1200,8 @@
       {
         "parent": "w99",
         "index": 78,
-        "texts": [
-          "79",
-          "Au",
-          "Gold",
-          "Transition metal",
-          "11",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["79", "Au", "Gold", "Transition metal", "11", "6"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -2831,27 +1211,8 @@
       {
         "parent": "w99",
         "index": 79,
-        "texts": [
-          "80",
-          "Hg",
-          "Mercury",
-          "Transition metal",
-          "12",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["80", "Hg", "Mercury", "Transition metal", "12", "6"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -2861,27 +1222,8 @@
       {
         "parent": "w99",
         "index": 80,
-        "texts": [
-          "81",
-          "Tl",
-          "Thallium",
-          "Poor metal",
-          "13",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            238,
-            238,
-            236,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["81", "Tl", "Thallium", "Poor metal", "13", "6"],
+        "cellBackgrounds": [null, null, null, [238, 238, 236, 255], null, null]
       }
     ],
     [
@@ -2891,27 +1233,8 @@
       {
         "parent": "w99",
         "index": 81,
-        "texts": [
-          "82",
-          "Pb",
-          "Lead",
-          "Poor metal",
-          "14",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            238,
-            238,
-            236,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["82", "Pb", "Lead", "Poor metal", "14", "6"],
+        "cellBackgrounds": [null, null, null, [238, 238, 236, 255], null, null]
       }
     ],
     [
@@ -2921,27 +1244,8 @@
       {
         "parent": "w99",
         "index": 82,
-        "texts": [
-          "83",
-          "Bi",
-          "Bismuth",
-          "Poor metal",
-          "15",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            238,
-            238,
-            236,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["83", "Bi", "Bismuth", "Poor metal", "15", "6"],
+        "cellBackgrounds": [null, null, null, [238, 238, 236, 255], null, null]
       }
     ],
     [
@@ -2951,27 +1255,8 @@
       {
         "parent": "w99",
         "index": 83,
-        "texts": [
-          "84",
-          "Po",
-          "Polonium",
-          "Metalloid",
-          "16",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            156,
-            159,
-            153,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["84", "Po", "Polonium", "Metalloid", "16", "6"],
+        "cellBackgrounds": [null, null, null, [156, 159, 153, 255], null, null]
       }
     ],
     [
@@ -2981,27 +1266,8 @@
       {
         "parent": "w99",
         "index": 84,
-        "texts": [
-          "85",
-          "At",
-          "Astatine",
-          "Halogen",
-          "17",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            233,
-            79,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["85", "At", "Astatine", "Halogen", "17", "6"],
+        "cellBackgrounds": [null, null, null, [252, 233, 79, 255], null, null]
       }
     ],
     [
@@ -3011,27 +1277,8 @@
       {
         "parent": "w99",
         "index": 85,
-        "texts": [
-          "86",
-          "Rn",
-          "Radon",
-          "Noble gas",
-          "18",
-          "6"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            114,
-            159,
-            207,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["86", "Rn", "Radon", "Noble gas", "18", "6"],
+        "cellBackgrounds": [null, null, null, [114, 159, 207, 255], null, null]
       }
     ],
     [
@@ -3041,27 +1288,8 @@
       {
         "parent": "w99",
         "index": 86,
-        "texts": [
-          "87",
-          "Fr",
-          "Francium",
-          "Alkali metal",
-          "1",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            239,
-            41,
-            41,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["87", "Fr", "Francium", "Alkali metal", "1", "7"],
+        "cellBackgrounds": [null, null, null, [239, 41, 41, 255], null, null]
       }
     ],
     [
@@ -3071,27 +1299,8 @@
       {
         "parent": "w99",
         "index": 87,
-        "texts": [
-          "88",
-          "Ra",
-          "Radium",
-          "Alkaline earth metal",
-          "2",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            233,
-            185,
-            110,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["88", "Ra", "Radium", "Alkaline earth metal", "2", "7"],
+        "cellBackgrounds": [null, null, null, [233, 185, 110, 255], null, null]
       }
     ],
     [
@@ -3101,27 +1310,8 @@
       {
         "parent": "w99",
         "index": 88,
-        "texts": [
-          "89",
-          "Ac",
-          "Actinium",
-          "Actinide",
-          "3",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["89", "Ac", "Actinium", "Actinide", "3", "7"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -3131,27 +1321,8 @@
       {
         "parent": "w99",
         "index": 89,
-        "texts": [
-          "90",
-          "Th",
-          "Thorium",
-          "Actinide",
-          "3",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["90", "Th", "Thorium", "Actinide", "3", "7"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -3161,27 +1332,8 @@
       {
         "parent": "w99",
         "index": 90,
-        "texts": [
-          "91",
-          "Pa",
-          "Protactinium",
-          "Actinide",
-          "3",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["91", "Pa", "Protactinium", "Actinide", "3", "7"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -3191,27 +1343,8 @@
       {
         "parent": "w99",
         "index": 91,
-        "texts": [
-          "92",
-          "U",
-          "Uranium",
-          "Actinide",
-          "3",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["92", "U", "Uranium", "Actinide", "3", "7"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -3221,27 +1354,8 @@
       {
         "parent": "w99",
         "index": 92,
-        "texts": [
-          "93",
-          "Np",
-          "Neptunium",
-          "Actinide",
-          "3",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["93", "Np", "Neptunium", "Actinide", "3", "7"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -3251,27 +1365,8 @@
       {
         "parent": "w99",
         "index": 93,
-        "texts": [
-          "94",
-          "Pu",
-          "Plutonium",
-          "Actinide",
-          "3",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["94", "Pu", "Plutonium", "Actinide", "3", "7"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -3281,27 +1376,8 @@
       {
         "parent": "w99",
         "index": 94,
-        "texts": [
-          "95",
-          "Am",
-          "Americium",
-          "Actinide",
-          "3",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["95", "Am", "Americium", "Actinide", "3", "7"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -3311,27 +1387,8 @@
       {
         "parent": "w99",
         "index": 95,
-        "texts": [
-          "96",
-          "Cm",
-          "Curium",
-          "Actinide",
-          "3",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["96", "Cm", "Curium", "Actinide", "3", "7"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -3341,27 +1398,8 @@
       {
         "parent": "w99",
         "index": 96,
-        "texts": [
-          "97",
-          "Bk",
-          "Berkelium",
-          "Actinide",
-          "3",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["97", "Bk", "Berkelium", "Actinide", "3", "7"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -3371,27 +1409,8 @@
       {
         "parent": "w99",
         "index": 97,
-        "texts": [
-          "98",
-          "Cf",
-          "Californium",
-          "Actinide",
-          "3",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["98", "Cf", "Californium", "Actinide", "3", "7"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -3401,27 +1420,8 @@
       {
         "parent": "w99",
         "index": 98,
-        "texts": [
-          "99",
-          "Es",
-          "Einsteinium",
-          "Actinide",
-          "3",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["99", "Es", "Einsteinium", "Actinide", "3", "7"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -3431,27 +1431,8 @@
       {
         "parent": "w99",
         "index": 99,
-        "texts": [
-          "100",
-          "Fm",
-          "Fermium",
-          "Actinide",
-          "3",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["100", "Fm", "Fermium", "Actinide", "3", "7"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -3461,27 +1442,8 @@
       {
         "parent": "w99",
         "index": 100,
-        "texts": [
-          "101",
-          "Md",
-          "Mendelevium",
-          "Actinide",
-          "3",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["101", "Md", "Mendelevium", "Actinide", "3", "7"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -3491,27 +1453,8 @@
       {
         "parent": "w99",
         "index": 101,
-        "texts": [
-          "102",
-          "No",
-          "Nobelium",
-          "Actinide",
-          "3",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["102", "No", "Nobelium", "Actinide", "3", "7"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -3521,27 +1464,8 @@
       {
         "parent": "w99",
         "index": 102,
-        "texts": [
-          "103",
-          "Lr",
-          "Lawrencium",
-          "Actinide",
-          "3",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            173,
-            127,
-            168,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["103", "Lr", "Lawrencium", "Actinide", "3", "7"],
+        "cellBackgrounds": [null, null, null, [173, 127, 168, 255], null, null]
       }
     ],
     [
@@ -3551,27 +1475,8 @@
       {
         "parent": "w99",
         "index": 103,
-        "texts": [
-          "104",
-          "Rf",
-          "Rutherfordium",
-          "Transition metal",
-          "4",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["104", "Rf", "Rutherfordium", "Transition metal", "4", "7"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -3581,27 +1486,8 @@
       {
         "parent": "w99",
         "index": 104,
-        "texts": [
-          "105",
-          "Db",
-          "Dubnium",
-          "Transition metal",
-          "5",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["105", "Db", "Dubnium", "Transition metal", "5", "7"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -3611,27 +1497,8 @@
       {
         "parent": "w99",
         "index": 105,
-        "texts": [
-          "106",
-          "Sg",
-          "Seaborgium",
-          "Transition metal",
-          "6",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["106", "Sg", "Seaborgium", "Transition metal", "6", "7"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -3641,27 +1508,8 @@
       {
         "parent": "w99",
         "index": 106,
-        "texts": [
-          "107",
-          "Bh",
-          "Bohrium",
-          "Transition metal",
-          "7",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["107", "Bh", "Bohrium", "Transition metal", "7", "7"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -3671,27 +1519,8 @@
       {
         "parent": "w99",
         "index": 107,
-        "texts": [
-          "108",
-          "Hs",
-          "Hassium",
-          "Transition metal",
-          "8",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["108", "Hs", "Hassium", "Transition metal", "8", "7"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -3701,27 +1530,8 @@
       {
         "parent": "w99",
         "index": 108,
-        "texts": [
-          "109",
-          "Mt",
-          "Meitnerium",
-          "Transition metal",
-          "9",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["109", "Mt", "Meitnerium", "Transition metal", "9", "7"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -3731,27 +1541,8 @@
       {
         "parent": "w99",
         "index": 109,
-        "texts": [
-          "110",
-          "Ds",
-          "Darmstadtium",
-          "Transition metal",
-          "10",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["110", "Ds", "Darmstadtium", "Transition metal", "10", "7"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -3761,27 +1552,8 @@
       {
         "parent": "w99",
         "index": 110,
-        "texts": [
-          "111",
-          "Rg",
-          "Roentgenium",
-          "Transition metal",
-          "11",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["111", "Rg", "Roentgenium", "Transition metal", "11", "7"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -3791,27 +1563,8 @@
       {
         "parent": "w99",
         "index": 111,
-        "texts": [
-          "112",
-          "Uub",
-          "Ununbium",
-          "Transition metal",
-          "12",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            175,
-            62,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["112", "Uub", "Ununbium", "Transition metal", "12", "7"],
+        "cellBackgrounds": [null, null, null, [252, 175, 62, 255], null, null]
       }
     ],
     [
@@ -3821,27 +1574,8 @@
       {
         "parent": "w99",
         "index": 112,
-        "texts": [
-          "113",
-          "Uut",
-          "Ununtrium",
-          "Poor metal",
-          "13",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            238,
-            238,
-            236,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["113", "Uut", "Ununtrium", "Poor metal", "13", "7"],
+        "cellBackgrounds": [null, null, null, [238, 238, 236, 255], null, null]
       }
     ],
     [
@@ -3851,27 +1585,8 @@
       {
         "parent": "w99",
         "index": 113,
-        "texts": [
-          "114",
-          "Uuq",
-          "Ununquadium",
-          "Poor metal",
-          "14",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            238,
-            238,
-            236,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["114", "Uuq", "Ununquadium", "Poor metal", "14", "7"],
+        "cellBackgrounds": [null, null, null, [238, 238, 236, 255], null, null]
       }
     ],
     [
@@ -3881,27 +1596,8 @@
       {
         "parent": "w99",
         "index": 114,
-        "texts": [
-          "115",
-          "Uup",
-          "Ununpentium",
-          "Poor metal",
-          "15",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            238,
-            238,
-            236,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["115", "Uup", "Ununpentium", "Poor metal", "15", "7"],
+        "cellBackgrounds": [null, null, null, [238, 238, 236, 255], null, null]
       }
     ],
     [
@@ -3911,27 +1607,8 @@
       {
         "parent": "w99",
         "index": 115,
-        "texts": [
-          "116",
-          "Uuh",
-          "Ununhexium",
-          "Poor metal",
-          "16",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            238,
-            238,
-            236,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["116", "Uuh", "Ununhexium", "Poor metal", "16", "7"],
+        "cellBackgrounds": [null, null, null, [238, 238, 236, 255], null, null]
       }
     ],
     [
@@ -3941,27 +1618,8 @@
       {
         "parent": "w99",
         "index": 116,
-        "texts": [
-          "117",
-          "Uus",
-          "Ununseptium",
-          "Halogen",
-          "17",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            252,
-            233,
-            79,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["117", "Uus", "Ununseptium", "Halogen", "17", "7"],
+        "cellBackgrounds": [null, null, null, [252, 233, 79, 255], null, null]
       }
     ],
     [
@@ -3971,27 +1629,8 @@
       {
         "parent": "w99",
         "index": 117,
-        "texts": [
-          "118",
-          "Uuo",
-          "Ununoctium",
-          "Noble gas",
-          "18",
-          "7"
-        ],
-        "cellBackgrounds": [
-          null,
-          null,
-          null,
-          [
-            114,
-            159,
-            207,
-            255
-          ],
-          null,
-          null
-        ]
+        "texts": ["118", "Uuo", "Ununoctium", "Noble gas", "18", "7"],
+        "cellBackgrounds": [null, null, null, [114, 159, 207, 255], null, null]
       }
     ],
     [
@@ -4000,25 +1639,11 @@
       "rwt.widgets.Composite",
       {
         "parent": "w97",
-        "style": [
-          "BORDER"
-        ],
-        "bounds": [
-          10,
-          464,
-          988,
-          25
-        ],
-        "children": [
-          "w227"
-        ],
+        "style": ["BORDER"],
+        "bounds": [10, 464, 988, 25],
+        "children": ["w227"],
         "tabIndex": -1,
-        "clientArea": [
-          0,
-          0,
-          986,
-          23
-        ]
+        "clientArea": [0, 0, 986, 23]
       }
     ],
     [
@@ -4027,15 +1652,8 @@
       "rwt.widgets.Label",
       {
         "parent": "w226",
-        "style": [
-          "NONE"
-        ],
-        "bounds": [
-          10,
-          10,
-          966,
-          3
-        ],
+        "style": ["NONE"],
+        "bounds": [10, 10, 966, 3],
         "tabIndex": -1,
         "text": "Hydrogen (H)"
       }
@@ -4046,30 +1664,12 @@
       "rwt.widgets.Label",
       {
         "parent": "w97",
-        "style": [
-          "WRAP"
-        ],
-        "bounds": [
-          10,
-          499,
-          988,
-          16
-        ],
+        "style": ["WRAP"],
+        "bounds": [10, 499, 988, 16],
         "tabIndex": -1,
-        "foreground": [
-          150,
-          150,
-          150,
-          255
-        ],
+        "foreground": [150, 150, 150, 255],
         "font": [
-          [
-            "Verdana",
-            "Lucida Sans",
-            "Arial",
-            "Helvetica",
-            "sans-serif"
-          ],
+          ["Verdana", "Lucida Sans", "Arial", "Helvetica", "sans-serif"],
           10,
           false,
           false
@@ -4089,12 +1689,7 @@
       "rwt.client.BrowserNavigation",
       "addToHistory",
       {
-        "entries": [
-          [
-            "tableviewer",
-            "TableViewer"
-          ]
-        ]
+        "entries": [["tableviewer", "TableViewer"]]
       }
     ]
   ]

@@ -1,17 +1,30 @@
 <div align="center">
-  <img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/>
+  <img
+    alt="QuestDB Logo"
+    src="https://questdb.io/img/questdb-logo-themed.svg"
+    width="305px"
+  />
 </div>
 <p>&nbsp;</p>
 
 <p align="center">
   <a href="https://slack.questdb.io">
-    <img src="https://slack.questdb.io/badge.svg" alt="QuestDB community Slack channel"/>
+    <img
+      src="https://slack.questdb.io/badge.svg"
+      alt="QuestDB community Slack channel"
+    />
   </a>
   <a href="#contribute">
-    <img src="https://img.shields.io/github/all-contributors/questdb/questdb" alt="QuestDB open source contributors"/>
+    <img
+      src="https://img.shields.io/github/all-contributors/questdb/questdb"
+      alt="QuestDB open source contributors"
+    />
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
-    <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB on Apache Maven"/>
+    <img
+      src="https://img.shields.io/maven-central/v/org.questdb/questdb"
+      alt="QuestDB on Apache Maven"
+    />
   </a>
 </p>
 
@@ -35,7 +48,11 @@ is 100% free from garbage collection.
 
 <div align="center">
   <a href="https://demo.questdb.io">
-    <img alt="QuestDB Web Console showing multiple SQL statements and visualizing a query as a chart" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="600" />
+    <img
+      alt="QuestDB Web Console showing multiple SQL statements and visualizing a query as a chart"
+      src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png"
+      width="600"
+    />
   </a>
 </div>
 
@@ -82,7 +99,10 @@ results using the `cpu-only` use case with 6 workers on an AMD Ryzen 3970X:
 
 <div align="center">
   <a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">
-    <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src=".github/tsbs-results.png"/>
+    <img
+      alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB."
+      src=".github/tsbs-results.png"
+    />
   </a>
 </div>
 
@@ -99,16 +119,23 @@ The following table shows query execution time of a billion rows run on a
 
 ### 📚 Read the docs
 
-- [QuestDB documentation:](https://questdb.io/docs/introduction/) understand how to run and configure QuestDB.
-- [Tutorials:](https://questdb.io/tutorial/) learn what's possible with QuestDB step by step.
-- [Product roadmap:](https://github.com/questdb/questdb/projects) check out our plan for upcoming releases.
+- [QuestDB documentation:](https://questdb.io/docs/introduction/) understand how
+  to run and configure QuestDB.
+- [Tutorials:](https://questdb.io/tutorial/) learn what's possible with QuestDB
+  step by step.
+- [Product roadmap:](https://github.com/questdb/questdb/projects) check out our
+  plan for upcoming releases.
 
 ### ❓ Get support
 
-- [Community Slack:](https://slack.questdb.io) join technical discussions, ask questions, and meet other users!
-- [GitHub issues:](https://github.com/questdb/questdb/issues) report bugs or issues with QuestDB.
-- [GitHub discussions:](https://github.com/questdb/questdb/discussions) propose new features or show what you've built.
-- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) look for common troubleshooting solutions.
+- [Community Slack:](https://slack.questdb.io) join technical discussions, ask
+  questions, and meet other users!
+- [GitHub issues:](https://github.com/questdb/questdb/issues) report bugs or
+  issues with QuestDB.
+- [GitHub discussions:](https://github.com/questdb/questdb/discussions) propose
+  new features or show what you've built.
+- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) look for
+  common troubleshooting solutions.
 
 ### 🚢 Deploy QuestDB
 
@@ -133,8 +160,8 @@ with contributing:
 - [Create a fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)
   of QuestDB and submit a pull request with your proposed changes.
 
-✨ As a sign of our gratitude, we also send **QuestDB swag** to our contributors.
-[Claim your swag here.](https://questdb.io/community)
+✨ As a sign of our gratitude, we also send **QuestDB swag** to our
+contributors. [Claim your swag here.](https://questdb.io/community)
 
 A big thanks goes to the following wonderful people who have contributed to
 QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
