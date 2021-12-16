@@ -1,4 +1,4 @@
-FROM openjdk:17.0.1-jdk-buster
+FROM openjdk:17.0.1-jdk-bullseye
 
 RUN apt-get update \
   && apt-get install git curl -y
