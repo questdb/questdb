@@ -39,6 +39,7 @@ import org.junit.Assert;
 import org.junit.Before;
 
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
@@ -98,7 +99,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         recvBuffer = null;
         disconnected = true;
         netMsgBufferSize.set(512);
-        lineTcpConfiguration = createNoAuthReceiverConfiguration(new LineTcpNetworkFacade());
+        lineTcpConfiguration = createNoAuthReceiverConfiguration(provideLineTcpNetworkFacade());
+    }
+
+    NetworkFacade provideLineTcpNetworkFacade() {
+        return new LineTcpNetworkFacade();
     }
 
     private static WorkerPool createWorkerPool(final int workerCount, final boolean haltOnError) {
@@ -275,7 +280,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             context = new LineTcpAuthConnectionContext(lineTcpConfiguration, authDb, scheduler);
         }
         Assert.assertNull(context.getDispatcher());
-        context.of(FD, new IODispatcher<LineTcpConnectionContext>() {
+        context.of(FD, new IODispatcher<>() {
             @Override
             public void close() {
             }
@@ -338,13 +343,17 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 return -1;
             }
 
-            byte[] bytes = recvBuffer.getBytes(Files.UTF_8);
+            byte[] bytes = getBytes(recvBuffer);
             int n = 0;
             while (n < bufferLen && n < bytes.length) {
                 Unsafe.getUnsafe().putByte(buffer++, bytes[n++]);
             }
             recvBuffer = new String(bytes, n, bytes.length - n);
             return n;
+        }
+
+        byte[] getBytes(String recvBuffer) {
+            return recvBuffer.getBytes(StandardCharsets.UTF_8);
         }
     }
 }
