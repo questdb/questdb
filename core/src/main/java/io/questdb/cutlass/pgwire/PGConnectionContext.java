@@ -169,7 +169,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
     private final SCSequence tempSequence = new SCSequence();
 
-    public PGConnectionContext(CairoEngine engine, PGWireConfiguration configuration, int workerCount) {
+    public PGConnectionContext(CairoEngine engine, PGWireConfiguration configuration, SqlExecutionContextImpl sqlExecutionContext) {
         this.engine = engine;
         this.utf8Sink = new DirectCharSink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize());
         this.typeManager = new TypeManager(engine.getConfiguration().getTextConfiguration(), utf8Sink);
@@ -192,7 +192,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         this.serverVersion = configuration.getServerVersion();
         this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword());
         this.locale = configuration.getDefaultDateLocale();
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount);
+        this.sqlExecutionContext = sqlExecutionContext;
         this.sqlExecutionContext.setRandom(this.rnd = configuration.getRandom());
         this.namedStatementWrapperPool = new WeakObjectPool<>(NamedStatementWrapper::new, configuration.getNamesStatementPoolCapacity()); // 16
         this.namedPortalPool = new WeakObjectPool<>(Portal::new, configuration.getNamesStatementPoolCapacity()); // 16

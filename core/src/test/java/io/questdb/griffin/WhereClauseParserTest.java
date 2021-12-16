@@ -33,7 +33,10 @@ import io.questdb.griffin.model.*;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.util.ServiceLoader;
 
@@ -56,9 +59,9 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             configuration,
             new FunctionFactoryCache(configuration, ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader()))
     );
-    protected BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
-    private SqlCompiler compiler;
-    private SqlExecutionContext sqlExecutionContext;
+    protected static BindVariableService bindVariableService;
+    private static SqlCompiler compiler;
+    private static SqlExecutionContext sqlExecutionContext;
 
     @BeforeClass
     public static void setUpStatic() {
@@ -122,22 +125,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
         noDesignatedTimestampNorIdxReader = new TableReader(configuration, "w");
         noDesignatedTimestampNorIdxMetadata = noDesignatedTimestampNorIdxReader.getMetadata();
-    }
 
-    @AfterClass
-    public static void tearDownStatic() {
-        AbstractCairoTest.tearDownStatic();
-        reader.close();
-        noTimestampReader.close();
-        unindexedReader.close();
-        noDesignatedTimestampNorIdxReader.close();
-    }
-
-    @Before
-    @Override
-    public void setUp() {
-        super.setUp();
-        CairoEngine engine = new CairoEngine(configuration);
         bindVariableService = new BindVariableServiceImpl(configuration);
         compiler = new SqlCompiler(new CairoEngine(configuration));
         sqlExecutionContext = new SqlExecutionContextImpl(
@@ -148,6 +136,17 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                         null,
                         -1,
                         null);
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        AbstractCairoTest.tearDownStatic();
+        reader.close();
+        noTimestampReader.close();
+        unindexedReader.close();
+        noDesignatedTimestampNorIdxReader.close();
+        compiler.close();
+        sqlExecutionContext.close();
     }
 
     @Test
