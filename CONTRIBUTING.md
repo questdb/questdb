@@ -206,8 +206,7 @@ Otherwise, you can use the dedicated `maven` profile to build the code:
 mvn clean package -DskipTests -P build-web-console,build-binaries,use-built-in-nodejs
 ```
 
-That way, `maven` will install `node` on the fly in `ui/node` so you don't have
-to install it locally.
+That way, `maven` will install `node` on the fly in `ui/node` so you don't have sflkajhsdflkjashdflkjhasdflkjhasldkfjhlaksdjfhlaksjdhlkjhfdto install it locally.
 
 ### Why do some tests fail on Windows?
 
