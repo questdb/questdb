@@ -184,7 +184,7 @@ really helpful and keeps our repository concise and clean.
 
 ## FAQ
 
-### Why does the server work, but the UI returns a `404` on [localhost:9000](http://localhost:9000)?
+### Why does the server work, but thsdfsdfe UI returns a `404` on [localhost:9000](http://localhost:9000)?
 
 This means that the web console artifacts are not present in
 `core/src/main/resources/io/questdb/site/public.zip`. To fix this, you can
