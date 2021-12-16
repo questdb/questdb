@@ -31,17 +31,23 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.std.Chars;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class RebuildIndexTest extends AbstractCairoTest {
     protected static CharSequence root;
     private static SqlCompiler compiler;
     private static SqlExecutionContextImpl sqlExecutionContext;
     private final RebuildIndex rebuildIndex = new RebuildIndex();
+    TableWriter tempWriter;
 
     @BeforeClass
     public static void setUpStatic() {
@@ -69,6 +75,50 @@ public class RebuildIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonPartitionedWithColumnTop() throws Exception {
+        String createAlterInsertSql = "create table xxx as (" +
+                "select " +
+                "rnd_symbol('A', 'B', 'C') as sym1," +
+                "x," +
+                "timestamp_sequence(0, 100000000) ts " +
+                "from long_sequence(5000)" +
+                "), index(sym1) timestamp(ts); " +
+
+                "alter table xxx add column sym2 symbol index; " +
+
+                "insert into xxx " +
+                "select " +
+                "rnd_symbol('A', 'B', 'C') as sym1," +
+                "x," +
+                "timestamp_sequence(100000000L * 5000L, 100000000) ts, " +
+                "rnd_symbol(4,4,4,2) as sym2 " +
+                "from long_sequence(5000)";
+
+        checkRebuildIndexes(createAlterInsertSql,
+                tablePath -> removeFileAtPartition("sym2.k", PartitionBy.NONE, tablePath, 0),
+                rebuildIndex -> rebuildIndex.rebuildColumn("sym2"));
+    }
+
+    @Test
+    public void testNonePartitionedOneColumn() throws Exception {
+        String createTableSql = "create table xxx as (" +
+                "select " +
+                "rnd_symbol('A', 'B', 'C') as sym1," +
+                "rnd_symbol(4,4,4,2) as sym2," +
+                "x," +
+                "timestamp_sequence(0, 100000000) ts " +
+                "from long_sequence(10000)" +
+                "), index(sym1), index(sym2) timestamp(ts)";
+
+        checkRebuildIndexes(createTableSql,
+                tablePath -> {
+                    removeFileAtPartition("sym1.v", PartitionBy.NONE, tablePath, 0);
+                    removeFileAtPartition("sym1.k", PartitionBy.NONE, tablePath, 0);
+                },
+                rebuildIndex -> rebuildIndex.rebuildColumn("sym1"));
+    }
+
+    @Test
     public void testPartitionedDaily() throws Exception {
         String createTableSql = "create table xxx as (" +
                 "select " +
@@ -84,6 +134,27 @@ public class RebuildIndexTest extends AbstractCairoTest {
                 (tablePath) -> {
                     removeFileAtPartition("sym1.v", PartitionBy.DAY, tablePath, 0);
                     removeFileAtPartition("sym2.k", PartitionBy.DAY, tablePath, 0);
+                },
+                RebuildIndex::rebuildAll
+        );
+    }
+
+    @Test
+    public void testPartitionedNone() throws Exception {
+        String createTableSql = "create table xxx as (" +
+                "select " +
+                "rnd_symbol('A', 'B', 'C') as sym1," +
+                "rnd_symbol(4,4,4,2) as sym2," +
+                "x," +
+                "timestamp_sequence(0, 100000000) ts " +
+                "from long_sequence(10000)" +
+                "), index(sym1), index(sym2) timestamp(ts)";
+
+        checkRebuildIndexes(
+                createTableSql,
+                (tablePath) -> {
+                    removeFileAtPartition("sym1.v", PartitionBy.NONE, tablePath, 0);
+                    removeFileAtPartition("sym2.k", PartitionBy.NONE, tablePath, 0);
                 },
                 RebuildIndex::rebuildAll
         );
@@ -106,6 +177,62 @@ public class RebuildIndexTest extends AbstractCairoTest {
                     removeFileAtPartition("sym1.k", PartitionBy.DAY, tablePath, 0);
                 },
                 rebuildIndex -> rebuildIndex.rebuildColumn("sym1"));
+    }
+
+    @Test
+    public void testPartitionedOneColumnFirstPartition() throws Exception {
+        String createTableSql = "create table xxx as (" +
+                "select " +
+                "rnd_symbol('A', 'B', 'C') as sym1," +
+                "rnd_symbol(4,4,4,2) as sym2," +
+                "x," +
+                "timestamp_sequence(0, 100000000) ts " +
+                "from long_sequence(10000)" +
+                "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
+
+        checkRebuildIndexes(createTableSql,
+                tablePath -> {
+                    removeFileAtPartition("sym1.v", PartitionBy.DAY, tablePath, 0);
+                    removeFileAtPartition("sym1.k", PartitionBy.DAY, tablePath, 0);
+                },
+                rebuildIndex -> rebuildIndex.rebuildPartitionColumn("1970-01-01", "sym1"));
+    }
+
+    @Test
+    public void testRebuildIndexCustomBlockSize() throws Exception {
+        String createTableSql = "create table xxx as (" +
+                "select " +
+                "rnd_symbol('A', 'B', 'C') as sym1," +
+                "rnd_symbol(4,4,4,2) as sym2," +
+                "x," +
+                "timestamp_sequence(0, 100000000) ts " +
+                "from long_sequence(10000)" +
+                "), index(sym1 capacity 512), index(sym2 capacity 1024) timestamp(ts) PARTITION BY DAY";
+
+        checkRebuildIndexes(createTableSql,
+                tablePath -> {
+                    removeFileAtPartition("sym1.v", PartitionBy.DAY, tablePath, 0);
+                    removeFileAtPartition("sym2.k", PartitionBy.DAY, tablePath, 0);
+                },
+                rebuildIndex -> rebuildIndex.rebuildPartition("1970-01-01"));
+
+        assertMemoryLeak(() -> {
+            try(TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "xxx")) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                int columnIndex = metadata.getColumnIndex("sym1");
+                Assert.assertTrue("Column sym1 must exist", columnIndex >= 0);
+                int columnIndex2 = metadata.getColumnIndex("sym2");
+                Assert.assertTrue("Column sym2 must exist", columnIndex2 >= 0);
+                Assert.assertEquals(
+                        511,
+                        reader.getBitmapIndexReader(0, columnIndex, BitmapIndexReader.DIR_FORWARD).getValueBlockCapacity()
+                );
+                Assert.assertEquals(
+                        1023,
+                        reader.getBitmapIndexReader(0, columnIndex2, BitmapIndexReader.DIR_FORWARD).getValueBlockCapacity()
+                );
+            }
+        });
     }
 
     @Test
@@ -134,28 +261,127 @@ public class RebuildIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNonPartitionedWithColumnTop() throws Exception {
-        String createAlterInsertSql = "create table xxx as (" +
+    public void testRebuildColumnTableWriterLockedFails() throws Exception {
+        assertMemoryLeak(() -> {
+            String createTableSql = "create table xxx as (" +
+                    "select " +
+                    "rnd_symbol('A', 'B', 'C') as sym1," +
+                    "rnd_symbol(4,4,4,2) as sym2," +
+                    "rnd_symbol(4,4,4,2) as sym3," +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(10000)" +
+                    "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
+
+            tempWriter = null;
+            try {
+                checkRebuildIndexes(createTableSql,
+                        tablePath -> tempWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "xxx", "test lock"),
+                        rebuildIndex -> {
+                            try {
+                                rebuildIndex.rebuildColumn("sym2");
+                            } finally {
+                                tempWriter.close();
+                            }
+                        });
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "Cannot lock table");
+            }
+        });
+    }
+
+    @Test
+    public void testRebuildFailsWriteKFile() throws Exception {
+        assertMemoryLeak(() -> {
+            String createTableSql = "create table xxx as (" +
+                    "select " +
+                    "rnd_symbol('A', 'B', 'C') as sym1," +
+                    "rnd_symbol(4,4,4,2) as sym2," +
+                    "rnd_symbol(4,4,4,2) as sym3," +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(10000)" +
+                    "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
+
+            AtomicInteger count = new AtomicInteger();
+            ff = new FilesFacadeImpl() {
+                @Override
+                public long openRW(LPSZ name) {
+                    if (Chars.contains(name, "sym2.k") && count.incrementAndGet() == 27) {
+                        return -1;
+                    }
+                    return Files.openRW(name);
+                }
+            };
+
+            try {
+                checkRebuildIndexes(createTableSql,
+                        tablePath -> {},
+                        rebuildIndex -> rebuildIndex.rebuildColumn("sym2"));
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-write");
+            }
+        });
+    }
+
+    @Test
+    public void testRebuildFailsWriteVFile() throws Exception {
+        assertMemoryLeak(() -> {
+            String createTableSql = "create table xxx as (" +
+                    "select " +
+                    "rnd_symbol('A', 'B', 'C') as sym1," +
+                    "rnd_symbol(4,4,4,2) as sym2," +
+                    "rnd_symbol(4,4,4,2) as sym3," +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(10000)" +
+                    "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
+
+            AtomicInteger count = new AtomicInteger();
+            ff = new FilesFacadeImpl() {
+                @Override
+                public boolean touch(LPSZ path) {
+                    if (Chars.contains(path, "sym2.v") && count.incrementAndGet() == 14) {
+                        return false;
+                    }
+                    return Files.touch(path);
+                }
+            };
+
+            try {
+                checkRebuildIndexes(createTableSql,
+                        tablePath -> {},
+                        rebuildIndex -> rebuildIndex.rebuildColumn("sym2"));
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "could not create index");
+            }
+        });
+    }
+
+    @Test
+    public void testRebuildColumnWrongName() throws Exception {
+        String createTableSql = "create table xxx as (" +
                 "select " +
                 "rnd_symbol('A', 'B', 'C') as sym1," +
+                "rnd_symbol(4,4,4,2) as sym2," +
+                "rnd_symbol(4,4,4,2) as sym3," +
                 "x," +
                 "timestamp_sequence(0, 100000000) ts " +
-                "from long_sequence(5000)" +
-                "), index(sym1) timestamp(ts); " +
+                "from long_sequence(10000)" +
+                "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
 
-                "alter table xxx add column sym2 symbol index; " +
-
-                "insert into xxx " +
-                "select " +
-                "rnd_symbol('A', 'B', 'C') as sym1," +
-                "x," +
-                "timestamp_sequence(100000000L * 5000L, 100000000) ts, " +
-                "rnd_symbol(4,4,4,2) as sym2 " +
-                "from long_sequence(5000)";
-
-        checkRebuildIndexes(createAlterInsertSql,
-                tablePath -> removeFileAtPartition("sym2.k", PartitionBy.NONE, tablePath, 0),
-                rebuildIndex -> rebuildIndex.rebuildColumn("sym2"));
+        try {
+            checkRebuildIndexes(createTableSql,
+                    tablePath -> {
+                    },
+                    rebuildIndex -> rebuildIndex.rebuildColumn("sym4"));
+            Assert.fail();
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "Column does not exist");
+        }
     }
 
     @Test
@@ -201,49 +427,9 @@ public class RebuildIndexTest extends AbstractCairoTest {
         }
     }
 
-    @Test
-    public void testPartitionedNone() throws Exception {
-        String createTableSql = "create table xxx as (" +
-                "select " +
-                "rnd_symbol('A', 'B', 'C') as sym1," +
-                "rnd_symbol(4,4,4,2) as sym2," +
-                "x," +
-                "timestamp_sequence(0, 100000000) ts " +
-                "from long_sequence(10000)" +
-                "), index(sym1), index(sym2) timestamp(ts)";
-
-        checkRebuildIndexes(
-                createTableSql,
-                (tablePath) -> {
-                    removeFileAtPartition("sym1.v", PartitionBy.NONE, tablePath, 0);
-                    removeFileAtPartition("sym2.k", PartitionBy.NONE, tablePath, 0);
-                },
-                RebuildIndex::rebuildAll
-        );
-    }
-
-    @Test
-    public void testNonePartitionedOneColumn() throws Exception {
-        String createTableSql = "create table xxx as (" +
-                "select " +
-                "rnd_symbol('A', 'B', 'C') as sym1," +
-                "rnd_symbol(4,4,4,2) as sym2," +
-                "x," +
-                "timestamp_sequence(0, 100000000) ts " +
-                "from long_sequence(10000)" +
-                "), index(sym1), index(sym2) timestamp(ts)";
-
-        checkRebuildIndexes(createTableSql,
-                tablePath -> {
-                    removeFileAtPartition("sym1.v", PartitionBy.NONE, tablePath, 0);
-                    removeFileAtPartition("sym1.k", PartitionBy.NONE, tablePath, 0);
-                },
-                rebuildIndex -> rebuildIndex.rebuildColumn("sym1"));
-    }
-
     private void checkRebuildIndexes(String createTableSql, Action<String> changeTable, Action<RebuildIndex> rebuildIndexAction) throws Exception {
-        assertMemoryLeak(() -> {
-            for(String sql: createTableSql.split(";")) {
+        assertMemoryLeak(ff, () -> {
+            for (String sql : createTableSql.split(";")) {
                 compiler.compile(sql, sqlExecutionContext).execute(null).await();
             }
             int sym1A = countByFullScan("select * from xxx where sym1 = 'A'");
@@ -270,17 +456,6 @@ public class RebuildIndexTest extends AbstractCairoTest {
         });
     }
 
-    private void removeFileAtPartition(String fileName, int partitionBy, String tablePath, long partitionTs) {
-        try (Path path = new Path()) {
-            path.concat(tablePath);
-            path.put(Files.SEPARATOR);
-            PartitionBy.setSinkForPartition(path, partitionBy, partitionTs, false);
-            path.concat(fileName);
-            LOG.info().$("removing ").utf8(path).$();
-            Assert.assertTrue(Files.remove(path.$()));
-        }
-    }
-
     private int countByFullScan(String sql) throws SqlException {
         int recordCount = 0;
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
@@ -291,6 +466,17 @@ public class RebuildIndexTest extends AbstractCairoTest {
             }
         }
         return recordCount;
+    }
+
+    private void removeFileAtPartition(String fileName, int partitionBy, String tablePath, long partitionTs) {
+        try (Path path = new Path()) {
+            path.concat(tablePath);
+            path.put(Files.SEPARATOR);
+            PartitionBy.setSinkForPartition(path, partitionBy, partitionTs, false);
+            path.concat(fileName);
+            LOG.info().$("removing ").utf8(path).$();
+            Assert.assertTrue(Files.remove(path.$()));
+        }
     }
 
     @FunctionalInterface

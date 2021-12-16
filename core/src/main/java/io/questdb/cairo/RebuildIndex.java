@@ -90,9 +90,8 @@ public class RebuildIndex implements Closeable, Mutable {
             metadata = new TableReaderMetadata(ff);
         }
         metadata.of(path.$(), ColumnType.VERSION);
-
-        lock(ff);
         try {
+            lock(ff);
 
             // Resolve column id if the column name specified
             int rebuildColumnIndex = ALL;
@@ -106,7 +105,7 @@ public class RebuildIndex implements Closeable, Mutable {
             path.trimTo(rootLen);
             int partitionBy = metadata.getPartitionBy();
             DateFormat partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
-            StringSink sink = Misc.getThreadLocalBuilder();
+            StringSink tempStringSink = Misc.getThreadLocalBuilder();
 
             try (TxReader txReader = new TxReader(ff, path, partitionBy)) {
                 txReader.unsafeLoadAll();
@@ -129,14 +128,14 @@ public class RebuildIndex implements Closeable, Mutable {
                                     indexer,
                                     metadata,
                                     partitionDirFormatMethod,
-                                    sink,
+                                    tempStringSink,
                                     partitionTimestamp,
                                     partitionSize);
                         }
                     }
                 } else {
                     long partitionSize = txReader.getTransientRowCount();
-                    rebuildIndex(rebuildColumnIndex, ff, indexer, metadata, partitionDirFormatMethod, sink, 0, partitionSize);
+                    rebuildIndex(rebuildColumnIndex, ff, indexer, metadata, partitionDirFormatMethod, tempStringSink, 0, partitionSize);
                 }
             }
         } finally {
@@ -192,17 +191,16 @@ public class RebuildIndex implements Closeable, Mutable {
         final int plen = path.length();
 
         if (ff.exists(path.$())) {
-
             try (final MemoryMR roMem = indexMem) {
                 LOG.info().$("indexing [path=").$(path).I$();
 
                 removeIndexFiles(columnName, ff);
 
                 TableUtils.dFile(path.trimTo(plen), columnName);
-                createIndexFiles(columnName, indexValueBlockCapacity, plen, ff);
                 final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, false);
 
                 if (partitionSize > columnTop) {
+                    createIndexFiles(columnName, indexValueBlockCapacity, plen, ff);
                     TableUtils.dFile(path.trimTo(plen), columnName);
                     if (ff.exists(path.$())) {
                         final long columnSize = (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT);
@@ -219,8 +217,6 @@ public class RebuildIndex implements Closeable, Mutable {
     private void createIndexFiles(CharSequence columnName, int indexValueBlockCapacity, int plen, FilesFacade ff) {
         try {
             BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
-
-            // reuse memory column object to create index and close it at the end
             try {
                 ddlMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WRITER);
                 BitmapIndexWriter.initKeyMemory(ddlMem, indexValueBlockCapacity);
