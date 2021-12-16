@@ -113,8 +113,6 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readULong
         (JNIEnv *e, jclass cl,
          jlong fd,
-         jlong address,
-         jlong len,
          jlong offset) {
     DWORD count;
     jlong result;
