@@ -74,6 +74,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public QueryFutureUpdateListener getQueryFutureUpdateListener() {
+        return QueryFutureUpdateListener.EMPTY;
+    }
+
+    @Override
     public BindVariableService getBindVariableService() {
         return bindVariableService;
     }

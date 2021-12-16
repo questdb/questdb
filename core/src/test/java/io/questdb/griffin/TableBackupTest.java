@@ -144,6 +144,9 @@ public class TableBackupTest {
     public void tearDown() {
         finalBackupPath.close();
         path.close();
+        mainSqlExecutionContext.close();
+        mainCompiler.close();
+        mainEngine.close();
     }
 
     @Test
