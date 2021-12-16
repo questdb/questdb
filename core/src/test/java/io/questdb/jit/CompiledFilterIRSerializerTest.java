@@ -223,7 +223,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testNullConstantMultipleExpressions() throws Exception {
+    public void testNullConstantMultiplePredicates() throws Exception {
         serialize("ageoint <> null and along <> null");
         assertIR("(i64 -9223372036854775808L)(i64 along)(<>)(i32 -1L)(i32 ageoint)(<>)(&&)(ret)");
     }
@@ -295,7 +295,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testNegatedExpression() throws Exception {
+    public void testNegatedArithmeticalExpression() throws Exception {
         serialize("-(anint + 42) = -10");
         assertIR("(i32 -10L)(i32 42L)(i32 anint)(+)(neg)(=)(ret)");
     }
@@ -471,22 +471,22 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedSingleConstantExpression() throws Exception {
+    public void testUnsupportedSingleConstantPredicate() throws Exception {
         serialize("true");
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedSingleNonBooleanColumnExpression() throws Exception {
+    public void testUnsupportedSingleNonBooleanColumnPredicate() throws Exception {
         serialize("anint");
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedConstantExpression() throws Exception {
+    public void testUnsupportedConstantPredicate() throws Exception {
         serialize("2 > 1");
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedConstantSubexpression() throws Exception {
+    public void testUnsupportedConstantPredicate2() throws Exception {
         serialize("anint = 0 or 2 > 1");
     }
 

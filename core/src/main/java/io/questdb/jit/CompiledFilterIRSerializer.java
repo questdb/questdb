@@ -131,16 +131,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * @param debug  set enable debug flag in the returned options.
      * @return JIT compiler options stored in a single int in the following way:
      * <ul>
-     *     <li>1 LSB - debug flag</li>
-     *     <li>2-3 LSBs - filter's arithmetic type size (widest type size): 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B</li>
-     *     <li>4-5 LSBs - filter's execution hint: 0 - scalar, 1 - single size (SIMD-friendly), 2 - mixed sizes</li>
-     *     <li>6 LSB - flag to include null checks for column values into compiled filter</li>
+     * <li>1 LSB - debug flag</li>
+     * <li>2-3 LSBs - filter's arithmetic type size (widest type size): 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B</li>
+     * <li>4-5 LSBs - filter's execution hint: 0 - scalar, 1 - single size (SIMD-friendly), 2 - mixed sizes</li>
+     * <li>6 LSB - flag to include null checks for column values into compiled filter</li>
      * </ul>
-     * <br/>
+     * <p>
      * Examples:
      * <ul>
-     *     <li>00000000 00000000 00000000 00010100 - 4B, mixed types, debug off, null checks disabled</li>
-     *     <li>00000000 00000000 00000000 00100111 - 8B, scalar, debug on, null checks enabled</li>
+     * <li>00000000 00000000 00000000 00010100 - 4B, mixed types, debug off, null checks disabled</li>
+     * <li>00000000 00000000 00000000 00100111 - 8B, scalar, debug on, null checks enabled</li>
      * </ul>
      * @throws SqlException thrown when IR serialization failed.
      */
@@ -232,7 +232,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
             // Force scalar mode if the predicate had byte or short arithmetic operations.
             // That's because SIMD mode uses byte/short-sized overflows for arithmetic
-            // calculations instead of implicit upcast to int like in Java SQL functions.
+            // calculations instead of implicit upcast to int done by *.sql.Function classes.
             forceScalarMode |=
                     predicateContext.hasArithmeticOperations && predicateContext.localTypesObserver.maxSize() <= 2;
 
@@ -453,18 +453,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (SqlKeywords.isNullKeyword(token)) {
-            boolean geoHashExpression = ExpressionType.GEO_HASH == predicateContext.expressionType;
+            boolean geoHashExpression = PredicateType.GEO_HASH == predicateContext.type;
             serializeNull(position, typeCode, geoHashExpression);
             return;
         }
 
-        if (ExpressionType.SYMBOL == predicateContext.expressionType) {
+        if (PredicateType.SYMBOL == predicateContext.type) {
             serializeSymbolConstant(position, token);
             return;
         }
 
         if (Chars.isQuoted(token)) {
-            if (ExpressionType.CHAR != predicateContext.expressionType) {
+            if (PredicateType.CHAR != predicateContext.type) {
                 throw SqlException.position(position).put("char constant in non-char expression: ").put(token);
             }
             if (len == 3) {
@@ -477,7 +477,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (SqlKeywords.isTrueKeyword(token)) {
-            if (ExpressionType.BOOLEAN != predicateContext.expressionType) {
+            if (PredicateType.BOOLEAN != predicateContext.type) {
                 throw SqlException.position(position).put("boolean constant in non-boolean expression: ").put(token);
             }
             memory.putByte(IMM_I1);
@@ -486,7 +486,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (SqlKeywords.isFalseKeyword(token)) {
-            if (ExpressionType.BOOLEAN != predicateContext.expressionType) {
+            if (PredicateType.BOOLEAN != predicateContext.type) {
                 throw SqlException.position(position).put("boolean constant in non-boolean expression: ").put(token);
             }
             memory.putByte(IMM_I1);
@@ -495,7 +495,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (len > 1 && token.charAt(0) == '#') {
-            if (ExpressionType.GEO_HASH != predicateContext.expressionType) {
+            if (PredicateType.GEO_HASH != predicateContext.type) {
                 throw SqlException.position(position).put("geo hash constant in non-geo hash expression: ").put(token);
             }
             ConstantFunction geoConstant = GeoHashUtil.parseGeoHashConstant(position, token, len);
@@ -505,7 +505,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
         }
 
-        if (ExpressionType.NUMERIC != predicateContext.expressionType) {
+        if (PredicateType.NUMERIC != predicateContext.type) {
             throw SqlException.position(position).put("numeric constant in non-numeric expression: ").put(token);
         }
         if (predicateContext.localTypesObserver.hasMixedSizes()) {
@@ -878,10 +878,28 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return Chars.equals(token, "/");
     }
 
+    /**
+     * Helper class that tracks types and arithmetic operations in a predicate.
+     * <p>
+     * A "predicate" stands for any arithmetical expression or single boolean
+     * column expression present in the filter. Predicates are combined with
+     * each other via binary boolean operators (and, or).
+     * <p>
+     * For example, we consider the below filter:
+     * <pre>
+     * long_col - 42 > 0 and (not bool_col1 or bool_col2)
+     * </pre>
+     * to contain three predicates:
+     * <pre>
+     * long_col - 42 > 0
+     * not bool_col1
+     * bool_col2
+     * </pre>
+     */
     private class PredicateContext implements Mutable {
 
         private ExpressionNode rootNode;
-        ExpressionType expressionType;
+        PredicateType type;
         SymbolMapReader symbolMapReader; // used for known symbol constant lookups
         int symbolColumnIndex; // used for symbol deferred constants and bind variables
         boolean singleBooleanColumn;
@@ -898,7 +916,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         private void reset() {
             rootNode = null;
-            expressionType = null;
+            type = null;
             symbolMapReader = null;
             symbolColumnIndex = -1;
             singleBooleanColumn = false;
@@ -915,11 +933,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 boolean topLevelOperation = isTopLevelOperation(node);
                 boolean topLevelBooleanColumn = isTopLevelBooleanColumn(node);
                 if (topLevelOperation || topLevelBooleanColumn) {
+                    // We entered a predicate.
                     reset();
                     rootNode = node;
                 }
                 if (topLevelBooleanColumn) {
-                    expressionType = ExpressionType.BOOLEAN;
+                    type = PredicateType.BOOLEAN;
                     singleBooleanColumn = true;
                 }
             }
@@ -928,6 +947,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         public boolean onNodeVisited(final ExpressionNode node) throws SqlException {
             boolean predicateLeft = false;
             if (node == rootNode) {
+                // We left the predicate.
                 rootNode = null;
                 predicateLeft = true;
             }
@@ -960,7 +980,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 symbolColumnIndex = columnIndex;
             }
 
-            updateExpressionType(node.position, columnTypeTag);
+            updateType(node.position, columnTypeTag);
 
             byte code = columnTypeCode(columnTypeTag);
             localTypesObserver.observe(code);
@@ -977,7 +997,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 columnTypeTag = ColumnType.SYMBOL;
             }
 
-            updateExpressionType(node.position, columnTypeTag);
+            updateType(node.position, columnTypeTag);
 
             byte code = columnTypeCode(columnTypeTag);
             localTypesObserver.observe(code);
@@ -988,57 +1008,57 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             hasArithmeticOperations |= isArithmeticOperation(node);
         }
 
-        private void updateExpressionType(int position, int columnTypeTag) throws SqlException {
+        private void updateType(int position, int columnTypeTag) throws SqlException {
             switch (columnTypeTag) {
                 case ColumnType.BOOLEAN:
-                    if (expressionType != null && expressionType != ExpressionType.BOOLEAN) {
+                    if (type != null && type != PredicateType.BOOLEAN) {
                         throw SqlException.position(position)
                                 .put("non-boolean column in boolean expression: ")
                                 .put(ColumnType.nameOf(columnTypeTag));
                     }
-                    expressionType = ExpressionType.BOOLEAN;
+                    type = PredicateType.BOOLEAN;
                     break;
                 case ColumnType.GEOBYTE:
                 case ColumnType.GEOSHORT:
                 case ColumnType.GEOINT:
                 case ColumnType.GEOLONG:
-                    if (expressionType != null && expressionType != ExpressionType.GEO_HASH) {
+                    if (type != null && type != PredicateType.GEO_HASH) {
                         throw SqlException.position(position)
                                 .put("non-geohash column in geohash expression: ")
                                 .put(ColumnType.nameOf(columnTypeTag));
                     }
-                    expressionType = ExpressionType.GEO_HASH;
+                    type = PredicateType.GEO_HASH;
                     break;
                 case ColumnType.CHAR:
-                    if (expressionType != null && expressionType != ExpressionType.CHAR) {
+                    if (type != null && type != PredicateType.CHAR) {
                         throw SqlException.position(position)
                                 .put("non-char column in char expression: ")
                                 .put(ColumnType.nameOf(columnTypeTag));
                     }
-                    expressionType = ExpressionType.CHAR;
+                    type = PredicateType.CHAR;
                     break;
                 case ColumnType.SYMBOL:
-                    if (expressionType != null && expressionType != ExpressionType.SYMBOL) {
+                    if (type != null && type != PredicateType.SYMBOL) {
                         throw SqlException.position(position)
                                 .put("non-symbol column in symbol expression: ")
                                 .put(ColumnType.nameOf(columnTypeTag));
                     }
-                    expressionType = ExpressionType.SYMBOL;
+                    type = PredicateType.SYMBOL;
                     break;
                 default:
-                    if (expressionType != null && expressionType != ExpressionType.NUMERIC) {
+                    if (type != null && type != PredicateType.NUMERIC) {
                         throw SqlException.position(position)
                                 .put("non-numeric column in numeric expression: ")
                                 .put(ColumnType.nameOf(columnTypeTag));
                     }
-                    expressionType = ExpressionType.NUMERIC;
+                    type = PredicateType.NUMERIC;
                     break;
             }
         }
     }
 
     /**
-     * Helper class for accumulating column types information.
+     * Helper class for accumulating column and bind variable types information.
      */
     private static class TypesObserver implements Mutable {
 
@@ -1076,8 +1096,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         /**
-         * Returns the expected constant type calculated based on the "widest" observed column type.
-         * The result contains IMM_* value or UNDEFINED_CODE value.
+         * Returns the expected constant type calculated based on the "widest" observed column
+         * or bind variable type. The result contains IMM_* value or UNDEFINED_CODE value.
          */
         public byte constantTypeCode() {
             for (int i = sizes.length - 1; i > -1; i--) {
@@ -1112,7 +1132,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         /**
-         * Returns size in bytes of the "widest" observed column type.
+         * Returns size in bytes of the "widest" observed column or bind variable type.
          */
         public int maxSize() {
             for (int i = sizes.length - 1; i > -1; i--) {
@@ -1154,7 +1174,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private enum ExpressionType {
+    private enum PredicateType {
         NUMERIC, CHAR, SYMBOL, BOOLEAN, GEO_HASH
     }
 }
