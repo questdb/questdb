@@ -39,7 +39,12 @@ ingestion using InfluxDB Line Protocol, and a REST API for queries, bulk
 imports, and exports.
 
 QuestDB implements ANSI SQL with native extensions for time-oriented language
-features. These extensions make it simple to correlate data from multiple
+features. These extensions ma
+
+
+
+
+dfgsdfgke it simple to correlate data from multiple
 sources using relational and time series joins. QuestDB achieves high
 performance from a column-oriented storage model, massively-parallelized vector
 execution, SIMD instructions, and various low-latency techniques. The entire
