@@ -63,6 +63,10 @@ const monacoPatterns = [
   { from: "node_modules/monaco-editor/min/vs/base", to: "assets/vs/base" },
 ]
 
+const monacoMapPatterns = [
+  { from: "node_modules/monaco-editor/min-maps/vs/", to: "min-maps/vs" },
+]
+
 const basePlugins = [
   new CleanWebpackPlugin(),
   new HtmlWebpackPlugin({
@@ -96,7 +100,17 @@ const devPlugins = [
     },
   }),
   new CopyWebpackPlugin({
-    patterns: monacoPatterns,
+    patterns: [
+      { from: "./assets/", to: "assets/" },
+      ...monacoPatterns,
+      ...monacoMapPatterns,
+    ],
+  }),
+]
+
+const prodPlugins = [
+  new CopyWebpackPlugin({
+    patterns: [{ from: "./assets/", to: "assets/" }, ...monacoPatterns],
   }),
 ]
 
@@ -108,21 +122,11 @@ const devLoaders = [
   },
 ]
 
-const prodPlugins = [
-  new CopyWebpackPlugin({
-    patterns: [{ from: "./assets/", to: "assets/" }, ...monacoPatterns],
-  }),
-]
-
 module.exports = {
   devServer: {
     compress: true,
     host: "localhost",
     hot: false,
-    overlay: !isProdBuild && {
-      errors: true,
-      warnings: false,
-    },
     port: PORT,
     proxy: {
       context: ["/imp", "/exp", "/exec", "/chk"],
@@ -175,7 +179,7 @@ module.exports = {
     all: false,
     chunks: true,
     env: true,
-    errors: true,
+    errors: !isProdBuild,
     errorDetails: true,
   },
 }
