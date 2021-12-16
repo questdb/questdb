@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
@@ -35,6 +36,11 @@ import org.jetbrains.annotations.Nullable;
 
 public final class AllowAllSqlSecurityContext {
     public static final SqlExecutionContext INSTANCE = new SqlExecutionContext() {
+        @Override
+        public QueryFutureUpdateListener getQueryFutureUpdateListener() {
+            return QueryFutureUpdateListener.EMPTY;
+        }
+
         @Override
         public BindVariableService getBindVariableService() {
             return null;

@@ -29,6 +29,7 @@ import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.Atomicity;
@@ -917,7 +918,7 @@ public class SqlCompiler implements Closeable {
 
         // Save execution context in resulting Compiled Query
         // it may be used for Alter Table statement execution
-        compiledQuery.withDefaultContext(executionContext);
+        compiledQuery.withContext(executionContext);
         final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);
         if (executor == null) {
             return compileUsingModel(executionContext);

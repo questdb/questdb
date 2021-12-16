@@ -28,6 +28,7 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionCircuitBreaker;
 import io.questdb.std.Misc;

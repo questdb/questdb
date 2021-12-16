@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
@@ -31,12 +32,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.NetUtils;
-import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
@@ -73,12 +72,12 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.LockSupport;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
 import static io.questdb.std.Numbers.hexDigits;
+import static io.questdb.test.tools.TestUtils.drainEngineCmdQueue;
 import static org.junit.Assert.*;
 
 @SuppressWarnings("SqlNoDataSourceInspection")
@@ -3070,67 +3069,65 @@ nodejs code:
     }
 
     @Test
-    @Ignore
-    // todo: unstable test that requires more work
     public void testRunAlterWhenTableLockedAndAlterTakesTooLong() throws Exception {
         assertMemoryLeak(() -> {
-            writerAsyncCommandBusyWaitTimeout = 10_000_000;
+            writerAsyncCommandBusyWaitTimeout = 1_000_000;
+            writerAsyncCommandMaxTimeout = 30_000_000;
+            SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new FilesFacadeImpl() {
                 @Override
                 public long openRW(LPSZ name) {
                     if (Chars.endsWith(name, "_meta.swp")) {
-                        try {
-                            Thread.sleep(writerAsyncCommandBusyWaitTimeout / 10000 + 100);
-                        } catch (InterruptedException e) {
-                            e.printStackTrace();
-                        }
+                        queryStartedCountDown.await();
+                        Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() / 1000);
                     }
                     return super.openRW(name);
                 }
             };
-            testAddColumnBusyWriter(true);
+            testAddColumnBusyWriter(true, new SOCountDownLatch());
         });
     }
 
     @Test
-    @Ignore
-    // unstable test that requires more work
     public void testRunAlterWhenTableLockedAndAlterTakesTooLongFailsToWait() throws Exception {
         assertMemoryLeak(() -> {
             writerAsyncCommandMaxTimeout = configuration.getWriterAsyncCommandBusyWaitTimeout();
+            SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new FilesFacadeImpl() {
                 @Override
                 public long openRW(LPSZ name) {
                     if (Chars.endsWith(name, "_meta.swp")) {
-                        try {
-                            Thread.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() / 1000);
-                        } catch (InterruptedException e) {
-                            e.printStackTrace();
-                        }
+                        queryStartedCountDown.await();
+                        Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() / 1000);
                     }
                     return super.openRW(name);
                 }
             };
-            testAddColumnBusyWriter(false);
+            testAddColumnBusyWriter(false, queryStartedCountDown);
         });
     }
 
     @Test
-    @Ignore
-    // todo: unstable test that requires more work
     public void testRunAlterWhenTableLockedAndAlterTimeoutsToStart() throws Exception {
         assertMemoryLeak(() -> {
-            writerAsyncCommandBusyWaitTimeout = 0;
-            testAddColumnBusyWriter(false);
+            writerAsyncCommandBusyWaitTimeout = 1;
+            ff = new FilesFacadeImpl() {
+                @Override
+                public long openRW(LPSZ name) {
+                    if (Chars.endsWith(name, "_meta.swp")) {
+                        Os.sleep(50);
+                    }
+                    return super.openRW(name);
+                }
+            };
+            testAddColumnBusyWriter(false, new SOCountDownLatch());
         });
     }
 
     @Test
-    @Ignore
-    // todo: unstable test that requires more work
     public void testRunAlterWhenTableLockedWithInserts() throws Exception {
         writerAsyncCommandBusyWaitTimeout = 10_000_000;
-        assertMemoryLeak(() -> testAddColumnBusyWriter(true));
+        assertMemoryLeak(() -> testAddColumnBusyWriter(true, new SOCountDownLatch()));
     }
 
     @Test
@@ -4384,54 +4381,54 @@ nodejs code:
         }
     }
 
-    private void testAddColumnBusyWriter(boolean alterRequestReturnSuccess) throws SQLException, InterruptedException, BrokenBarrierException, SqlException {
+    private void testAddColumnBusyWriter(boolean alterRequestReturnSuccess, SOCountDownLatch queryStartedCountDownLatch) throws SQLException, InterruptedException, BrokenBarrierException, SqlException {
         AtomicLong errors = new AtomicLong();
-        int iteration = 0;
-        do {
-            String tableName = "xyz" + iteration++;
-            compiler.compile("create table " + tableName + " (a int)", sqlExecutionContext);
+        final int[] affinity = new int[2];
+        Arrays.fill(affinity, -1);
+        int workerCount = 2;
 
-            final int[] affinity = new int[2];
-            Arrays.fill(affinity, -1);
+        final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
+            @Override
+            public Rnd getRandom() {
+                return new Rnd();
+            }
 
-            final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
-                @Override
-                public Rnd getRandom() {
-                    return new Rnd();
-                }
+            @Override
+            public int[] getWorkerAffinity() {
+                return affinity;
+            }
 
-                @Override
-                public int[] getWorkerAffinity() {
-                    return affinity;
-                }
+            @Override
+            public int getWorkerCount() {
+                return workerCount;
+            }
+        };
 
-                @Override
-                public int getWorkerCount() {
-                    return 2;
-                }
-            };
+        WorkerPool pool = new WorkerPool(conf);
+        pool.assign(engine.getEngineMaintenanceJob());
+        try (
+                final PGWireServer ignored = PGWireServer.create(
+                        conf,
+                        pool,
+                        LOG,
+                        engine,
+                        compiler.getFunctionFactoryCache(),
+                        metrics,
+                        createPGConnectionContextFactory(conf, workerCount, queryStartedCountDownLatch)
+                )
+        ) {
+            pool.start(LOG);
+            int iteration = 0;
 
-            WorkerPool pool = new WorkerPool(conf);
-            pool.assign(engine.getEngineMaintenanceJob());
-            try (
-                    final PGWireServer ignored = PGWireServer.create(
-                            conf,
-                            pool,
-                            LOG,
-                            engine,
-                            compiler.getFunctionFactoryCache(),
-                            metrics
-                    )
-            ) {
-                pool.start(LOG);
+            do {
+                final String tableName = "xyz" + iteration++;
+                compiler.compile("create table " + tableName + " (a int)", sqlExecutionContext);
+
                 try (
                         final Connection connection1 = getConnection(false, true);
                         final Connection connection2 = getConnection(false, true);
                         final PreparedStatement insert = connection1.prepareStatement(
                                 "insert into " + tableName + " values (?)"
-                        );
-                        final PreparedStatement alter = connection2.prepareStatement(
-                                "alter table " + tableName + " add column b long"
                         )
                 ) {
                     connection1.setAutoCommit(false);
@@ -4447,7 +4444,13 @@ nodejs code:
                     new Thread(() -> {
                         try {
                             start.await();
-                            alter.execute();
+                            try (
+                                    final PreparedStatement alter = connection2.prepareStatement(
+                                            "alter table " + tableName + " add column b long"
+                                    )
+                            ) {
+                                alter.execute();
+                            }
                         } catch (Throwable e) {
                             e.printStackTrace();
                             errors.incrementAndGet();
@@ -4457,7 +4460,7 @@ nodejs code:
                     }).start();
 
                     start.await();
-                    LockSupport.parkNanos(1);
+                    Os.sleep(100);
                     connection1.commit();
                     finished.await();
 
@@ -4471,12 +4474,38 @@ nodejs code:
                     }
                 } finally {
                     pool.halt();
+                    drainEngineCmdQueue(engine);
                     engine.releaseAllWriters();
                 }
+                // Failure may not happen if we're lucky, even when they are expected
+                // When alterRequestReturnSuccess if false and errors are 0, repeat
+            } while (!alterRequestReturnSuccess && errors.get() == 0);
+        }
+    }
+
+    private PGWireServer.PGConnectionContextFactory createPGConnectionContextFactory(PGWireConfiguration conf, int workerCount, SOCountDownLatch queryStartedCount) {
+        return new PGWireServer.PGConnectionContextFactory(engine,  conf, workerCount) {
+            @Override
+            protected SqlExecutionContextImpl getSqlExecutionContext(CairoEngine engine, int workerCount) {
+                return new SqlExecutionContextImpl(engine, workerCount) {
+                    @Override
+                    public QueryFutureUpdateListener getQueryFutureUpdateListener() {
+                        return new QueryFutureUpdateListener () {
+                            @Override
+                            public void reportProgress(long commandId, int status) {
+                                if (status == QueryFuture.QUERY_STARTED) {
+                                    queryStartedCount.countDown();
+                                }
+                            }
+
+                            @Override
+                            public void reportStart(CharSequence tableName, long commandId) {
+                            }
+                        };
+                    }
+                };
             }
-            // Failure may not happen if we're lucky, even when they are expected
-            // When alterRequestReturnSuccess if false and errors are 0, repeat
-        } while (!alterRequestReturnSuccess && errors.get() == 0);
+        };
     }
 
     private void testAllTypesSelect(boolean simple) throws Exception {
