@@ -958,40 +958,14 @@ namespace questdb::avx2 {
     }
 
     inline Gpd to_bits8(Compiler &c, const Ymm &x) {
-        //    __m128i a = _mm_packs_epi32(x.get_low(), x.get_high());  // 32-bit dwords to 16-bit words
-        //    __m128i b = _mm_packs_epi16(a, a);  // 16-bit words to bytes
-        //    return (uint8_t)_mm_movemask_epi8(b);
         Gp r = c.newInt32();
-        Xmm l = get_low(c, x);
-        Xmm h = get_high(c, x);
-        c.packssdw(l, h); // 32-bit dwords to 16-bit words
-        c.packsswb(l, l); // 16-bit words to bytes
-        c.pmovmskb(r, l);
-        c.and_(r, 0xff);
+        c.vmovmskps(r, x);
         return r.as<Gpd>();
     }
 
     inline Gpd to_bits4(Compiler &c, const Ymm &mask) {
-        //    uint32_t a = (uint32_t)_mm256_movemask_epi8(mask);
-        //    return ((a & 1) | ((a >> 7) & 2)) | (((a >> 14) & 4) | ((a >> 21) & 8));
         Gp r = c.newInt32();
-        c.vpmovmskb(r, mask);
-        Gp y = c.newInt32();
-        c.mov(y, r);
-        c.and_(y, 1);
-        Gp z = c.newInt32();
-        c.mov(z, r);
-        c.shr(z, 7);
-        c.and_(z, 2);
-        c.or_(z, y);
-        c.mov(y, r);
-        c.shr(y, 14);
-        c.and_(y, 4);
-        c.shr(r, 21);
-        c.and_(r, 8);
-        c.or_(r, z);
-        c.or_(r, y);
-        c.and_(r, 0xf); // 4 bits
+        c.vmovmskpd(r, mask);
         return r.as<Gpd>();
     }
 
@@ -1006,6 +980,23 @@ namespace questdb::avx2 {
             default:
                 return to_bits4(c, mask);
         }
+    }
+
+    //https://stackoverflow.com/questions/36932240/avx2-what-is-the-most-efficient-way-to-pack-left-based-on-a-mask
+    inline Ymm compress_register(Compiler &c, const Ymm &ymm0, const Ymm &mask) {
+        c.comment("compress_register");
+        x86::Gp bits = to_bits32(c, mask);
+        Gp identity_indices = c.newUInt64("identity_indices");
+        c.mov(identity_indices.r32(), 0x76543210);
+        c.pext(identity_indices.r32(), identity_indices.r32(), bits.r32());
+        Gp expanded_indices = c.newUInt64("expanded_indices");
+        c.movabs(expanded_indices, 0x0F0F0F0F0F0F0F0F);
+        c.pdep(identity_indices, identity_indices, expanded_indices);
+        Ymm ymm1 = c.newYmm();
+        c.vmovq(ymm1.xmm(), identity_indices);
+        c.vpmovzxbd(ymm1, ymm1.xmm());
+        c.vpermps(ymm1, ymm1, ymm0);
+        return ymm1;
     }
 
     inline Mem vec_long_null(Compiler &c) {

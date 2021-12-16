@@ -34,6 +34,8 @@
 
 #include <memory>
 #include <chrono>
+#include <bitset>
+#include <iostream>
 #include <src/main/c/share/compiler.h>
 
 #include "cmdline.h"
@@ -788,6 +790,7 @@ public:
             return false;
 
         resultRet = func(std::numeric_limits<int64_t>::max(), std::numeric_limits<int64_t>::max());
+        //overflow test
         expectRet = std::numeric_limits<int64_t>::max() + std::numeric_limits<int64_t>::max();
 
         result.assignFormat("ret={%lld}", resultRet);
@@ -914,6 +917,7 @@ public:
         int64_t expectRet = 0;
 
         resultRet = func(-3985256597569472057ll, 3);
+        //overflow test
         expectRet = -3985256597569472057ll * 3;
 
         result.assignFormat("ret={%lld}", resultRet);
@@ -966,6 +970,7 @@ public:
             return false;
 
         resultRet = func(std::numeric_limits<int64_t>::max(), std::numeric_limits<int64_t>::max());
+        //overflow test
         expectRet = std::numeric_limits<int64_t>::max() * std::numeric_limits<int64_t>::max();
 
         result.assignFormat("ret={%lld}", resultRet);
@@ -1378,6 +1383,8 @@ public:
             return false;
 
         resultRet = func(std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::max());
+
+        //overflow test
         expectRet = std::numeric_limits<int32_t>::max() * std::numeric_limits<int32_t>::max();
 
         result.assignFormat("ret={%d}", resultRet);
@@ -1932,6 +1939,120 @@ public:
     }
 };
 
+class Test_Compress256 : public TestCase {
+public:
+    Test_Compress256() : TestCase("Compress256") {}
+
+    static void add(TestApp &app) {
+        app.add(new Test_Compress256());
+    }
+
+    void compile(BaseCompiler &c) override {
+        auto &cc = dynamic_cast<x86::Compiler &>(c);
+        cc.addFunc(FuncSignatureT<int32_t, int64_t *, int64_t *>(CallConv::kIdHost));
+
+        x86::Gp a_ptr = cc.newInt64("a_ptr");
+        cc.setArg(0, a_ptr);
+        x86::Gp b_ptr = cc.newInt64("b_ptr");
+        cc.setArg(1, b_ptr);
+
+        x86::Mem am = ymmword_ptr(a_ptr);
+        x86::Mem bm = ymmword_ptr(b_ptr);
+
+        x86::Ymm adata = cc.newYmm();
+        x86::Ymm bdata = cc.newYmm();
+
+        cc.vmovdqu(adata, am);
+        cc.vmovdqu(bdata, bm);
+
+        x86::Ymm r = questdb::avx2::cmp_eq(cc, data_type_t::i64, adata, bdata);
+        adata = questdb::avx2::compress_register(cc, adata, r);
+
+        cc.vmovdqu(bm, adata);
+        x86::Gp mask2 = questdb::avx2::to_bits4(cc, r);
+        cc.ret(mask2.r32());
+        cc.endFunc();
+    }
+
+    bool run(void *_func, String &result, String &expect) override {
+        typedef int32_t (*Func)(int64_t *, int64_t *);
+        Func func = ptr_as_func<Func>(_func);
+
+        int64_t a[4] = {9, 12, 22, 37};
+        int64_t c[4] = {-1, 12, 2, 37};
+
+        int64_t e[4] = {12, 37, 0, 0};
+
+        int32_t mask = func(reinterpret_cast<int64_t *>(&a), reinterpret_cast<int64_t *>(&c));
+
+        result.assignFormat("ret=[{%lld}, {%lld}, {%lld}, {%lld}]", c[0], c[1], c[2], c[3]);
+        expect.assignFormat("ret=[{%lld}, {%lld}, {%lld}, {%lld}]", e[0], e[1], e[2], e[3]);
+        // i < 2 coz garbage in the rest positions
+        for (int i = 0; i < 2; ++i) {
+            if (c[i] != e[i])
+                return false;
+        }
+        return true;
+    }
+};
+
+class Test_Compress256Ints : public TestCase {
+public:
+    Test_Compress256Ints() : TestCase("Compress256Ints") {}
+
+    static void add(TestApp &app) {
+        app.add(new Test_Compress256Ints());
+    }
+
+    void compile(BaseCompiler &c) override {
+        auto &cc = dynamic_cast<x86::Compiler &>(c);
+        cc.addFunc(FuncSignatureT<int32_t, int32_t *, int32_t *>(CallConv::kIdHost));
+
+        x86::Gp a_ptr = cc.newInt64("a_ptr");
+        cc.setArg(0, a_ptr);
+        x86::Gp b_ptr = cc.newInt64("b_ptr");
+        cc.setArg(1, b_ptr);
+
+        x86::Mem am = ymmword_ptr(a_ptr);
+        x86::Mem bm = ymmword_ptr(b_ptr);
+
+        x86::Ymm adata = cc.newYmm();
+        x86::Ymm bdata = cc.newYmm();
+
+        cc.vmovdqu(adata, am);
+        cc.vmovdqu(bdata, bm);
+
+        x86::Ymm r = questdb::avx2::cmp_eq(cc, data_type_t::i32, adata, bdata);
+        x86::Gp bits = questdb::avx2::to_bits8(cc, r);
+        x86::Ymm res = questdb::avx2::compress_register(cc, adata, r);
+
+        cc.vmovdqu(bm, res);
+        cc.ret(bits.r32());
+        cc.endFunc();
+    }
+
+    bool run(void *_func, String &result, String &expect) override {
+        typedef int32_t (*Func)(int32_t *, int32_t *);
+        Func func = ptr_as_func<Func>(_func);
+
+        int32_t a[8] = {0, 1, 2, 3, 4, 5, 6, 7};
+        int32_t c[8] = {0, -1, 2, 3, -4, 5, -6, 7};
+
+        int32_t e[8] = {0, 2, 3, 5, 7, 0, 0, 0};
+
+        int32_t mask = func(reinterpret_cast<int32_t *>(&a), reinterpret_cast<int32_t *>(&c));
+
+        result.assignFormat("ret=[{%d}, {%d}, {%d}, {%d}, {%d}, {%d}, {%d}, {%d}]", c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]);
+        expect.assignFormat("ret=[{%d}, {%d}, {%d}, {%d}, {%d}, {%d}, {%d}, {%d}]", e[0], e[1], e[2], e[3], e[4], e[5], e[6], e[7]);
+
+        for (int i = 0; i < 8; ++i) {
+            if (c[i] != e[i])
+                return false;
+        }
+        return true;
+    }
+};
+
 void compiler_add_x86_tests(TestApp &app) {
     app.addT<Test_Int32Not>();
     app.addT<Test_Int32And>();
@@ -1960,6 +2081,8 @@ void compiler_add_x86_tests(TestApp &app) {
     app.addT<Test_VecInt64LeZero>();
     app.addT<Test_Float64CmpVec>();
     app.addT<Test_Int32EqNull>();
+    app.addT<Test_Compress256>();
+    app.addT<Test_Compress256Ints>();
 }
 
 int main(int argc, char *argv[]) {

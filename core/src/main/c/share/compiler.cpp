@@ -163,7 +163,6 @@ namespace questdb::x86 {
 
     jit_value_t imm2reg(Compiler &c, data_type_t dst_type, const jit_value_t &v) {
         Imm k = v.op().as<Imm>();
-        auto type = v.dtype();
         if (k.isInteger()) {
             auto value = k.valueAs<int64_t>();
             switch (dst_type) {
@@ -1262,6 +1261,25 @@ struct JitCompiler {
         c.cmp(input_index, stop);
         c.jge(l_exit);
 
+
+        Ymm row_ids_reg = c.newYmm("rows_ids");
+        Ymm row_ids_step = c.newYmm("rows_ids_step");
+
+        //mask compress optimization for longs
+        //init row_ids_reg out of loop
+        if(step == 4) {
+            int64_t rows_id_mem[4] = {0, 1, 2, 3};
+            Mem mem = c.newConst(ConstPool::kScopeLocal, &rows_id_mem, 32);
+
+            c.vmovq(row_ids_reg.xmm(), rows_id_start_offset);
+            c.vpbroadcastq(row_ids_reg, row_ids_reg.xmm());
+            c.vpaddq(row_ids_reg, row_ids_reg, mem);
+
+            int64_t step_data[4] = {step, step, step, step};
+            Mem stem_mem = c.newConst(ConstPool::kScopeLocal, &step_data, 32);
+            c.vmovdqu(row_ids_step, stem_mem);
+        }
+
         c.bind(l_loop);
 
         questdb::avx2::emit_code(c, filter_expr, filter_size, registers, null_check, cols_ptr, vars_ptr, input_index);
@@ -1269,8 +1287,18 @@ struct JitCompiler {
         auto mask = registers.top();
         registers.pop();
 
-        Gp bits = questdb::avx2::to_bits(c, mask.ymm(), step);
-        questdb::avx2::unrolled_loop2(c, bits.r64(), rows_ptr, input_index, output_index, rows_id_start_offset, step);
+        //mask compress optimization for longs
+        if(step == 4) {
+            Ymm compacted = questdb::avx2::compress_register(c, row_ids_reg, mask.ymm());
+            c.vmovdqu(ymmword_ptr(rows_ptr, output_index, 3), compacted);
+            Gp bits = questdb::avx2::to_bits4(c, mask.ymm());
+            c.popcnt(bits, bits);
+            c.add(output_index, bits.r64());
+            c.vpaddq(row_ids_reg, row_ids_reg, row_ids_step);
+        } else {
+            Gp bits = questdb::avx2::to_bits(c, mask.ymm(), step);
+            questdb::avx2::unrolled_loop2(c, bits.r64(), rows_ptr, input_index, output_index, rows_id_start_offset, step);
+        }
 
         c.add(input_index, step); // index += step
         c.cmp(input_index, stop);
