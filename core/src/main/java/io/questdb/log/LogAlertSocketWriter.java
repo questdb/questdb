@@ -24,17 +24,20 @@
 
 package io.questdb.log;
 
-import io.questdb.VisibleForTesting;
+import io.questdb.BuildInformationHolder;
 import io.questdb.mp.QueueConsumer;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SynchronizedJob;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.*;
 
@@ -46,22 +49,27 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     static final CharSequenceObjHashMap<CharSequence> ALERT_PROPS = TemplateParser.adaptMap(System.getenv());
     private static final String DEFAULT_ENV_VALUE = "GLOBAL";
     private static final String ORG_ID_ENV = "ORGID";
+    private static final String QDB_VERSION_ENV = "QDB_VERSION";
     private static final String NAMESPACE_ENV = "NAMESPACE";
     private static final String CLUSTER_ENV = "CLUSTER_NAME";
     private static final String INSTANCE_ENV = "INSTANCE_NAME";
     private static final String MESSAGE_ENV = "ALERT_MESSAGE";
     private static final String MESSAGE_ENV_VALUE = "${" + MESSAGE_ENV + "}";
+
     private final int level;
     private final MicrosecondClock clock;
+    private final StringSink sink = new StringSink();
     private final FilesFacade ff;
+    private final NetworkFacade nf;
     private final SCSequence writeSequence;
     private final RingQueue<LogRecordSink> alertsSourceQueue;
+    private final QueueConsumer<LogRecordSink> alertsProcessor = this::onLogRecord;
     private final TemplateParser alertTemplate = new TemplateParser();
     private HttpLogRecordSink alertSink;
     private LogAlertSocket socket;
     private ObjList<TemplateNode> alertTemplateNodes;
     private int alertTemplateNodesLen;
-    private final QueueConsumer<LogRecordSink> alertsProcessor = this::onLogRecord;
+    private Log log;
     // changed by introspection
     private String defaultAlertHost;
     private String defaultAlertPort;
@@ -74,6 +82,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     public LogAlertSocketWriter(RingQueue<LogRecordSink> alertsSrc, SCSequence writeSequence, int level) {
         this(
                 FilesFacadeImpl.INSTANCE,
+                NetworkFacadeImpl.INSTANCE,
                 MicrosecondClockImpl.INSTANCE,
                 alertsSrc,
                 writeSequence,
@@ -83,12 +92,14 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
 
     public LogAlertSocketWriter(
             FilesFacade ff,
+            NetworkFacade nf,
             MicrosecondClock clock,
             RingQueue<LogRecordSink> alertsSrc,
             SCSequence writeSequence,
             int level
     ) {
         this.ff = ff;
+        this.nf = nf;
         this.clock = clock;
         this.alertsSourceQueue = alertsSrc;
         this.writeSequence = writeSequence;
@@ -97,7 +108,6 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
 
     @Override
     public void bindProperties(LogFactory factory) {
-        final Log log = factory.create(LogAlertSocketWriter.class.getName());
         int nInBufferSize = LogAlertSocket.IN_BUFFER_SIZE;
         if (inBufferSize != null) {
             try {
@@ -133,7 +143,9 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                 throw new LogError("Invalid value for defaultAlertPort: " + defaultAlertPort);
             }
         }
+        log = factory.create(LogAlertSocketWriter.class.getName());
         socket = new LogAlertSocket(
+                nf,
                 alertTargets,
                 nInBufferSize,
                 nOutBufferSize,
@@ -159,7 +171,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         return writeSequence.consumeAll(alertsSourceQueue, alertsProcessor);
     }
 
-    @VisibleForTesting
+    @TestOnly
     static void readFile(String location, long address, long addressSize, FilesFacade ff, CharSink sink) {
         long fdTemplate = -1;
         try (Path path = new Path()) {
@@ -192,77 +204,77 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         }
     }
 
-    @VisibleForTesting
+    @TestOnly
     HttpLogRecordSink getAlertSink() {
         return alertSink;
     }
 
-    @VisibleForTesting
+    @TestOnly
     String getAlertTargets() {
         return socket.getAlertTargets();
     }
 
-    @VisibleForTesting
+    @TestOnly
     void setAlertTargets(String alertTargets) {
         this.alertTargets = alertTargets;
     }
 
-    @VisibleForTesting
+    @TestOnly
     String getDefaultAlertHost() {
         return socket.getDefaultAlertHost();
     }
 
-    @VisibleForTesting
+    @TestOnly
     void setDefaultAlertHost(String defaultAlertHost) {
         this.defaultAlertHost = defaultAlertHost;
     }
 
-    @VisibleForTesting
+    @TestOnly
     int getDefaultAlertPort() {
         return socket.getDefaultAlertPort();
     }
 
-    @VisibleForTesting
+    @TestOnly
     void setDefaultAlertPort(String defaultAlertPort) {
         this.defaultAlertPort = defaultAlertPort;
     }
 
-    @VisibleForTesting
+    @TestOnly
     int getInBufferSize() {
         return socket.getInBufferSize();
     }
 
-    @VisibleForTesting
+    @TestOnly
     void setInBufferSize(String inBufferSize) {
         this.inBufferSize = inBufferSize;
     }
 
-    @VisibleForTesting
+    @TestOnly
     String getLocation() {
         return location;
     }
 
-    @VisibleForTesting
+    @TestOnly
     void setLocation(String location) {
         this.location = location;
     }
 
-    @VisibleForTesting
+    @TestOnly
     int getOutBufferSize() {
         return socket.getOutBufferSize();
     }
 
-    @VisibleForTesting
+    @TestOnly
     void setOutBufferSize(String outBufferSize) {
         this.outBufferSize = outBufferSize;
     }
 
-    @VisibleForTesting
+    @TestOnly
     long getReconnectDelay() {
         return socket.getReconnectDelay();
     }
 
-    @VisibleForTesting
+    @TestOnly
     void setReconnectDelay(String reconnectDelay) {
         this.reconnectDelay = reconnectDelay;
     }
@@ -288,7 +300,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
             // it was not a resource ("/resource_name")
         }
         if (needsReading) {
-            StringSink sink = new StringSink();
+            sink.clear();
             readFile(
                     location,
                     socket.getInBufferPtr(),
@@ -308,7 +320,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         alertTemplateNodesLen = alertTemplateNodes.size();
     }
 
-    @VisibleForTesting
+    @TestOnly
     void onLogRecord(LogRecordSink logRecord) {
         final int len = logRecord.length();
         if ((logRecord.getLevel() & level) != 0 && len > 0) {
@@ -322,6 +334,10 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                     alertSink.put(comp);
                 }
             }
+            sink.clear();
+            sink.put(logRecord);
+            sink.clear(sink.length() - Misc.EOL.length());
+            log.info().$("Sending: ").$(sink).$();
             socket.send(alertSink.$());
         }
     }
@@ -338,6 +354,9 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         }
         if (!ALERT_PROPS.contains(INSTANCE_ENV)) {
             ALERT_PROPS.put(INSTANCE_ENV, DEFAULT_ENV_VALUE);
+        }
+        if (!ALERT_PROPS.contains(QDB_VERSION_ENV)) {
+            ALERT_PROPS.put(QDB_VERSION_ENV, BuildInformationHolder.INSTANCE.toString());
         }
         ALERT_PROPS.put(MESSAGE_ENV, MESSAGE_ENV_VALUE);
     }

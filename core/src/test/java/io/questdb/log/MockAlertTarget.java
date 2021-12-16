@@ -24,15 +24,12 @@
 
 package io.questdb.log;
 
-import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.concurrent.atomic.AtomicBoolean;
-
-import static io.questdb.log.HttpLogRecordSink.CRLF;
 
 class MockAlertTarget extends Thread {
     static final String ACK = "Ack";
@@ -48,6 +45,7 @@ class MockAlertTarget extends Thread {
         this.onTargetEnd = onTargetEnd;
         this.isRunning = new AtomicBoolean();
     }
+
 
     boolean isRunning() {
         return isRunning.get();
@@ -75,10 +73,8 @@ class MockAlertTarget extends Thread {
                 clientSkt.setSoLinger(false, 0);
 
                 // read until end or until death pill is read
-                StringSink inputLine = new StringSink();
                 String line = in.readLine();
                 while (line != null) {
-                    inputLine.put(line).put(CRLF);
                     if (line.equals(DEATH_PILL)) {
                         break;
                     }
@@ -86,6 +82,7 @@ class MockAlertTarget extends Thread {
                 }
                 // send ACK, equivalent to status: ok in http
                 out.print(ACK);
+                out.flush();
             } catch (IOException e) {
                 Assert.fail(e.getMessage());
             } finally {

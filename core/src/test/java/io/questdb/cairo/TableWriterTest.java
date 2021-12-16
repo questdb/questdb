@@ -869,7 +869,7 @@ public class TableWriterTest extends AbstractCairoTest {
             @Override
             public int rmdir(Path name) {
                 if (kIndexFd != -1) {
-                    // Access dinied, file is open
+                    // Access denied, file is open
                     return 5;
                 }
                 return super.rmdir(name);
@@ -2662,6 +2662,11 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTruncateMidO3Transaction() throws NumericException {
+        testTruncate(TableWriterTest::danglingO3TransactionModifier);
+    }
+
+    @Test
     public void testTruncateMidRowAppend() throws NumericException {
         testTruncate(TableWriterTest::danglingRowModifier);
     }
@@ -2669,11 +2674,6 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testTruncateMidTransaction() throws NumericException {
         testTruncate(TableWriterTest::danglingTransactionModifier);
-    }
-
-    @Test
-    public void testTruncateMidO3Transaction() throws NumericException {
-        testTruncate(TableWriterTest::danglingO3TransactionModifier);
     }
 
     @Test

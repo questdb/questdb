@@ -25,10 +25,17 @@
 package io.questdb.log;
 
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.Misc;
+import io.questdb.std.Sinkable;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.File;
 import java.util.Arrays;
 
 import static io.questdb.log.HttpLogRecordSink.CRLF;
@@ -109,7 +116,7 @@ public class LogAlertSocketTest {
     @Test
     public void testFailOver() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (LogAlertSocket alertSkt = new LogAlertSocket("localhost:1234,localhost:1242", LOG)) {
+            try (LogAlertSocket alertSkt = new LogAlertSocket(NetworkFacadeImpl.INSTANCE, "localhost:1234,localhost:1242", LOG)) {
                 final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
                         .putHeader("localhost")
                         .setMark();
@@ -154,35 +161,243 @@ public class LogAlertSocketTest {
     }
 
     @Test
+    public void testFailOverSingleHost() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String host = "127.0.0.1";
+            final int port = 1241;
+            try (LogAlertSocket alertSkt = new LogAlertSocket(NetworkFacadeImpl.INSTANCE, host + ":" + port, LOG)) {
+                final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
+                        .putHeader(host)
+                        .setMark();
+
+                // start server
+                final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
+                final MockAlertTarget server = new MockAlertTarget(port, haltLatch::countDown);
+                server.start();
+
+                // connect to server
+                alertSkt.connect();
+
+                // send something
+                Assert.assertTrue(
+                        alertSkt.send(builder
+                                .rewindToMark()
+                                .put("Something")
+                                .put(CRLF)
+                                .put(MockAlertTarget.DEATH_PILL)
+                                .put(CRLF)
+                                .$()));
+
+                // wait for haltness
+                haltLatch.await();
+                Assert.assertFalse(server.isRunning());
+
+                // send and fail after a re-connect delay
+                final long start = System.nanoTime();
+                Assert.assertFalse(alertSkt.send(builder.length()));
+                Assert.assertTrue(System.nanoTime() - start >= 2 * LogAlertSocket.RECONNECT_DELAY_NANO);
+            }
+        });
+    }
+
+    @Test
     public void testFailOverNoServers() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (LogAlertSocket alertSkt = new LogAlertSocket("localhost:1234,localhost:1243", LOG)) {
+            final NetworkFacade nf = new NetworkFacadeImpl() {
+                @Override
+                public long connect(long fd, long sockaddr) {
+                    return -1;
+                }
+            };
+            try (LogAlertSocket alertSkt = new LogAlertSocket(nf, "localhost:1234,localhost:1243", LOG)) {
                 final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
                         .putHeader("localhost")
                         .setMark();
-
-                // start servers
                 final int numHosts = alertSkt.getAlertHostsCount();
                 Assert.assertEquals(2, numHosts);
-
-                // connect to a server and send something
                 Assert.assertFalse(
                         alertSkt.send(builder
-                                        .rewindToMark()
-                                        .put("Something")
-                                        .put(CRLF)
-                                        .put(MockAlertTarget.DEATH_PILL)
-                                        .put(CRLF)
-                                        .$(),
-                                ack -> Assert.assertEquals(ack, LogAlertSocket.NACK)
-                        ));
+                                .rewindToMark()
+                                .put("Something")
+                                .put(CRLF)
+                                .put(MockAlertTarget.DEATH_PILL)
+                                .put(CRLF)
+                                .$()));
+            }
+        });
+    }
+
+    @Test
+    public void testParseStatusSuccessResponse() throws Exception {
+        testParseStatusResponse(
+                "HTTP/1.1 200 OK\r\n" +
+                        "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                        "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                        "Access-Control-Allow-Origin: *\r\n" +
+                        "Access-Control-Expose-Headers: Date\r\n" +
+                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Date: Thu, 09 Dec 2021 09:37:22 GMT\r\n" +
+                        "Content-Length: 20\r\n" +
+                        "\r\n" +
+                        "{\"status\":\"success\"}",
+                "Added default alert manager [0] 127.0.0.1:9093\r\n" +
+                        "Received [0] 127.0.0.1:9093: {\"status\":\"success\"}\r\n"
+        );
+    }
+
+    @Test
+    public void testParseStatusErrorResponse() throws Exception {
+        testParseStatusResponse(
+                "HTTP/1.1 400 Bad Request\r\n" +
+                        "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                        "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                        "Access-Control-Allow-Origin: *\r\n" +
+                        "Access-Control-Expose-Headers: Date\r\n" +
+                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
+                        "Content-Length: 66\r\n" +
+                        "\r\n" +
+                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}",
+                "Added default alert manager [0] 127.0.0.1:9093\r\n" +
+                        "Received [0] 127.0.0.1:9093: {\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n"
+        );
+    }
+
+    @Test
+    public void testParseBadResponse0() throws Exception {
+        testParseStatusResponse(
+                "HTTP/1.1 400 Bad Request\r\n" +
+                        "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                        "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                        "Access-Control-Allow-Origin: *\r\n" +
+                        "Access-Control-Expose-Headers: Date\r\n" +
+                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
+                        "Content-Length: 6o\r\n" +
+                        "\r\n" +
+                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}",
+                "Added default alert manager [0] 127.0.0.1:9093\r\n" +
+                        "Received [0] 127.0.0.1:9093: HTTP/1.1 400 Bad Request\r\n" +
+                        "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                        "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                        "Access-Control-Allow-Origin: *\r\n" +
+                        "Access-Control-Expose-Headers: Date\r\n" +
+                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
+                        "Content-Length: 6o\r\n" +
+                        "\r\n" +
+                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n");
+    }
+
+    @Test
+    public void testParseBadResponse1() throws Exception {
+        testParseStatusResponse(
+                "HTTP/1.1 400 Bad Request\r\n" +
+                        "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                        "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                        "Access-Control-Allow-Origin: *\r\n" +
+                        "Access-Control-Expose-Headers: Date\r\n" +
+                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
+                        "\r\n" +
+                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}",
+                "Added default alert manager [0] 127.0.0.1:9093\r\n" +
+                        "Received [0] 127.0.0.1:9093: HTTP/1.1 400 Bad Request\r\n" +
+                        "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                        "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                        "Access-Control-Allow-Origin: *\r\n" +
+                        "Access-Control-Expose-Headers: Date\r\n" +
+                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
+                        "\r\n" +
+                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n");
+    }
+
+    @Test
+    public void testParseBadResponse2() throws Exception {
+        testParseStatusResponse("HTTP/1.1 400 Bad Request\r\n" +
+                        "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                        "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                        "Access-Control-Allow-Origin: *\r\n" +
+                        "Access-Control-Expose-Headers: Date\r\n" +
+                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
+                        "Content-Length: 6\r\n" +
+                        "\r\n" +
+                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}",
+                "Added default alert manager [0] 127.0.0.1:9093\r\n" +
+                        "Received [0] 127.0.0.1:9093: HTTP/1.1 400 Bad Request\r\n" +
+                        "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                        "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                        "Access-Control-Allow-Origin: *\r\n" +
+                        "Access-Control-Expose-Headers: Date\r\n" +
+                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
+                        "Content-Length: 6\r\n" +
+                        "\r\n" +
+                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n");
+    }
+
+    @Test
+    public void testParseBadResponse3() throws Exception {
+        testParseStatusResponse("HTTP/1.1 400 Bad Request\r\n" +
+                        "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                        "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                        "Access-Control-Allow-Origin: *\r\n" +
+                        "Access-Control-Expose-Headers: Date\r\n" +
+                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
+                        "Content-Length: 66\r\n" +
+                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}",
+                "Added default alert manager [0] 127.0.0.1:9093\r\n" +
+                        "Received [0] 127.0.0.1:9093: HTTP/1.1 400 Bad Request\r\n" +
+                        "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                        "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                        "Access-Control-Allow-Origin: *\r\n" +
+                        "Access-Control-Expose-Headers: Date\r\n" +
+                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
+                        "Content-Length: 66\r\n" +
+                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n");
+    }
+
+    private void testParseStatusResponse(CharSequence httpMessage, CharSequence expected) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            NetworkFacade nf = new NetworkFacadeImpl() {
+                @Override
+                public long connect(long fd, long sockaddr) {
+                    return -1;
+                }
+            };
+            MockLog log = new MockLog();
+            try (LogAlertSocket alertSkt = new LogAlertSocket(nf, "", log)) {
+                LogRecordSink logRecord = new LogRecordSink(alertSkt.getInBufferPtr(), alertSkt.getInBufferSize());
+                logRecord.put(httpMessage);
+                alertSkt.logResponse(logRecord.length());
+                TestUtils.assertEquals(expected, log.logRecord.sink);
             }
         });
     }
 
     private void assertLogError(String socketAddress, String expected) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (LogAlertSocket ignored = new LogAlertSocket(socketAddress, LOG)) {
+            NetworkFacade nf = new NetworkFacadeImpl() {
+                @Override
+                public long connect(long fd, long sockaddr) {
+                    return -1;
+                }
+            };
+            try (LogAlertSocket ignored = new LogAlertSocket(nf, socketAddress, LOG)) {
                 Assert.fail();
             } catch (LogError logError) {
                 Assert.assertEquals(expected, logError.getMessage());
@@ -196,7 +411,14 @@ public class LogAlertSocketTest {
             int[] expectedPorts
     ) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (LogAlertSocket socket = new LogAlertSocket(alertTargets, LOG)) {
+            NetworkFacade nf = new NetworkFacadeImpl() {
+                @Override
+                public long connect(long fd, long sockaddr) {
+                    return -1;
+                }
+            };
+
+            try (LogAlertSocket socket = new LogAlertSocket(nf, alertTargets, LOG)) {
                 Assert.assertEquals(expectedHosts.length, socket.getAlertHostsCount());
                 Assert.assertEquals(expectedPorts.length, socket.getAlertHostsCount());
                 for (int i = 0; i < expectedHosts.length; i++) {
@@ -205,5 +427,213 @@ public class LogAlertSocketTest {
                 }
             }
         });
+    }
+
+    private static class MockLog implements Log {
+        final MockLogRecord logRecord = new MockLogRecord();
+
+        @Override
+        public LogRecord info() {
+            return logRecord;
+        }
+
+        @Override
+        public LogRecord debug() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord debugW() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord error() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord errorW() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord critical() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord criticalW() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord infoW() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord advisory() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord advisoryW() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean isDebugEnabled() {
+            return false;
+        }
+
+        @Override
+        public LogRecord xerror() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord xcritical() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord xinfo() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord xInfoW() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord xdebug() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord xDebugW() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord xadvisory() {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    private static class MockLogRecord implements LogRecord {
+        final StringSink sink = new StringSink();
+
+        @Override
+        public void $() {
+            sink.put(Misc.EOL);
+        }
+
+        @Override
+        public LogRecord $(CharSequence sequence) {
+            sink.put(sequence);
+            return this;
+        }
+
+        @Override
+        public LogRecord $(CharSequence sequence, int lo, int hi) {
+            sink.put(sequence, lo, hi);
+            return this;
+        }
+
+        @Override
+        public CharSinkBase put(char c) {
+            sink.put(c);
+            return this;
+        }
+
+        @Override
+        public LogRecord $(int x) {
+            sink.put(x);
+            return this;
+        }
+
+        @Override
+        public LogRecord $(char c) {
+            sink.put(c);
+            return this;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return true;
+        }
+
+        @Override
+        public LogRecord $utf8(long lo, long hi) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord $(double x) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord $(long x) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord $(boolean x) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord $(Throwable e) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord $(File x) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord $(Object x) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord $(Sinkable x) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord $ip(long ip) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord $ts(long x) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord $256(long a, long b, long c, long d) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord ts() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord microTime(long x) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord utf8(CharSequence sequence) {
+            throw new UnsupportedOperationException();
+        }
     }
 }

@@ -33,6 +33,10 @@ public interface Log {
 
     LogRecord errorW();
 
+    LogRecord critical();
+
+    LogRecord criticalW();
+
     LogRecord info();
 
     LogRecord infoW();
@@ -44,6 +48,8 @@ public interface Log {
     boolean isDebugEnabled();
 
     LogRecord xerror();
+
+    LogRecord xcritical();
 
     LogRecord xinfo();
 

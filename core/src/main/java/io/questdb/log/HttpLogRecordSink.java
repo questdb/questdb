@@ -24,9 +24,10 @@
 
 package io.questdb.log;
 
-import io.questdb.VisibleForTesting;
-import io.questdb.std.*;
-
+import io.questdb.std.Chars;
+import io.questdb.std.Sinkable;
+import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.TestOnly;
 
 public class HttpLogRecordSink extends LogRecordSink {
 
@@ -34,7 +35,6 @@ public class HttpLogRecordSink extends LogRecordSink {
     private static final String CL_MARKER = "#########"; // with 9 digits, max content length = 999999999 bytes (953MB)
     private static final int CL_MARKER_LEN = CL_MARKER.length(); // number of digits available for contentLength
     private static final int MARK_NOT_SET = -1;
-
 
     private long mark = MARK_NOT_SET;
     private boolean hasContentLengthMarker;
@@ -68,7 +68,7 @@ public class HttpLogRecordSink extends LogRecordSink {
         if (hasContentLengthMarker) {
             // take the body length and format it into the ###### contentLength marker
             int bodyLen = (int) (_wptr - bodyStart);
-            long p = contentLengthEnd; // note, we replace # from lowest significant digit (right to left)
+            long p = contentLengthEnd; // note, we replace # from the lowest significant digit (right to left)
             if (bodyLen == 0) {
                 Unsafe.getUnsafe().putByte(p--, (byte) '0');
             } else {
@@ -153,6 +153,12 @@ public class HttpLogRecordSink extends LogRecordSink {
     }
 
     @Override
+    public HttpLogRecordSink encodeUtf8(CharSequence cs) {
+        super.encodeUtf8(cs);
+        return this;
+    }
+
+    @Override
     public HttpLogRecordSink put(CharSequence cs, int lo, int hi) {
         super.put(cs, lo, hi);
         return this;
@@ -175,7 +181,7 @@ public class HttpLogRecordSink extends LogRecordSink {
         return Chars.stringFromUtf8Bytes(address, _wptr);
     }
 
-    @VisibleForTesting
+    @TestOnly
     void putContentLengthMarker() {
         put("Content-Length:").put(CL_MARKER);
         contentLengthEnd = _wptr - 1; // will scan backwards from here

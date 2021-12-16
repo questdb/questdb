@@ -29,6 +29,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.ex.BytecodeException;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.FileOutputStream;
 import java.nio.ByteBuffer;
@@ -410,10 +411,11 @@ public class BytecodeAssembler {
     }
 
     @SuppressWarnings("unchecked")
+    @Nullable
     public <T> Class<T> loadClass(Class<?> host) {
         byte[] b = new byte[position()];
         System.arraycopy(buf.array(), 0, b, 0, b.length);
-        return (Class<T>) Unsafe.getUnsafe().defineAnonymousClass(host, b, null);
+        return (Class<T>) Unsafe.defineAnonymousClass(host, b);
     }
 
     public void lreturn() {
@@ -430,10 +432,11 @@ public class BytecodeAssembler {
 
     public <T> T newInstance() {
         Class<T> x = loadClass(host);
+        assert x != null;
         try {
             return x.getDeclaredConstructor().newInstance();
         } catch (Exception e) {
-            LOG.error().$("could not create an instance of ").$(host.getName()).$(", cause: ").$(e).$();
+            LOG.critical().$("could not create an instance of ").$(host.getName()).$(", cause: ").$(e).$();
             throw BytecodeException.INSTANCE;
         }
     }

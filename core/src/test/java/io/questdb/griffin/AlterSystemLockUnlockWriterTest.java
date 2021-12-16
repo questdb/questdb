@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.pool.WriterPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -33,6 +34,11 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
     //alter system [lock|unlock] writer <tableName>
 
     @Test
+    public void testAlterExpectLockWriter() throws Exception {
+        assertFailure("alter system lock reader", 18, "'writer' expected");
+    }
+
+    @Test
     public void testAlterExpectTableName1() throws Exception {
         assertFailure("alter system lock writer", 24, "table name expected");
     }
@@ -40,6 +46,11 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
     @Test
     public void testAlterExpectTableName2() throws Exception {
         assertFailure("alter system unlock writer", 26, "table name expected");
+    }
+
+    @Test
+    public void testAlterExpectUnkockWriter() throws Exception {
+        assertFailure("alter system unlock reader", 20, "'writer' expected");
     }
 
     @Test
@@ -68,8 +79,58 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDoubleLockWriter() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            compile("alter system lock writer x", sqlExecutionContext);
+            try {
+                compile("alter system lock writer x", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "could not lock, busy");
+            } finally {
+                compile("alter system unlock writer x", sqlExecutionContext);
+            }
+        });
+    }
+
+    @Test
+    public void testLockWriter() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            compile("alter system lock writer x", sqlExecutionContext);
+            TestUtils.assertEquals("alterSystem", engine.lockWriter("x", "new lock"));
+            compile("alter system unlock writer x", sqlExecutionContext);
+        });
+    }
+
+    @Test
     public void testNonExistentTable() throws Exception {
         assertFailure("alter system unlock writer z", 27, "table 'z' does not exist");
+    }
+
+    @Test
+    public void testUnlockNonExistingWriter() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compile("alter system unlock writer y", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "table 'y' does not exist");
+            }
+
+        });
+    }
+
+    @Test
+    public void testUnlockWriter() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            compile("alter system lock writer x", sqlExecutionContext);
+            compile("alter system unlock writer x", sqlExecutionContext);
+            Assert.assertEquals(WriterPool.OWNERSHIP_REASON_NONE, engine.lockWriter("x", "new lock 2"));
+            engine.unlock(sqlExecutionContext.getCairoSecurityContext(), "x", null, false);
+        });
     }
 
     private void assertFailure(String sql, int position, String message) throws Exception {
