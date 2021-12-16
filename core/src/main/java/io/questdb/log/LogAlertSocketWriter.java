@@ -29,6 +29,8 @@ import io.questdb.mp.QueueConsumer;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SynchronizedJob;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -58,6 +60,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private final MicrosecondClock clock;
     private final StringSink sink = new StringSink();
     private final FilesFacade ff;
+    private final NetworkFacade nf;
     private final SCSequence writeSequence;
     private final RingQueue<LogRecordSink> alertsSourceQueue;
     private final QueueConsumer<LogRecordSink> alertsProcessor = this::onLogRecord;
@@ -79,6 +82,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     public LogAlertSocketWriter(RingQueue<LogRecordSink> alertsSrc, SCSequence writeSequence, int level) {
         this(
                 FilesFacadeImpl.INSTANCE,
+                NetworkFacadeImpl.INSTANCE,
                 MicrosecondClockImpl.INSTANCE,
                 alertsSrc,
                 writeSequence,
@@ -88,12 +92,14 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
 
     public LogAlertSocketWriter(
             FilesFacade ff,
+            NetworkFacade nf,
             MicrosecondClock clock,
             RingQueue<LogRecordSink> alertsSrc,
             SCSequence writeSequence,
             int level
     ) {
         this.ff = ff;
+        this.nf = nf;
         this.clock = clock;
         this.alertsSourceQueue = alertsSrc;
         this.writeSequence = writeSequence;
@@ -139,6 +145,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         }
         log = factory.create(LogAlertSocketWriter.class.getName());
         socket = new LogAlertSocket(
+                nf,
                 alertTargets,
                 nInBufferSize,
                 nOutBufferSize,

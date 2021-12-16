@@ -22,12 +22,16 @@
  *
  ******************************************************************************/
 
-import echarts from "echarts/lib/echarts"
+import * as echarts from "echarts/lib/echarts"
+import { LegendComponent, GridComponent } from "echarts/components"
+
 import $ from "jquery"
 import SlimSelect from "slim-select"
 
 import * as qdb from "./globals"
 import eChartsMacarons from "./utils/macarons"
+
+echarts.use([LegendComponent, GridComponent])
 
 //
 // this code is taken from:
