@@ -26,6 +26,7 @@ package io.questdb.test.tools;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -515,6 +516,15 @@ public final class TestUtils {
                 }
             }
         }
+    }
+
+    public static boolean drainEngineCmdQueue(CairoEngine engine) {
+        boolean useful = false;
+        while (engine.tick()) {
+            useful = true;
+            // drain the engine queue
+        }
+        return useful;
     }
 
     public static void createPopulateTable(

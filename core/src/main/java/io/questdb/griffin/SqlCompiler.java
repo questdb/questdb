@@ -27,7 +27,9 @@ package io.questdb.griffin;
 import io.questdb.MessageBus;
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.*;
+import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.Atomicity;
@@ -906,7 +908,7 @@ public class SqlCompiler implements Closeable {
 
         // Save execution context in resulting Compiled Query
         // it may be used for Alter Table statement execution
-        compiledQuery.withDefaultContext(executionContext);
+        compiledQuery.withContext(executionContext);
         final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);
         if (executor == null) {
             return compileUsingModel(executionContext);
@@ -964,7 +966,7 @@ public class SqlCompiler implements Closeable {
         tableExistsOrFail(tableNamePosition, tok, executionContext);
         try {
             CharSequence lockedReason = engine.lockWriter(tok, "alterSystem");
-            if (null != lockedReason) {
+            if (lockedReason != WriterPool.OWNERSHIP_REASON_NONE) {
                 throw SqlException.$(tableNamePosition, "could not lock, busy [table=`").put(tok).put(", lockedReason=").put(lockedReason).put("`]");
             }
             return compiledQuery.ofLock();
@@ -1470,7 +1472,7 @@ public class SqlCompiler implements Closeable {
             Function function,
             TableReader reader,
             AlterStatementBuilder changePartitionStatement
-    ) throws SqlException {
+    ) {
         // Iterate partitions in descending order so if folders are missing on disk
         // removePartition does not fail to determine next minTimestamp
         // Last partition cannot be dropped, exclude it from the list

@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.NetworkIOJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ThreadLocal;

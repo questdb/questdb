@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.pool.WriterPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -87,6 +88,8 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "could not lock, busy");
+            } finally {
+                compile("alter system unlock writer x", sqlExecutionContext);
             }
         });
     }
@@ -97,6 +100,7 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
             createX();
             compile("alter system lock writer x", sqlExecutionContext);
             TestUtils.assertEquals("alterSystem", engine.lockWriter("x", "new lock"));
+            compile("alter system unlock writer x", sqlExecutionContext);
         });
     }
 
@@ -124,7 +128,8 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
             createX();
             compile("alter system lock writer x", sqlExecutionContext);
             compile("alter system unlock writer x", sqlExecutionContext);
-            Assert.assertNull(engine.lockWriter("x", "new lock 2"));
+            Assert.assertEquals(WriterPool.OWNERSHIP_REASON_NONE, engine.lockWriter("x", "new lock 2"));
+            engine.unlock(sqlExecutionContext.getCairoSecurityContext(), "x", null, false);
         });
     }
 

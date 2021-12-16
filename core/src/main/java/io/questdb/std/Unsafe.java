@@ -24,7 +24,11 @@
 
 package io.questdb.std;
 
+import org.jetbrains.annotations.Nullable;
+
+import java.lang.invoke.MethodHandles;
 import java.lang.reflect.AccessibleObject;
+import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicLong;
@@ -43,6 +47,7 @@ public final class Unsafe {
     private static final long OVERRIDE;
     private static final Method implAddExports;
     //#endif
+    private static final AnonymousClassDefiner anonymousClassDefiner;
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
 
     static {
@@ -60,6 +65,15 @@ public final class Unsafe {
             OVERRIDE = AccessibleObject_override_fieldOffset();
             implAddExports = Module.class.getDeclaredMethod("implAddExports", String.class, Module.class);
             //#endif
+
+            AnonymousClassDefiner classDefiner = UnsafeClassDefiner.newInstance();
+            if (classDefiner == null) {
+                classDefiner = MethodHandlesClassDefiner.newInstance();
+            }
+            if (classDefiner == null) {
+                throw new InstantiationException("failed to initialize class definer");
+            }
+            anonymousClassDefiner = classDefiner;
         } catch (ReflectiveOperationException e) {
             throw new ExceptionInInitializerError(e);
         }
@@ -70,7 +84,6 @@ public final class Unsafe {
         for (int i = 0; i < COUNTERS.length; i++) {
            COUNTERS[i] = new LongAdder();
         }
-
     }
 
     //#if jdk.version!=8
@@ -217,6 +230,20 @@ public final class Unsafe {
         return 31 - Integer.numberOfLeadingZeros(value);
     }
 
+    /**
+     * Defines a class but does not make it known to the class loader or system dictionary.
+     *
+     * Equivalent to {@code Unsafe#defineAnonymousClass} and {@code Lookup#defineHiddenClass}, except that
+     * it does not support constant pool patches.
+     *
+     * @param hostClass context for linkage, access control, protection domain, and class loader
+     * @param data      bytes of a class file
+     */
+    @Nullable
+    public static Class<?> defineAnonymousClass(Class<?> hostClass, byte[] data) {
+        return anonymousClassDefiner.define(hostClass, data);
+    }
+
     //#if jdk.version!=8
     /**
      * Equivalent to {@link AccessibleObject#setAccessible(boolean) AccessibleObject.setAccessible(true)}, except that
@@ -238,4 +265,91 @@ public final class Unsafe {
 
     public static final Module JAVA_BASE_MODULE = System.class.getModule();
     //#endif
+
+    interface AnonymousClassDefiner {
+        Class<?> define(Class<?> hostClass, byte[] data);
+    }
+
+    /**
+     * Based on {@code Unsafe#defineAnonymousClass}.
+     */
+    static class UnsafeClassDefiner implements AnonymousClassDefiner {
+
+        private static Method defineMethod;
+
+        @Nullable
+        public static UnsafeClassDefiner newInstance() {
+            if (defineMethod == null) {
+                try {
+                    defineMethod = sun.misc.Unsafe.class
+                            .getMethod("defineAnonymousClass", Class.class, byte[].class, Object[].class);
+                } catch (ReflectiveOperationException e) {
+                    return null;
+                }
+            }
+            return new UnsafeClassDefiner();
+        }
+
+        @Override
+        public Class<?> define(Class<?> hostClass, byte[] data) {
+            try {
+                return (Class<?>) defineMethod.invoke(UNSAFE, hostClass, data, null);
+            } catch (Exception e) {
+                e.printStackTrace();
+                return null;
+            }
+        }
+    }
+
+    /**
+     * Based on {@code MethodHandles.Lookup#defineHiddenClass}.
+     */
+    static class MethodHandlesClassDefiner implements AnonymousClassDefiner {
+
+        private static Object lookupBase;
+        private static long lookupOffset;
+        private static Object hiddenClassOptions;
+        private static Method defineMethod;
+
+        @Nullable
+        public static MethodHandlesClassDefiner newInstance() {
+            if (defineMethod == null) {
+                try {
+                    Field trustedLookupField = MethodHandles.Lookup.class.getDeclaredField("IMPL_LOOKUP");
+                    lookupBase = UNSAFE.staticFieldBase(trustedLookupField);
+                    lookupOffset = UNSAFE.staticFieldOffset(trustedLookupField);
+                    hiddenClassOptions = hiddenClassOptions("NESTMATE");
+                    defineMethod = MethodHandles.Lookup.class
+                            .getMethod("defineHiddenClass", byte[].class, boolean.class, hiddenClassOptions.getClass());
+                } catch (ReflectiveOperationException e) {
+                    return null;
+                }
+            }
+            return new MethodHandlesClassDefiner();
+        }
+
+        @Override
+        public Class<?> define(Class<?> hostClass, byte[] data) {
+            try {
+                MethodHandles.Lookup trustedLookup = (MethodHandles.Lookup) UNSAFE.getObject(lookupBase, lookupOffset);
+                MethodHandles.Lookup definedLookup =
+                        (MethodHandles.Lookup) defineMethod.invoke(trustedLookup.in(hostClass), data, false, hiddenClassOptions);
+                return definedLookup.lookupClass();
+            } catch (Exception e) {
+                e.printStackTrace();
+                return null;
+            }
+        }
+
+        @SuppressWarnings("unchecked")
+        private static Object hiddenClassOptions(String... options) throws ClassNotFoundException {
+            @SuppressWarnings("rawtypes")
+            Class optionClass = Class.forName(MethodHandles.Lookup.class.getName() + "$ClassOption");
+            Object classOptions = Array.newInstance(optionClass, options.length);
+            for (int i = 0; i < options.length; i++) {
+                Array.set(classOptions, i, Enum.valueOf(optionClass, options[i]));
+            }
+            return classOptions;
+        }
+    }
 }

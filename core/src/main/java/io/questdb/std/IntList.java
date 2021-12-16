@@ -30,7 +30,7 @@ import java.util.Arrays;
 
 public class IntList implements Mutable {
     private static final int DEFAULT_ARRAY_SIZE = 16;
-    private static final int noEntryValue = -1;
+    private static final int NO_ENTRY_VALUE = -1;
     private int[] buffer;
     private int pos = 0;
 
@@ -83,7 +83,7 @@ public class IntList implements Mutable {
     public void clear(int capacity) {
         ensureCapacity(capacity);
         pos = 0;
-        Arrays.fill(buffer, noEntryValue);
+        Arrays.fill(buffer, NO_ENTRY_VALUE);
     }
 
     public void ensureCapacity(int capacity) {
@@ -107,7 +107,7 @@ public class IntList implements Mutable {
         if (pos > 0) {
             return buffer[pos - 1];
         }
-        return noEntryValue;
+        return NO_ENTRY_VALUE;
     }
 
     /**
@@ -136,7 +136,7 @@ public class IntList implements Mutable {
         if (index < pos) {
             return buffer[index];
         }
-        return noEntryValue;
+        return NO_ENTRY_VALUE;
     }
 
     /**
@@ -147,7 +147,7 @@ public class IntList implements Mutable {
         int hashCode = 1;
         for (int i = 0, n = pos; i < n; i++) {
             int v = getQuick(i);
-            hashCode = 31 * hashCode + (v == noEntryValue ? 0 : v);
+            hashCode = 31 * hashCode + (v == NO_ENTRY_VALUE ? 0 : v);
         }
         return hashCode;
     }
@@ -221,7 +221,7 @@ public class IntList implements Mutable {
             System.arraycopy(buffer, index + 1, buffer, index, move);
         }
         int index1 = --pos;
-        buffer[index1] = noEntryValue;
+        buffer[index1] = NO_ENTRY_VALUE;
     }
 
     public void set(int index, int element) {
@@ -235,7 +235,7 @@ public class IntList implements Mutable {
     public void setAll(int capacity, int value) {
         ensureCapacity0(capacity);
         pos = capacity;
-        Arrays.fill(buffer, value);
+        Arrays.fill(buffer, 0, pos, value);
     }
 
     public void setPos(int capacity) {

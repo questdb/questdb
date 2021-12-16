@@ -22,7 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.cutlass.line.tcp;
 
-public @interface VisibleForTesting {
+import io.questdb.mp.Job;
+import io.questdb.std.ObjList;
+
+interface NetworkIOJob extends Job {
+    void addTableUpdateDetails(String tableNameUtf8, TableUpdateDetails tableUpdateDetails);
+
+    void close();
+
+    TableUpdateDetails getLocalTableDetails(CharSequence tableName);
+
+    ObjList<SymbolCache> getUnusedSymbolCaches();
+
+    int getWorkerId();
 }

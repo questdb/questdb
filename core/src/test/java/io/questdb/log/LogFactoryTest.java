@@ -71,6 +71,7 @@ public class LogFactoryTest {
             Log logger = factory.create("x");
             assertEnabled(logger.info());
             assertEnabled(logger.error());
+            assertEnabled(logger.critical());
             assertEnabled(logger.debug());
             assertEnabled(logger.advisory());
         }
@@ -124,6 +125,7 @@ public class LogFactoryTest {
             assertDisabled(logger.debug());
             assertEnabled(logger.info());
             assertEnabled(logger.error());
+            assertEnabled(logger.critical());
             assertEnabled(logger.advisory());
         }
     }
@@ -139,12 +141,14 @@ public class LogFactoryTest {
             assertDisabled(logger.debug());
             assertDisabled(logger.info());
             assertDisabled(logger.error());
+            assertDisabled(logger.critical());
             assertDisabled(logger.advisory());
 
             Log logger1 = factory.create("com.questdb.x.y");
             assertEnabled(logger1.debug());
             assertDisabled(logger1.info());
             assertEnabled(logger1.error());
+            assertEnabled(logger1.critical());
             assertEnabled(logger1.advisory());
         }
     }
@@ -242,6 +246,7 @@ public class LogFactoryTest {
             Log logger = factory.create("x");
             assertEnabled(logger.info());
             assertDisabled(logger.error());
+            assertDisabled(logger.critical());
             assertEnabled(logger.debug());
             assertDisabled(logger.advisory());
         }
@@ -474,6 +479,70 @@ public class LogFactoryTest {
             }
         } finally {
             LogFactory.envEnabled = true;
+        }
+    }
+
+    @Test
+    public void testSetIncorrectQueueDepthProperty() throws Exception {
+        File conf = temp.newFile();
+        File out = new File(temp.newFolder(), "testSetProperties.log");
+        TestUtils.writeStringToFile(conf, "writers=file\n" +
+                "recordLength=4096\n" +
+                "queueDepth=banana\n" +
+                "w.file.class=io.questdb.log.LogFileWriter\n" +
+                "w.file.location=" + out.getAbsolutePath().replaceAll("\\\\", "/") + "\n" +
+                "w.file.level=INFO,ERROR\n" +
+                "w.file.bufferSize=4M"
+        );
+        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
+        try (LogFactory factory = new LogFactory()) {
+            LogFactory.configureFromSystemProperties(factory);
+            Assert.fail();
+        } catch (LogError e) {
+            Assert.assertEquals("Invalid value for queueDepth", e.getMessage());
+        }
+    }
+
+    @Test
+    public void testSetIncorrectRecordLengthProperty() throws Exception {
+        File conf = temp.newFile();
+        File out = new File(temp.newFolder(), "testSetProperties.log");
+        TestUtils.writeStringToFile(conf, "writers=file\n" +
+                "recordLength=coconut\n" +
+                "queueDepth=1024\n" +
+                "w.file.class=io.questdb.log.LogFileWriter\n" +
+                "w.file.location=" + out.getAbsolutePath().replaceAll("\\\\", "/") + "\n" +
+                "w.file.level=INFO,ERROR\n" +
+                "w.file.bufferSize=4M"
+        );
+        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
+        try (LogFactory factory = new LogFactory()) {
+            LogFactory.configureFromSystemProperties(factory);
+            Assert.fail();
+        } catch (LogError e) {
+            Assert.assertEquals("Invalid value for recordLength", e.getMessage());
+        }
+    }
+
+    @Test
+    public void testSetUnknownProperty() throws Exception {
+        File conf = temp.newFile();
+        File out = new File(temp.newFolder(), "testSetProperties.log");
+        TestUtils.writeStringToFile(conf, "writers=file\n" +
+                "recordLength=4092\n" +
+                "queueDepth=1024\n" +
+                "w.file.class=io.questdb.log.LogFileWriter\n" +
+                "w.file.location=" + out.getAbsolutePath().replaceAll("\\\\", "/") + "\n" +
+                "w.file.level=INFO,ERROR\n" +
+                "w.file.avocado=tasty\n" +
+                "w.file.bufferSize=4M"
+        );
+        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
+        try (LogFactory factory = new LogFactory()) {
+            LogFactory.configureFromSystemProperties(factory);
+            Assert.fail();
+        } catch (LogError e) {
+            Assert.assertEquals("Unknown property: w.file.avocado", e.getMessage());
         }
     }
 

@@ -412,12 +412,12 @@ public final class TableUtils {
     public static long lock(FilesFacade ff, Path path) {
         long fd = ff.openRW(path);
         if (fd == -1) {
-            LOG.error().$("cannot open '").$(path).$("' to lock [errno=").$(ff.errno()).$(']').$();
+            LOG.error().$("cannot open '").utf8(path).$("' to lock [errno=").$(ff.errno()).$(']').$();
             return -1L;
         }
 
         if (ff.lock(fd) != 0) {
-            LOG.error().$("cannot lock '").$(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).$(']').$();
+            LOG.error().$("cannot lock '").utf8(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).$(']').$();
             ff.close(fd);
             return -1L;
         }
