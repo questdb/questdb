@@ -51,13 +51,22 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     private static final int N_SIMD = 512;
     private static final int N_SIMD_WITH_SCALAR_TAIL = N_SIMD + 3;
 
-    @Parameterized.Parameters(name = "{0}")
+    @Parameterized.Parameters(name = "{0} - null checks enabled: {1}")
     public static Object[] data() {
-        return new Object[] { JitMode.SCALAR, JitMode.VECTORIZED };
+        return new Object[] {
+                new Object[] {JitMode.SCALAR, true},
+                new Object[] {JitMode.SCALAR, false},
+                new Object[] {JitMode.VECTORIZED, true},
+                new Object[] {JitMode.VECTORIZED, false},
+        };
     }
 
     @Parameterized.Parameter
     public JitMode jitMode;
+    // At the moment, there is no way for users to disable null checks in the
+    // JIT compiler output. Yet, we want to test this part of the compiler.
+    @Parameterized.Parameter(1)
+    public boolean compileWithNullChecks;
 
     private static final StringSink jitSink = new StringSink();
     private static BindVariableService bindVariableService;
@@ -91,6 +100,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // Disable the test suite on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
         super.setUp();
+        compiler.setEnableJitNullChecks(compileWithNullChecks);
         bindVariableService.clear();
     }
 
@@ -107,7 +117,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64")
                 .withComparisonOperator()
                 .withAnyOf("-50", "0", "50");
-        assertGeneratedQuery("select * from x", ddl, gen);
+        assertGeneratedQueryNotNull("select * from x", ddl, gen);
     }
 
     @Test
@@ -123,7 +133,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withOptionalNegation().withAnyOf("i32", "i64", "f32", "f64")
                 .withComparisonOperator()
                 .withAnyOf("-50", "-25.5", "0", "0.0", "0.000", "25.5", "50");
-        assertGeneratedQuery("select * from x", ddl, gen);
+        assertGeneratedQueryNotNull("select * from x", ddl, gen);
     }
 
     @Test
@@ -141,7 +151,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64")
                 .withComparisonOperator()
                 .withOptionalNegation().withAnyOf("f32", "f64");
-        assertGeneratedQuery("select * from x", ddl, gen);
+        assertGeneratedQueryNotNull("select * from x", ddl, gen);
     }
 
     @Test
@@ -160,7 +170,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withArithmeticOperator()
                 .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
                 .withAnyOf(" = 1");
-        assertGeneratedQuery("select * from x", ddl, gen);
+        assertGeneratedQueryNotNull("select * from x", ddl, gen);
     }
 
     @Test
@@ -183,7 +193,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withArithmeticOperator()
                 .withOptionalNegation().withAnyOf("f32", "f64")
                 .withAnyOf(" > 1");
-        assertGeneratedQuery("select * from x", ddl, gen);
+        assertGeneratedQueryNotNull("select * from x", ddl, gen);
     }
 
     @Test
@@ -209,7 +219,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withOptionalNot().withAnyOf("f32 <= 0.34")
                 .withBooleanOperator()
                 .withOptionalNot().withAnyOf("f64 > 7.5");
-        assertGeneratedQuery("select * from x", ddl, gen);
+        assertGeneratedQueryNotNull("select * from x", ddl, gen);
     }
 
     @Test
@@ -229,7 +239,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withOptionalNegation().withAnyOf("f32", "f64")
                 .withAnyOf(" = ", " <> ")
                 .withAnyOf("null");
-        assertGeneratedQuery("select * from x", ddl, gen);
+        assertGeneratedQueryNullable("select * from x", ddl, gen);
     }
 
     @Test
@@ -245,7 +255,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withAnyOf("i32", "i64", "f32", "f64")
                 .withComparisonOperator()
                 .withAnyOf("1");
-        assertGeneratedQuery("select * from x", ddl, gen);
+        assertGeneratedQueryNullable("select * from x", ddl, gen);
     }
 
     @Test
@@ -263,7 +273,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withOptionalNegation().withAnyOf("i32", "i64", "f32", "f64")
                 .withAnyOf(" = ", " <> ")
                 .withAnyOf("null");
-        assertGeneratedQuery("select * from x", ddl, gen);
+        assertGeneratedQueryNullable("select * from x", ddl, gen);
     }
 
     @Test
@@ -279,7 +289,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withOptionalNegation().withAnyOf("i32", "i64")
                 .withComparisonOperator()
                 .withOptionalNegation().withAnyOf("f32", "f64");
-        assertGeneratedQuery("select * from x", ddl, gen);
+        assertGeneratedQueryNullable("select * from x", ddl, gen);
     }
 
     @Test
@@ -290,7 +300,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 " rnd_geohash(4) geo8a," +
                 " rnd_geohash(4) geo8b" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQuery(query, ddl);
+        assertQueryNotNull(query, ddl);
     }
 
     @Test
@@ -304,7 +314,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 " rnd_geohash(16) geo32," +
                 " rnd_geohash(32) geo64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQuery(query, ddl);
+        assertQueryNotNull(query, ddl);
     }
 
     @Test
@@ -317,7 +327,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 " rnd_geohash(16) geo32," +
                 " rnd_geohash(40) geo64" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQuery(query, ddl);
+        assertQueryNotNull(query, ddl);
     }
 
     @Test
@@ -328,7 +338,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 " rnd_boolean() bool1," +
                 " rnd_boolean() bool2" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQuery(query, ddl);
+        assertQueryNotNull(query, ddl);
     }
 
     @Test
@@ -338,7 +348,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_char() ch" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQuery(query, ddl);
+        assertQueryNotNull(query, ddl);
     }
 
     @Test
@@ -351,7 +361,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 " rnd_double() price, \n" +
                 " timestamp_sequence(172800000000, 360000000) ts \n" +
                 "from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp (ts)";
-        assertQuery(query, ddl);
+        assertQueryNotNull(query, ddl);
     }
 
     @Test
@@ -361,7 +371,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_symbol(10,1,3,5) sym" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQuery(query, ddl);
+        assertQueryNullable(query, ddl);
     }
 
     @Test
@@ -372,7 +382,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 " rnd_date(to_date('2020', 'yyyy'), to_date('2021', 'yyyy'), 0) d1," +
                 " rnd_date(to_date('2020', 'yyyy'), to_date('2021', 'yyyy'), 0) d2" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQuery(query, ddl);
+        assertQueryNotNull(query, ddl);
     }
 
     @Test
@@ -382,7 +392,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_date(to_date('2020', 'yyyy'), to_date('2021', 'yyyy'), 5) d" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQuery(query, ddl);
+        assertQueryNullable(query, ddl);
     }
 
     @Test
@@ -393,7 +403,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 " rnd_timestamp(to_timestamp('2020', 'yyyy'), to_timestamp('2021', 'yyyy'), 0) t1," +
                 " rnd_timestamp(to_timestamp('2020', 'yyyy'), to_timestamp('2021', 'yyyy'), 0) t2" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQuery(query, ddl);
+        assertQueryNotNull(query, ddl);
     }
 
     @Test
@@ -403,7 +413,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_timestamp(to_timestamp('2020', 'yyyy'), to_timestamp('2021', 'yyyy'), 5) t" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQuery(query, ddl);
+        assertQueryNullable(query, ddl);
     }
 
     @Test
@@ -412,7 +422,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         final String ddl = "create table x as " +
                 "(select case when x < 10 then cast(NULL as TIMESTAMP) else cast(x as TIMESTAMP) end ts" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + "))";
-        assertQuery(query, ddl);
+        assertQueryNullable(query, ddl);
     }
 
     @Test
@@ -422,7 +432,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 "(select timestamp_sequence(to_timestamp('2021-11-29T10:00:00', 'yyyy-MM-ddTHH:mm:ss'), 500000000) as k," +
                 " rnd_int() i32" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQuery(query, ddl);
+        assertQueryNotNull(query, ddl);
     }
 
     @Test
@@ -433,7 +443,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 " rnd_double() price, \n" +
                 " timestamp_sequence(172800000000, 360000000) ts \n" +
                 "from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp (ts)";
-        assertQuery(query, ddl);
+        assertQueryNotNull(query, ddl);
     }
 
     @Test
@@ -444,7 +454,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 " rnd_double() price, \n" +
                 " timestamp_sequence(172800000000, 360000000) ts \n" +
                 "from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp (ts)";
-        assertQuery(query, ddl);
+        assertQueryNotNull(query, ddl);
     }
 
     @Test
@@ -462,34 +472,21 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             }
             gen.withAnyOf("i64 != 0");
         }
-        assertGeneratedQuery("select * from x", ddl, gen);
+        assertGeneratedQueryNotNull("select * from x", ddl, gen);
     }
 
-    @Test
-    public void testDisableNullChecks() throws Exception {
-        compiler.setEnableJitNullChecks(false);
-        try {
-            final String ddl = "create table x as " +
-                    "(select timestamp_sequence(400000000000, 500000000) as k," +
-                    " rnd_byte() i8," +
-                    " rnd_short() i16," +
-                    " rnd_int() i32," +
-                    " rnd_long() i64," +
-                    " rnd_float() f32," +
-                    " rnd_double() f64 " +
-                    " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-            FilterGenerator gen = new FilterGenerator()
-                    .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
-                    .withArithmeticOperator()
-                    .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
-                    .withAnyOf(" = 1");
-            assertGeneratedQuery("select * from x", ddl, gen);
-        } finally {
-            compiler.setEnableJitNullChecks(true);
+    private void assertGeneratedQueryNotNull(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen) throws Exception {
+        assertGeneratedQuery(baseQuery, ddl, gen, false);
+    }
+
+    private void assertGeneratedQueryNullable(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen) throws Exception {
+        assertGeneratedQuery(baseQuery, ddl, gen, true);
+    }
+
+    private void assertGeneratedQuery(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen, boolean nullsPresent) throws Exception {
+        if (nullsPresent) {
+            Assume.assumeTrue(compileWithNullChecks);
         }
-    }
-
-    private void assertGeneratedQuery(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen) throws Exception {
         final boolean forceScalarJit = jitMode == JitMode.SCALAR;
         assertMemoryLeak(() -> {
             if (ddl != null) {
@@ -510,7 +507,18 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         });
     }
 
-    private void assertQuery(CharSequence query, CharSequence ddl) throws Exception {
+    private void assertQueryNotNull(CharSequence query, CharSequence ddl) throws Exception {
+        assertQuery(query, ddl, false);
+    }
+
+    private void assertQueryNullable(CharSequence query, CharSequence ddl) throws Exception {
+        assertQuery(query, ddl, true);
+    }
+
+    private void assertQuery(CharSequence query, CharSequence ddl, boolean nullsPresent) throws Exception {
+        if (nullsPresent) {
+            Assume.assumeTrue(compileWithNullChecks);
+        }
         final boolean forceScalarJit = jitMode == JitMode.SCALAR;
         assertMemoryLeak(() -> {
             if (ddl != null) {
