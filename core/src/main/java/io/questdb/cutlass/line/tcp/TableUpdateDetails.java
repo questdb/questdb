@@ -36,6 +36,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
+import java.util.Iterator;
 
 public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
@@ -251,9 +252,9 @@ public class TableUpdateDetails implements Closeable {
     }
 
     public class ThreadLocalDetails implements Closeable {
+        private static final int COLUMN_INDEX_NOT_CACHED = -2;
         private final Path path = new Path();
-        private final ObjIntHashMap<CharSequence> columnIndexByNameUtf8 = new ObjIntHashMap<>();
-        private final ObjHashSet<DirectByteCharSequence> unresolvedColNamesUtf8 = new ObjHashSet<>();
+        private final ObjIntHashMap<CharSequence> columnIndexByNameUtf8 = new ObjIntHashMap<>(8, 0.3, COLUMN_INDEX_NOT_CACHED);
         private final ObjList<SymbolCache> symbolCacheByColumnIndex = new ObjList<>();
         private final ObjList<SymbolCache> unusedSymbolCaches;
         // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)
@@ -263,6 +264,7 @@ public class TableUpdateDetails implements Closeable {
         private final LowerCaseCharSequenceHashSet addedCols = new LowerCaseCharSequenceHashSet();
         private final LineTcpReceiverConfiguration configuration;
         private int columnCount;
+        private boolean unresolvedColumnFlag = false;
 
         ThreadLocalDetails(LineTcpReceiverConfiguration configuration, ObjList<SymbolCache> unusedSymbolCaches, int columnCount) {
             this.configuration = configuration;
@@ -324,10 +326,10 @@ public class TableUpdateDetails implements Closeable {
 
         int getColumnIndex(DirectByteCharSequence colName) {
             int colIndex = columnIndexByNameUtf8.get(colName);
-            if (colIndex == CharSequenceIntHashMap.NO_ENTRY_VALUE) {
+            if (colIndex == COLUMN_INDEX_NOT_CACHED) {
                 colIndex = getColumnIndexFromReader(colName);
-                if (colIndex == CharSequenceIntHashMap.NO_ENTRY_VALUE) {
-                    unresolvedColNamesUtf8.add(colName);
+                if (colIndex < 0) {
+                    unresolvedColumnFlag = true;
                 }
             }
             return colIndex;
@@ -348,36 +350,35 @@ public class TableUpdateDetails implements Closeable {
         }
 
         void updateColumnIndexCache() {
-            if (unresolvedColNamesUtf8.size() < 1) {
+            if (!unresolvedColumnFlag) {
                 return;
             }
 
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16)) {
                 TableReaderMetadata metadata = reader.getMetadata();
+                unresolvedColumnFlag = false;
                 boolean resolvedNewColumn = false;
-                for (int i = 0, n = unresolvedColNamesUtf8.size(); i < n; i++) {
-                    final DirectByteCharSequence colName = unresolvedColNamesUtf8.get(i);
-                    tempSink.clear();
-                    if (!Chars.utf8Decode(colName.getLo(), colName.getHi(), tempSink)) {
-                        throw CairoException.instance(0).put("invalid UTF8 in value for ").put(colName);
-                    }
-                    int colIndex = metadata.getColumnIndexQuiet(tempSink);
-                    if (colIndex > -1) {
-                        resolvedNewColumn = true;
-                        columnIndexByNameUtf8.put(colName.toString(), colIndex);
+                Iterator<ObjIntHashMap.Entry<CharSequence>> entries = columnIndexByNameUtf8.iterator();
+                while (entries.hasNext()) {
+                    ObjIntHashMap.Entry<CharSequence> entry = entries.next();
+                    if (entry.value < 0) {
+                        int colIndex = metadata.getColumnIndexQuiet(entry.key);
+                        if (colIndex < 0) {
+                            unresolvedColumnFlag = true;
+                        } else {
+                            resolvedNewColumn = true;
+                            columnIndexByNameUtf8.put(entry.key, colIndex);
+                        }
                     }
                 }
-                unresolvedColNamesUtf8.clear();
 
-                if (!resolvedNewColumn) {
-                    return;
-                }
-
-                columnTypeMeta.clear();
-                columnTypeMeta.add(0); // first value is for cols indexed with -1
-                columnCount = metadata.getColumnCount();
-                for (int i = 0, n = columnCount; i < n; i++) {
-                    updateColumTypeCache(metadata, i);
+                if (resolvedNewColumn) {
+                    columnTypeMeta.clear();
+                    columnTypeMeta.add(0); // first value is for cols indexed with -1
+                    columnCount = metadata.getColumnCount();
+                    for (int i = 0, n = columnCount; i < n; i++) {
+                        updateColumTypeCache(metadata, i);
+                    }
                 }
             }
         }

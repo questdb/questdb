@@ -444,7 +444,8 @@ class LineTcpMeasurementEvent implements Closeable {
         long bufPos = bufLo;
         long bufMax = bufLo + bufSize;
         long timestampBufPos = bufPos;
-        //timestamp and entitiesWritten are saved to timestampBufPos after saving all fields
+        // timestamp and entitiesWritten are saved to timestampBufPos after saving all fields
+        // because their values are worked out while the columns are processed
         bufPos += Long.BYTES;
         int entitiesWritten = 0;
         bufPos += Integer.BYTES;
@@ -453,18 +454,21 @@ class LineTcpMeasurementEvent implements Closeable {
                 LineTcpParser.ProtoEntity entity = parser.getEntity(nEntity);
                 int colIndex = localDetails.getColumnIndex(entity.getName());
                 if (colIndex < 0) {
-                    final DirectByteCharSequence colName = entity.getName();
-                    tempSink.clear();
-                    if (!Chars.utf8Decode(colName.getLo(), colName.getHi(), tempSink)) {
-                        throw CairoException.instance(0).put("invalid UTF8 in value for ").put(colName);
+                    CharSequence colName = entity.getName();
+                    if (parser.hasNonAsciiChars()) {
+                        tempSink.clear();
+                        if (!Chars.utf8Decode(entity.getName().getLo(), entity.getName().getHi(), tempSink)) {
+                            throw CairoException.instance(0).put("invalid UTF8 in value for ").put(colName);
+                        }
+                        colName = tempSink;
                     }
-                    int index = addedCols.keyIndex(tempSink);
+                    int index = addedCols.keyIndex(colName);
                     if (index < 0) {
                         continue;
                     } else {
-                        addedCols.addAt(index, tempSink);
+                        addedCols.addAt(index, colName.toString());
                     }
-                    int colNameLen = colName.length();
+                    int colNameLen = entity.getName().length();
                     Unsafe.getUnsafe().putInt(bufPos, -1 * colNameLen);
                     bufPos += Integer.BYTES;
                     if (bufPos + colNameLen < bufMax) {
@@ -472,7 +476,7 @@ class LineTcpMeasurementEvent implements Closeable {
                         // so that writing thread will create the column
                         // Note that writing thread will be responsible to convert it from utf8
                         // to utf16. This should happen rarely
-                        Vect.memcpy(bufPos, colName.getLo(), colNameLen);
+                        Vect.memcpy(bufPos, entity.getName().getLo(), colNameLen);
                     } else {
                         throw CairoException.instance(0).put("queue buffer overflow");
                     }

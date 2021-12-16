@@ -975,6 +975,35 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
+    public void testDuplicateNewFieldAlternating() throws Exception {
+        String table = "dupField";
+        runInContext(() -> {
+            recvBuffer =
+                    table + ",location=us-midwest temperature=82 1465839830100400200\n" +
+                            table + ",location=us-midwest temperature=83 1465839830100500200\n" +
+                            table + ",location=us-eastcoast temperature=81,humidity=24,another=26,humidity=25,another=28,humidity=29 1465839830101400200\n" +
+                            table + ",location=us-midwest temperature=85,humidity=27 1465839830102300200\n" +
+                            table + ",location=us-eastcoast temperature=89,another=30,humidity=31 1465839830102400200\n" +
+                            table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
+                            table + ",location=us-westcost temperature=82 1465839830102500200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\thumidity\tanother\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\tNaN\tNaN\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\tNaN\tNaN\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\t24.0\t26.0\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\t27.0\tNaN\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\t31.0\t30.0\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\tNaN\tNaN\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\tNaN\tNaN\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Test
     public void testDuplicateNewFieldCaseInsensitivity() throws Exception {
         String table = "dupField";
         runInContext(() -> {
