@@ -37,36 +37,16 @@ import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-@RunWith(Parameterized.class)
 public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     private static final Log LOG = LogFactory.getLog(CompiledFilterRegressionTest.class);
     private static final int N_SIMD = 512;
     private static final int N_SIMD_WITH_SCALAR_TAIL = N_SIMD + 3;
-
-    @Parameterized.Parameters(name = "{0} - null checks enabled: {1}")
-    public static Object[] data() {
-        return new Object[] {
-                new Object[] {JitMode.SCALAR, true},
-                new Object[] {JitMode.SCALAR, false},
-                new Object[] {JitMode.VECTORIZED, true},
-                new Object[] {JitMode.VECTORIZED, false},
-        };
-    }
-
-    @Parameterized.Parameter
-    public JitMode jitMode;
-    // At the moment, there is no way for users to disable null checks in the
-    // JIT compiler output. Yet, we want to test this part of the compiler.
-    @Parameterized.Parameter(1)
-    public boolean compileWithNullChecks;
 
     private static final StringSink jitSink = new StringSink();
     private static BindVariableService bindVariableService;
@@ -100,7 +80,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // Disable the test suite on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
         super.setUp();
-        compiler.setEnableJitNullChecks(compileWithNullChecks);
+        compiler.setEnableJitNullChecks(true);
         bindVariableService.clear();
     }
 
@@ -476,18 +456,14 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     private void assertGeneratedQueryNotNull(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen) throws Exception {
-        assertGeneratedQuery(baseQuery, ddl, gen, false);
-    }
-
-    private void assertGeneratedQueryNullable(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen) throws Exception {
         assertGeneratedQuery(baseQuery, ddl, gen, true);
     }
 
-    private void assertGeneratedQuery(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen, boolean nullsPresent) throws Exception {
-        if (nullsPresent) {
-            Assume.assumeTrue(compileWithNullChecks);
-        }
-        final boolean forceScalarJit = jitMode == JitMode.SCALAR;
+    private void assertGeneratedQueryNullable(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen) throws Exception {
+        assertGeneratedQuery(baseQuery, ddl, gen, false);
+    }
+
+    private void assertGeneratedQuery(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen, boolean notNull) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
                 compiler.compile(ddl, sqlExecutionContext);
@@ -498,10 +474,10 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             LOG.info().$("generated ").$(filters.size()).$(" filter expressions for base query: ").$(baseQuery).$();
             Assert.assertTrue(filters.size() > 0);
             for (String filter : filters) {
-                long size = runQuery(baseQuery + " where " + filter, forceScalarJit);
+                long size = runQuery(baseQuery + " where " + filter);
                 maxSize = Math.max(maxSize, size);
 
-                TestUtils.assertEquals("result mismatch for filter: " + filter, sink, jitSink);
+                assertJitQuery(baseQuery + " where " + filter, notNull);
             }
             Assert.assertTrue("at least one query is expected to return rows", maxSize > 0);
         });
@@ -515,24 +491,46 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         assertQuery(query, ddl, true);
     }
 
-    private void assertQuery(CharSequence query, CharSequence ddl, boolean nullsPresent) throws Exception {
-        if (nullsPresent) {
-            Assume.assumeTrue(compileWithNullChecks);
-        }
-        final boolean forceScalarJit = jitMode == JitMode.SCALAR;
+    private void assertQuery(CharSequence query, CharSequence ddl, boolean notNull) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
                 compiler.compile(ddl, sqlExecutionContext);
             }
 
-            long size = runQuery(query, forceScalarJit);
-
-            TestUtils.assertEquals(sink, jitSink);
+            long size = runQuery(query);
             Assert.assertTrue("query is expected to return rows", size > 0);
+
+            assertJitQuery(query, notNull);
         });
     }
 
-    private long runQuery(CharSequence query, boolean forceScalarJit) throws SqlException {
+    private void assertJitQuery(CharSequence query, boolean notNull) throws SqlException {
+        compiler.setEnableJitNullChecks(true);
+
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_FORCE_SCALAR);
+        runJitQuery(query);
+        TestUtils.assertEquals("[scalar mode] result mismatch for query: " + query, sink, jitSink);
+
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        runJitQuery(query);
+        TestUtils.assertEquals("[vectorized mode] result mismatch for query: " + query, sink, jitSink);
+
+        // At the moment, there is no way for users to disable null checks in the
+        // JIT compiler output. Yet, we want to test this part of the compiler.
+        if (notNull) {
+            compiler.setEnableJitNullChecks(false);
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_FORCE_SCALAR);
+            runJitQuery(query);
+            TestUtils.assertEquals("[scalar mode, not null] result mismatch for query: " + query, sink, jitSink);
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            runJitQuery(query);
+            TestUtils.assertEquals("[vectorized mode, not null] result mismatch for query: " + query, sink, jitSink);
+        }
+    }
+
+    private long runQuery(CharSequence query) throws SqlException {
         long resultSize;
 
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
@@ -546,22 +544,18 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             Misc.free(factory);
         }
 
-        int jitMode = forceScalarJit ? SqlJitMode.JIT_MODE_FORCE_SCALAR : SqlJitMode.JIT_MODE_ENABLED;
-        sqlExecutionContext.setJitMode(jitMode);
-        cc = compiler.compile(query, sqlExecutionContext);
-        factory = cc.getRecordCursorFactory();
+        return resultSize;
+    }
+
+    private void runJitQuery(CharSequence query) throws SqlException {
+        final CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
+        final RecordCursorFactory factory = cc.getRecordCursorFactory();
         Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             TestUtils.printCursor(cursor, factory.getMetadata(), true, jitSink, printer);
         } finally {
             Misc.free(factory);
         }
-
-        return resultSize;
-    }
-
-    private enum JitMode {
-        SCALAR, VECTORIZED
     }
 
     private static class FilterGenerator {
