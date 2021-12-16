@@ -24,12 +24,12 @@
 
 package io.questdb.log;
 
-import io.questdb.VisibleForTesting;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.*;
 import java.lang.reflect.Constructor;
@@ -233,12 +233,15 @@ public class LogFactory implements Closeable {
                     null,
                     null,
                     null,
+                    null,
+                    null,
                     null
             );
         }
         final Holder inf = scopeConfiguration.getHolder(Numbers.msb(LogLevel.INFO));
         final Holder dbg = scopeConfiguration.getHolder(Numbers.msb(LogLevel.DEBUG));
         final Holder err = scopeConfiguration.getHolder(Numbers.msb(LogLevel.ERROR));
+        final Holder cri = scopeConfiguration.getHolder(Numbers.msb(LogLevel.CRITICAL));
         final Holder adv = scopeConfiguration.getHolder(Numbers.msb(LogLevel.ADVISORY));
         return new Logger(
                 clock,
@@ -249,6 +252,8 @@ public class LogFactory implements Closeable {
                 inf == null ? null : inf.lSeq,
                 err == null ? null : err.ring,
                 err == null ? null : err.lSeq,
+                cri == null ? null : cri.ring,
+                cri == null ? null : cri.lSeq,
                 adv == null ? null : adv.ring,
                 adv == null ? null : adv.lSeq
         );
@@ -258,7 +263,7 @@ public class LogFactory implements Closeable {
         return queueDepth;
     }
 
-    @VisibleForTesting
+    @TestOnly
     ObjHashSet<LogWriter> getJobs() {
         return jobs;
     }
@@ -359,6 +364,9 @@ public class LogFactory implements Closeable {
                     case "ERROR":
                         level |= LogLevel.ERROR;
                         break;
+                    case "CRITICAL":
+                        level |= LogLevel.CRITICAL;
+                        break;
                     case "ADVISORY":
                         level |= LogLevel.ADVISORY;
                         break;
@@ -447,7 +455,7 @@ public class LogFactory implements Closeable {
     }
 
     private void configureDefaultWriter() {
-        int level = LogLevel.INFO | LogLevel.ERROR | LogLevel.ADVISORY;
+        int level = LogLevel.INFO | LogLevel.ERROR | LogLevel.CRITICAL |LogLevel.ADVISORY;
         if (isForcedDebug()) {
             level = level | LogLevel.DEBUG;
         }

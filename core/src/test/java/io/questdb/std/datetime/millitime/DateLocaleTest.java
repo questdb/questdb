@@ -69,10 +69,10 @@ public class DateLocaleTest {
 
     @Test
     public void testShortMonth() throws Exception {
-        String date = "23 Sep 2010";
+        String date = "23 Aug 2010";
         long result = DateLocaleFactory.INSTANCE.getLocale("en-GB").matchMonth(date, 3, date.length());
         Assert.assertEquals(3, Numbers.decodeHighInt(result));
-        Assert.assertEquals(8, Numbers.decodeLowInt(result));
+        Assert.assertEquals(7, Numbers.decodeLowInt(result));
     }
 
     @Test(expected = NumericException.class)

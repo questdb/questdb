@@ -58,7 +58,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final CairoConfiguration configuration;
     private final LongList columnNameType = new LongList();
     private final LongList columnIndexAndType = new LongList();
-    private final IntList geohashBitsSizeByColIdx = new IntList(); // 0 if not a geohash, else bits precision
+    private final IntList geoHashBitsSizeByColIdx = new IntList(); // 0 if not a GeoHash, else bits precision
     private final LongList columnValues = new LongList();
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final MicrosecondClock clock;
@@ -156,7 +156,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 break;
             case EVT_TIMESTAMP:
                 columnValues.add(token.getCacheAddress());
-                geohashBitsSizeByColIdx.add(0);
+                geoHashBitsSizeByColIdx.add(0);
                 break;
             default:
                 break;
@@ -191,7 +191,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 LineUdpParserSupport.putValue(
                         row,
                         (int) columnNameType.getQuick(i * 2 + 1),
-                        geohashBitsSizeByColIdx.getQuick(i),
+                        geoHashBitsSizeByColIdx.getQuick(i),
                         i,
                         cache.get(columnValues.getQuick(i))
                 );
@@ -215,7 +215,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 LineUdpParserSupport.putValue(
                         row,
                         Numbers.decodeHighInt(value),
-                        geohashBitsSizeByColIdx.getQuick(i),
+                        geoHashBitsSizeByColIdx.getQuick(i),
                         Numbers.decodeLowInt(value),
                         cache.get(columnValues.getQuick(i))
                 );
@@ -241,7 +241,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private void clearState() {
         columnNameType.clear();
         columnIndexAndType.clear();
-        geohashBitsSizeByColIdx.clear();
+        geoHashBitsSizeByColIdx.clear();
         columnValues.clear();
     }
 
@@ -397,7 +397,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             if (valid) {
                 columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, columnType));
                 columnValues.add(value.getCacheAddress());
-                geohashBitsSizeByColIdx.add(geoHashBits);
+                geoHashBitsSizeByColIdx.add(geoHashBits);
             } else {
                 LOG.error().$("mismatched column and value types [table=").$(writer.getTableName())
                         .$(", column=").$(metadata.getColumnName(columnIndex))
@@ -412,7 +412,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 writer.addColumn(colNameAsChars, valueType);
                 columnIndexAndType.add(Numbers.encodeLowHighInts(columnCount++, valueType));
                 columnValues.add(value.getCacheAddress());
-                geohashBitsSizeByColIdx.add(0);
+                geoHashBitsSizeByColIdx.add(0);
             } else {
                 LOG.error().$("invalid column name [table=").$(writer.getTableName())
                         .$(", columnName=").$(colNameAsChars)
@@ -425,7 +425,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private void parseValueNewTable(CachedCharSequence value, int valueType) {
         columnNameType.add(valueType);
         columnValues.add(value.getCacheAddress());
-        geohashBitsSizeByColIdx.add(0); // not a geohash, no constant literal
+        geoHashBitsSizeByColIdx.add(0); // not a GeoHash, no constant literal
         // that can be recognised yet
     }
 
