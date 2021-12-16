@@ -204,10 +204,12 @@ public class RebuildIndex implements Closeable, Mutable {
 
                 if (partitionSize > columnTop) {
                     TableUtils.dFile(path.trimTo(plen), columnName);
-                    final long columnSize = (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT);
-                    roMem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_WRITER);
-                    indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnTop);
-                    indexer.index(roMem, columnTop, partitionSize);
+                    if (ff.exists(path.$())) {
+                        final long columnSize = (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT);
+                        roMem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_WRITER);
+                        indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnTop);
+                        indexer.index(roMem, columnTop, partitionSize);
+                    }
                 }
             }
         }

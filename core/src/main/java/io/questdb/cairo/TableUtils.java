@@ -539,7 +539,7 @@ public final class TableUtils {
                 final long fd = TableUtils.openRO(ff, path, LOG);
                 try {
                     long n;
-                    if ((n = ff.readUlong(fd, 0)) < 0) {
+                    if ((n = ff.readULong(fd, 0)) < 0) {
                         if (failIfCouldNotRead) {
                             throw CairoException.instance(Os.errno())
                                     .put("could not read top of column [file=").put(path)

@@ -224,13 +224,8 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long readUlong(long fd, long offset) {
-        return Files.readUlong(fd, offset);
-    }
-
-    @Override
-    public long readInt(long fd, long offset) {
-        return Files.readInt(fd, offset);
+    public long readULong(long fd, long offset) {
+        return Files.readULong(fd, offset);
     }
 
     @Override

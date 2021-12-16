@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Files;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -81,8 +82,8 @@ public class RebuildIndexTest extends AbstractCairoTest {
         checkRebuildIndexes(
                 createTableSql,
                 (tablePath) -> {
-                    removeFileFirstParition("sym1.v", PartitionBy.DAY, tablePath);
-                    removeFileFirstParition("sym2.k", PartitionBy.DAY, tablePath);
+                    removeFileAtPartition("sym1.v", PartitionBy.DAY, tablePath, 0);
+                    removeFileAtPartition("sym2.k", PartitionBy.DAY, tablePath, 0);
                 },
                 RebuildIndex::rebuildAll
         );
@@ -101,10 +102,60 @@ public class RebuildIndexTest extends AbstractCairoTest {
 
         checkRebuildIndexes(createTableSql,
                 tablePath -> {
-                    removeFileFirstParition("sym1.v", PartitionBy.DAY, tablePath);
-                    removeFileFirstParition("sym1.k", PartitionBy.DAY, tablePath);
+                    removeFileAtPartition("sym1.v", PartitionBy.DAY, tablePath, 0);
+                    removeFileAtPartition("sym1.k", PartitionBy.DAY, tablePath, 0);
                 },
                 rebuildIndex -> rebuildIndex.rebuildColumn("sym1"));
+    }
+
+    @Test
+    public void testPartitionedWithColumnTop() throws Exception {
+        String createAlterInsertSql = "create table xxx as (" +
+                "select " +
+                "rnd_symbol('A', 'B', 'C') as sym1," +
+                "x," +
+                "timestamp_sequence(0, 100000000) ts " +
+                "from long_sequence(5000)" +
+                "), index(sym1) timestamp(ts) PARTITION BY DAY; " +
+
+                "alter table xxx add column sym2 symbol index; " +
+
+                "insert into xxx " +
+                "select " +
+                "rnd_symbol('A', 'B', 'C') as sym1," +
+                "x," +
+                "timestamp_sequence(100000000L * 5000L, 100000000) ts, " +
+                "rnd_symbol(4,4,4,2) as sym2 " +
+                "from long_sequence(5000)";
+
+        checkRebuildIndexes(createAlterInsertSql,
+                tablePath -> removeFileAtPartition("sym2.k", PartitionBy.DAY, tablePath, Timestamps.DAY_MICROS * 11),
+                rebuildIndex -> rebuildIndex.rebuildColumn("sym2"));
+    }
+
+    @Test
+    public void testNonPartitionedWithColumnTop() throws Exception {
+        String createAlterInsertSql = "create table xxx as (" +
+                "select " +
+                "rnd_symbol('A', 'B', 'C') as sym1," +
+                "x," +
+                "timestamp_sequence(0, 100000000) ts " +
+                "from long_sequence(5000)" +
+                "), index(sym1) timestamp(ts); " +
+
+                "alter table xxx add column sym2 symbol index; " +
+
+                "insert into xxx " +
+                "select " +
+                "rnd_symbol('A', 'B', 'C') as sym1," +
+                "x," +
+                "timestamp_sequence(100000000L * 5000L, 100000000) ts, " +
+                "rnd_symbol(4,4,4,2) as sym2 " +
+                "from long_sequence(5000)";
+
+        checkRebuildIndexes(createAlterInsertSql,
+                tablePath -> removeFileAtPartition("sym2.k", PartitionBy.NONE, tablePath, 0),
+                rebuildIndex -> rebuildIndex.rebuildColumn("sym2"));
     }
 
     @Test
@@ -120,9 +171,9 @@ public class RebuildIndexTest extends AbstractCairoTest {
 
         checkRebuildIndexes(createTableSql,
                 tablePath -> {
-                    removeFileFirstParition("sym1.v", PartitionBy.DAY, tablePath);
-                    removeFileFirstParition("sym1.k", PartitionBy.DAY, tablePath);
-                    removeFileFirstParition("sym2.k", PartitionBy.DAY, tablePath);
+                    removeFileAtPartition("sym1.v", PartitionBy.DAY, tablePath, 0);
+                    removeFileAtPartition("sym1.k", PartitionBy.DAY, tablePath, 0);
+                    removeFileAtPartition("sym2.k", PartitionBy.DAY, tablePath, 0);
                 },
                 rebuildIndex -> rebuildIndex.rebuildPartition("1970-01-01"));
     }
@@ -164,8 +215,8 @@ public class RebuildIndexTest extends AbstractCairoTest {
         checkRebuildIndexes(
                 createTableSql,
                 (tablePath) -> {
-                    removeFileFirstParition("sym1.v", PartitionBy.NONE, tablePath);
-                    removeFileFirstParition("sym2.k", PartitionBy.NONE, tablePath);
+                    removeFileAtPartition("sym1.v", PartitionBy.NONE, tablePath, 0);
+                    removeFileAtPartition("sym2.k", PartitionBy.NONE, tablePath, 0);
                 },
                 RebuildIndex::rebuildAll
         );
@@ -184,15 +235,17 @@ public class RebuildIndexTest extends AbstractCairoTest {
 
         checkRebuildIndexes(createTableSql,
                 tablePath -> {
-                    removeFileFirstParition("sym1.v", PartitionBy.NONE, tablePath);
-                    removeFileFirstParition("sym1.k", PartitionBy.NONE, tablePath);
+                    removeFileAtPartition("sym1.v", PartitionBy.NONE, tablePath, 0);
+                    removeFileAtPartition("sym1.k", PartitionBy.NONE, tablePath, 0);
                 },
                 rebuildIndex -> rebuildIndex.rebuildColumn("sym1"));
     }
 
     private void checkRebuildIndexes(String createTableSql, Action<String> changeTable, Action<RebuildIndex> rebuildIndexAction) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(createTableSql, sqlExecutionContext);
+            for(String sql: createTableSql.split(";")) {
+                compiler.compile(sql, sqlExecutionContext).execute(null).await();
+            }
             int sym1A = countByFullScan("select * from xxx where sym1 = 'A'");
             int sym1B = countByFullScan("select * from xxx where sym1 = 'B'");
             int sym1C = countByFullScan("select * from xxx where sym1 = 'C'");
@@ -217,11 +270,11 @@ public class RebuildIndexTest extends AbstractCairoTest {
         });
     }
 
-    private void removeFileFirstParition(String fileName, int partitionBy, String tablePath) {
+    private void removeFileAtPartition(String fileName, int partitionBy, String tablePath, long partitionTs) {
         try (Path path = new Path()) {
             path.concat(tablePath);
             path.put(Files.SEPARATOR);
-            PartitionBy.setSinkForPartition(path, partitionBy, 0, false);
+            PartitionBy.setSinkForPartition(path, partitionBy, partitionTs, false);
             path.concat(fileName);
             LOG.info().$("removing ").utf8(path).$();
             Assert.assertTrue(Files.remove(path.$()));
