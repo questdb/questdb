@@ -26,46 +26,101 @@ package io.questdb.cliutil;
 
 
 import io.questdb.BuildInformation;
+import io.questdb.BuildInformationHolder;
 import io.questdb.PropServerConfiguration;
 import io.questdb.ServerConfigurationException;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.RebuildIndex;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
 
+import java.io.*;
 import java.util.Properties;
 
 public class RebuildIndexMain {
-    public static void main(String[] args) {
-        if (args.length < 1 || args.length > 3) {
-            printUsage();
+    public static void main(String[] args) throws IOException, JsonException, ServerConfigurationException {
+        CommandLineArgs params = parseCommandArgs(args);
+        if (params == null) {
+            // Invalid params, usage already printed
             return;
         }
 
-        if (args.length == 1) {
-            rebuildIndexAllPartitions(args[0]);
-        }
+        RebuildIndex ri = new RebuildIndex();
+        String rootDirectory = params.tablePath + Files.SEPARATOR + ".." + Files.SEPARATOR + "..";
+        final Properties properties = new Properties();
+        final String configurationFileName = "/server.conf";
+        final File configurationFile = new File(new File(rootDirectory, PropServerConfiguration.CONFIG_DIRECTORY), configurationFileName);
 
-        if (args.length == 2) {
-            rebuildIndex(args[0], args[1]);
+        try (InputStream is = new FileInputStream(configurationFile)) {
+            properties.load(is);
+        }
+        final Log log = LogFactory.getLog("rebuild-index");
+        PropServerConfiguration configuration = readServerConfiguration(rootDirectory, properties, log, new BuildInformationHolder());
+
+        ri.of(params.tablePath, configuration.getCairoConfiguration());
+        try {
+            ri.rebuildPartitionColumn(params.partition, params.column);
+        } catch (CairoException ex) {
+            log.error().$(ex.getFlyweightMessage()).$();
         }
     }
 
-    private static void rebuildIndex(String tablePath, String partitionName) {
+    static CommandLineArgs parseCommandArgs(String[] args) {
 
-    }
+        if (args.length > 5 || args.length % 2 != 1) {
+            printUsage();
+            return null;
+        }
 
-    private static void rebuildIndexAllPartitions(String tablePath) {
+        CommandLineArgs res = new CommandLineArgs();
+        res.tablePath = args[0];
+        for (int i = 1, n = args.length; i < n; i += 2) {
+            if ("-p".equals(args[i])) {
+                if (res.partition == null) {
+                    res.partition = args[i + 1];
+                } else {
+                    System.err.println("-p parameter can be only used once");
+                    printUsage();
+                    return null;
+                }
+            }
 
+            if ("-c".equals(args[i])) {
+                if (res.column == null) {
+                    res.column = args[i + 1];
+                } else {
+                    System.err.println("-c parameter can be only used once");
+                    printUsage();
+                    return null;
+                }
+            }
+        }
+
+        if (res.tablePath.endsWith(String.valueOf(Files.SEPARATOR))) {
+            res.tablePath = res.tablePath.substring(res.tablePath.length());
+        }
+
+        return res;
     }
 
     private static void printUsage() {
-        System.out.println("usage: " + RebuildIndexMain.class.getName() + " -s <table_path> [<partition_name>]");
+        System.out.println("usage: " + RebuildIndexMain.class.getName() + " <table_path> [-p <partition_name>] [-c <column_name>]");
     }
 
-
-    private PropServerConfiguration readServerConfiguration(final String rootDirectory,
-                                                            final Properties properties,
-                                                            Log log,
-                                                            final BuildInformation buildInformation) throws ServerConfigurationException, JsonException {
+    private static PropServerConfiguration readServerConfiguration(
+            final String rootDirectory,
+            final Properties properties,
+            Log log,
+            final BuildInformation buildInformation
+    ) throws ServerConfigurationException, JsonException {
         return new PropServerConfiguration(rootDirectory, properties, System.getenv(), log, buildInformation);
+    }
+
+    static class CommandLineArgs {
+        String tablePath;
+        String partition;
+        String column;
     }
 }

@@ -192,11 +192,10 @@ public class RebuildIndex implements Closeable, Mutable {
 
         if (ff.exists(path.$())) {
             try (final MemoryMR roMem = indexMem) {
+                removeIndexFiles(columnName, ff);
+                TableUtils.dFile(path.trimTo(plen), columnName);
                 LOG.info().$("indexing [path=").$(path).I$();
 
-                removeIndexFiles(columnName, ff);
-
-                TableUtils.dFile(path.trimTo(plen), columnName);
                 final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, false);
 
                 if (partitionSize > columnTop) {
@@ -206,6 +205,7 @@ public class RebuildIndex implements Closeable, Mutable {
                         final long columnSize = (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT);
                         roMem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_WRITER);
                         indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnTop);
+
                         indexer.index(roMem, columnTop, partitionSize);
                     }
                 }
@@ -218,6 +218,7 @@ public class RebuildIndex implements Closeable, Mutable {
         try {
             BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
             try {
+                LOG.info().$("writing ").utf8(path).$();
                 ddlMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WRITER);
                 BitmapIndexWriter.initKeyMemory(ddlMem, indexValueBlockCapacity);
             } catch (CairoException e) {
@@ -241,6 +242,7 @@ public class RebuildIndex implements Closeable, Mutable {
                 LOG.error().$("could not create index [name=").$(path).$(']').$();
                 throw CairoException.instance(ff.errno()).put("could not create index [name=").put(path).put(']');
             }
+            LOG.info().$("writing ").utf8(path).$();
         } finally {
             path.trimTo(plen);
         }
