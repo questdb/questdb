@@ -1,4 +1,4 @@
-# Contributing to QuestDB
+## Contributing to QuestDB
 
 ## Raise an Issue
 
@@ -39,15 +39,15 @@ deep diving into the code base.
 Compiled binaries (for C libraries and Windows service wrapper) are committed to
 git to make build of development process Java-centric and simplified.
 
-## Local setup
+# Local setup
 
-### Setup Java and JAVA_HOME
+## Setup Java and JAVA_HOME
 
-JAVA*HOME is required by Maven. It is possible to have multiple version of Java
+JAVA_HOME is required by Maven. It is possible to have multiple version of Java
 on the same platform. Please set up JAVA_HOME to point to Java 11. Other
 versions of Java may not work. If you are new to Java please check that
 JAVA_HOME is pointing to the root of Java directory:
-`C:\Users\me\dev\jdk-11.0.8` and \_not* `C:\Users\me\dev\jdk-11.0.8\bin\java`.
+`C:\Users\me\dev\jdk-11.0.8` and _not_ `C:\Users\me\dev\jdk-11.0.8\bin\java`.
 
 Linux/OSX
 
@@ -61,7 +61,7 @@ Windows
 set JAVA_HOME="c:\path\to\java directory"
 ```
 
-### Compiling Java and frontend code
+## Compiling Java and frontend code
 
 Compiling the database + the web console can be done with:
 
@@ -77,7 +77,7 @@ java -p core/target/questdb-<version>-SNAPSHOT.jar -m io.questdb/io.questdb.Serv
 
 The web console will available at [localhost:9000](http://localhost:9000).
 
-### Compiling C-libraries
+## Compiling C-libraries
 
 C-libraries will have to be compiled for each platform separately. Cmake will
 also need JAVA_HOME to be set. The following commands will compile on Linux/OSX.
@@ -96,9 +96,9 @@ The build will copy artifacts as follows:
 core/src/main/c -> core/src/main/resources/io/questdb/bin
 ```
 
-## Local setup for frontend development
+# Local setup for frontend development
 
-### Development server
+## Development server
 
 This is useful when you want to work on the web console without having to
 rebuild the artifacts and restart QuestDB. Instead, we use `webpack-dev-server`:
@@ -115,7 +115,7 @@ Development server running on port 9999 will monitor for web console file
 changes and will rebuild/deploy on the fly. The web console front end will be
 connecting to QuestDB REST API on port 9000. Keep QuestDB server running.
 
-### Building web console bundle into questdb.jar
+## Building web console bundle into questdb.jar
 
 Run the command:
 
@@ -129,7 +129,7 @@ The build will copy artifacts as follows:
 ui -> core/src/main/resources/io/questdb/site/public.zip
 ```
 
-## Testing
+# Testing
 
 We have a lot of unit tests, most of which are of "integration" type, e.g. test
 starts a server, interacts with it and asserts the outcome. We expect all
@@ -137,27 +137,27 @@ contributors to submit PRs with tests. Please reach out to us via slack if you
 uncertain on how to test, or you think existing test is inadequate and should be
 removed.
 
-## Dependencies
+# Dependencies
 
 QuestDB does not have dependencies. This may sound unorthodox but in reality we
 try not to reinvent the wheel but rather than using libraries we implement
 algorithms on first principles to ensure perfect fit with existing code. With
 that in mind we expect contributions that do not add third-party dependencies.
 
-## Allocations, "new" operator and garbage collection
+# Allocations, "new" operator and garbage collection
 
 QuestDB is zero-GC along data pipelines. We expect contributions not to allocate
 if possible. That said we would like to help you to contribute zero-GC code, do
 not hesitate to reach out!
 
-## Committing
+# Committing
 
 We use [Conventional commits](https://www.conventionalcommits.org/en/v1.0.0/) to
 auto-generate release notes. We require all commit comments to conform. To that
 end, commits have to be granular enough to be successfully described using this
 method.
 
-## Squashing commits
+# Squashing commits
 
 When submitting a pull request to QuestDB, we ask that you squash your commits
 before we merge.
@@ -184,7 +184,7 @@ really helpful and keeps our repository concise and clean.
 
 ## FAQ
 
-### Why does the server work, but thsdfsdfe UI returns a `404` on [localhost:9000](http://localhost:9000)?
+### Why does the server work, but the UI returns a `404` on [localhost:9000](http://localhost:9000)?
 
 This means that the web console artifacts are not present in
 `core/src/main/resources/io/questdb/site/public.zip`. To fix this, you can
@@ -206,9 +206,7 @@ Otherwise, you can use the dedicated `maven` profile to build the code:
 mvn clean package -DskipTests -P build-web-console,build-binaries,use-built-in-nodejs
 ```
 
-That way, `maven` will install `node` on the fly in `ui/node` so you don't have sflkajhsdflkjashdflkjhasdflkjhasldkfjhlaksdjfhlaksjdhlkjhfd
-
-
+That way, `maven` will install `node` on the fly in `ui/node` so you don't have
 to install it locally.
 
 ### Why do some tests fail on Windows?

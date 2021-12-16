@@ -81,14 +81,15 @@ brew services start questdb
 
 يمكنك التفاعل مع QuestDB باستخدام الواجهات التالية:
 
-- <a href="https://questdb.io/docs/reference/web-console/">وحدة تحكم الويب</a> الاستماع
-  على المنفذ `9000`
-- <a href="https://questdb.io/docs/reference/api/rest/">REST API</a> في المنفذ `9000`
-- <a href="https://questdb.io/docs/reference/api/postgres/">PostgreSQL</a> بروتوكول
-  سلكي على المنفذ `8812`
+- <a href="https://questdb.io/docs/reference/web-console/">وحدة تحكم الويب</a>
+  الاستماع على المنفذ `9000`
+- <a href="https://questdb.io/docs/reference/api/rest/">REST API</a> في المنفذ
+  `9000`
+- <a href="https://questdb.io/docs/reference/api/postgres/">PostgreSQL</a>
+  بروتوكول سلكي على المنفذ `8812`
 - بروتوكول خط
-  <a href="https://questdb.io/docs/reference/api/influxdb/">InfluxDB</a> لبث عالي
-  الإنتاجية على المنفذ `9009`
+  <a href="https://questdb.io/docs/reference/api/influxdb/">InfluxDB</a> لبث
+  عالي الإنتاجية على المنفذ `9009`
 
 <h2>كيف يقارن QuestDB مع TSDBs الأخرى مفتوحة المصدر</h2>
 
@@ -124,14 +125,14 @@ brew services start questdb
 - تعد <a href="https://slack.questdb.io">مساحة عمل Slack الخاصة بنا</a> مكانًا
   رائعًا للمناقشات التقنية ولقاء مستخدمين آخرين. :wave:
 - <a href="https://github.com/questdb/questdb/discussions">مناقشات GitHub</a> هي
-  المكان الذي يشارك فيه مستخدمونا أفكارًا حول الميزات وطرح الأسئلة وإظهار ما قاموا
-  ببنائه.
-- <a href="https://github.com/questdb/questdb/issues">قضايا GitHub</a> مخصصة لتقارير
-  الأخطاء.
+  المكان الذي يشارك فيه مستخدمونا أفكارًا حول الميزات وطرح الأسئلة وإظهار ما
+  قاموا ببنائه.
+- <a href="https://github.com/questdb/questdb/issues">قضايا GitHub</a> مخصصة
+  لتقارير الأخطاء.
 - تسرد <a href="https://github.com/questdb/questdb/milestones">معالم المشروع</a>
   المهام والميزات التي نعمل عليها للإصدارات القادمة.
-- <a href="https://questdb.io/tutorial/">دروس</a> كتبها أعضاء مجتمعنا تظهر ما يمكن
-  عمله مع QuestDB.
+- <a href="https://questdb.io/tutorial/">دروس</a> كتبها أعضاء مجتمعنا تظهر ما
+  يمكن عمله مع QuestDB.
 - <a href="https://stackoverflow.com/questions/tagged/questdb">
     QuestDB على Stack Overflow
   </a> لديها حلول مشتركة لاستكشاف الأخطاء وإصلاحها.
