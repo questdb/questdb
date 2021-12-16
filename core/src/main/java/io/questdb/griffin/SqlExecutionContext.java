@@ -41,6 +41,8 @@ import java.io.Closeable;
 
 public interface SqlExecutionContext extends Closeable {
 
+    QueryFutureUpdateListener getQueryFutureUpdateListener();
+
     BindVariableService getBindVariableService();
 
     CairoSecurityContext getCairoSecurityContext();

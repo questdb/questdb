@@ -909,7 +909,7 @@ public class SqlCompiler implements Closeable {
 
         // Save execution context in resulting Compiled Query
         // it may be used for Alter Table statement execution
-        compiledQuery.withDefaultContext(executionContext);
+        compiledQuery.withContext(executionContext);
         final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);
         if (executor == null) {
             return compileUsingModel(executionContext);

@@ -518,6 +518,15 @@ public final class TestUtils {
         }
     }
 
+    public static boolean drainEngineCmdQueue(CairoEngine engine) {
+        boolean useful = false;
+        while (engine.tick()) {
+            useful = true;
+            // drain the engine queue
+        }
+        return useful;
+    }
+
     public static void createPopulateTable(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
