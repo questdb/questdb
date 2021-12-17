@@ -260,6 +260,48 @@ public class UpdateBasicTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUpdateTimestampToSymbolLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " timestamp_sequence(0, 1000000) ts1, " +
+                    " cast(to_str(timestamp_sequence(1000000, 1000000), 'yyyy-MM-ddTHH:mm:ss.SSSz') as symbol) as sym" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET ts1 = sym WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
+
+            assertSql("up", "ts\tts1\tsym\n" +
+                    "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:01.000Z\n" +
+                    "1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:02.000Z\n" +
+                    "1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:03.000Z\n" +
+                    "1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:04.000Z\n" +
+                    "1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:04.000000Z\t1970-01-01T00:00:05.000Z\n");
+        });
+    }
+
+    @Test
+    public void testUpdateGeohashToStringLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " rnd_geohash(15) as geo3," +
+                    " rnd_geohash(25) as geo5 " +
+                    " from long_sequence(5))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET geo3 = 'questdb', geo5 = 'questdb' WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
+
+            assertSql("up", "ts\tgeo3\tgeo5\n" +
+                    "1970-01-01T00:00:00.000000Z\t9v1\t46swg\n" +
+                    "1970-01-01T00:00:01.000000Z\tjnw\tzfuqd\n" +
+                    "1970-01-01T00:00:02.000000Z\tque\tquest\n" +
+                    "1970-01-01T00:00:03.000000Z\tque\tquest\n" +
+                    "1970-01-01T00:00:04.000000Z\tmmt\t71ftm\n");
+        });
+    }
+
+    @Test
     public void testUpdateGeoHashColumnToLowerPrecision() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +

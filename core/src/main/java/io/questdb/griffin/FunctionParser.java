@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastSymbolToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.*;
@@ -173,27 +174,24 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     @Nullable
     private Function createImplicitCastOrNull(int position, Function function, int toType) throws SqlException {
         int fromType = function.getType();
-        switch (ColumnType.tagOf(fromType)) {
+        switch (fromType) {
             case ColumnType.STRING:
+            case ColumnType.SYMBOL:
                 if (toType == ColumnType.TIMESTAMP) {
                     return new CastStrToTimestampFunctionFactory.Func(position, function);
                 }
-                break;
-            case ColumnType.SYMBOL:
-                if (toType == ColumnType.TIMESTAMP) {
-                    return new CastSymbolToTimestampFunctionFactory.Func(function);
+                if (ColumnType.isGeoHash(toType)) {
+                    return CastStrToGeoHashFunctionFactory.newInstance(position, toType, function);
                 }
                 break;
-            case ColumnType.GEOBYTE:
-            case ColumnType.GEOSHORT:
-            case ColumnType.GEOINT:
-            case ColumnType.GEOLONG:
-                int fromGeoBits = ColumnType.getGeoHashBits(fromType);
-                int toGeoBits = ColumnType.getGeoHashBits(toType);
-                if (ColumnType.isGeoHash(toType) && toGeoBits < fromGeoBits) {
-                    return CastGeoHashToGeoHashFunctionFactory.newInstance(position, function, fromType, toType);
+            default:
+                if (ColumnType.isGeoHash(fromType)) {
+                    int fromGeoBits = ColumnType.getGeoHashBits(fromType);
+                    int toGeoBits = ColumnType.getGeoHashBits(toType);
+                    if (ColumnType.isGeoHash(toType) && toGeoBits < fromGeoBits) {
+                        return CastGeoHashToGeoHashFunctionFactory.newInstance(position, function, fromType, toType);
+                    }
                 }
-                break;
         }
         return null;
     }
