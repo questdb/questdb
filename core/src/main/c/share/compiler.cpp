@@ -1276,7 +1276,8 @@ struct JitCompiler {
         registers.pop();
 
         //mask compress optimization for longs
-        if (step == 4) {
+        bool is_slow_zen = CpuInfo::host().familyId() == 23; // AMD Zen1, Zen1+ and Zen2
+        if (step == 4 && !is_slow_zen) {
             Ymm compacted = questdb::avx2::compress_register(c, row_ids_reg, mask.ymm());
             c.vmovdqu(ymmword_ptr(rows_ptr, output_index, 3), compacted);
             Gp bits = questdb::avx2::to_bits4(c, mask.ymm());
