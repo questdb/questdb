@@ -262,6 +262,8 @@ public interface CairoConfiguration {
 
     int getSqlJitMode();
 
+    boolean isSqlJitDebugEnabled();
+
     int getTableBlockWriterQueueCapacity();
 
     TelemetryConfiguration getTelemetryConfiguration();

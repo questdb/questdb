@@ -89,6 +89,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final CompiledFilterIRSerializer jitIRSerializer = new CompiledFilterIRSerializer();
     private final MemoryCARW jitIRMem;
     private boolean enableJitNullChecks = true;
+    private final boolean enableJitDebug;
     private final FunctionParser functionParser;
     private final CairoEngine engine;
     private final BytecodeAssembler asm = new BytecodeAssembler();
@@ -136,6 +137,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         this.configuration = configuration;
         this.functionParser = functionParser;
         this.recordComparatorCompiler = new RecordComparatorCompiler(asm);
+        this.enableJitDebug = configuration.isSqlJitDebugEnabled();
         this.jitIRMem = Vm.getCARWInstance(2048, 16, MemoryTag.NATIVE_DEFAULT);
         // Pre-touch JIT IR memory to avoid false positive memleak detections.
         jitIRMem.putByte((byte) 0);
@@ -749,7 +751,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final ObjList<Function> bindVarFunctions = new ObjList<>();
                     final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
                     jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), reader, columnIndexes, bindVarFunctions);
-                    int jitOptions = jitIRSerializer.serialize(filter, forceScalar, false, enableJitNullChecks);
+                    int jitOptions = jitIRSerializer.serialize(filter, forceScalar, enableJitDebug, enableJitNullChecks);
                     final CompiledFilter jitFilter = new CompiledFilter();
                     jitFilter.compile(jitIRMem, jitOptions);
 

@@ -203,6 +203,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().ownThread());
 
         Assert.assertEquals(SqlJitMode.JIT_MODE_DISABLED, configuration.getCairoConfiguration().getSqlJitMode());
+        Assert.assertFalse(configuration.getCairoConfiguration().isSqlJitDebugEnabled());
 
         // statics
         Assert.assertSame(FilesFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getFilesFacade());
@@ -570,6 +571,7 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getLineUdpReceiverConfiguration().ownThread());
 
             Assert.assertEquals(SqlJitMode.JIT_MODE_FORCE_SCALAR, configuration.getCairoConfiguration().getSqlJitMode());
+            Assert.assertTrue(configuration.getCairoConfiguration().isSqlJitDebugEnabled());
 
             // influxdb line TCP protocol
             Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().isEnabled());

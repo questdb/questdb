@@ -152,6 +152,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlBindVariablePoolSize;
     private final int sqlJitMode;
+    private final boolean sqlJitDebugEnabled;
     private final DateLocale locale;
     private final String backupRoot;
     private final DateFormat backupDirTimestampFormat;
@@ -643,6 +644,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlDistinctTimestampKeyCapacity = getInt(properties, env, "cairo.sql.distinct.timestamp.key.capacity", 512);
             this.sqlDistinctTimestampLoadFactor = getDouble(properties, env, "cairo.sql.distinct.timestamp.load.factor", 0.5);
             this.sqlJitMode = getSqlJitMode(properties, env);
+            this.sqlJitDebugEnabled = getBoolean(properties, env, "cairo.sql.jit.debug.enabled", false);
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
                     new DateFormatFactory(),
@@ -2018,6 +2020,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlJitMode() {
             return sqlJitMode;
+        }
+
+        @Override
+        public boolean isSqlJitDebugEnabled() {
+            return sqlJitDebugEnabled;
         }
 
         @Override
