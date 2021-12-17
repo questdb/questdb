@@ -72,15 +72,23 @@ uint32_t type_shift(data_type_t type) {
     }
 }
 
+data_kind_t dst_kind(const jit_value_t &lhs, const jit_value_t &rhs) {
+    auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
+                                                                                         : data_kind_t::kMemory;
+    return dk;
+}
+
+
 namespace questdb::x86 {
     using namespace asmjit::x86;
 
     jit_value_t
-    read_vars_mem(Compiler &c, data_type_t type, const uint8_t *istream, size_t size, uint32_t &pos, const Gp &vars_ptr) {
+    read_vars_mem(Compiler &c, data_type_t type, const uint8_t *istream, size_t size, uint32_t &pos,
+                  const Gp &vars_ptr) {
         auto idx = static_cast<int32_t>(read<int64_t>(istream, size, pos));
         auto shift = type_shift(type);
-        auto type_size  = 1 << shift;
-        return {Mem(vars_ptr, 8*idx, type_size), type, data_kind_t::kMemory};
+        auto type_size = 1 << shift;
+        return {Mem(vars_ptr, 8 * idx, type_size), type, data_kind_t::kMemory};
     }
 
     jit_value_t
@@ -91,7 +99,7 @@ namespace questdb::x86 {
         Gp column_address = c.newInt64("column_address");
         c.mov(column_address, ptr(cols_ptr, 8 * column_idx, 8));
         auto shift = type_shift(type);
-        auto type_size  = 1 << shift;
+        auto type_size = 1 << shift;
         return {Mem(column_address, input_index, shift, 0, type_size), type, data_kind_t::kMemory};
     }
 
@@ -263,24 +271,23 @@ namespace questdb::x86 {
         return {int32_not(c, lhs.gp().r32()), dt, dk};
     }
 
+
     jit_value_t bin_and(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-                                                                                             : data_kind_t::kMemory;
+        auto dk = dst_kind(lhs, rhs);
         return {int32_and(c, lhs.gp().r32(), rhs.gp().r32()), dt, dk};
     }
 
+
     jit_value_t bin_or(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-                                                                                             : data_kind_t::kMemory;
+        auto dk = dst_kind(lhs, rhs);
         return {int32_or(c, lhs.gp().r32(), rhs.gp().r32()), dt, dk};
     }
 
     jit_value_t cmp_eq(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-                                                                                             : data_kind_t::kMemory;
+        auto dk = dst_kind(lhs, rhs);
         switch (dt) {
             case data_type_t::i8:
             case data_type_t::i16:
@@ -299,8 +306,7 @@ namespace questdb::x86 {
 
     jit_value_t cmp_ne(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-                                                                                             : data_kind_t::kMemory;
+        auto dk = dst_kind(lhs, rhs);
         switch (dt) {
             case data_type_t::i8:
             case data_type_t::i16:
@@ -319,8 +325,7 @@ namespace questdb::x86 {
 
     jit_value_t cmp_gt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-                                                                                             : data_kind_t::kMemory;
+        auto dk = dst_kind(lhs, rhs);
         switch (dt) {
             case data_type_t::i8:
             case data_type_t::i16:
@@ -339,8 +344,7 @@ namespace questdb::x86 {
 
     jit_value_t cmp_ge(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-                                                                                             : data_kind_t::kMemory;
+        auto dk = dst_kind(lhs, rhs);
         switch (dt) {
             case data_type_t::i8:
             case data_type_t::i16:
@@ -359,8 +363,7 @@ namespace questdb::x86 {
 
     jit_value_t cmp_lt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-                                                                                             : data_kind_t::kMemory;
+        auto dk = dst_kind(lhs, rhs);
         switch (dt) {
             case data_type_t::i8:
             case data_type_t::i16:
@@ -379,8 +382,7 @@ namespace questdb::x86 {
 
     jit_value_t cmp_le(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-                                                                                             : data_kind_t::kMemory;
+        auto dk = dst_kind(lhs, rhs);
         switch (dt) {
             case data_type_t::i8:
             case data_type_t::i16:
@@ -399,8 +401,7 @@ namespace questdb::x86 {
 
     jit_value_t add(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-                                                                                             : data_kind_t::kMemory;
+        auto dk = dst_kind(lhs, rhs);
         switch (dt) {
             case data_type_t::i8:
             case data_type_t::i16:
@@ -419,8 +420,7 @@ namespace questdb::x86 {
 
     jit_value_t sub(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-                                                                                             : data_kind_t::kMemory;
+        auto dk = dst_kind(lhs, rhs);
         switch (dt) {
             case data_type_t::i8:
             case data_type_t::i16:
@@ -439,8 +439,7 @@ namespace questdb::x86 {
 
     jit_value_t mul(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-                                                                                             : data_kind_t::kMemory;
+        auto dk = dst_kind(lhs, rhs);
         switch (dt) {
             case data_type_t::i8:
             case data_type_t::i16:
@@ -459,8 +458,7 @@ namespace questdb::x86 {
 
     jit_value_t div(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-                                                                                             : data_kind_t::kMemory;
+        auto dk = dst_kind(lhs, rhs);
         switch (dt) {
             case data_type_t::i8:
             case data_type_t::i16:
@@ -777,7 +775,8 @@ namespace questdb::avx2 {
     }
 
     jit_value_t
-    read_vars_mem(Compiler &c, data_type_t type, const uint8_t *istream, size_t size, uint32_t &pos, const Gp &vars_ptr) {
+    read_vars_mem(Compiler &c, data_type_t type, const uint8_t *istream, size_t size, uint32_t &pos,
+                  const Gp &vars_ptr) {
         auto value = x86::read_vars_mem(c, type, istream, size, pos, vars_ptr);
         Mem mem = value.op().as<Mem>();
         Ymm val = c.newYmm();
@@ -785,27 +784,27 @@ namespace questdb::avx2 {
             case data_type_t::i8: {
                 c.vpbroadcastb(val, mem);
             }
-            break;
+                break;
             case data_type_t::i16: {
                 c.vpbroadcastw(val, mem);
             }
-            break;
+                break;
             case data_type_t::i32: {
                 c.vpbroadcastd(val, mem);
             }
-            break;
+                break;
             case data_type_t::i64: {
                 c.vpbroadcastq(val, mem);
             }
-            break;
+                break;
             case data_type_t::f32: {
                 c.vbroadcastss(val, mem);
             }
-            break;
+                break;
             case data_type_t::f64: {
                 c.vbroadcastsd(val, mem);
             }
-            break;
+                break;
             default:
                 __builtin_unreachable();
         }
@@ -903,90 +902,78 @@ namespace questdb::avx2 {
 
     jit_value_t bin_and(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-                                                                                             : data_kind_t::kMemory;
+        auto dk = dst_kind(lhs, rhs);
         return {mask_and(c, lhs.ymm(), rhs.ymm()), dt, dk};
     }
 
     jit_value_t bin_or(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-                                                                                             : data_kind_t::kMemory;
+        auto dk = dst_kind(lhs, rhs);
         return {mask_or(c, lhs.ymm(), rhs.ymm()), dt, dk};
     }
 
     jit_value_t cmp_eq(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-                                                                                             : data_kind_t::kMemory;
+        auto dk = dst_kind(lhs, rhs);
         return {cmp_eq(c, dt, lhs.ymm(), rhs.ymm()), data_type_t::i32, dk};
     }
 
     jit_value_t cmp_ne(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-                                                                                             : data_kind_t::kMemory;
+        auto dk = dst_kind(lhs, rhs);
         auto mt = mask_type(dt);
         return {cmp_ne(c, dt, lhs.ymm(), rhs.ymm()), mt, dk};
     }
 
     jit_value_t cmp_gt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-                                                                                             : data_kind_t::kMemory;
+        auto dk = dst_kind(lhs, rhs);
         auto mt = mask_type(dt);
         return {cmp_gt(c, dt, lhs.ymm(), rhs.ymm(), null_check), mt, dk};
     }
 
     jit_value_t cmp_ge(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-                                                                                             : data_kind_t::kMemory;
+        auto dk = dst_kind(lhs, rhs);
         auto mt = mask_type(dt);
         return {cmp_ge(c, dt, lhs.ymm(), rhs.ymm(), null_check), mt, dk};
     }
 
     jit_value_t cmp_lt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-                                                                                             : data_kind_t::kMemory;
+        auto dk = dst_kind(lhs, rhs);
         auto mt = mask_type(dt);
         return {cmp_lt(c, dt, lhs.ymm(), rhs.ymm(), null_check), mt, dk};
     }
 
     jit_value_t cmp_le(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-                                                                                             : data_kind_t::kMemory;
+        auto dk = dst_kind(lhs, rhs);
         auto mt = mask_type(dt);
         return {cmp_le(c, dt, lhs.ymm(), rhs.ymm(), null_check), mt, dk};
     }
 
     jit_value_t add(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-                                                                                             : data_kind_t::kMemory;
+        auto dk = dst_kind(lhs, rhs);
         return {add(c, dt, lhs.ymm(), rhs.ymm(), null_check), dt, dk};
     }
 
     jit_value_t sub(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-                                                                                             : data_kind_t::kMemory;
+        auto dk = dst_kind(lhs, rhs);
         return {sub(c, dt, lhs.ymm(), rhs.ymm(), null_check), dt, dk};
     }
 
     jit_value_t mul(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-                                                                                             : data_kind_t::kMemory;
+        auto dk = dst_kind(lhs, rhs);
         return {mul(c, dt, lhs.ymm(), rhs.ymm(), null_check), dt, dk};
     }
 
     jit_value_t div(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
-        auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-                                                                                             : data_kind_t::kMemory;
+        auto dk = dst_kind(lhs, rhs);
         return {div(c, dt, lhs.ymm(), rhs.ymm(), null_check), dt, dk};
     }
 
@@ -1185,7 +1172,8 @@ namespace questdb::avx2 {
     }
 }
 
-using CompiledFn = int64_t (*)(int64_t *cols, int64_t cols_count, int64_t *vars, int64_t vars_count, int64_t *rows, int64_t rows_count,
+using CompiledFn = int64_t (*)(int64_t *cols, int64_t cols_count, int64_t *vars, int64_t vars_count, int64_t *rows,
+                               int64_t rows_count,
                                int64_t rows_start_offset);
 
 struct JitCompiler {
@@ -1202,7 +1190,7 @@ struct JitCompiler {
 
         uint32_t type_size = (options >> 1) & 3; // 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B
         uint32_t exec_hint = (options >> 3) & 3; // 0 - scalar, 1 - single size type, 2 - mixed size types, ...
-        bool null_check    = (options >> 5) & 1; // 1 - with null check
+        bool null_check = (options >> 5) & 1; // 1 - with null check
 
         if (exec_hint == single_size && features.hasAVX2()) {
             auto step = 256 / ((1 << type_size) * 8);
@@ -1267,7 +1255,7 @@ struct JitCompiler {
 
         //mask compress optimization for longs
         //init row_ids_reg out of loop
-        if(step == 4) {
+        if (step == 4) {
             int64_t rows_id_mem[4] = {0, 1, 2, 3};
             Mem mem = c.newConst(ConstPool::kScopeLocal, &rows_id_mem, 32);
 
@@ -1288,7 +1276,8 @@ struct JitCompiler {
         registers.pop();
 
         //mask compress optimization for longs
-        if(step == 4) {
+        bool is_slow_zen = CpuInfo::host().familyId() == 23; // AMD Zen1, Zen1+ and Zen2
+        if (step == 4 && !is_slow_zen) {
             Ymm compacted = questdb::avx2::compress_register(c, row_ids_reg, mask.ymm());
             c.vmovdqu(ymmword_ptr(rows_ptr, output_index, 3), compacted);
             Gp bits = questdb::avx2::to_bits4(c, mask.ymm());
@@ -1297,7 +1286,8 @@ struct JitCompiler {
             c.vpaddq(row_ids_reg, row_ids_reg, row_ids_step);
         } else {
             Gp bits = questdb::avx2::to_bits(c, mask.ymm(), step);
-            questdb::avx2::unrolled_loop2(c, bits.r64(), rows_ptr, input_index, output_index, rows_id_start_offset, step);
+            questdb::avx2::unrolled_loop2(c, bits.r64(), rows_ptr, input_index, output_index, rows_id_start_offset,
+                                          step);
         }
 
         c.add(input_index, step); // index += step
@@ -1310,7 +1300,8 @@ struct JitCompiler {
     }
 
     void begin_fn() {
-        c.addFunc(FuncSignatureT<int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t>(CallConv::kIdHost));
+        c.addFunc(FuncSignatureT<int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t *, int64_t, int64_t>(
+                CallConv::kIdHost));
         cols_ptr = c.newIntPtr("cols_ptr");
         cols_size = c.newInt64("cols_size");
 
