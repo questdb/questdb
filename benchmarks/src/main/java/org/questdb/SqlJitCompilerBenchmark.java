@@ -50,14 +50,14 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 public class SqlJitCompilerBenchmark {
 
-    private static final int PARTITION_SIZE_MB = 128;
+    private static final int PARTITION_SIZE_MB = 512;
     private static final int NUM_ROWS = (PARTITION_SIZE_MB * 1024 * 1024) / Long.BYTES;
 
     private static final CairoConfiguration configuration = new DefaultCairoConfiguration(System.getProperty("java.io.tmpdir"));
 
     @Param({"SIMD", "SCALAR", "DISABLED"})
     public JitMode jitMode;
-    @Param({"l", "i"})
+    @Param({"i64", "i32"})
     public String column;
 
     private CairoEngine engine;
@@ -77,8 +77,8 @@ public class SqlJitCompilerBenchmark {
                     );
             try (SqlCompiler compiler = new SqlCompiler(engine)) {
                 compiler.compile("create table if not exists x as (select" +
-                        " rnd_long() l," +
-                        " rnd_int() i," +
+                        " rnd_long() i64," +
+                        " rnd_int() i32," +
                         " timestamp_sequence(400000000000, 500000000) ts" +
                         " from long_sequence(" + NUM_ROWS + ")) timestamp(ts)", sqlExecutionContext);
             } catch (SqlException e) {
