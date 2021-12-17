@@ -43,7 +43,6 @@ import java.util.function.BooleanSupplier;
 
 class CompiledFilterRecordCursor implements RecordCursor {
 
-    private final IntList columnIndexes;
     private final TableReaderSelectedColumnRecord recordA;
     private final TableReaderSelectedColumnRecord recordB;
 
@@ -72,7 +71,6 @@ class CompiledFilterRecordCursor implements RecordCursor {
     private final BooleanSupplier nextPage = this::nextPage;
 
     public CompiledFilterRecordCursor(@NotNull IntList columnIndexes) {
-        this.columnIndexes = columnIndexes;
         this.recordA = new TableReaderSelectedColumnRecord(columnIndexes);
         this.recordB = new TableReaderSelectedColumnRecord(columnIndexes);
     }
@@ -186,8 +184,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
             partitionIndex = frame.getPartitionIndex();
 
             boolean hasColumnTops = false;
-            for (int i = 0; i < columnCount; i++) {
-                final int columnIndex = columnIndexes.getQuick(i);
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 if (frame.getPageAddress(columnIndex) == 0) {
                     hasColumnTops = true;
                     break;
