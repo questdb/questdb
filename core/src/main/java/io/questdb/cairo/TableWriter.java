@@ -815,7 +815,7 @@ public class TableWriter implements Closeable {
                 }
 
                 if (timestamp < txWriter.getMaxTimestamp()) {
-                    throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order. Table=").put(path);
+                    throw CairoException.instance(ff.errno()).put("Cannot insert rows out of order to non-partitioned table. Table=").put(path);
                 }
 
                 bumpMasterRef();
