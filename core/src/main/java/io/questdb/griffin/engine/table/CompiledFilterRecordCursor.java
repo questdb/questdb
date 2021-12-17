@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderSelectedColumnRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -182,17 +181,14 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
     private boolean nextPage() {
         PageFrame frame;
-        final TableReader reader = pageFrameCursor.getTableReader();
         final int columnCount = metadata.getColumnCount();
         while ((frame = pageFrameCursor.next()) != null) {
             partitionIndex = frame.getPartitionIndex();
 
             boolean hasColumnTops = false;
-            final int base = reader.getColumnBase(partitionIndex);
             for (int i = 0; i < columnCount; i++) {
                 final int columnIndex = columnIndexes.getQuick(i);
-                final long top = reader.getColumnTop(base, columnIndex);
-                if (top > frame.getPartitionLo()) {
+                if (frame.getPageAddress(columnIndex) == 0) {
                     hasColumnTops = true;
                     break;
                 }
