@@ -24,55 +24,33 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
-import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-public class CompiledFilterRegressionTest extends AbstractCairoTest {
+public class CompiledFilterRegressionTest extends AbstractGriffinTest {
 
     private static final Log LOG = LogFactory.getLog(CompiledFilterRegressionTest.class);
     private static final int N_SIMD = 512;
     private static final int N_SIMD_WITH_SCALAR_TAIL = N_SIMD + 3;
 
     private static final StringSink jitSink = new StringSink();
-    private static BindVariableService bindVariableService;
-    private static SqlExecutionContext sqlExecutionContext;
-    private static SqlCompiler compiler;
-
-    @BeforeClass
-    public static void setUpStatic() {
-        AbstractCairoTest.setUpStatic();
-        compiler = new SqlCompiler(engine);
-        bindVariableService = new BindVariableServiceImpl(configuration);
-        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                .with(
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService,
-                        null,
-                        -1,
-                        null);
-        bindVariableService.clear();
-    }
-
-    @AfterClass
-    public static void tearDownStatic() {
-        AbstractCairoTest.tearDownStatic();
-        compiler.close();
-    }
 
     @Override
     @Before
@@ -81,7 +59,6 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         Assume.assumeTrue(JitUtil.isJitSupported());
         super.setUp();
         compiler.setEnableJitNullChecks(true);
-        bindVariableService.clear();
     }
 
     @Test
