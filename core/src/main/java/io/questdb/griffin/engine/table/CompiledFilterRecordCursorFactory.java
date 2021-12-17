@@ -34,7 +34,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -52,7 +51,6 @@ public class CompiledFilterRecordCursorFactory implements RecordCursorFactory {
 
     public CompiledFilterRecordCursorFactory(
             @NotNull RecordCursorFactory factory,
-            @NotNull IntList columnIndexes,
             @NotNull ObjList<Function> bindVarFunctions,
             @NotNull Function filter,
             @NotNull CompiledFilter compiledFilter
@@ -62,7 +60,7 @@ public class CompiledFilterRecordCursorFactory implements RecordCursorFactory {
         this.factory = factory;
         this.filter = filter;
         this.compiledFilter = compiledFilter;
-        this.cursor = new CompiledFilterRecordCursor(columnIndexes);
+        this.cursor = new CompiledFilterRecordCursor();
         this.bindVarFunctions = bindVarFunctions;
         this.bindVarMemory = Vm.getCARWInstance(2048, 16, MemoryTag.NATIVE_DEFAULT);
         this.rows = new DirectLongList(1024);

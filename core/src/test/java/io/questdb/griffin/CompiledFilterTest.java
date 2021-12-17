@@ -391,4 +391,6 @@ public class CompiledFilterTest extends AbstractGriffinTest {
             assertSqlRunWithJit(query);
         });
     }
+
+    // TODO test iteration -> toTop -> recordAt and other random access scenarios
 }
