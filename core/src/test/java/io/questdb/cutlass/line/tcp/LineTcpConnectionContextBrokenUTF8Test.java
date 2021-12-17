@@ -41,15 +41,15 @@ public class LineTcpConnectionContextBrokenUTF8Test extends BaseLineTcpContextTe
         char nonPrintable = 0x3000;
         char nonPrintable1 = 0x3080;
         char nonPrintable2 = 0x3a55;
-        String table = "nonPrintable" + nonPrintable + "Chars";
+        String table = "nonPrintableChars";
         runInContext(() -> {
             recvBuffer =
                     table + ",location=us-midwest temperature=82 1465839830100400200\n" +
                             table + ",location=us-mid" + nonPrintable1 + "west temperature=83 1465839830100500200\n" +
                             table + ",location=us-eastcoast" + nonPrintable2 + " temperature=81 1465839830101400200\n" +
-                            table + ",location=us-midwest temperature=85,hőmérséklet" + nonPrintable1 + "=24 1465839830102300200\n" +
-                            table + ",location=us-eastcoast temperature=89,hőmérséklet" + nonPrintable2 + "=26 1465839830102400200\n" +
-                            table + ",location=us-eastcoast temperature=80,hőmérséklet" + nonPrintable + "=25,hőmérséklet" + nonPrintable2 + "=23 1465839830102400200\n" +
+                            table + ",location=us-midwest temperature=85,hőmérséklet=24 1465839830102300200\n" +
+                            table + ",location=us-eastcoast temperature=89,hőmérséklet=26 1465839830102400200\n" +
+                            table + ",location=us-eastcoast temperature=80,hőmérséklet=25" + nonPrintable + ",hőmérséklet=23 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
 
             handleContextIO();
