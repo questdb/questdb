@@ -22,34 +22,20 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.str;
+package io.questdb.griffin;
 
-import io.questdb.std.Unsafe;
+public interface SqlExecutionCircuitBreaker {
+    SqlExecutionCircuitBreaker NOOP_CIRCUIT_BREAKER = new SqlExecutionCircuitBreaker() {
+        @Override
+        public void test() {
+        }
 
-/**
- * Represents C LPSZ as Java' CharSequence. Bytes in native memory are
- * interpreted as ASCII characters. Multi-byte characters are NOT decoded.
- */
-public class NativeLPSZ extends AbstractCharSequence {
-    private long address;
-    private int len;
+        @Override
+        public void powerUp() {
+        }
+    };
 
-    @Override
-    public int length() {
-        return len;
-    }
+    void test();
 
-    @Override
-    public char charAt(int index) {
-        return (char) Unsafe.getUnsafe().getByte(address + index);
-    }
-
-    @SuppressWarnings("StatementWithEmptyBody")
-    public NativeLPSZ of(long address) {
-        this.address = address;
-        long p = address;
-        while (Unsafe.getUnsafe().getByte(p++) != 0) ;
-        this.len = (int) (p - address - 1);
-        return this;
-    }
+    void powerUp();
 }

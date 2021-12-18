@@ -264,6 +264,7 @@ public class HttpServer implements Closeable {
         }
         Misc.free(httpContextFactory);
         Misc.free(dispatcher);
+        Misc.free(rescheduleContext);
     }
 
     private static HttpServer create0(

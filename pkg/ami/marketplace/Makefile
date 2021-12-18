@@ -3,8 +3,6 @@
 
 
 AWS_REGION 		?= eu-west-1
-QUESTDB_VERSION ?= 6.0.4
-#AMI_REGIONS 	?=eu-north-1,eu-central-1
 
 packer ?= packer
 git    ?= git
@@ -26,5 +24,6 @@ build_release:
 	-var questdb_version=$(QUESTDB_VERSION) \
 	-var ami_groups=all \
 	packer.json
+
 
 -include ../Mk/phonies

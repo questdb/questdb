@@ -132,16 +132,16 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     private void calculateRanges(LongList intervals) {
         size = -1;
         if (intervals.size() > 0) {
-            if (reader.getPartitionedBy() == PartitionBy.NONE) {
-                initialIntervalsLo = 0;
-                initialIntervalsHi = intervals.size() / 2;
-                initialPartitionLo = 0;
-                initialPartitionHi = reader.getPartitionCount();
-            } else {
+            if (PartitionBy.isPartitioned(reader.getPartitionedBy())) {
                 cullIntervals(intervals);
                 if (initialIntervalsLo < initialIntervalsHi) {
                     cullPartitions(intervals);
                 }
+            } else {
+                initialIntervalsLo = 0;
+                initialIntervalsHi = intervals.size() / 2;
+                initialPartitionLo = 0;
+                initialPartitionHi = reader.getPartitionCount();
             }
             toTop();
         }
@@ -232,7 +232,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     }
 
     private void cullIntervals(LongList intervals) {
-        int intervalsLo = intervals.binarySearch(reader.getMinTimestamp());
+        int intervalsLo = intervals.binarySearch(reader.getMinTimestamp(), BinarySearch.SCAN_UP);
 
         // not a direct hit
         if (intervalsLo < 0) {
@@ -242,7 +242,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         // normalise interval index
         this.initialIntervalsLo = intervalsLo / 2;
 
-        int intervalsHi = intervals.binarySearch(reader.getMaxTimestamp());
+        int intervalsHi = intervals.binarySearch(reader.getMaxTimestamp(), BinarySearch.SCAN_UP);
         if (reader.getMaxTimestamp() == intervals.getQuick(intervals.size() - 1)) {
             this.initialIntervalsHi = intervals.size() - 1;
         }

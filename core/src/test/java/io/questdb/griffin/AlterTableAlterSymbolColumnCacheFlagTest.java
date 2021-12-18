@@ -123,15 +123,15 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
 
         assertMemoryLeak(() -> {
             compiler.compile("create table x (i int, sym symbol nocache) ;", sqlExecutionContext);
-            executeInsert("insert into x values (1, 'GBP')\"");
-            executeInsert("insert into x values (2, 'CHF')\"");
-            executeInsert("insert into x values (3, 'GBP')\"");
-            executeInsert("insert into x values (4, 'JPY')\"");
-            executeInsert("insert into x values (5, 'USD')\"");
-            executeInsert("insert into x values (6, 'GBP')\"");
-            executeInsert("insert into x values (7, 'GBP')\"");
-            executeInsert("insert into x values (8, 'GBP')\"");
-            executeInsert("insert into x values (9, 'GBP')\"");
+            executeInsert("insert into x values (1, 'GBP')");
+            executeInsert("insert into x values (2, 'CHF')");
+            executeInsert("insert into x values (3, 'GBP')");
+            executeInsert("insert into x values (4, 'JPY')");
+            executeInsert("insert into x values (5, 'USD')");
+            executeInsert("insert into x values (6, 'GBP')");
+            executeInsert("insert into x values (7, 'GBP')");
+            executeInsert("insert into x values (8, 'GBP')");
+            executeInsert("insert into x values (9, 'GBP')");
         });
 
         String expectedOrdered = "sym\n" +
@@ -211,7 +211,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
         assertMemoryLeak(() -> {
             try {
                 createX();
-                compiler.compile(sql, sqlExecutionContext);
+                compile(sql);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(position, e.getPosition());

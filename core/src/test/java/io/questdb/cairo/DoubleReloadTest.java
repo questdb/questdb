@@ -22,11 +22,42 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.cairo;
 
-public interface SqlExecutionInterruptor {
-    SqlExecutionInterruptor NOP_INTERRUPTOR = () -> {
-    };
+import org.junit.Assert;
+import org.junit.Test;
 
-    void checkInterrupted();
+public class DoubleReloadTest extends AbstractCairoTest {
+    @Test
+    public void testSingleColumn() {
+        try (TableModel model = new TableModel(
+                configuration,
+                "int_test",
+                PartitionBy.NONE
+        ).col("x", ColumnType.INT)) {
+            CairoTestUtils.create(model);
+        }
+
+
+        try (
+                TableReader reader = new TableReader(configuration, "int_test");
+                TableWriter w = new TableWriter(configuration, "int_test")
+        ) {
+            reader.reload();
+
+            TableWriter.Row r = w.newRow();
+            r.putInt(0, 10);
+            r.append();
+            w.commit();
+            reader.reload();
+
+            r = w.newRow();
+            r.putInt(0, 10);
+            r.append();
+            w.commit();
+
+            reader.reload();
+            Assert.assertEquals(2, reader.size());
+        }
+    }
 }

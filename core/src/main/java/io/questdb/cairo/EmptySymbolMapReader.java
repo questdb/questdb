@@ -36,7 +36,7 @@ public class EmptySymbolMapReader implements SymbolMapReader {
     }
 
     @Override
-    public int size() {
+    public int getSymbolCount() {
         return 0;
     }
 

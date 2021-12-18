@@ -25,8 +25,8 @@ package io.questdb.cutlass.http;
 
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
-import io.questdb.griffin.DefaultSqlInterruptorConfiguration;
-import io.questdb.griffin.SqlInterruptorConfiguration;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
@@ -51,66 +51,6 @@ public class HttpServerConfigurationBuilder {
     private int receiveBufferSize = 1024 * 1024;
     private long multipartIdleSpinCount = -1;
     private Runnable onPeerDisconnect = HttpContextConfiguration.NONE;
-
-    public HttpServerConfigurationBuilder withNetwork(NetworkFacade nf) {
-        this.nf = nf;
-        return this;
-    }
-
-    public HttpServerConfigurationBuilder withBaseDir(String baseDir) {
-        this.baseDir = baseDir;
-        return this;
-    }
-
-    public HttpServerConfigurationBuilder withSendBufferSize(int sendBufferSize) {
-        this.sendBufferSize = sendBufferSize;
-        return this;
-    }
-
-    public HttpServerConfigurationBuilder withDumpingTraffic(boolean dumpTraffic) {
-        this.dumpTraffic = dumpTraffic;
-        return this;
-    }
-
-    public HttpServerConfigurationBuilder withAllowDeflateBeforeSend(boolean allowDeflateBeforeSend) {
-        this.allowDeflateBeforeSend = allowDeflateBeforeSend;
-        return this;
-    }
-
-    public HttpServerConfigurationBuilder withServerKeepAlive(boolean serverKeepAlive) {
-        this.serverKeepAlive = serverKeepAlive;
-        return this;
-    }
-
-    public HttpServerConfigurationBuilder withHttpProtocolVersion(String httpProtocolVersion) {
-        this.httpProtocolVersion = httpProtocolVersion;
-        return this;
-    }
-
-    public HttpServerConfigurationBuilder withConfiguredMaxQueryResponseRowLimit(long configuredMaxQueryResponseRowLimit) {
-        this.configuredMaxQueryResponseRowLimit = configuredMaxQueryResponseRowLimit;
-        return this;
-    }
-
-    public HttpServerConfigurationBuilder withRerunProcessingQueueSize(int rerunProcessingQueueSize) {
-        this.rerunProcessingQueueSize = rerunProcessingQueueSize;
-        return this;
-    }
-
-    public HttpServerConfigurationBuilder withOnPeerDisconnect(Runnable runnable) {
-        this.onPeerDisconnect = runnable;
-        return this;
-    }
-
-    public HttpServerConfigurationBuilder withReceiveBufferSize(int receiveBufferSize) {
-        this.receiveBufferSize = receiveBufferSize;
-        return this;
-    }
-
-    public HttpServerConfigurationBuilder withMultipartIdleSpinCount(long multipartIdleSpinCount) {
-        this.multipartIdleSpinCount = multipartIdleSpinCount;
-        return this;
-    }
 
     public DefaultHttpServerConfiguration build() {
         final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
@@ -154,7 +94,7 @@ public class HttpServerConfigurationBuilder {
             };
 
             private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
-                private final DefaultSqlInterruptorConfiguration sqlInterruptorConfiguration = new DefaultSqlInterruptorConfiguration();
+                private final DefaultSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
 
                 @Override
                 public MillisecondClock getClock() {
@@ -192,10 +132,76 @@ public class HttpServerConfigurationBuilder {
                 }
 
                 @Override
-                public SqlInterruptorConfiguration getInterruptorConfiguration() {
-                    return sqlInterruptorConfiguration;
+                public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+                    return circuitBreakerConfiguration;
                 }
             };
+
+            @Override
+            public IODispatcherConfiguration getDispatcherConfiguration() {
+                return ioDispatcherConfiguration;
+            }
+
+            @Override
+            public HttpContextConfiguration getHttpContextConfiguration() {
+                return new DefaultHttpContextConfiguration() {
+                    @Override
+                    public boolean allowDeflateBeforeSend() {
+                        return allowDeflateBeforeSend;
+                    }
+
+                    @Override
+                    public MillisecondClock getClock() {
+                        return StationaryMillisClock.INSTANCE;
+                    }
+
+                    @Override
+                    public boolean getDumpNetworkTraffic() {
+                        return dumpTraffic;
+                    }
+
+                    @Override
+                    public String getHttpVersion() {
+                        return httpProtocolVersion;
+                    }
+
+                    @Override
+                    public long getMultipartIdleSpinCount() {
+                        if (multipartIdleSpinCount < 0) return super.getMultipartIdleSpinCount();
+                        return multipartIdleSpinCount;
+                    }
+
+                    @Override
+                    public NetworkFacade getNetworkFacade() {
+                        return nf;
+                    }
+
+                    @Override
+                    public int getRecvBufferSize() {
+                        return receiveBufferSize;
+                    }
+
+                    @Override
+                    public int getSendBufferSize() {
+                        return sendBufferSize;
+                    }
+
+                    @Override
+                    public boolean getServerKeepAlive() {
+                        return serverKeepAlive;
+                    }
+
+                    @Override
+                    public Runnable onPeerDisconnect() {
+                        return onPeerDisconnect;
+                    }
+                };
+            }
+
+            @Override
+            public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
+                return jsonQueryProcessorConfiguration;
+            }
 
             @Override
             public WaitProcessorConfiguration getWaitProcessorConfiguration() {
@@ -228,74 +234,69 @@ public class HttpServerConfigurationBuilder {
             }
 
             @Override
-            public HttpContextConfiguration getHttpContextConfiguration() {
-                return new DefaultHttpContextConfiguration() {
-                    @Override
-                    public MillisecondClock getClock() {
-                        return StationaryMillisClock.INSTANCE;
-                    }
-
-                    @Override
-                    public long getMultipartIdleSpinCount() {
-                        if (multipartIdleSpinCount < 0) return super.getMultipartIdleSpinCount();
-                        return multipartIdleSpinCount;
-                    }
-
-                    @Override
-                    public int getRecvBufferSize() {
-                        return receiveBufferSize;
-                    }
-                    @Override
-                    public int getSendBufferSize() {
-                        return sendBufferSize;
-                    }
-
-                    @Override
-                    public boolean getDumpNetworkTraffic() {
-                        return dumpTraffic;
-                    }
-
-                    @Override
-                    public boolean allowDeflateBeforeSend() {
-                        return allowDeflateBeforeSend;
-                    }
-
-                    @Override
-                    public boolean getServerKeepAlive() {
-                        return serverKeepAlive;
-                    }
-
-                    @Override
-                    public String getHttpVersion() {
-                        return httpProtocolVersion;
-                    }
-
-                    @Override
-                    public Runnable onPeerDisconnect() {
-                        return onPeerDisconnect;
-                    }
-
-                    @Override
-                    public NetworkFacade getNetworkFacade() {
-                        return nf;
-                    }
-                };
-            }
-
-            @Override
-            public IODispatcherConfiguration getDispatcherConfiguration() {
-                return ioDispatcherConfiguration;
-            }
-
-            @Override
             public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
                 return staticContentProcessorConfiguration;
             }
-
-            @Override
-            public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
-                return jsonQueryProcessorConfiguration;
-            }
         };
+    }
+
+    public HttpServerConfigurationBuilder withAllowDeflateBeforeSend(boolean allowDeflateBeforeSend) {
+        this.allowDeflateBeforeSend = allowDeflateBeforeSend;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withBaseDir(String baseDir) {
+        this.baseDir = baseDir;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withConfiguredMaxQueryResponseRowLimit(long configuredMaxQueryResponseRowLimit) {
+        this.configuredMaxQueryResponseRowLimit = configuredMaxQueryResponseRowLimit;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withDumpingTraffic(boolean dumpTraffic) {
+        this.dumpTraffic = dumpTraffic;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withHttpProtocolVersion(String httpProtocolVersion) {
+        this.httpProtocolVersion = httpProtocolVersion;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withMultipartIdleSpinCount(long multipartIdleSpinCount) {
+        this.multipartIdleSpinCount = multipartIdleSpinCount;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withNetwork(NetworkFacade nf) {
+        this.nf = nf;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withOnPeerDisconnect(Runnable runnable) {
+        this.onPeerDisconnect = runnable;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withReceiveBufferSize(int receiveBufferSize) {
+        this.receiveBufferSize = receiveBufferSize;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withRerunProcessingQueueSize(int rerunProcessingQueueSize) {
+        this.rerunProcessingQueueSize = rerunProcessingQueueSize;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withSendBufferSize(int sendBufferSize) {
+        this.sendBufferSize = sendBufferSize;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withServerKeepAlive(boolean serverKeepAlive) {
+        this.serverKeepAlive = serverKeepAlive;
+        return this;
     }
 }

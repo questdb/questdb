@@ -32,7 +32,7 @@ import io.questdb.std.Unsafe;
 
 public class RawTCPILPSenderMain {
     public static void main(String[] args) {
-        final String ilp = "dhl_plug,building=ba1aa618-4de4-40be-a4f7-72e341274b91,floor=a3979437-5d95-4f4d-8ef2-ace635cffce4,label=144c8537-db16-11e9-a374-0e9c62fb84fe,room=d534235d-d253-4aaa-8e40-eb8dc07c0d2b,socket_id=affbe16e-6a9e-4a06-85fe-e24430a1d8ba,address_id=8ca1d63a-d119-45aa-9747-351eb40bedf9 mac_address=\"xxxx\",milliamps=4,millijoules=151200,millivolts=120609,milliwatts=2520,duration=60587 1635189276608000\n";
+        final String ilp = "vbw water_speed_longitudinal=0.07,water_speed_transveral=,water_speed_status=\"A\",ground_speed_longitudinal=0,ground_speed_transveral=0,ground_speed_status=\"A\",water_speed_stern_transversal=,water_speed_stern_transversal_status=\"V\",ground_speed_stern_transversal=0,ground_speed_stern_transversal_status=\"V\" 1627046637414969856\n";
         final int len = ilp.length();
 
         long mem = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);

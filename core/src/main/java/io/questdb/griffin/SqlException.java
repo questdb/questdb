@@ -43,6 +43,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return position(position).put(message);
     }
 
+    public static SqlException $(int position, long addrLo, long addrHi) {
+        return position(position).put(addrLo, addrHi);
+    }
+
     public static SqlException ambiguousColumn(int position) {
         return position(position).put("Ambiguous column name");
     }
@@ -54,6 +58,30 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
                 .put(ColumnType.nameOf(toType))
                 .put(" [from=").put(fromName)
                 .put(", to=").put(toName).put(']');
+    }
+
+    public static SqlException inconvertibleValue(int columnNumber, double value, int fromType, int toType) {
+        return $(-1, "inconvertible value: ")
+                .put(value)
+                .put(" [")
+                .put(ColumnType.nameOf(fromType))
+                .put(" -> ")
+                .put(ColumnType.nameOf(toType))
+                .put(']')
+                .put(" in target column number: ")
+                .put(columnNumber);
+    }
+
+    public static SqlException inconvertibleValue(int columnNumber, long value, int fromType, int toType) {
+        return $(-1, "inconvertible value: ")
+                .put(value)
+                .put(" [")
+                .put(ColumnType.nameOf(fromType))
+                .put(" -> ")
+                .put(ColumnType.nameOf(toType))
+                .put(']')
+                .put(" in target column number: ")
+                .put(columnNumber);
     }
 
     public static SqlException invalidColumn(int position, CharSequence column) {
@@ -109,8 +137,18 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return this;
     }
 
+    public SqlException put(double value) {
+        message.put(value);
+        return this;
+    }
+
     public SqlException put(Sinkable sinkable) {
         message.put(sinkable);
+        return this;
+    }
+
+    public SqlException put(long addrLo, long addrHi) {
+        message.put(addrLo, addrHi);
         return this;
     }
 

@@ -52,6 +52,11 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test(expected = NumericException.class)
+    public void testRandomFormat() throws Exception {
+        assertThat("Ketchup", "", "2021-11-19T14:00:00.000Z");
+    }
+
+    @Test(expected = NumericException.class)
     public void testBadAmPm() throws Exception {
         assertThat("KaMMy", "", "11 0910 am");
     }
@@ -605,15 +610,15 @@ public class TimestampFormatCompilerTest {
 
     @Test
     public void testNegativeYear() throws Exception {
-        assertThat("yyyy MMM dd", "-2010-09-01T00:00:00.000Z", "-2010 Sep 01");
+        assertThat("yyyy MMM dd", "-2010-08-01T00:00:00.000Z", "-2010 Aug 01");
 
         DateFormat fmt1 = compiler.compile("G yyyy MMM", true);
         DateFormat fmt2 = compiler.compile("yyyy MMM dd", true);
 
-        long millis = fmt2.parse("-2010 Sep 01", defaultLocale);
+        long millis = fmt2.parse("-2010 Aug 01", defaultLocale);
         sink.clear();
         fmt1.format(millis, defaultLocale, "Z", sink);
-        TestUtils.assertEquals("BC -2010 Sep", sink);
+        TestUtils.assertEquals("BC -2010 Aug", sink);
     }
 
     @Test

@@ -26,6 +26,7 @@ package io.questdb.test.tools;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -40,6 +41,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 
@@ -49,6 +51,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class TestUtils {
 
     public static final RecordCursorPrinter printer = new RecordCursorPrinter();
+
+    private static final StringSink sink = new StringSink();
 
     private static final RecordCursorPrinter printerWithTypes = new RecordCursorPrinter().withTypes(true);
 
@@ -282,6 +286,12 @@ public final class TestUtils {
         }
     }
 
+    public static void assertEquals(CharSequence expected, Sinkable actual) {
+        sink.clear();
+        actual.toSink(sink);
+        assertEquals(null, expected, sink);
+    }
+
     public static void assertEquals(CharSequence expected, CharSequence actual) {
         assertEquals(null, expected, actual);
     }
@@ -404,12 +414,14 @@ public final class TestUtils {
         Assert.assertTrue("Initial file count should be >= 0", fileCount >= 0);
         runnable.run();
         Path.clearThreadLocals();
-        Assert.assertEquals(fileCount, Files.getOpenFileCount());
+        if (fileCount != Files.getOpenFileCount()) {
+            Assert.assertEquals(Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
+        }
         Assert.assertEquals(mem, Unsafe.getMemUsed());
 
         // Checks that the same tag used for allocation and freeing native memory
         for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
-            final long actualMemByTag = Unsafe.getMemUsedByTag(i);
+            long actualMemByTag = Unsafe.getMemUsedByTag(i);
             if (memoryUsageByTag[i] != actualMemByTag) {
                 Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i), memoryUsageByTag[i], actualMemByTag);
             }
@@ -506,6 +518,15 @@ public final class TestUtils {
         }
     }
 
+    public static boolean drainEngineCmdQueue(CairoEngine engine) {
+        boolean useful = false;
+        while (engine.tick()) {
+            useful = true;
+            // drain the engine queue
+        }
+        return useful;
+    }
+
     public static void createPopulateTable(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
@@ -523,13 +544,15 @@ public final class TestUtils {
             TableModel tableModel,
             int totalRows,
             String startDate,
-            int partitionCount) throws NumericException, SqlException {
+            int partitionCount
+    ) throws NumericException, SqlException {
         long fromTimestamp = IntervalUtils.parseFloorPartialDate(startDate);
 
         long increment = 0;
-        if (tableModel.getPartitionBy() != PartitionBy.NONE) {
-            Timestamps.TimestampAddMethod partitionAdd = TableUtils.getPartitionAdd(tableModel.getPartitionBy());
-            long toTs = partitionAdd.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
+        if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
+            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(tableModel.getPartitionBy());
+            assert partitionAddMethod != null;
+            long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
             increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
         }
 
@@ -592,7 +615,7 @@ public final class TestUtils {
             CharSequence timestampCol = tableModel.getColumnName(tableModel.getTimestampIndex());
             sql.append(" timestamp(").append(timestampCol).append(")");
         }
-        if (tableModel.getPartitionBy() != PartitionBy.NONE) {
+        if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
             sql.append(" Partition By ").append(PartitionBy.toString(tableModel.getPartitionBy()));
         }
         compiler.compile(sql.toString(), sqlExecutionContext);

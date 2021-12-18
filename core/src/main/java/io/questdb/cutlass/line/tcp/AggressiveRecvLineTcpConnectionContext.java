@@ -24,8 +24,6 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.NetworkIOJob;
-
 public class AggressiveRecvLineTcpConnectionContext extends LineTcpConnectionContext {
 
     private final int aggressiveReadRetryCount;

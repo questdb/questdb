@@ -40,6 +40,22 @@ import static io.questdb.griffin.CompiledQuery.ALTER;
 public class AlterTableAlterColumnTest extends AbstractGriffinTest {
 
     @Test
+    public void testAddIndexColumnWithCapacity_capacityCanBeReadByWriter() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createX();
+
+                    Assert.assertEquals(ALTER, compile("alter table x alter column ik add index capacity 1024", sqlExecutionContext).getType());
+
+                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
+                        int blockCapacity = writer.getMetadata().getIndexValueBlockCapacity("ik");
+                        Assert.assertEquals(1024, blockCapacity);
+                    }
+                }
+        );
+    }
+
+    @Test
     public void testAddIndexColumns() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -52,7 +68,7 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
                         }
                     }
 
-                    Assert.assertEquals(ALTER, compiler.compile("alter table x alter column ik add index", sqlExecutionContext).getType());
+                    Assert.assertEquals(ALTER, compile("alter table x alter column ik add index", sqlExecutionContext).getType());
 
                     try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                         Assert.assertNotNull(reader.getBitmapIndexReader(0, reader.getMetadata().getColumnIndex("ik"), BitmapIndexReader.DIR_FORWARD));
@@ -69,6 +85,26 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
     @Test
     public void testAlterExpectColumnName() throws Exception {
         assertFailure("alter table x alter column", 26, "column name expected");
+    }
+
+    @Test
+    public void testAlterExpectCapacityKeyword() throws Exception {
+        assertFailure("alter table x alter column y add index a", 39, "'capacity' expected");
+    }
+
+    @Test
+    public void testAlterExpectCapacityValue() throws Exception {
+        assertFailure("alter table x alter column y add index capacity ", 48, "capacity value expected");
+    }
+
+    @Test
+    public void testAlterExpectCapacityValueIsInteger() throws Exception {
+        assertFailure("alter table x alter column y add index capacity qwe", 48, "positive integer literal expected as index capacity");
+    }
+
+    @Test
+    public void testAlterExpectCapacityValueIsPositiveInteger() throws Exception {
+        assertFailure("alter table x alter column y add index capacity -123", 48, "positive integer literal expected as index capacity");
     }
 
     @Test
@@ -100,14 +136,13 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
 
                 startBarrier.await();
                 try {
-                    compiler.compile("alter table x alter column ik add index", sqlExecutionContext);
+                    compile("alter table x alter column ik add index", sqlExecutionContext);
                     Assert.fail();
                 } finally {
                     haltLatch.countDown();
                 }
-            } catch (SqlException e) {
-                Assert.assertEquals(12, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "table 'x' could not be altered: [0]: table busy");
+            } catch (EntryUnavailableException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "table busy");
             }
             Assert.assertTrue(allHaltLatch.await(2, TimeUnit.SECONDS));
         });
@@ -150,8 +185,8 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
                 compiler.compile(sql, sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
-                Assert.assertEquals(position, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), message);
+                Assert.assertEquals(position, e.getPosition());
             }
         });
     }

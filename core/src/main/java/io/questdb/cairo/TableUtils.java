@@ -31,11 +31,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -69,9 +64,6 @@ public final class TableUtils {
     public static final String FILE_SUFFIX_D = ".d";
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
-    public static final DateFormat fmtDay;
-    public static final DateFormat fmtMonth;
-    public static final DateFormat fmtYear;
     public static final String DEFAULT_PARTITION_NAME = "default";
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long TX_OFFSET_MIN_TIMESTAMP = 24;
@@ -115,7 +107,6 @@ public final class TableUtils {
     private static final int MAX_SYMBOL_CAPACITY_CACHED = Numbers.ceilPow2(30_000_000);
     private static final int MAX_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(8 * 1024 * 1024);
     private final static Log LOG = LogFactory.getLog(TableUtils.class);
-    private final static DateFormat fmtDefault;
 
     private TableUtils() {
     }
@@ -318,32 +309,6 @@ public final class TableUtils {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);
     }
 
-    public static Timestamps.TimestampAddMethod getPartitionAdd(int partitionBy) {
-        switch (partitionBy) {
-            case PartitionBy.DAY:
-                return Timestamps.ADD_DD;
-            case PartitionBy.MONTH:
-                return Timestamps.ADD_MM;
-            case PartitionBy.YEAR:
-                return Timestamps.ADD_YYYY;
-            default:
-                throw new UnsupportedOperationException("partition by " + partitionBy + " does not have add method");
-        }
-    }
-
-    public static Timestamps.TimestampFloorMethod getPartitionFloor(int partitionBy) {
-        switch (partitionBy) {
-            case PartitionBy.DAY:
-                return Timestamps.FLOOR_DD;
-            case PartitionBy.MONTH:
-                return Timestamps.FLOOR_MM;
-            case PartitionBy.YEAR:
-                return Timestamps.FLOOR_YYYY;
-            default:
-                throw new UnsupportedOperationException("partition by " + partitionBy + " does not have floor method");
-        }
-    }
-
     public static long getPartitionTableIndexOffset(int symbolWriterCount, int index) {
         return getPartitionTableIndexOffset(getPartitionTableSizeOffset(symbolWriterCount), index);
     }
@@ -382,7 +347,6 @@ public final class TableUtils {
         for (int i = 0, l = seq.length(); i < l; i++) {
             char c = seq.charAt(i);
             switch (c) {
-                case ' ':
                 case '?':
                 case '.':
                 case ',':
@@ -413,7 +377,6 @@ public final class TableUtils {
             switch (seq.charAt(i)) {
                 default:
                     break;
-                case ' ':
                 case '?':
                 case '.':
                 case ',':
@@ -449,12 +412,12 @@ public final class TableUtils {
     public static long lock(FilesFacade ff, Path path) {
         long fd = ff.openRW(path);
         if (fd == -1) {
-            LOG.error().$("cannot open '").$(path).$("' to lock [errno=").$(ff.errno()).$(']').$();
+            LOG.error().$("cannot open '").utf8(path).$("' to lock [errno=").$(ff.errno()).$(']').$();
             return -1L;
         }
 
         if (ff.lock(fd) != 0) {
-            LOG.error().$("cannot lock '").$(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).$(']').$();
+            LOG.error().$("cannot lock '").utf8(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).$(']').$();
             ff.close(fd);
             return -1L;
         }
@@ -472,7 +435,7 @@ public final class TableUtils {
 
     /**
      * Maps a file in read-only mode.
-     *
+     * <p>
      * Important note. Linux requires the offset to be page aligned.
      */
     public static long mapRO(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
@@ -497,7 +460,7 @@ public final class TableUtils {
 
     /**
      * Maps a file in read-write mode.
-     *
+     * <p>
      * Important note. Linux requires the offset to be page aligned.
      */
     public static long mapRW(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
@@ -695,56 +658,7 @@ public final class TableUtils {
      * @return The last timestamp in the partition
      */
     public static long setPathForPartition(Path path, int partitionBy, long timestamp, boolean calculatePartitionMax) {
-        return setSinkForPartition(path.slash(), partitionBy, timestamp, calculatePartitionMax);
-    }
-
-    public static long setSinkForPartition(CharSink path, int partitionBy, long timestamp, boolean calculatePartitionMax) {
-        int y, m, d;
-        boolean leap;
-        switch (partitionBy) {
-            case PartitionBy.DAY:
-                y = Timestamps.getYear(timestamp);
-                leap = Timestamps.isLeapYear(y);
-                m = Timestamps.getMonthOfYear(timestamp, y, leap);
-                d = Timestamps.getDayOfMonth(timestamp, y, m, leap);
-                TimestampFormatUtils.append000(path, y);
-                path.put('-');
-                TimestampFormatUtils.append0(path, m);
-                path.put('-');
-                TimestampFormatUtils.append0(path, d);
-
-                if (calculatePartitionMax) {
-                    return Timestamps.yearMicros(y, leap)
-                            + Timestamps.monthOfYearMicros(m, leap)
-                            + (d - 1) * Timestamps.DAY_MICROS + 24 * Timestamps.HOUR_MICROS - 1;
-                }
-                return 0;
-            case PartitionBy.MONTH:
-                y = Timestamps.getYear(timestamp);
-                leap = Timestamps.isLeapYear(y);
-                m = Timestamps.getMonthOfYear(timestamp, y, leap);
-                TimestampFormatUtils.append000(path, y);
-                path.put('-');
-                TimestampFormatUtils.append0(path, m);
-
-                if (calculatePartitionMax) {
-                    return Timestamps.yearMicros(y, leap)
-                            + Timestamps.monthOfYearMicros(m, leap)
-                            + Timestamps.getDaysPerMonth(m, leap) * 24L * Timestamps.HOUR_MICROS - 1;
-                }
-                return 0;
-            case PartitionBy.YEAR:
-                y = Timestamps.getYear(timestamp);
-                leap = Timestamps.isLeapYear(y);
-                TimestampFormatUtils.append000(path, y);
-                if (calculatePartitionMax) {
-                    return Timestamps.addYear(Timestamps.yearMicros(y, leap), 1) - 1;
-                }
-                return 0;
-            default:
-                path.put(DEFAULT_PARTITION_NAME);
-                return Long.MAX_VALUE;
-        }
+        return PartitionBy.setSinkForPartition(path.slash(), partitionBy, timestamp, calculatePartitionMax);
     }
 
     public static int toIndexKey(int symbolKey) {
@@ -982,49 +896,6 @@ public final class TableUtils {
         return CairoException.instance(0).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
     }
 
-    static boolean isSamePartition(long timestampA, long timestampB, int partitionBy) {
-        switch (partitionBy) {
-            case PartitionBy.NONE:
-                return true;
-            case PartitionBy.DAY:
-                return Timestamps.floorDD(timestampA) == Timestamps.floorDD(timestampB);
-            case PartitionBy.MONTH:
-                return Timestamps.floorMM(timestampA) == Timestamps.floorMM(timestampB);
-            case PartitionBy.YEAR:
-                return Timestamps.floorYYYY(timestampA) == Timestamps.floorYYYY(timestampB);
-            default:
-                throw CairoException.instance(0).put("Cannot compare timestamps for unsupported partition type: [").put(partitionBy).put(']');
-        }
-    }
-
-    static DateFormat getPartitionDateFmt(int partitionBy) {
-        switch (partitionBy) {
-            case PartitionBy.DAY:
-                return fmtDay;
-            case PartitionBy.MONTH:
-                return fmtMonth;
-            case PartitionBy.YEAR:
-                return fmtYear;
-            case PartitionBy.NONE:
-                return fmtDefault;
-            default:
-                throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
-        }
-    }
-
-    static Timestamps.TimestampCeilMethod getPartitionCeil(int partitionBy) {
-        switch (partitionBy) {
-            case PartitionBy.DAY:
-                return Timestamps.CEIL_DD;
-            case PartitionBy.MONTH:
-                return Timestamps.CEIL_MM;
-            case PartitionBy.YEAR:
-                return Timestamps.CEIL_YYYY;
-            default:
-                throw new UnsupportedOperationException("partition by " + partitionBy + " does not have ceil method");
-        }
-    }
-
     static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
         if (ff.mkdirs(path, mkDirMode) != 0) {
             throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
@@ -1089,26 +960,4 @@ public final class TableUtils {
         void close(long prevSize);
     }
 
-    static {
-        TimestampFormatCompiler compiler = new TimestampFormatCompiler();
-        fmtDay = compiler.compile("yyyy-MM-dd");
-        fmtMonth = compiler.compile("yyyy-MM");
-        fmtYear = compiler.compile("yyyy");
-        fmtDefault = new DateFormat() {
-            @Override
-            public void format(long datetime, DateLocale locale, CharSequence timeZoneName, CharSink sink) {
-                sink.put(DEFAULT_PARTITION_NAME);
-            }
-
-            @Override
-            public long parse(CharSequence in, DateLocale locale) {
-                return 0;
-            }
-
-            @Override
-            public long parse(CharSequence in, int lo, int hi, DateLocale locale) {
-                return 0;
-            }
-        };
-    }
 }

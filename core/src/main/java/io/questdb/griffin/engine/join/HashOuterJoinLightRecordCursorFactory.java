@@ -33,9 +33,10 @@ import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionInterruptor;
+import io.questdb.griffin.SqlExecutionCircuitBreaker;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
@@ -88,7 +89,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
         try {
-            buildMapOfSlaveRecords(slaveCursor, executionContext.getSqlExecutionInterruptor());
+            buildMapOfSlaveRecords(slaveCursor, executionContext.getCircuitBreaker());
         } catch (Throwable e) {
             slaveCursor.close();
             throw e;
@@ -102,12 +103,12 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
         return false;
     }
 
-    private void buildMapOfSlaveRecords(RecordCursor slaveCursor, SqlExecutionInterruptor interruptor) {
+    private void buildMapOfSlaveRecords(RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
         slaveChain.clear();
         joinKeyMap.clear();
         final Record record = slaveCursor.getRecord();
         while (slaveCursor.hasNext()) {
-            interruptor.checkInterrupted();
+            circuitBreaker.test();
             MapKey key = joinKeyMap.withKey();
             key.put(record, slaveKeySink);
             MapValue value = key.createValue();

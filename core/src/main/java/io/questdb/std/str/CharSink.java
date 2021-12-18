@@ -26,9 +26,10 @@ package io.questdb.std.str;
 
 import io.questdb.std.Numbers;
 import io.questdb.std.Sinkable;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 
-public interface CharSink {
+public interface CharSink extends CharSinkBase {
 
     int encodeSurrogate(char c, CharSequence in, int pos, int hi);
 
@@ -64,7 +65,9 @@ public interface CharSink {
     default void flush() {
     }
 
-    char[] getDoubleDigitsBuffer();
+    default char[] getDoubleDigitsBuffer() {
+        throw new UnsupportedOperationException();
+    }
 
     default CharSink put(CharSequence cs) {
         throw new UnsupportedOperationException();
@@ -77,6 +80,7 @@ public interface CharSink {
         return this;
     }
 
+    @Override
     CharSink put(char c);
 
     default CharSink put(int value) {
@@ -86,6 +90,13 @@ public interface CharSink {
 
     default CharSink put(long value) {
         Numbers.append(this, value);
+        return this;
+    }
+
+    default CharSink put(long lo, long hi) {
+        for (long addr = lo; addr < hi; addr += Character.BYTES) {
+            put(Unsafe.getUnsafe().getChar(addr));
+        }
         return this;
     }
 

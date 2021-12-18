@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.BinarySearch;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import org.junit.Assert;
@@ -34,16 +35,60 @@ public class DirectLongListTest {
     private static final Log LOG = LogFactory.getLog(DirectLongListTest.class);
 
     @Test
-    public void testResizeMemLeak() {
-        // use logger so that static memory allocation happens before our control measurement
-        LOG.info().$("testResizeMemLeak").$();
-        long expected = Unsafe.getMemUsed();
-        try (DirectLongList list = new DirectLongList(1024)) {
-            for (int i = 0; i < 1_000_000; i++) {
-                list.add(i);
+    public void testAddList() {
+        DirectLongList list = new DirectLongList(256);
+        DirectLongList list2 = new DirectLongList(256);
+        final int N = 100;
+        for (int i = 0; i < N; ++i) {
+            list.add(i);
+            list2.add(N + i);
+        }
+        list.add(list2);
+        Assert.assertEquals(256, list.getCapacity());
+        Assert.assertEquals(2 * N, list.size());
+        for (long i = 0; i < list.size(); ++i) {
+            Assert.assertEquals(i, list.get(i));
+        }
+        list.close();
+        list2.close();
+    }
+
+    @Test
+    public void testAddListExpand() {
+        DirectLongList list = new DirectLongList(128);
+        DirectLongList list2 = new DirectLongList(128);
+        final int N = 100;
+        for (int i = 0; i < N; ++i) {
+            list.add(i);
+            list2.add(N + i);
+        }
+        list.add(list2);
+        Assert.assertEquals(200, list.getCapacity()); //128 + 100 - 28
+        Assert.assertEquals(2 * N, list.size());
+        for (long i = 0; i < list.size(); ++i) {
+            Assert.assertEquals(i, list.get(i));
+        }
+        list.close();
+        list2.close();
+    }
+
+    @Test
+    public void testBinarySearchFuzz() {
+        final int N = 997; // prime
+        final int skipRate = 4;
+        final int dupeRate = 8;
+        final int dupeCountBound = 4;
+        for (int c = 0; c < N; c++) {
+            for (int i = 0; i < skipRate; i++) {
+                for (int j = 0; j < dupeRate; j++) {
+                    for (int k = 1; k < dupeCountBound; k++) {
+                        testBinarySearchFuzz0(c, i, j, k);
+                    }
+                }
             }
         }
-        Assert.assertEquals(expected, Unsafe.getMemUsed());
+
+        testBinarySearchFuzz0(1, 0, 1, 1024);
     }
 
     @Test
@@ -79,42 +124,18 @@ public class DirectLongListTest {
     }
 
     @Test
-    public void testAddList() {
-        DirectLongList list = new DirectLongList(256);
-        DirectLongList list2 = new DirectLongList(256);
-        final int N = 100;
-        for (int i = 0; i < N; ++i) {
-            list.add(i);
-            list2.add(N + i);
+    public void testResizeMemLeak() {
+        // use logger so that static memory allocation happens before our control measurement
+        LOG.info().$("testResizeMemLeak").$();
+        long expected = Unsafe.getMemUsed();
+        try (DirectLongList list = new DirectLongList(1024)) {
+            for (int i = 0; i < 1_000_000; i++) {
+                list.add(i);
+            }
         }
-        list.add(list2);
-        Assert.assertEquals(256, list.getCapacity());
-        Assert.assertEquals(2*N, list.size());
-        for (long i = 0; i < list.size(); ++i) {
-            Assert.assertEquals(i, list.get(i));
-        }
-        list.close();
-        list2.close();
+        Assert.assertEquals(expected, Unsafe.getMemUsed());
     }
 
-    @Test
-    public void testAddListExpand() {
-        DirectLongList list = new DirectLongList(128);
-        DirectLongList list2 = new DirectLongList(128);
-        final int N = 100;
-        for (int i = 0; i < N; ++i) {
-            list.add(i);
-            list2.add(N + i);
-        }
-        list.add(list2);
-        Assert.assertEquals(200, list.getCapacity()); //128 + 100 - 28
-        Assert.assertEquals(2*N, list.size());
-        for (long i = 0; i < list.size(); ++i) {
-            Assert.assertEquals(i, list.get(i));
-        }
-        list.close();
-        list2.close();
-    }
     @Test
     public void testSearch() {
         DirectLongList list = new DirectLongList(256);
@@ -122,8 +143,117 @@ public class DirectLongListTest {
         for (int i = 0; i < N; ++i) {
             list.add(i);
         }
-        Assert.assertEquals(N/2, list.scanSearch(N/2, 0, list.size()));
-        Assert.assertEquals(N/2, list.binarySearch(N/2));
+        Assert.assertEquals(N / 2, list.scanSearch(N / 2, 0, list.size()));
+        Assert.assertEquals(N / 2, list.binarySearch(N / 2, BinarySearch.SCAN_UP));
         list.close();
+    }
+
+    @Test
+    public void testToString() {
+        DirectLongList list = new DirectLongList(1001);
+        final int N = 1000;
+        for (int i = 0; i < N; ++i) {
+            list.add(i);
+        }
+        String str1 = list.toString();
+        list.add(1001);
+        String str2 = list.toString();
+
+        Assert.assertEquals(str1.substring(0, str1.length() - 1) + ", .. }", str2);
+    }
+
+    private void testBinarySearchFuzz0(int N, int skipRate, int dupeRate, int dupeCountBound) {
+        final Rnd rnd = new Rnd();
+        try (final DirectLongList list = new DirectLongList(N)) {
+            final IntList skipList = new IntList();
+            for (int i = 0; i < N; i++) {
+                // not skipping ?
+                if (skipRate == 0 || rnd.nextInt(skipRate) != 0) {
+                    list.add(i);
+                    skipList.add(1);
+
+                    boolean dupe = dupeRate > 0 && rnd.nextInt(dupeRate) == 0;
+                    // duplicating value ?
+                    if (dupe) {
+                        int dupeCount = Math.abs(rnd.nextInt(dupeCountBound));
+                        while (dupeCount-- > 0) {
+                            list.add(i);
+                        }
+                    }
+                } else {
+                    skipList.add(0);
+                }
+            }
+
+            // test scan UP
+            final long M = list.size();
+
+            for (int i = 0; i < N; i++) {
+                long pos = list.binarySearch(i, BinarySearch.SCAN_UP);
+                int skip = skipList.getQuick(i);
+
+                // the value was skipped
+                if (skip == 0) {
+                    Assert.assertTrue(pos < 0);
+
+                    pos = -pos - 1;
+                    if (pos > 0) {
+                        Assert.assertTrue(list.get(pos - 1) < i);
+                    }
+
+                    if (pos < M) {
+                        Assert.assertTrue(list.get(pos) > i);
+                    }
+                } else {
+                    Assert.assertTrue(pos > -1);
+                    if (pos > 0) {
+                        Assert.assertTrue(list.get(pos - 1) < i);
+                    }
+                    Assert.assertEquals(list.get(pos), i);
+                }
+            }
+
+            for (int i = 0; i < N; i++) {
+                long pos = list.binarySearch(i, BinarySearch.SCAN_DOWN);
+                int skip = skipList.getQuick(i);
+
+                // the value was skipped
+                if (skip == 0) {
+                    Assert.assertTrue(pos < 0);
+
+                    pos = -pos - 1;
+
+                    if (pos > 0) {
+                        Assert.assertTrue(list.get(pos - 1) < i);
+                    }
+
+                    if (pos < M) {
+                        Assert.assertTrue(list.get(pos) > i);
+                    }
+                } else {
+                    Assert.assertTrue(pos > -1);
+                    Assert.assertEquals(list.get(pos), i);
+                    if (pos + 1 < M) {
+                        Assert.assertTrue(list.get(pos + 1) > i);
+                    }
+                }
+            }
+
+            // search max value (greater than anything in the list)
+
+            long pos = list.binarySearch(N, BinarySearch.SCAN_UP);
+            Assert.assertTrue(pos < 0);
+
+            pos = -pos - 1;
+            Assert.assertEquals(pos, list.size());
+
+            // search min value (less than anything in the list)
+
+            pos = list.binarySearch(-1, BinarySearch.SCAN_UP);
+            Assert.assertTrue(pos < 0);
+
+            pos = -pos - 1;
+            Assert.assertEquals(0, pos);
+        }
     }
 }

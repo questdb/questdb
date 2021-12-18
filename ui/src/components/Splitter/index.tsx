@@ -91,6 +91,7 @@ const HorizontalWrapper = styled.div`
   border-top: none;
   border-bottom: none;
   cursor: ew-resize;
+  flex-shrink: 0;
 `
 
 const VerticalWrapper = styled.div`
@@ -100,6 +101,7 @@ const VerticalWrapper = styled.div`
   border-left: none;
   border-right: none;
   cursor: row-resize;
+  flex-shrink: 0;
 `
 
 const ghostStyles = css`
@@ -169,6 +171,8 @@ export const Splitter = ({
         (min == null && max == null)
       ) {
         setGhostPosition(position)
+      } else if (min != null && position <= min && firstChild.current) {
+        setGhostPosition(firstChild.current.getBoundingClientRect().left)
       }
     },
     [direction, max, min],
@@ -226,12 +230,14 @@ export const Splitter = ({
         firstChild.current.getBoundingClientRect()[measure] +
         (ghostPosition - originalPosition)
 
+      const basis = size < 0 ? 0 : size
+
       setOriginalPosition(0)
       setGhostPosition(0)
-      setBasis(size)
+      setBasis(basis)
 
       if (onChange) {
-        onChange(size)
+        onChange(basis)
       }
     }
   }, [direction, ghostPosition, onChange, originalPosition, pressed])
@@ -244,7 +250,7 @@ export const Splitter = ({
     display: "flex",
     flexGrow: 0,
     flexBasis: basis ?? fallback,
-    flexShrink: 1,
+    flexShrink: 0,
   }
 
   if (children.length === 1) {

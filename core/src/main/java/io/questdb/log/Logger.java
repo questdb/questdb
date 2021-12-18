@@ -27,6 +27,7 @@ package io.questdb.log;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.network.Net;
+import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Sinkable;
@@ -64,6 +65,8 @@ class Logger implements LogRecord, Log {
     private final Sequence infoSeq;
     private final RingQueue<LogRecordSink> errorRing;
     private final Sequence errorSeq;
+    private final RingQueue<LogRecordSink> criticalRing;
+    private final Sequence criticalSeq;
     private final RingQueue<LogRecordSink> advisoryRing;
     private final Sequence advisorySeq;
     private final ThreadLocalCursor tl = new ThreadLocalCursor();
@@ -78,6 +81,8 @@ class Logger implements LogRecord, Log {
             Sequence infoSeq,
             RingQueue<LogRecordSink> errorRing,
             Sequence errorSeq,
+            RingQueue<LogRecordSink> criticalRing,
+            Sequence criticalSeq,
             RingQueue<LogRecordSink> advisoryRing,
             Sequence advisorySeq
     ) {
@@ -89,6 +94,8 @@ class Logger implements LogRecord, Log {
         this.infoSeq = infoSeq;
         this.errorRing = errorRing;
         this.errorSeq = errorSeq;
+        this.criticalRing = criticalRing;
+        this.criticalSeq = criticalSeq;
         this.advisoryRing = advisoryRing;
         this.advisorySeq = advisorySeq;
     }
@@ -113,6 +120,12 @@ class Logger implements LogRecord, Log {
     @Override
     public LogRecord $(CharSequence sequence, int lo, int hi) {
         sink().put(sequence, lo, hi);
+        return this;
+    }
+
+    @Override
+    public LogRecord $utf8(long lo, long hi) {
+        Chars.utf8Decode(lo, hi, this);
         return this;
     }
 
@@ -222,43 +235,59 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord put(char c) {
+        sink().put(c);
+        return this;
+    }
+
+    @Override
     public LogRecord debug() {
-        return addTimestamp(xdebug(), " D ");
+        return addTimestamp(xdebug(), LogLevel.DEBUG_HEADER);
     }
 
     @Override
     public LogRecord error() {
-        return addTimestamp(xerror(), " E ");
+        return addTimestamp(xerror(), LogLevel.ERROR_HEADER);
+    }
+
+    @Override
+    public LogRecord critical() {
+        return addTimestamp(xcritical(), LogLevel.CRITICAL_HEADER);
     }
 
     @Override
     public LogRecord info() {
-        return addTimestamp(xinfo(), " I ");
+        return addTimestamp(xinfo(), LogLevel.INFO_HEADER);
     }
 
     @Override
     public LogRecord infoW() {
-        return addTimestamp(xInfoW(), " I ");
+        return addTimestamp(xInfoW(), LogLevel.INFO_HEADER);
     }
 
     @Override
     public LogRecord errorW() {
-        return addTimestamp(xErrorW(), " E ");
+        return addTimestamp(xErrorW(), LogLevel.ERROR_HEADER);
+    }
+
+    @Override
+    public LogRecord criticalW() {
+        return addTimestamp(xCriticalW(), LogLevel.CRITICAL_HEADER);
     }
 
     @Override
     public LogRecord debugW() {
-        return addTimestamp(xDebugW(), " D ");
+        return addTimestamp(xDebugW(), LogLevel.DEBUG_HEADER);
     }
 
     @Override
     public LogRecord advisoryW() {
-        return addTimestamp(xAdvisoryW(), " A ");
+        return addTimestamp(xAdvisoryW(), LogLevel.ADVISORY_HEADER);
     }
 
     @Override
     public LogRecord advisory() {
-        return addTimestamp(xadvisory(), " A ");
+        return addTimestamp(xadvisory(), LogLevel.ADVISORY_HEADER);
     }
 
     @Override
@@ -267,11 +296,15 @@ class Logger implements LogRecord, Log {
     }
 
     public LogRecord xerror() {
-        return next(errorSeq, errorRing, LogLevel.LOG_LEVEL_ERROR);
+        return next(errorSeq, errorRing, LogLevel.ERROR);
+    }
+
+    public LogRecord xcritical() {
+        return next(criticalSeq, criticalRing, LogLevel.CRITICAL);
     }
 
     public LogRecord xinfo() {
-        return next(infoSeq, infoRing, LogLevel.LOG_LEVEL_INFO);
+        return next(infoSeq, infoRing, LogLevel.INFO);
     }
 
     /**
@@ -281,28 +314,32 @@ class Logger implements LogRecord, Log {
      * @return log record API
      */
     public LogRecord xInfoW() {
-        return nextWaiting(infoSeq, infoRing, LogLevel.LOG_LEVEL_INFO);
+        return nextWaiting(infoSeq, infoRing, LogLevel.INFO);
     }
 
     public LogRecord xdebug() {
-        return next(debugSeq, debugRing, LogLevel.LOG_LEVEL_DEBUG);
+        return next(debugSeq, debugRing, LogLevel.DEBUG);
     }
 
     @Override
     public LogRecord xadvisory() {
-        return next(advisorySeq, advisoryRing, LogLevel.LOG_LEVEL_ADVISORY);
+        return next(advisorySeq, advisoryRing, LogLevel.ADVISORY);
     }
 
     public LogRecord xAdvisoryW() {
-        return nextWaiting(infoSeq, infoRing, LogLevel.LOG_LEVEL_ADVISORY);
+        return nextWaiting(infoSeq, infoRing, LogLevel.ADVISORY);
     }
 
     public LogRecord xDebugW() {
-        return nextWaiting(infoSeq, infoRing, LogLevel.LOG_LEVEL_DEBUG);
+        return nextWaiting(infoSeq, infoRing, LogLevel.DEBUG);
     }
 
     public LogRecord xErrorW() {
-        return nextWaiting(infoSeq, infoRing, LogLevel.LOG_LEVEL_ERROR);
+        return nextWaiting(infoSeq, infoRing, LogLevel.ERROR);
+    }
+
+    public LogRecord xCriticalW() {
+        return nextWaiting(infoSeq, infoRing, LogLevel.CRITICAL);
     }
 
     private LogRecord addTimestamp(LogRecord rec, String level) {
@@ -337,7 +374,7 @@ class Logger implements LogRecord, Log {
         h.ring = ring;
         LogRecordSink r = ring.get(cursor);
         r.setLevel(level);
-        r.clear(0);
+        r.clear();
         return this;
     }
 

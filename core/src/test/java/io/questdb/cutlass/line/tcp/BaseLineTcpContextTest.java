@@ -39,7 +39,6 @@ import org.junit.Assert;
 import org.junit.Before;
 
 import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
@@ -49,13 +48,13 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     static final Log LOG = LogFactory.getLog(BaseLineTcpContextTest.class);
     static final int FD = 1_000_000;
     protected final AtomicInteger netMsgBufferSize = new AtomicInteger();
-    protected final LineTcpMeasurementScheduler.NetworkIOJob NO_NETWORK_IO_JOB = new LineTcpMeasurementScheduler.NetworkIOJob() {
-        private final CharSequenceObjHashMap<LineTcpMeasurementScheduler.TableUpdateDetails> localTableUpdateDetailsByTableName = new CharSequenceObjHashMap<>();
+    protected final NetworkIOJob NO_NETWORK_IO_JOB = new NetworkIOJob() {
+        private final CharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new CharSequenceObjHashMap<>();
         private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
 
         @Override
-        public void addTableUpdateDetails(LineTcpMeasurementScheduler.TableUpdateDetails tableUpdateDetails) {
-            localTableUpdateDetailsByTableName.put(tableUpdateDetails.tableName, tableUpdateDetails);
+        public void addTableUpdateDetails(String tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
+            localTableUpdateDetailsByTableName.put(tableNameUtf8, tableUpdateDetails);
         }
 
         @Override
@@ -63,7 +62,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
 
         @Override
-        public LineTcpMeasurementScheduler.TableUpdateDetails getTableUpdateDetails(CharSequence tableName) {
+        public TableUpdateDetails getLocalTableDetails(CharSequence tableName) {
             return localTableUpdateDetailsByTableName.get(tableName);
         }
 
@@ -263,11 +262,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            boolean tryButCouldNotCommit(NetworkIOJob netIoJob, LineTcpParser protoParser, FloatingDirectCharSink charSink) {
+            boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser, FloatingDirectCharSink floatingDirectCharSink) {
                 if (null != onCommitNewEvent) {
                     onCommitNewEvent.run();
                 }
-                return super.tryButCouldNotCommit(netIoJob, protoParser, charSink);
+                return super.scheduleEvent(netIoJob, parser, floatingDirectCharSink);
             }
         };
         if (authDb == null) {
@@ -339,7 +338,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 return -1;
             }
 
-            byte[] bytes = recvBuffer.getBytes(StandardCharsets.UTF_8);
+            byte[] bytes = recvBuffer.getBytes(Files.UTF_8);
             int n = 0;
             while (n < bufferLen && n < bytes.length) {
                 Unsafe.getUnsafe().putByte(buffer++, bytes[n++]);

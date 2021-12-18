@@ -46,101 +46,106 @@ public class PerformanceTest extends AbstractCairoTest {
     private long timeoutResult;
 
     @Test
-    public void testCairoPartitionedReaderReloadSpeed() throws InterruptedException {
-        int operations = 1_00_000 * 100;
-        double speed = measureReloadSpeed(1_00_000, operations, 100000);
+    public void testCairoPartitionedReaderReloadSpeed() throws Exception {
+        assertMemoryLeak(() -> {
+            int operations = 1_00_000 * 100;
+            double speed = measureReloadSpeed(1_00_000, operations, 100000);
 
-        // Add 10x slowdown for slow / busy build server.
-        Assert.assertTrue("Total reload should be around 300 ms", TimeUnit.NANOSECONDS.toMillis((long) (operations * speed)) < 3000);
+            // Add 10x slowdown for slow / busy build server.
+            Assert.assertTrue("Total reload should be around 300 ms", TimeUnit.NANOSECONDS.toMillis((long) (operations * speed)) < 3000);
+        });
     }
 
     @Test
-    public void testCairoPerformance() throws NumericException {
+    public void testCairoPerformance() throws Exception {
+        assertMemoryLeak(() -> {
+            int count = 10;
+            long t = 0;
+            long result;
 
-        int count = 10;
-        long t = 0;
-        long result;
-
-        String[] symbols = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
-        try (TableModel model = new TableModel(configuration, "quote", PartitionBy.NONE)
-                .timestamp()
-                .col("sym", ColumnType.SYMBOL)
-                .col("bid", ColumnType.DOUBLE)
-                .col("ask", ColumnType.DOUBLE)
-                .col("bidSize", ColumnType.INT)
-                .col("askSize", ColumnType.INT)
-                .col("mode", ColumnType.SYMBOL).symbolCapacity(2)
-                .col("ex", ColumnType.SYMBOL).symbolCapacity(2)) {
-            CairoTestUtils.create(model);
-        }
-
-        try (TableWriter w = new TableWriter(configuration, "quote")) {
-            for (int i = -count; i < count; i++) {
-                if (i == 0) {
-                    t = System.nanoTime();
-                }
-                w.truncate();
-                long timestamp = DateFormatUtils.parseUTCDate("2013-10-05T10:00:00.000Z");
-                Rnd r = new Rnd();
-                int n = symbols.length - 1;
-                for (int i1 = 0; i1 < TEST_DATA_SIZE; i1++) {
-                    TableWriter.Row row = w.newRow(timestamp);
-                    row.putSym(1, symbols[Math.abs(r.nextInt() % n)]);
-                    row.putDouble(2, Math.abs(r.nextDouble()));
-                    row.putDouble(3, Math.abs(r.nextDouble()));
-                    row.putInt(4, Math.abs(r.nextInt()));
-                    row.putInt(5, Math.abs(r.nextInt()));
-                    row.putSym(6, "LXE");
-                    row.putSym(7, "Fast trading");
-                    row.append();
-                    timestamp += 1000;
-                }
-                w.commit();
+            String[] symbols = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
+            try (TableModel model = new TableModel(configuration, "quote", PartitionBy.NONE)
+                    .timestamp()
+                    .col("sym", ColumnType.SYMBOL)
+                    .col("bid", ColumnType.DOUBLE)
+                    .col("ask", ColumnType.DOUBLE)
+                    .col("bidSize", ColumnType.INT)
+                    .col("askSize", ColumnType.INT)
+                    .col("mode", ColumnType.SYMBOL).symbolCapacity(2)
+                    .col("ex", ColumnType.SYMBOL).symbolCapacity(2)) {
+                CairoTestUtils.create(model);
             }
-            result = System.nanoTime() - t;
-        }
-        long appendDuration = result / count;
 
-        try (TableReader reader = new TableReader(configuration, "quote")) {
-            for (int i = -count; i < count; i++) {
-                if (i == 0) {
-                    t = System.nanoTime();
+            try (TableWriter w = new TableWriter(configuration, "quote")) {
+                for (int i = -count; i < count; i++) {
+                    if (i == 0) {
+                        t = System.nanoTime();
+                    }
+                    w.truncate();
+                    long timestamp = DateFormatUtils.parseUTCDate("2013-10-05T10:00:00.000Z");
+                    Rnd r = new Rnd();
+                    int n = symbols.length - 1;
+                    for (int i1 = 0; i1 < TEST_DATA_SIZE; i1++) {
+                        TableWriter.Row row = w.newRow(timestamp);
+                        row.putSym(1, symbols[Math.abs(r.nextInt() % n)]);
+                        row.putDouble(2, Math.abs(r.nextDouble()));
+                        row.putDouble(3, Math.abs(r.nextDouble()));
+                        row.putInt(4, Math.abs(r.nextInt()));
+                        row.putInt(5, Math.abs(r.nextInt()));
+                        row.putSym(6, "LXE");
+                        row.putSym(7, "Fast trading");
+                        row.append();
+                        timestamp += 1000;
+                    }
+                    w.commit();
                 }
-
-                RecordCursor cursor = reader.getCursor();
-                Record record = cursor.getRecord();
-                while (cursor.hasNext()) {
-                    record.getDate(0);
-                    record.getSym(1);
-                    record.getDouble(2);
-                    record.getDouble(3);
-                    record.getInt(4);
-                    record.getInt(5);
-                    record.getSym(6);
-                    record.getSym(7);
-                }
+                result = System.nanoTime() - t;
             }
-            result = (System.nanoTime() - t) / count;
-        }
+            long appendDuration = result / count;
 
-        LOG.info().$("Cairo append (1M): ").$(TimeUnit.NANOSECONDS.toMillis(appendDuration)).$("ms").$();
-        LOG.info().$("Cairo read (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result)).$("ms").$();
+            try (TableReader reader = new TableReader(configuration, "quote")) {
+                for (int i = -count; i < count; i++) {
+                    if (i == 0) {
+                        t = System.nanoTime();
+                    }
+
+                    RecordCursor cursor = reader.getCursor();
+                    Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        record.getDate(0);
+                        record.getSym(1);
+                        record.getDouble(2);
+                        record.getDouble(3);
+                        record.getInt(4);
+                        record.getInt(5);
+                        record.getSym(6);
+                        record.getSym(7);
+                    }
+                }
+                result = (System.nanoTime() - t) / count;
+            }
+
+            LOG.info().$("Cairo append (1M): ").$(TimeUnit.NANOSECONDS.toMillis(appendDuration)).$("ms").$();
+            LOG.info().$("Cairo read (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result)).$("ms").$();
+        });
     }
 
     @Test
     @Ignore
-    public void testFastestReloadIteration() throws InterruptedException {
-        double min = 100000;
-        int iterations = 50;
-        double avg = 0;
-        for (int i = 0; i < iterations; i++) {
-            double ns = measureReloadSpeed(1_00_000, 1_00_000 * 100, 100000);
-            min = Math.min(min, ns);
-            avg = (avg * i + ns) / (i + 1);
-        }
+    public void testFastestReloadIteration() throws Exception {
+        assertMemoryLeak(() -> {
+            double min = 100000;
+            int iterations = 50;
+            double avg = 0;
+            for (int i = 0; i < iterations; i++) {
+                double ns = measureReloadSpeed(1_00_000, 1_00_000 * 100, 100000);
+                min = Math.min(min, ns);
+                avg = (avg * i + ns) / (i + 1);
+            }
 
-        LOG.info().$("Min reload from ").$(iterations).$(" attempts: ").$(min).$("ns. Average: ").$(avg).$("ns").$();
-        Assert.assertTrue(min < 10);
+            LOG.info().$("Min reload from ").$(iterations).$(" attempts: ").$(min).$("ns. Average: ").$(avg).$("ns").$();
+            Assert.assertTrue(min < 10);
+        });
     }
 
     private double measureReloadSpeed(int reloadTableRowCount, int reloadCount, int txCount) throws InterruptedException {

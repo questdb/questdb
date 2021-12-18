@@ -22,42 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin;
 
-import org.junit.Assert;
-import org.junit.Test;
+import io.questdb.network.NetworkFacade;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 
-public class TestDoubleReload extends AbstractCairoTest {
-    @Test
-    public void testSingleColumn() {
-        try (TableModel model = new TableModel(
-                configuration,
-                "int_test",
-                PartitionBy.NONE
-        ).col("x", ColumnType.INT)) {
-            CairoTestUtils.create(model);
-        }
+public interface SqlExecutionCircuitBreakerConfiguration {
+    int getBufferSize();
 
+    int getCircuitBreakerThrottle();
 
-        try (
-                TableReader reader = new TableReader(configuration, "int_test");
-                TableWriter w = new TableWriter(configuration, "int_test")
-        ) {
-            reader.reload();
+    NetworkFacade getNetworkFacade();
 
-            TableWriter.Row r = w.newRow();
-            r.putInt(0, 10);
-            r.append();
-            w.commit();
-            reader.reload();
+    boolean isEnabled();
 
-            r = w.newRow();
-            r.putInt(0, 10);
-            r.append();
-            w.commit();
+    MicrosecondClock getClock();
 
-            reader.reload();
-            Assert.assertEquals(2, reader.size());
-        }
-    }
+    // maximum SQL execution time in micros
+    long getMaxTime();
 }

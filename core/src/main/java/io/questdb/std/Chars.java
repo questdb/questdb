@@ -26,8 +26,8 @@ package io.questdb.std;
 
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -53,7 +53,7 @@ public final class Chars {
             } else {
                 pad++;
             }
-            if (i + 2 <len) {
+            if (i + 2 < len) {
                 b |= (sequence.byteAt(i + 2) & 0xFF);
             } else {
                 pad++;
@@ -402,11 +402,12 @@ public final class Chars {
     }
 
     public static boolean isQuoted(CharSequence s) {
-        if (s == null || s.length() == 0) {
+        if (s == null || s.length() < 2) {
             return false;
         }
 
-        return isQuote(s.charAt(0));
+        char open = s.charAt(0);
+        return isQuote(open) && open == s.charAt(s.length() - 1);
     }
 
     public static int lastIndexOf(CharSequence s, char c) {
@@ -483,17 +484,6 @@ public final class Chars {
 
     public static boolean nonEmpty(final CharSequence value) {
         return value != null && value.length() > 0;
-    }
-
-    public static boolean notDots(CharSequence value) {
-        final int len = value.length();
-        if (len > 2) {
-            return true;
-        }
-        if (value.charAt(0) != '.') {
-            return true;
-        }
-        return len == 2 && value.charAt(1) != '.';
     }
 
     public static CharSequence repeat(String s, int times) {
@@ -682,7 +672,7 @@ public final class Chars {
         }
     }
 
-    public static boolean utf8Decode(long lo, long hi, CharSink sink) {
+    public static boolean utf8Decode(long lo, long hi, CharSinkBase sink) {
         long p = lo;
         while (p < hi) {
             byte b = Unsafe.getUnsafe().getByte(p);
@@ -701,7 +691,7 @@ public final class Chars {
         return true;
     }
 
-    public static int utf8DecodeMultiByte(long lo, long hi, int b, CharSink sink) {
+    public static int utf8DecodeMultiByte(long lo, long hi, int b, CharSinkBase sink) {
         if (b >> 5 == -2 && (b & 30) != 0) {
             return utf8Decode2Bytes(lo, hi, b, sink);
         }
@@ -763,7 +753,7 @@ public final class Chars {
         return -1;
     }
 
-    private static int utf8Decode4Bytes(long lo, int b, long hi, CharSink sink) {
+    private static int utf8Decode4Bytes(long lo, int b, long hi, CharSinkBase sink) {
         if (b >> 3 != -2 || hi - lo < 4) {
             return utf8error();
         }
@@ -775,7 +765,7 @@ public final class Chars {
         return utf8Decode4Bytes0(b, sink, b2, b3, b4);
     }
 
-    private static int utf8Decode4Bytes0(int b, CharSink sink, byte b2, byte b3, byte b4) {
+    private static int utf8Decode4Bytes0(int b, CharSinkBase sink, byte b2, byte b3, byte b4) {
         if (isMalformed4(b2, b3, b4)) {
             return utf8error();
         }
@@ -812,7 +802,7 @@ public final class Chars {
         return utf8Decode4Bytes0(b, sink, b2, b3, b4);
     }
 
-    private static int utf8Decode3Bytes(long lo, long hi, int b1, CharSink sink) {
+    private static int utf8Decode3Bytes(long lo, long hi, int b1, CharSinkBase sink) {
         if (hi - lo < 3) {
             return utf8error();
         }
@@ -837,7 +827,7 @@ public final class Chars {
         return utf8Decode3Byte0(b1, sink, b2, b3);
     }
 
-    private static int utf8Decode3Byte0(int b1, CharSink sink, byte b2, byte b3) {
+    private static int utf8Decode3Byte0(int b1, CharSinkBase sink, byte b2, byte b3) {
         if (isMalformed3(b1, b2, b3)) {
             return utf8error();
         }
@@ -851,7 +841,7 @@ public final class Chars {
         return 3;
     }
 
-    private static int utf8Decode2Bytes(long lo, long hi, int b1, CharSink sink) {
+    private static int utf8Decode2Bytes(long lo, long hi, int b1, CharSinkBase sink) {
         if (hi - lo < 2) {
             return utf8error();
         }

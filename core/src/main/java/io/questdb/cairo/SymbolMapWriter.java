@@ -32,7 +32,6 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.SingleCharCharSequence;
 import org.jetbrains.annotations.NotNull;
@@ -49,7 +48,6 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
     private final MemoryMARW charMem;
     private final MemoryMARW offsetMem;
     private final CharSequenceIntHashMap cache;
-    private final DirectCharSequence tmpSymbol;
     private final int maxHash;
     private final SymbolValueCountCollector valueCountCollector;
     private boolean nullValue = false;
@@ -86,7 +84,9 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
             // open "offset" memory and make sure we start appending from where
             // we left off. Where we left off is stored externally to symbol map
             this.offsetMem = Vm.getWholeMARWInstance(ff, path, mapPageSize, MemoryTag.MMAP_INDEX_WRITER);
+            // formula for calculating symbol capacity needs to be in agreement with symbol reader
             final int symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
+            assert symbolCapacity > 0;
             final boolean useCache = offsetMem.getBool(HEADER_CACHE_ENABLED);
             this.offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
 
@@ -117,7 +117,6 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
                 this.cache = null;
             }
 
-            tmpSymbol = new DirectCharSequence();
             this.symbolIndexInTxWriter = symbolIndexInTxWriter;
             this.valueCountCollector = valueCountCollector;
             LOG.debug()
@@ -192,33 +191,6 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
             LOG.debug().$("closed [fd=").$(fd).$(']').$();
         }
         nullValue = false;
-    }
-
-    public void commitAppendedBlock(int nSymbolsAdded) {
-        long offset = charMem.getAppendOffset();
-        int symbolIndex = getSymbolCount();
-        int nSymbols = symbolIndex + nSymbolsAdded;
-        while (symbolIndex < nSymbols) {
-            long symCharsOffset = offset;
-            int symLen = charMem.getInt(offset);
-            offset += Integer.BYTES;
-            long symCharsOffsetHi = offset + symLen * 2L;
-            tmpSymbol.of(charMem.addressOf(offset), charMem.addressOf(symCharsOffsetHi));
-
-            long offsetOffset = offsetMem.getAppendOffset();
-            offsetMem.putLong(symCharsOffset);
-            int hash = Hash.boundedHash(tmpSymbol, maxHash);
-            indexWriter.add(hash, offsetOffset);
-
-            if (cache != null) {
-                cache.putAt(symbolIndex, tmpSymbol.toString(), offsetToKey(offsetOffset));
-            }
-
-            offset = symCharsOffsetHi;
-            charMem.jumpTo(offset);
-            symbolIndex++;
-        }
-        LOG.debug().$("appended a block of ").$(nSymbolsAdded).$("symbols [fd=").$(this.offsetMem.getFd()).$(']').$();
     }
 
     public int getSymbolCount() {
@@ -317,8 +289,11 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
     }
 
     void truncate() {
+        final int symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
+        offsetMem.truncate();
+        offsetMem.putInt(HEADER_CAPACITY, symbolCapacity);
         offsetMem.jumpTo(keyToOffset(0) + Long.BYTES);
-        charMem.jumpTo(0);
+        charMem.truncate();
         indexWriter.truncate();
         if (cache != null) {
             cache.clear();

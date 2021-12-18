@@ -47,8 +47,6 @@ import java.io.*;
 import java.net.*;
 import java.util.*;
 import java.util.concurrent.locks.LockSupport;
-import java.util.jar.Attributes;
-import java.util.jar.Manifest;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -59,7 +57,7 @@ public class ServerMain {
 
     public ServerMain(String[] args) throws Exception {
         //properties fetched from sources other than server.conf
-        final BuildInformation buildInformation = fetchBuildInformation();
+        final BuildInformation buildInformation = BuildInformationHolder.INSTANCE;
 
         System.err.printf(
                 "QuestDB server %s%nCopyright (C) 2014-%d, all rights reserved.%n%n",
@@ -95,37 +93,38 @@ public class ServerMain {
         }
 
         readServerConfiguration(rootDirectory, properties, log, buildInformation);
-        log.info().$("Server config : ").$(configurationFile.getAbsoluteFile()).$();
-        log.info().$("Config changes applied:").$();
-        log.info().$("  http.enabled : ").$(configuration.getHttpServerConfiguration().isEnabled()).$();
-        log.info().$("  tcp.enabled  : ").$(configuration.getLineTcpReceiverConfiguration().isEnabled()).$();
-        log.info().$("  pg.enabled   : ").$(configuration.getPGWireConfiguration().isEnabled()).$();
+        log.advisory().$("Server config : ").$(configurationFile.getAbsoluteFile()).$();
+        log.advisory().$("Config changes applied:").$();
+        log.advisory().$("  http.enabled : ").$(configuration.getHttpServerConfiguration().isEnabled()).$();
+        log.advisory().$("  tcp.enabled  : ").$(configuration.getLineTcpReceiverConfiguration().isEnabled()).$();
+        log.advisory().$("  pg.enabled   : ").$(configuration.getPGWireConfiguration().isEnabled()).$();
 
-        log.info().$("open database [id=").$(configuration.getCairoConfiguration().getDatabaseIdLo()).$('.').$(configuration.getCairoConfiguration().getDatabaseIdHi()).$(']').$();
-        log.info().$("platform [bit=").$(System.getProperty("sun.arch.data.model")).$(']').$();
+        log.advisory().$("open database [id=").$(configuration.getCairoConfiguration().getDatabaseIdLo()).$('.').$(configuration.getCairoConfiguration().getDatabaseIdHi()).$(']').$();
+        log.advisory().$("platform [bit=").$(System.getProperty("sun.arch.data.model")).$(']').$();
         switch (Os.type) {
             case Os.WINDOWS:
-                log.info().$("OS: windows-amd64").$(Vect.getSupportedInstructionSetName()).$();
+                log.advisory().$("OS/Arch: windows/amd64").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             case Os.LINUX_AMD64:
-                log.info().$("OS: linux-amd64").$(Vect.getSupportedInstructionSetName()).$();
+                log.advisory().$("OS/Arch: linux/amd64").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             case Os.OSX_AMD64:
-                log.info().$("OS: apple-amd64").$(Vect.getSupportedInstructionSetName()).$();
+                log.advisory().$("OS/Arch: apple/amd64").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             case Os.OSX_ARM64:
-                log.info().$("OS: apple-silicon").$(Vect.getSupportedInstructionSetName()).$();
+                log.advisory().$("OS/Arch: apple/apple-silicon").$();
                 break;
             case Os.LINUX_ARM64:
-                log.info().$("OS: linux-arm64").$(Vect.getSupportedInstructionSetName()).$();
+                log.advisory().$("OS/Arch: linux/arm64").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             case Os.FREEBSD:
-                log.info().$("OS: freebsd-amd64").$(Vect.getSupportedInstructionSetName()).$();
+                log.advisory().$("OS: freebsd/amd64").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             default:
-                log.error().$("Unsupported OS").$(Vect.getSupportedInstructionSetName()).$();
+                log.critical().$("Unsupported OS").$(Vect.getSupportedInstructionSetName()).$();
                 break;
         }
+        log.advisory().$("available CPUs: ").$(Runtime.getRuntime().availableProcessors()).$();
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
         final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(
@@ -136,7 +135,7 @@ public class ServerMain {
 
         LogFactory.configureFromSystemProperties(workerPool);
         final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration());
-        workerPool.assign(cairoEngine.getWriterMaintenanceJob());
+        workerPool.assign(cairoEngine.getEngineMaintenanceJob());
         instancesToClean.add(cairoEngine);
 
         if (!configuration.getCairoConfiguration().getTelemetryConfiguration().getDisableCompletely()) {
@@ -428,47 +427,6 @@ public class ServerMain {
     protected static void shutdownQuestDb(final WorkerPool workerPool, final ObjList<? extends Closeable> instancesToClean) {
         workerPool.halt();
         Misc.freeObjList(instancesToClean);
-    }
-
-    private static CharSequence getQuestDbVersion(final Attributes manifestAttributes) {
-        final CharSequence version = manifestAttributes.getValue("Implementation-Version");
-        return version != null ? version : "[DEVELOPMENT]";
-    }
-
-    private static CharSequence getJdkVersion(final Attributes manifestAttributes) {
-        final CharSequence version = manifestAttributes.getValue("Build-Jdk");
-        return version != null ? version : "Unknown Version";
-    }
-
-    private static CharSequence getCommitHash(final Attributes manifestAttributes) {
-        final CharSequence version = manifestAttributes.getValue("Build-Commit-Hash");
-        return version != null ? version : "Unknown Version";
-    }
-
-    private static BuildInformation fetchBuildInformation() throws IOException {
-        final Attributes manifestAttributes = getManifestAttributes();
-
-        return new BuildInformationHolder(
-                getQuestDbVersion(manifestAttributes),
-                getJdkVersion(manifestAttributes),
-                getCommitHash(manifestAttributes)
-        );
-    }
-
-    private static Attributes getManifestAttributes() throws IOException {
-        final Enumeration<URL> resources = ServerMain.class.getClassLoader()
-                .getResources("META-INF/MANIFEST.MF");
-        while (resources.hasMoreElements()) {
-            try (InputStream is = resources.nextElement().openStream()) {
-                final Manifest manifest = new Manifest(is);
-                final Attributes attributes = manifest.getMainAttributes();
-                if ("org.questdb".equals(attributes.getValue("Implementation-Vendor-Id"))) {
-                    return manifest.getMainAttributes();
-                }
-            }
-        }
-
-        return new Attributes();
     }
 
     protected HttpServer createHttpServer(

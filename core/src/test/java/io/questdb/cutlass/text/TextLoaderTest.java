@@ -41,7 +41,6 @@ import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
@@ -1663,6 +1662,29 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSingleRowImport() throws Exception {
+        assertNoLeak(textLoader -> {
+            String text = "value1,value2,value3\n";
+            configureLoaderDefaults(textLoader);
+            try {
+                playText0(textLoader, text, 512, ENTITY_MANIPULATOR);
+            } catch (NotEnoughLinesException e) {
+                return;
+            }
+            Assert.fail();
+        });
+    }
+
+    @Test
+    public void testSingleRowImportWithSpecifiedDelimiter() throws Exception {
+        assertNoLeak(textLoader -> {
+            String text = "value1,value2,value3\n";
+            configureLoaderDefaults(textLoader, (byte) ',');
+            playText0(textLoader, text, 512, ENTITY_MANIPULATOR);
+        });
+    }
+
+    @Test
     public void testOverrideDoubleWithFloat() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
@@ -2921,7 +2943,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     private static void playText0(TextLoader textLoader, String text, int firstBufSize, ByteManipulator manipulator) throws TextException {
-        byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
+        byte[] bytes = text.getBytes(Files.UTF_8);
         int len = bytes.length;
         long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         long smallBuf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
@@ -3200,7 +3222,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     private void playJson(TextLoader textLoader, String jsonStr) throws TextException {
-        byte[] json = jsonStr.getBytes(StandardCharsets.UTF_8);
+        byte[] json = jsonStr.getBytes(Files.UTF_8);
         textLoader.setState(TextLoader.LOAD_JSON_METADATA);
 
         int len = json.length;

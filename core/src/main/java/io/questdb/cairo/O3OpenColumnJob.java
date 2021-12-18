@@ -164,7 +164,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
     public static void openColumn(O3OpenColumnTask task, long cursor, Sequence subSeq, long tmpBuf) {
         final int openColumnMode = task.getOpenColumnMode();
-        final CharSequence pathToTable = task.getPathToTable();
+        final Path pathToTable = task.getPathToTable();
         final int columnType = task.getColumnType();
         final CharSequence columnName = task.getColumnName();
         final long srcOooLo = task.getSrcOooLo();
@@ -251,7 +251,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
     public static void openColumn(
             int openColumnMode,
-            CharSequence pathToTable,
+            Path pathToTable,
             CharSequence columnName,
             AtomicInteger columnCounter,
             AtomicInteger partCounter,
@@ -1984,7 +1984,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 final long srcDataMaxBytes = srcDataMax * Long.BYTES;
                 if (srcDataTop > prefixHi || prefixType == O3_BLOCK_O3) {
                     // extend the existing column down, we will be discarding it anyway
-                    srcDataFixSize = srcDataActualBytes + srcDataMaxBytes;
+                    srcDataFixSize = srcDataActualBytes + srcDataMaxBytes + Long.BYTES;
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
 
                     if (srcDataActualBytes > 0) {
@@ -2001,7 +2001,13 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
                         // we need to shift copy the original column so that new block points at strings "below" the
                         // nulls we created above
-                        O3Utils.shiftCopyFixedSizeColumnData(-srcDataTop * Integer.BYTES, srcDataFixAddr, 0, srcDataMax - srcDataTop + 1, srcDataFixAddr + srcDataMaxBytes);
+                        O3Utils.shiftCopyFixedSizeColumnData(
+                                -srcDataTop * Integer.BYTES,
+                                srcDataFixAddr,
+                                0,
+                                srcDataMax - srcDataTop + 1,
+                                srcDataFixAddr + srcDataMaxBytes
+                        );
 
                         // now set the "empty" bit of fixed size column with references to those
                         // null strings we just added
@@ -2017,12 +2023,23 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
                         // we need to shift copy the original column so that new block points at strings "below" the
                         // nulls we created above
-                        O3Utils.shiftCopyFixedSizeColumnData(-srcDataTop * Long.BYTES, srcDataFixAddr, 0, srcDataMax - srcDataTop + 1, srcDataFixAddr + srcDataMaxBytes);
+                        O3Utils.shiftCopyFixedSizeColumnData(
+                                -srcDataTop * Long.BYTES,
+                                srcDataFixAddr,
+                                0,
+                                srcDataMax - srcDataTop + 1,
+                                srcDataFixAddr + srcDataMaxBytes
+                        );
+
                         // now set the "empty" bit of fixed size column with references to those
                         // null strings we just added
                         Vect.setVarColumnRefs64Bit(srcDataFixAddr + srcDataActualBytes, 0, srcDataTop);
 
-                        Vect.memcpy(srcDataVarAddr + srcDataVarOffset + srcDataTop * Long.BYTES, srcDataVarAddr, srcDataVarOffset);
+                        Vect.memcpy(
+                                srcDataVarAddr + srcDataVarOffset + srcDataTop * Long.BYTES,
+                                srcDataVarAddr,
+                                srcDataVarOffset
+                        );
                     }
                     srcDataTop = 0;
                     srcDataFixOffset = srcDataActualBytes;
@@ -2036,11 +2053,11 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             srcDataTop,
                             tmpBuf
                     );
-                    srcDataFixSize = srcDataActualBytes;
+                    srcDataFixSize = srcDataActualBytes + Long.BYTES;
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                     srcDataFixOffset = 0;
 
-                    srcDataVarSize = Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataFixSize - srcDataFixOffset);
+                    srcDataVarSize = Unsafe.getUnsafe().getLong(srcDataFixAddr + srcDataFixSize - Long.BYTES);
                     srcDataVarAddr = mapRO(ff, srcVarFd, srcDataVarSize, MemoryTag.MMAP_O3);
                 }
             } else {

@@ -47,16 +47,6 @@ public class DirectLongList implements Mutable, Closeable {
         this.limit = pos + this.capacity;
     }
 
-    // base address of native memory
-    public long getAddress() {
-        return address;
-    }
-
-    // capacity in LONGs
-    public long getCapacity() {
-        return capacity / Long.BYTES;
-    }
-
     public void add(long x) {
         ensureCapacity();
         assert pos < limit;
@@ -73,31 +63,12 @@ public class DirectLongList implements Mutable, Closeable {
         this.pos += thatSize;
     }
 
-    public void sortAsUnsigned() {
-        Vect.sortULongAscInPlace(address, size());
-    }
-
-    public long binarySearch(long v) {
-        long low = 0;
-        long high = ((pos - start) >> 3) - 1;
-
-        while (low <= high) {
-
-            if (high - low < 65) {
-                return scanSearch(v, low, high);
-            }
-
-            long mid = (low + high) >>> 1;
-            long midVal = Unsafe.getUnsafe().getLong(start + (mid << 3));
-
-            if (midVal < v)
-                low = mid + 1;
-            else if (midVal > v)
-                high = mid - 1;
-            else
-                return mid;
+    public long binarySearch(long value, int scanDir) {
+        final long high = (pos - start) / 8;
+        if (high > 0) {
+            return Vect.binarySearch64Bit(start, value, 0, high - 1, scanDir);
         }
-        return -(low + 1);
+        return -1;
     }
 
     // clear without "zeroing" memory
@@ -118,8 +89,23 @@ public class DirectLongList implements Mutable, Closeable {
         }
     }
 
+    // desired capacity in LONGs (not count of bytes)
+    public void extend(long capacity) {
+        extendBytes(capacity * Long.BYTES);
+    }
+
     public long get(long p) {
         return Unsafe.getUnsafe().getLong(start + (p << 3));
+    }
+
+    // base address of native memory
+    public long getAddress() {
+        return address;
+    }
+
+    // capacity in LONGs
+    public long getCapacity() {
+        return capacity / Long.BYTES;
     }
 
     public long scanSearch(long v, long low, long high) {
@@ -149,15 +135,23 @@ public class DirectLongList implements Mutable, Closeable {
         return (int) ((pos - start) / Long.BYTES);
     }
 
+    public void sortAsUnsigned() {
+        Vect.sortULongAscInPlace(address, size());
+    }
+
     @Override
     public String toString() {
         CharSink sb = Misc.getThreadLocalBuilder();
         sb.put('{');
-        for (int i = 0; i < size(); i++) {
+        final int maxElementsToPrint = 1000; // Do not try to print too much, it can hang IntelliJ debugger.
+        for (int i = 0, n = (int) Math.min(maxElementsToPrint, size()); i < n; i++) {
             if (i > 0) {
                 sb.put(',').put(' ');
             }
             sb.put(get(i));
+        }
+        if (size() > maxElementsToPrint) {
+            sb.put(", .. ");
         }
         sb.put('}');
         return sb.toString();
@@ -172,11 +166,6 @@ public class DirectLongList implements Mutable, Closeable {
             return;
         }
         extendBytes(this.capacity * 2);
-    }
-
-    // desired capacity in LONGs (not count of bytes)
-    public void extend(long capacity) {
-        extendBytes(capacity * Long.BYTES);
     }
 
     // desired capacity in bytes (not count of LONG values)

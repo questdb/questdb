@@ -31,6 +31,8 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -43,7 +45,8 @@ public class SecurityTest extends AbstractGriffinTest {
     private static SqlCompiler memoryRestrictedCompiler;
     private static CairoEngine memoryRestrictedEngine;
     private static final AtomicInteger nCheckInterruptedCalls = new AtomicInteger();
-    private static int maxNCheckInterruptedCalls = Integer.MAX_VALUE;
+    private static long circuitBreakerCallLimit = Long.MAX_VALUE;
+    private static long circuitBreakerTimeoutDeadline = Long.MAX_VALUE;
 
     @BeforeClass
     public static void setUpReadOnlyExecutionContext() {
@@ -89,13 +92,23 @@ public class SecurityTest extends AbstractGriffinTest {
             }
         };
         memoryRestrictedEngine = new CairoEngine(readOnlyConfiguration);
-        SqlExecutionInterruptor dummyInterruptor = () -> {
-            int nCalls = nCheckInterruptedCalls.incrementAndGet();
-            int max = maxNCheckInterruptedCalls;
-            if (nCalls > max) {
-                throw CairoException.instance(0).put("Interrupting SQL processing, max calls is ").put(max);
+        SqlExecutionCircuitBreaker dummyCircuitBreaker = new SqlExecutionCircuitBreaker() {
+            private  long deadline;
+            @Override
+            public void test() {
+                int nCalls = nCheckInterruptedCalls.incrementAndGet();
+                long max = circuitBreakerCallLimit;
+                if (nCalls > max || MicrosecondClockImpl.INSTANCE.getTicks() > deadline) {
+                    throw CairoException.instance(0).put("Interrupting SQL processing, max calls is ").put(max);
+                }
+            }
+
+            @Override
+            public void powerUp() {
+                deadline = circuitBreakerTimeoutDeadline;
             }
         };
+
         readOnlyExecutionContext = new SqlExecutionContextImpl(
                 memoryRestrictedEngine, 1
         )
@@ -105,19 +118,19 @@ public class SecurityTest extends AbstractGriffinTest {
                         bindVariableService,
                         null,
                         -1,
-                        dummyInterruptor);
+                        dummyCircuitBreaker);
         memoryRestrictedCompiler = new SqlCompiler(memoryRestrictedEngine);
     }
 
-    private static void setMaxInterruptorChecks(int max) {
+    private static void setMaxCircuitBreakerChecks(long max) {
         nCheckInterruptedCalls.set(0);
-        maxNCheckInterruptedCalls = max;
+        circuitBreakerCallLimit = max;
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                maxNCheckInterruptedCalls = Integer.MAX_VALUE;
+                circuitBreakerCallLimit = Integer.MAX_VALUE;
                 nCheckInterruptedCalls.set(0);
                 code.run();
                 engine.releaseInactive();
@@ -164,7 +177,7 @@ public class SecurityTest extends AbstractGriffinTest {
             assertQuery("cust_id\tccy\tbalance\n1\tEUR\t140.6\n", "select * from balances", null, true, true);
 
             try {
-                compiler.compile("alter table balances add column newcol int", readOnlyExecutionContext);
+                compile("alter table balances add column newcol int", readOnlyExecutionContext);
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("permission denied"));
@@ -219,7 +232,7 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInterruptorWithNonKeyedAgg() throws Exception {
+    public void testCircuitBreakerWithNonKeyedAgg() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
@@ -239,7 +252,7 @@ public class SecurityTest extends AbstractGriffinTest {
             );
             Assert.assertTrue(nCheckInterruptedCalls.get() > 0);
             try {
-                setMaxInterruptorChecks(2);
+                setMaxCircuitBreakerChecks(2);
                 assertQuery(
                         memoryRestrictedCompiler,
                         "sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n",
@@ -593,7 +606,7 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInterruptorWithUnion() throws Exception {
+    public void testCircuitBreakerWithUnion() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
@@ -614,7 +627,7 @@ public class SecurityTest extends AbstractGriffinTest {
                     false, readOnlyExecutionContext);
             Assert.assertTrue(nCheckInterruptedCalls.get() > 0);
             try {
-                setMaxInterruptorChecks(2);
+                setMaxCircuitBreakerChecks(2);
                 assertQuery(
                         memoryRestrictedCompiler,
                         "sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n",
@@ -624,6 +637,29 @@ public class SecurityTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("Interrupting SQL processing, max calls is 2"));
+            }
+        });
+    }
+
+    @Test
+    public void testCircuitBreakerTimeout() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.getRandom().reset();
+            compiler.compile("create table tab as (select" +
+                    " rnd_double(2) d" +
+                    " from long_sequence(10000000))", sqlExecutionContext);
+            try {
+                setMaxCircuitBreakerChecks(Long.MAX_VALUE);
+                circuitBreakerTimeoutDeadline = MicrosecondClockImpl.INSTANCE.getTicks() + Timestamps.SECOND_MICROS;
+                TestUtils.printSql(
+                        compiler,
+                        readOnlyExecutionContext,
+                        "tab order by d",
+                        sink
+                );
+                Assert.fail();
+            } catch (Exception ex) {
+                Assert.assertTrue(ex.toString().contains("Interrupting SQL processing"));
             }
         });
     }

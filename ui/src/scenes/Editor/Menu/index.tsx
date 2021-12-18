@@ -32,14 +32,17 @@ import { Close as _CloseIcon } from "@styled-icons/remix-line/Close"
 import { Menu as _MenuIcon } from "@styled-icons/remix-fill/Menu"
 import { Play } from "@styled-icons/remix-line/Play"
 import { Stop } from "@styled-icons/remix-line/Stop"
+import { Database2 } from "@styled-icons/remix-line/Database2"
 
 import {
   ErrorButton,
   Input,
   PaneMenu,
+  PopperHover,
   PopperToggle,
   SecondaryButton,
   SuccessButton,
+  Tooltip,
   TransitionDuration,
   TransparentButton,
   useKeyPress,
@@ -49,6 +52,8 @@ import { actions, selectors } from "store"
 import { color } from "utils"
 
 import QueryPicker from "../QueryPicker"
+import { useLocalStorage } from "../../../providers/LocalStorageProvider"
+import { StoreKey } from "../../../utils/localStorage/types"
 
 const Wrapper = styled(PaneMenu)<{ _display: string }>`
   z-index: 15;
@@ -77,6 +82,10 @@ const QueryPickerButton = styled(SecondaryButton)`
 
 const MenuIcon = styled(_MenuIcon)`
   color: ${color("draculaForeground")};
+`
+
+const ShowSchemaButton = styled(SecondaryButton)`
+  margin-right: 1rem;
 `
 
 const CloseIcon = styled(_CloseIcon)`
@@ -113,6 +122,7 @@ const Menu = () => {
   const running = useSelector(selectors.query.getRunning)
   const opened = useSelector(selectors.console.getSideMenuOpened)
   const { sm } = useScreenSize()
+  const { resultsSplitterBasis, updateSettings } = useLocalStorage()
 
   const handleClick = useCallback(() => {
     dispatch(actions.query.toggleRunning())
@@ -126,6 +136,9 @@ const Menu = () => {
   const handleSideMenuButtonClick = useCallback(() => {
     dispatch(actions.console.toggleSideMenu())
   }, [dispatch])
+  const handleShowSchemaClick = useCallback(() => {
+    updateSettings(StoreKey.RESULTS_SPLITTER_BASIS, 300)
+  }, [])
 
   useEffect(() => {
     setPopperActive(false)
@@ -157,6 +170,20 @@ const Menu = () => {
 
   return (
     <Wrapper _display={sm ? "none" : "inline"}>
+      {resultsSplitterBasis === 0 && (
+        <PopperHover
+          delay={350}
+          placement="bottom"
+          trigger={
+            <ShowSchemaButton onClick={handleShowSchemaClick}>
+              <Database2 size="18px" />
+            </ShowSchemaButton>
+          }
+        >
+          <Tooltip>Show tables</Tooltip>
+        </PopperHover>
+      )}
+
       {running.value && (
         <ErrorButton onClick={handleClick}>
           <Stop size="18px" />

@@ -29,6 +29,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
@@ -132,7 +133,7 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
         public void of(TableReader reader, int columnIndex) {
             this.reader = reader;
             this.symbolMapReader = reader.getSymbolMapReader(columnIndex);
-            this.numberOfSymbols = symbolMapReader.size() + (symbolMapReader.containsNullValue() ? 1 : 0);
+            this.numberOfSymbols = symbolMapReader.getSymbolCount() + (symbolMapReader.containsNullValue() ? 1 : 0);
             this.recordA.reset();
         }
 

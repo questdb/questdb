@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cutlass.pgwire.PGOids;
@@ -33,8 +34,8 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.*;
-import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_SIZE_MAP;
 
@@ -106,7 +107,6 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
         private final Path path;
         private final FilesFacade ff;
         private final DiskReadingRecord diskReadingRecord = new DiskReadingRecord();
-        private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
         private final int plimit;
         private final MemoryMR metaMem;
         private long findFileStruct = 0;
@@ -171,14 +171,12 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
             do {
                 if (readNextFileFromDisk) {
                     foundMetadataFile = false;
-                    final long pname = ff.findName(findFileStruct);
+                    final long pUtf8NameZ = ff.findName(findFileStruct);
                     if (hasNextFile) {
-                        nativeLPSZ.of(pname);
-                        if (
-                                ff.findType(findFileStruct) == Files.DT_DIR && Chars.notDots(nativeLPSZ)
-                        ) {
+                        final long type = ff.findType(findFileStruct);
+                        if (Files.isDir(pUtf8NameZ, type)) {
                             path.trimTo(plimit);
-                            path.concat(pname);
+                            path.concat(pUtf8NameZ);
                             if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
                                 foundMetadataFile = true;
                                 metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
@@ -277,7 +275,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("atttypmod", 6, ColumnType.INT));
         metadata.add(new TableColumnMetadata("attlen", 7, ColumnType.SHORT));
         metadata.add(new TableColumnMetadata("attidentity", 8, ColumnType.CHAR));
-        metadata.add(new TableColumnMetadata("attisdropped", 9,ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("attisdropped", 9, ColumnType.BOOLEAN));
         METADATA = metadata;
     }
 }

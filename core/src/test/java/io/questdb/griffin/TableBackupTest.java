@@ -34,7 +34,10 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
-import io.questdb.std.str.*;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.MutableCharSink;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
@@ -141,6 +144,9 @@ public class TableBackupTest {
     public void tearDown() {
         finalBackupPath.close();
         path.close();
+        mainSqlExecutionContext.close();
+        mainCompiler.close();
+        mainEngine.close();
     }
 
     @Test
@@ -238,8 +244,8 @@ public class TableBackupTest {
                     " rnd_geohash(15) g2," +
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(2)) timestamp(ts)", mainSqlExecutionContext);
-            mainCompiler.compile("alter table tb1 add g4 geohash(30b)", mainSqlExecutionContext);
-            mainCompiler.compile("alter table tb1 add g8 geohash(32b)", mainSqlExecutionContext);
+            mainCompiler.compile("alter table tb1 add g4 geohash(30b)", mainSqlExecutionContext).execute(null).await(0);
+            mainCompiler.compile("alter table tb1 add g8 geohash(32b)", mainSqlExecutionContext).execute(null).await(0);
 
             mainCompiler.compile("insert into tb1 " +
                     " select " +

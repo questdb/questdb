@@ -22,29 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.cutlass.line.tcp;
 
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
+class LineTcpMeasurementEventType {
+    // A reshuffle event is used to redistribute load across threads
+    static final int ALL_WRITERS_RESHUFFLE = -1;
 
-public class DefaultSqlInterruptorConfiguration implements SqlInterruptorConfiguration {
-    @Override
-    public int getBufferSize() {
-        return 64;
-    }
+    // An incomplete event is used when the queue producer has grabbed an event but is not able
+    // to populate it for some reason, the event needs to be committed to the queue incomplete
+    static final int ALL_WRITERS_INCOMPLETE_EVENT = -2;
 
-    @Override
-    public int getCountOfIterationsPerCheck() {
-        return 5;
-    }
-
-    @Override
-    public NetworkFacade getNetworkFacade() {
-        return NetworkFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public boolean isEnabled() {
-        return true;
-    }
+    static final int ALL_WRITERS_RELEASE_WRITER = -3;
 }

@@ -49,6 +49,7 @@ module.exports = {
   plugins: ["@typescript-eslint", "babel", "prettier", "react", "standard"],
   rules: {
     "react/display-name": "off",
+    "react-hooks/exhaustive-deps": "off",
     "react/jsx-no-bind": "off",
     "react/no-deprecated": "error",
     "react/style-prop-object": "error",

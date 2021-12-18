@@ -1,0 +1,558 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.log;
+
+import io.questdb.BuildInformation;
+import io.questdb.BuildInformationHolder;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.network.NetworkError;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.*;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
+
+import java.util.function.Consumer;
+
+public class LogAlertSocketWriterTest {
+    private static final FilesFacade ff = FilesFacadeImpl.INSTANCE;
+
+    static {
+        DateLocaleFactory.load();
+    }
+
+    private Rnd rand;
+    private StringSink sink;
+
+    @Before
+    public void setUp() {
+        rand = new Rnd();
+        sink = new StringSink();
+    }
+
+    @Test
+    public void testOnLogRecord() throws Exception {
+        withLogAlertSocketWriter(
+                () -> 1637091363010000L,
+                writer -> {
+
+                    final int logRecordBuffSize = 1024; // plenty, to allow for encoding/escaping
+                    final long logRecordBuffPtr = Unsafe.malloc(logRecordBuffSize, MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        // create mock alert target servers
+                        // Vlad: we are wasting time here not connecting anywhere
+                        final SOCountDownLatch haltLatch = new SOCountDownLatch(2);
+                        final MockAlertTarget[] alertsTarget = new MockAlertTarget[2];
+                        alertsTarget[0] = new MockAlertTarget(1234, haltLatch::countDown);
+                        alertsTarget[1] = new MockAlertTarget(1242, haltLatch::countDown);
+                        alertsTarget[0].start();
+                        alertsTarget[1].start();
+
+                        writer.setAlertTargets("localhost:1234,localhost:1242");
+                        writer.bindProperties(LogFactory.INSTANCE);
+
+                        LogRecordSink recordSink = new LogRecordSink(logRecordBuffPtr, logRecordBuffSize);
+                        recordSink.setLevel(LogLevel.ERROR);
+                        recordSink.put("A \"simple\" $message$\n");
+
+                        writer.onLogRecord(recordSink);
+                        BuildInformation binf = BuildInformationHolder.INSTANCE;
+                        TestUtils.assertEquals(
+                                "POST /api/v1/alerts HTTP/1.1\r\n" +
+                                        "Host: " + LogAlertSocket.localHostIp + "\r\n" +
+                                        "User-Agent: QuestDB/LogAlert\r\n" +
+                                        "Accept: */*\r\n" +
+                                        "Content-Type: application/json\r\n" +
+                                        "Content-Length:      564\r\n" +
+                                        "\r\n" +
+                                        "[\n" +
+                                        "  {\n" +
+                                        "    \"Status\": \"firing\",\n" +
+                                        "    \"Labels\": {\n" +
+                                        "      \"alertname\": \"QuestDbInstanceLogs\",\n" +
+                                        "      \"service\": \"QuestDB\",\n" +
+                                        "      \"category\": \"application-logs\",\n" +
+                                        "      \"severity\": \"critical\",\n" +
+                                        "      \"version\": \"" + binf.getQuestDbVersion() + ":" + binf.getCommitHash() + ":" + binf.getJdkVersion() + "\",\n" +
+                                        "      \"cluster\": \"GLOBAL\",\n" +
+                                        "      \"orgid\": \"GLOBAL\",\n" +
+                                        "      \"namespace\": \"GLOBAL\",\n" +
+                                        "      \"instance\": \"GLOBAL\",\n" +
+                                        "      \"alertTimestamp\": \"2021/11/16T19:36:03.010\"\n" +
+                                        "    },\n" +
+                                        "    \"Annotations\": {\n" +
+                                        "      \"description\": \"ERROR/cl:GLOBAL/org:GLOBAL/ns:GLOBAL/db:GLOBAL\",\n" +
+                                        "      \"message\": \"A \\\"simple\\\" \\$message\\$\"" +
+                                        "\n" +
+                                        "    }\n" +
+                                        "  }\n" +
+                                        "]\n",
+                                writer.getAlertSink()
+                        );
+
+                        recordSink.clear();
+                        recordSink.put("A second log message");
+                        writer.onLogRecord(recordSink);
+                        TestUtils.assertEquals(
+                                "POST /api/v1/alerts HTTP/1.1\r\n" +
+                                        "Host: " + LogAlertSocket.localHostIp + "\r\n" +
+                                        "User-Agent: QuestDB/LogAlert\r\n" +
+                                        "Accept: */*\r\n" +
+                                        "Content-Type: application/json\r\n" +
+                                        "Content-Length:      560\r\n" +
+                                        "\r\n" +
+                                        "[\n" +
+                                        "  {\n" +
+                                        "    \"Status\": \"firing\",\n" +
+                                        "    \"Labels\": {\n" +
+                                        "      \"alertname\": \"QuestDbInstanceLogs\",\n" +
+                                        "      \"service\": \"QuestDB\",\n" +
+                                        "      \"category\": \"application-logs\",\n" +
+                                        "      \"severity\": \"critical\",\n" +
+                                        "      \"version\": \"" + binf.getQuestDbVersion() + ":" + binf.getCommitHash() + ":" + binf.getJdkVersion() + "\",\n" +
+                                        "      \"cluster\": \"GLOBAL\",\n" +
+                                        "      \"orgid\": \"GLOBAL\",\n" +
+                                        "      \"namespace\": \"GLOBAL\",\n" +
+                                        "      \"instance\": \"GLOBAL\",\n" +
+                                        "      \"alertTimestamp\": \"2021/11/16T19:36:03.010\"\n" +
+                                        "    },\n" +
+                                        "    \"Annotations\": {\n" +
+                                        "      \"description\": \"ERROR/cl:GLOBAL/org:GLOBAL/ns:GLOBAL/db:GLOBAL\",\n" +
+                                        "      \"message\": \"A second log message\"" +
+                                        "\n" +
+                                        "    }\n" +
+                                        "  }\n" +
+                                        "]\n",
+                                writer.getAlertSink()
+                        );
+
+                        haltLatch.await();
+                        Assert.assertFalse(alertsTarget[0].isRunning());
+                        Assert.assertFalse(alertsTarget[1].isRunning());
+                    } finally {
+                        Unsafe.free(logRecordBuffPtr, logRecordBuffSize, MemoryTag.NATIVE_DEFAULT);
+                    }
+                });
+    }
+
+    @Test
+    public void testOnLogRecordInternationalTemplate() throws Exception {
+        withLogAlertSocketWriter(
+                () -> 1637091363010000L,
+                writer -> {
+                    // this test does not interact with server
+                    final int logRecordBuffSize = 1024; // plenty, to allow for encoding/escaping
+                    final long logRecordBuffPtr = Unsafe.malloc(logRecordBuffSize, MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        // create mock alert target server
+                        final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
+                        final MockAlertTarget alertTarget = new MockAlertTarget(1234, haltLatch::countDown);
+                        alertTarget.start();
+                        writer.setLocation("/alert-manager-tpt-international.json");
+                        writer.setAlertTargets("localhost:1234");
+                        writer.setReconnectDelay("100");
+                        writer.bindProperties(LogFactory.INSTANCE);
+
+                        LogRecordSink recordSink = new LogRecordSink(logRecordBuffPtr, logRecordBuffSize);
+                        recordSink.setLevel(LogLevel.ERROR);
+                        recordSink.put("A \"simple\" $message$\n");
+
+                        writer.onLogRecord(recordSink);
+                        TestUtils.assertEquals(
+                                "POST /api/v1/alerts HTTP/1.1\r\n" +
+                                        "Host: " + LogAlertSocket.localHostIp + "\r\n" +
+                                        "User-Agent: QuestDB/LogAlert\r\n" +
+                                        "Accept: */*\r\n" +
+                                        "Content-Type: application/json\r\n" +
+                                        "Content-Length:      560\r\n" +
+                                        "\r\n" +
+                                        "[\n" +
+                                        "  {\n" +
+                                        "    \"Status\": \"firing\",\n" +
+                                        "    \"Labels\": {\n" +
+                                        "      \"alertname\": \"உலகனைத்தும்\",\n" +
+                                        "      \"category\": \"воно мені не\",\n" +
+                                        "      \"severity\": \"łódź jeża lub osiem\",\n" +
+                                        "      \"orgid\": \"GLOBAL\",\n" +
+                                        "      \"service\": \"QuestDB\",\n" +
+                                        "      \"namespace\": \"GLOBAL\",\n" +
+                                        "      \"cluster\": \"GLOBAL\",\n" +
+                                        "      \"instance\": \"GLOBAL\",\n" +
+                                        "      \"我能吞下玻璃而不傷身體\": \"ππππππππππππππππππππ 11\"\n" +
+                                        "    },\n" +
+                                        "    \"Annotations\": {\n" +
+                                        "      \"description\": \"ERROR/GLOBAL/GLOBAL/GLOBAL/GLOBAL\",\n" +
+                                        "      \"message\": \"A \\\"simple\\\" \\$message\\$\"\n" +
+                                        "    }\n" +
+                                        "  }\n" +
+                                        "]\n" +
+                                "\n",
+                                writer.getAlertSink()
+                        );
+
+                        Assert.assertTrue(haltLatch.await(10_000_000_000L));
+                        Assert.assertFalse(alertTarget.isRunning());
+                    } finally {
+                        Unsafe.free(logRecordBuffPtr, logRecordBuffSize, MemoryTag.NATIVE_DEFAULT);
+                    }
+                });
+    }
+
+    @Test
+    public void testBindPropertiesBadTemplateFile() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.bindProperties(LogFactory.INSTANCE);
+            Assert.assertEquals(LogAlertSocket.OUT_BUFFER_SIZE, writer.getOutBufferSize());
+            Assert.assertEquals(LogAlertSocketWriter.DEFAULT_ALERT_TPT_FILE, writer.getLocation());
+            Assert.assertEquals(LogAlertSocket.DEFAULT_HOST + ":" + LogAlertSocket.DEFAULT_PORT, writer.getAlertTargets());
+            writer.close();
+
+            writer.setOutBufferSize("1978");
+            writer.setLocation("/log-file.conf");
+            writer.setAlertTargets("127.0.0.1:8989");
+            try {
+                writer.bindProperties(LogFactory.INSTANCE);
+                Assert.fail();
+            } catch (LogError e) {
+                Assert.assertEquals(
+                        "Bad template, no ${ALERT_MESSAGE} declaration found /log-file.conf",
+                        e.getMessage()
+                );
+            }
+            Assert.assertEquals(1978, writer.getOutBufferSize());
+            Assert.assertEquals("/log-file.conf", writer.getLocation());
+            Assert.assertEquals("127.0.0.1:8989", writer.getAlertTargets());
+        });
+    }
+
+    @Test
+    public void testBindPropertiesTemplateFileDoesNotExist() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setLocation("some-silly-path.conf");
+            try {
+                writer.bindProperties(LogFactory.INSTANCE);
+                Assert.fail();
+            } catch (LogError e) {
+                Assert.assertEquals("Cannot read some-silly-path.conf [errno=2]", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testBindPropertiesTemplateFileDoesNotHaveMessageKey() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setLocation("/alert-manager-tpt-test-missing-message-key.json");
+            try {
+                writer.bindProperties(LogFactory.INSTANCE);
+                Assert.fail();
+            } catch (LogError e) {
+                Assert.assertEquals(
+                        "Bad template, no ${ALERT_MESSAGE} declaration found /alert-manager-tpt-test-missing-message-key.json",
+                        e.getMessage()
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testBindPropertiesLocationDefault() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setAlertTargets("");
+            writer.setLocation("");
+            writer.bindProperties(LogFactory.INSTANCE);
+            Assert.assertEquals("/alert-manager-tpt.json", writer.getLocation());
+        });
+    }
+
+    @Test
+    public void testBindPropertiesAlertTargetsDefault() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setOutBufferSize(String.valueOf(1024));
+            writer.setAlertTargets("\"\"");
+            writer.bindProperties(LogFactory.INSTANCE);
+            Assert.assertNotNull(LogAlertSocket.localHostIp);
+            Assert.assertEquals("127.0.0.1:9093", writer.getAlertTargets());
+        });
+    }
+
+    @Test
+    public void testBindPropertiesReconnectDelay() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setReconnectDelay(String.valueOf(50));
+            writer.setAlertTargets("\"\"");
+            writer.bindProperties(LogFactory.INSTANCE);
+            Assert.assertNotNull(LogAlertSocket.localHostIp);
+            Assert.assertEquals(50_000_000, writer.getReconnectDelay());
+        });
+    }
+
+    @Test
+    public void testBindPropertiesReconnectDelayBadValue() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setReconnectDelay("banana");
+            writer.setAlertTargets("\"\"");
+            try {
+                writer.bindProperties(LogFactory.INSTANCE);
+            } catch (LogError e) {
+                Assert.assertEquals("Invalid value for reconnectDelay: banana", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testBindPropertiesInBufferSize() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setInBufferSize(String.valueOf(12));
+            writer.setAlertTargets("\"\"");
+            writer.bindProperties(LogFactory.INSTANCE);
+            Assert.assertNotNull(LogAlertSocket.localHostIp);
+            Assert.assertEquals(12, writer.getInBufferSize());
+        });
+    }
+
+    @Test
+    public void testBindPropertiesInBufferSizeBadValue() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setInBufferSize("anaconda");
+            writer.setAlertTargets("\"\"");
+            try {
+                writer.bindProperties(LogFactory.INSTANCE);
+            } catch (LogError e) {
+                Assert.assertEquals("Invalid value for inBufferSize: anaconda", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testBindPropertiesDefaultAlertHost() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setDefaultAlertHost("127.0.0.1");
+            writer.setAlertTargets("\"\"");
+            writer.bindProperties(LogFactory.INSTANCE);
+            Assert.assertNotNull(LogAlertSocket.localHostIp);
+            Assert.assertEquals("127.0.0.1", writer.getDefaultAlertHost());
+        });
+    }
+
+    @Test
+    public void testBindPropertiesDefaultAlertHostBadValue() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setDefaultAlertHost("pineapple");
+            writer.setAlertTargets("\"\"");
+            try {
+                writer.bindProperties(LogFactory.INSTANCE);
+            } catch (NetworkError e) {
+                Assert.assertEquals("[0] invalid address [pineapple]", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testBindPropertiesDefaultAlertPort() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setDefaultAlertPort(String.valueOf(12));
+            writer.setAlertTargets("\"\"");
+            writer.bindProperties(LogFactory.INSTANCE);
+            Assert.assertNotNull(LogAlertSocket.localHostIp);
+            Assert.assertEquals(12, writer.getDefaultAlertPort());
+        });
+    }
+
+    @Test
+    public void testBindPropertiesDefaultAlertPortBadValue() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setDefaultAlertPort("pineapple");
+            writer.setAlertTargets("\"\"");
+            try {
+                writer.bindProperties(LogFactory.INSTANCE);
+            } catch (LogError e) {
+                Assert.assertEquals("Invalid value for defaultAlertPort: pineapple", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testBindPropertiesOutBufferSize() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setOutBufferSize(String.valueOf(12));
+            writer.setAlertTargets("\"\"");
+            writer.bindProperties(LogFactory.INSTANCE);
+            Assert.assertNotNull(LogAlertSocket.localHostIp);
+            Assert.assertEquals(12, writer.getOutBufferSize());
+        });
+    }
+
+    @Test
+    public void testBindPropertiesOutBufferSize_BadValue() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setOutBufferSize("coconut");
+            writer.setAlertTargets("\"\"");
+            try {
+                writer.bindProperties(LogFactory.INSTANCE);
+            } catch (LogError e) {
+                Assert.assertEquals("Invalid value for outBufferSize: coconut", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testReadFile() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String fileName = rand.nextString(10);
+            final String fileContent = "யாமறிந்த மொழிகளிலே தமிழ்மொழி போல் இனிதாவது எங்கும் காணோம்,\n" +
+                    "பாமரராய் விலங்குகளாய், உலகனைத்தும் இகழ்ச்சிசொலப் பான்மை கெட்டு,\n" +
+                    "நாமமது தமிழரெனக் கொண்டு இங்கு வாழ்ந்திடுதல் நன்றோ? சொல்லீர்!\n" +
+                    "தேமதுரத் தமிழோசை உலகமெலாம் பரவும்வகை செய்தல் வேண்டும்.";
+            final int buffSize = fileContent.length() * 3;
+            final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
+            final byte[] bytes = fileContent.getBytes(Files.UTF_8);
+            long p = buffPtr;
+            for (int i = 0; i < bytes.length; i++) {
+                Unsafe.getUnsafe().putByte(p++, bytes[i]);
+            }
+            try (Path path = new Path()) {
+                path.put(fileName).$();
+                long fd = ff.openAppend(path);
+                ff.truncate(fd, 0);
+                ff.append(fd, buffPtr, bytes.length);
+                ff.close(fd);
+
+                // clear buffer
+                p = buffPtr;
+                for (int i = 0; i < bytes.length; i++) {
+                    Unsafe.getUnsafe().putByte(p++, (byte) 0);
+                }
+                LogAlertSocketWriter.readFile(fileName, buffPtr, buffSize, ff, sink);
+                TestUtils.assertEquals(fileContent, sink);
+                ff.remove(path);
+            } finally {
+                Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testReadFileNotExists() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String fileName = rand.nextString(10);
+            try (Path path = new Path()) {
+                path.put(fileName).$();
+                try {
+                    LogAlertSocketWriter.readFile(fileName, 0, 0, ff, sink);
+                } catch (LogError e) {
+                    String message = e.getMessage();
+                    Assert.assertTrue(
+                            message.equals("Template file is too big") ||
+                                    message.startsWith("Cannot read VTJWCPSWHY [errno=")
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReadFileTooBig() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String fileName = rand.nextString(10);
+            final String fileContent = "Pchnąć w tę łódź jeża lub osiem skrzyń fig";
+            final int buffSize = fileContent.length() * 4;
+            final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
+            Path path = new Path();
+            long fd = -1;
+            try {
+                final byte[] bytes = fileContent.getBytes(Files.UTF_8);
+                final int len = bytes.length;
+                long p = buffPtr;
+                for (int i = 0; i < len; i++) {
+                    Unsafe.getUnsafe().putByte(p++, bytes[i]);
+                }
+
+                path.put(fileName).$();
+                fd = ff.openCleanRW(path, buffSize);
+                ff.append(fd, buffPtr, len);
+                try {
+                    LogAlertSocketWriter.readFile(fileName, buffPtr, 17, ff, sink);
+                } catch (LogError e) {
+                    String message = e.getMessage();
+                    Assert.assertTrue(
+                            message.equals("Template file is too big") ||
+                                    message.startsWith("Cannot read VTJWCPSWHY [errno=")
+                    );
+                }
+            } finally {
+                if (fd != -1) {
+                    ff.close(fd);
+                }
+                ff.remove(path);
+                path.close();
+                Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    private static void withLogAlertSocketWriter(Consumer<LogAlertSocketWriter> consumer) throws Exception {
+        final NetworkFacade nf = new NetworkFacadeImpl() {
+            @Override
+            public long connect(long fd, long sockaddr) {
+                return -1;
+            }
+        };
+        withLogAlertSocketWriter(MicrosecondClockImpl.INSTANCE, consumer, nf);
+    }
+
+    private static void withLogAlertSocketWriter(
+            MicrosecondClock clock,
+            Consumer<LogAlertSocketWriter> consumer
+    ) throws Exception {
+        withLogAlertSocketWriter(clock, consumer, NetworkFacadeImpl.INSTANCE);
+    }
+
+    private static void withLogAlertSocketWriter(
+            MicrosecondClock clock,
+            Consumer<LogAlertSocketWriter> consumer,
+            NetworkFacade nf
+    ) throws Exception {
+        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log-silent.conf");
+        TestUtils.assertMemoryLeak(() -> {
+            try (LogAlertSocketWriter writer = new LogAlertSocketWriter(
+                    FilesFacadeImpl.INSTANCE,
+                    nf,
+                    clock,
+                    null,
+                    null,
+                    LogLevel.ERROR
+            )) {
+                consumer.accept(writer);
+            }
+        });
+    }
+}

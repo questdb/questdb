@@ -43,14 +43,9 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SOUnboundedCountDownLatch;
-import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkError;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
@@ -58,124 +53,33 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
-public class LineTcpReceiverTest extends AbstractCairoTest {
+public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     private final static Log LOG = LogFactory.getLog(LineTcpReceiverTest.class);
     private final static String AUTH_KEY_ID1 = "testUser1";
     private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthDb.importPrivateKey("5UjEMuA0Pj5pjK8a-fa24dyIf-Es5mYny3oE_Wmus48");
     private final static String AUTH_KEY_ID2 = "testUser2";
     private final static PrivateKey AUTH_PRIVATE_KEY2 = AuthDb.importPrivateKey("lwJi3TSb4G6UcHxFJmPhOTWa4BLwJOOiK76wT6Uk7pI");
     private static final long TEST_TIMEOUT_IN_MS = 120000;
-    private final WorkerPool sharedWorkerPool = new WorkerPool(new WorkerPoolConfiguration() {
-        private final int[] affinity = {-1, -1};
-
-        @Override
-        public int[] getWorkerAffinity() {
-            return affinity;
-        }
-
-        @Override
-        public int getWorkerCount() {
-            return 2;
-        }
-
-        @Override
-        public boolean haltOnError() {
-            return true;
-        }
-    });
-    private final int bindPort = 9002; // Don't clash with other tests since they may run in parallel
-    private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
-        @Override
-        public int getBindIPv4Address() {
-            return 0;
-        }
-
-        @Override
-        public int getBindPort() {
-            return bindPort;
-        }
-    };
-    private int maxMeasurementSize = 50;
-    private String authKeyId = null;
-    private int msgBufferSize = 1024;
-    private long minIdleMsBeforeWriterRelease = 30000;
-    private int aggressiveReadRetryCount = 0;
-    private final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
-        @Override
-        public IODispatcherConfiguration getNetDispatcherConfiguration() {
-            return ioDispatcherConfiguration;
-        }
-
-        @Override
-        public int getNetMsgBufferSize() {
-            return msgBufferSize;
-        }
-
-        @Override
-        public int getMaxMeasurementSize() {
-            return maxMeasurementSize;
-        }
-
-        @Override
-        public int getWriterQueueCapacity() {
-            return 4;
-        }
-
-        @Override
-        public MicrosecondClock getMicrosecondClock() {
-            return testMicrosClock;
-        }
-
-        @Override
-        public int getNUpdatesPerLoadRebalance() {
-            return 100;
-        }
-
-        @Override
-        public double getMaxLoadRatio() {
-            // Always rebalance as long as there are more tables than threads;
-            return 1;
-        }
-
-        @Override
-        public long getMaintenanceInterval() {
-            return 25;
-        }
-
-        @Override
-        public String getAuthDbPath() {
-            if (null == authKeyId) {
-                return null;
-            }
-            URL u = getClass().getResource("authDb.txt");
-            assert u != null;
-            return u.getFile();
-        }
-
-        @Override
-        public long getWriterIdleTimeout() {
-            return minIdleMsBeforeWriterRelease;
-        }
-
-        @Override
-        public int getAggressiveReadRetryCount() {
-            return aggressiveReadRetryCount;
-        }
-    };
-
+    public static final int WAIT_NO_WAIT = 0x0;
+    public static final int WAIT_ENGINE_TABLE_RELEASE = 0x1;
+    public static final int WAIT_ILP_TABLE_RELEASE = 0x2;
     private Path path;
 
+    @Before
+    public void setUpLineTcpReceiverTest() {
+        path = new Path();
+    }
+
     @After
-    public void cleanup() {
-        maxMeasurementSize = 50;
+    public void tearDownLineTcpReceiverTest() {
+        path.close();
     }
 
     @Test
@@ -343,7 +247,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                         } catch (AssertionError e) {
                             int releasedCount = -tableIndex.get(tableName).getCount();
                             // Wait one more writer release before re-trying to compare
-                            wait(tableIndex.get(tableName), releasedCount + 1, minIdleMsBeforeWriterRelease);
+                            wait(tableIndex.get(tableName), releasedCount + 3, minIdleMsBeforeWriterRelease);
                             assertTable(expectedSB, tableName);
                         }
                     } catch (Throwable err) {
@@ -414,47 +318,49 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
 
     @Test
     public void testTableTableIdChangedOnRecreate() throws Exception {
-        try (SqlCompiler compiler = new SqlCompiler(engine);
-             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                     .with(
-                             AllowAllCairoSecurityContext.INSTANCE,
-                             new BindVariableServiceImpl(configuration),
-                             null,
-                             -1,
-                             null)) {
-            compiler.compile("create table weather as (" +
-                    "select x as windspeed," +
-                    "x*2 as timetocycle, " +
-                    "cast(x as timestamp) as ts " +
-                    "from long_sequence(2)) timestamp(ts) ", sqlExecutionContext);
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = new SqlCompiler(engine);
+                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                         .with(
+                                 AllowAllCairoSecurityContext.INSTANCE,
+                                 new BindVariableServiceImpl(configuration),
+                                 null,
+                                 -1,
+                                 null)) {
+                compiler.compile("create table weather as (" +
+                        "select x as windspeed," +
+                        "x*2 as timetocycle, " +
+                        "cast(x as timestamp) as ts " +
+                        "from long_sequence(2)) timestamp(ts) ", sqlExecutionContext);
 
-            CompiledQuery cq = compiler.compile("weather", sqlExecutionContext);
-            try (RecordCursorFactory cursorFactory = cq.getRecordCursorFactory()) {
-                try (RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, printer);
-                    TestUtils.assertEquals("windspeed\ttimetocycle\tts\n" +
-                            "1\t2\t1970-01-01T00:00:00.000001Z\n" +
-                            "2\t4\t1970-01-01T00:00:00.000002Z\n", sink);
-                }
+                CompiledQuery cq = compiler.compile("weather", sqlExecutionContext);
+                try (RecordCursorFactory cursorFactory = cq.getRecordCursorFactory()) {
+                    try (RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
+                        TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, printer);
+                        TestUtils.assertEquals("windspeed\ttimetocycle\tts\n" +
+                                "1\t2\t1970-01-01T00:00:00.000001Z\n" +
+                                "2\t4\t1970-01-01T00:00:00.000002Z\n", sink);
+                    }
 
-                compiler.compile("drop table weather", sqlExecutionContext);
+                    compiler.compile("drop table weather", sqlExecutionContext);
 
-                runInContext((receiver) -> {
-                    String lineData =
-                            "weather windspeed=1.0 631150000000000000\n" +
-                                    "weather windspeed=2.0 631152000000000000\n" +
-                                    "weather timetocycle=0.0,windspeed=3.0 631160000000000000\n" +
-                                    "weather windspeed=4.0 631170000000000000\n";
-                    sendLinger(receiver, lineData, "weather");
-                });
+                    runInContext((receiver) -> {
+                        String lineData =
+                                "weather windspeed=1.0 631150000000000000\n" +
+                                        "weather windspeed=2.0 631152000000000000\n" +
+                                        "weather timetocycle=0.0,windspeed=3.0 631160000000000000\n" +
+                                        "weather windspeed=4.0 631170000000000000\n";
+                        sendLinger(receiver, lineData, "weather");
+                    });
 
-                try (RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, printer);
-                    Assert.fail();
-                } catch (ReaderOutOfDateException ignored) {
+                    try (RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
+                        TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, printer);
+                        Assert.fail();
+                    } catch (ReaderOutOfDateException ignored) {
+                    }
                 }
             }
-        }
+        });
     }
 
     @Test
@@ -471,53 +377,57 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
 
     @Test
     public void testWindowsAccessDenied() throws Exception {
-        try (TableModel m = new TableModel(configuration, "table_a", PartitionBy.DAY)) {
-            m.timestamp("ReceiveTime")
-                    .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
-                    .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
-                    .col("Length", ColumnType.INT);
-            CairoTestUtils.createTable(m, ColumnType.VERSION);
-        }
+        assertMemoryLeak(() -> {
+            try (TableModel m = new TableModel(configuration, "table_a", PartitionBy.DAY)) {
+                m.timestamp("ReceiveTime")
+                        .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
+                        .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
+                        .col("Length", ColumnType.INT);
+                CairoTestUtils.createTable(m, ColumnType.VERSION);
+            }
 
-        String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
+            String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
 
-        runInContext((receiver) -> {
-            sendLinger(receiver, lineData, "table_a");
+            runInContext((receiver) -> {
+                sendLinger(receiver, lineData, "table_a");
 
-            String expected = "ReceiveTime\tSequenceNumber\tMessageType\tLength\ttest\n" +
-                    "2016-06-13T17:43:50.100400Z\t1\tB\t92\t1.5\n";
-            assertTable(expected, "table_a");
+                String expected = "ReceiveTime\tSequenceNumber\tMessageType\tLength\ttest\n" +
+                        "2016-06-13T17:43:50.100400Z\t1\tB\t92\t1.5\n";
+                assertTable(expected, "table_a");
+            });
         });
     }
 
     @Test
     public void testWithColumnAsReservedKeyword() throws Exception {
-        try (SqlCompiler compiler = new SqlCompiler(engine);
-             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                     .with(
-                             AllowAllCairoSecurityContext.INSTANCE,
-                             new BindVariableServiceImpl(configuration),
-                             null,
-                             -1,
-                             null)) {
-            String expected =
-                    "out\ttimestamp\tin\n" +
-                            "1.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
-                            "NaN\t1990-01-01T00:00:00.000000Z\t2.0\n" +
-                            "NaN\t1990-01-01T02:13:20.000000Z\t3.0\n" +
-                            "NaN\t1990-01-01T05:00:00.000000Z\t4.0\n";
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = new SqlCompiler(engine);
+                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                         .with(
+                                 AllowAllCairoSecurityContext.INSTANCE,
+                                 new BindVariableServiceImpl(configuration),
+                                 null,
+                                 -1,
+                                 null)) {
+                String expected =
+                        "out\ttimestamp\tin\n" +
+                                "1.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
+                                "NaN\t1990-01-01T00:00:00.000000Z\t2.0\n" +
+                                "NaN\t1990-01-01T02:13:20.000000Z\t3.0\n" +
+                                "NaN\t1990-01-01T05:00:00.000000Z\t4.0\n";
 
-            runInContext((receiver) -> {
-                String lineData =
-                        "up out=1.0 631150000000000000\n" +
-                                "up in=2.0 631152000000000000\n" +
-                                "up in=3.0 631160000000000000\n" +
-                                "up in=4.0 631170000000000000\n";
-                sendLinger(receiver, lineData, "up");
-            });
+                runInContext((receiver) -> {
+                    String lineData =
+                            "up out=1.0 631150000000000000\n" +
+                                    "up in=2.0 631152000000000000\n" +
+                                    "up in=3.0 631160000000000000\n" +
+                                    "up in=4.0 631170000000000000\n";
+                    sendLinger(receiver, lineData, "up");
+                });
 
-            TestUtils.assertSql(compiler, sqlExecutionContext, "up", sink, expected);
-        }
+                TestUtils.assertSql(compiler, sqlExecutionContext, "up", sink, expected);
+            }
+        });
     }
 
     @Test
@@ -562,10 +472,10 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
     @Test
     public void testFieldWithUnquotedString() throws Exception {
         runInContext((receiver) -> {
-            sendLinger(receiver,  "tab raw_msg=____ 1619509249714000000\n", "tab");
-            sendLinger(receiver,  "tab raw_msg=__\"_ 1619509249714000000\n", "tab");
+            sendLinger(receiver,  "tab raw\\ msg=____ 1619509249714000000\n", "tab");
+            sendLinger(receiver,  "tab raw\\ msg=__\"_ 1619509249714000000\n", "tab");
 
-            String expected = "raw_msg\ttimestamp\n" +
+            String expected = "raw msg\ttimestamp\n" +
                     "____\t2021-04-27T07:40:49.714000Z\n" +
                     "__\"_\t2021-04-27T07:40:49.714000Z\n";
             assertTable(expected, "tab");
@@ -574,7 +484,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
 
     @Test
     public void testUnicodeTableName() throws Exception {
-        byte[] utf8Bytes = "ल".getBytes(StandardCharsets.UTF_8);
+        byte[] utf8Bytes = "ल".getBytes(Files.UTF_8);
         Assert.assertEquals(3, utf8Bytes.length);
 
         try (TableModel m = new TableModel(configuration, "लаблअца", PartitionBy.DAY)) {
@@ -796,7 +706,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                             .$(0);
                     lineTcpSender
                             .metric("table")
-                            .tag("tag 2", "value=\2") // Invalid column name, last line is not saved
+                            .tag("tag/2", "value=\2") // Invalid column name, last line is not saved
                             .$(Timestamps.DAY_MICROS * 1000L);
                     lineTcpSender.flush();
                 }
@@ -948,12 +858,12 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                             .$(0);
                     lineTcpSender
                             .metric("table")
-                            .tag("tag 2", "value=\2") // Invalid column name, last line is not saved
+                            .tag("tag/2", "value=\2") // Invalid column name, last line is not saved
                             .$(Timestamps.DAY_MICROS * 1000L);
                     // Repeat
                     lineTcpSender
                             .metric("table")
-                            .tag("tag 2", "value=\2") // Invalid column name, last line is not saved
+                            .tag("tag/2", "value=\2") // Invalid column name, last line is not saved
                             .$(Timestamps.DAY_MICROS * 1000L);
                     lineTcpSender.flush();
                 }
@@ -992,7 +902,7 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                 try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
                     lineTcpSender
                             .metric("table")
-                            .tag("tag 2", "value=\2") // Invalid column name, line is not saved
+                            .tag("tag/2", "value=\2") // Invalid column name, line is not saved
                             .$(0);
                     lineTcpSender
                             .metric("table")
@@ -1056,33 +966,8 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
     }
 
     @FunctionalInterface
-    private interface LineTcpServerAwareContext {
-        void run(LineTcpReceiver receiver);
-    }
-
-    private void runInContext(LineTcpServerAwareContext r) throws Exception {
-        minIdleMsBeforeWriterRelease = 250;
-        assertMemoryLeak(() -> {
-            path = new Path(4096);
-            try (LineTcpReceiver receiver = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine)) {
-                sharedWorkerPool.assignCleaner(Path.CLEANER);
-                sharedWorkerPool.start(LOG);
-                try {
-                    r.run(receiver);
-                } catch (Throwable err) {
-                    LOG.error().$("Stopping ILP worker pool because of an error").$();
-                    throw err;
-                } finally {
-                    sharedWorkerPool.halt();
-                    Path.clearThreadLocals();
-                }
-            } catch (Throwable err) {
-                LOG.error().$("Stopping ILP receiver because of an error").$();
-                throw err;
-            } finally {
-                Misc.free(path);
-            }
-        });
+    public interface LineTcpServerAwareContext {
+        void run(LineTcpReceiver receiver) throws Exception;
     }
 
     private void send(LineTcpReceiver receiver, String lineData, String tableName, int wait) {
@@ -1093,17 +978,14 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
         send(receiver, tableName, LineTcpReceiverTest.WAIT_ENGINE_TABLE_RELEASE, () -> sendToSocket(lineData, false));
     }
 
-    public static final int WAIT_NO_WAIT = 0;
-    public static final int WAIT_ENGINE_TABLE_RELEASE = 1;
-    public static final int WAIT_ILP_TABLE_RELEASE = 2;
-
     private void send(LineTcpReceiver receiver, String tableName, int wait, Runnable sendToSocket) {
         SOCountDownLatch releaseLatch = new SOCountDownLatch(1);
+        final String t = tableName;
         switch (wait) {
             case WAIT_ENGINE_TABLE_RELEASE:
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                     if (Chars.equals(tableName, name)) {
-                        if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                        if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(tableName, t) ) {
                             releaseLatch.countDown();
                         }
                     }
@@ -1132,29 +1014,6 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                     receiver.setSchedulerListener(null);
                     break;
             }
-        }
-    }
-
-    private void sendToSocket(String lineData, boolean noLinger) {
-        int ipv4address = Net.parseIPv4("127.0.0.1");
-        long sockaddr = Net.sockaddr(ipv4address, bindPort);
-        long fd = Net.socketTcp(true);
-        try {
-            TestUtils.assertConnect(fd, sockaddr, noLinger);
-            byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
-            long bufaddr = Unsafe.malloc(lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
-            try {
-                for (int n = 0; n < lineDataBytes.length; n++) {
-                    Unsafe.getUnsafe().putByte(bufaddr + n, lineDataBytes[n]);
-                }
-                int rc = Net.send(fd, bufaddr, lineDataBytes.length);
-                Assert.assertEquals(lineDataBytes.length, rc);
-            } finally {
-                Unsafe.free(bufaddr, lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
-            }
-        } finally {
-            Net.close(fd);
-            Net.freeSockAddr(sockaddr);
         }
     }
 
@@ -1234,38 +1093,40 @@ public class LineTcpReceiverTest extends AbstractCairoTest {
                         expectedSbs[n] = sb;
                     }
 
-                    long ts = Os.currentTimeMicros();
-                    StringSink tsSink = new StringSink();
-                    for (int nRow = 0; nRow < nRows; nRow++) {
-                        int nTable = nRow < tables.size() ? nRow : rand.nextInt(tables.size());
-                        AbstractLineSender sender = senders[nTable];
-                        StringBuilder sb = expectedSbs[nTable];
-                        CharSequence tableName = tables.get(nTable);
-                        sender.metric(tableName);
-                        String location = locations[rand.nextInt(locations.length)];
-                        sb.append(location);
-                        sb.append('\t');
-                        sender.tag("location", location);
-                        int temp = rand.nextInt(100);
-                        sb.append(temp);
-                        sb.append('\t');
-                        sender.field("temp", temp);
-                        tsSink.clear();
-                        TimestampFormatUtils.appendDateTimeUSec(tsSink, ts);
-                        sb.append(tsSink);
-                        sb.append('\n');
-                        sender.$(ts * 1000);
-                        sender.flush();
-                        if (expectDisconnect) {
-                            // To prevent all data being buffered before the expected disconnect slow sending
-                            Os.sleep(100);
+                    try {
+                        long ts = Os.currentTimeMicros();
+                        StringSink tsSink = new StringSink();
+                        for (int nRow = 0; nRow < nRows; nRow++) {
+                            int nTable = nRow < tables.size() ? nRow : rand.nextInt(tables.size());
+                            AbstractLineSender sender = senders[nTable];
+                            StringBuilder sb = expectedSbs[nTable];
+                            CharSequence tableName = tables.get(nTable);
+                            sender.metric(tableName);
+                            String location = locations[rand.nextInt(locations.length)];
+                            sb.append(location);
+                            sb.append('\t');
+                            sender.tag("location", location);
+                            int temp = rand.nextInt(100);
+                            sb.append(temp);
+                            sb.append('\t');
+                            sender.field("temp", temp);
+                            tsSink.clear();
+                            TimestampFormatUtils.appendDateTimeUSec(tsSink, ts);
+                            sb.append(tsSink);
+                            sb.append('\n');
+                            sender.$(ts * 1000);
+                            sender.flush();
+                            if (expectDisconnect) {
+                                // To prevent all data being buffered before the expected disconnect slow sending
+                                Os.sleep(100);
+                            }
+                            ts += rand.nextInt(1000);
                         }
-                        ts += rand.nextInt(1000);
-                    }
-
-                    for (int n = 0; n < senders.length; n++) {
-                        AbstractLineSender sender = senders[n];
-                        sender.close();
+                    } finally {
+                        for (int n = 0; n < senders.length; n++) {
+                            AbstractLineSender sender = senders[n];
+                            sender.close();
+                        }
                     }
 
                     Assert.assertFalse(expectDisconnect);

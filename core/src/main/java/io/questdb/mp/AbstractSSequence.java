@@ -24,7 +24,9 @@
 
 package io.questdb.mp;
 
-abstract class AbstractSSequence extends AbstractSequence implements Sequence {
+import io.questdb.std.Mutable;
+
+abstract class AbstractSSequence extends AbstractSequence implements Sequence, Mutable {
 
     AbstractSSequence(WaitStrategy waitStrategy) {
         super(waitStrategy);
@@ -56,6 +58,12 @@ abstract class AbstractSSequence extends AbstractSequence implements Sequence {
             waitStrategy.await();
         }
         return r;
+    }
+
+
+    @Override
+    public void clear() {
+        setBarrier(OpenBarrier.INSTANCE);
     }
 
     @Override
