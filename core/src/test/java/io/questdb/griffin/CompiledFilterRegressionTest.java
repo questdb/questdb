@@ -100,6 +100,26 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIntConstantColumnComparisonBoundaryMatch() throws Exception {
+        final int boundary = 101;
+        Assert.assertTrue("boundary should be within the range", N_SIMD_WITH_SCALAR_TAIL > boundary);
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " cast(x as byte) i8," +
+                " cast(x as short) i16," +
+                " cast(x as int) i32," +
+                " x i64," +
+                " cast(x as float) f32," +
+                " cast(x as double) f64 " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf(String.valueOf(boundary))
+                .withComparisonOperator()
+                .withAnyOf("i8", "i16", "i32", "i64", "f32", "f64");
+        assertGeneratedQueryNotNull("select * from x", ddl, gen);
+    }
+
+    @Test
     public void testColumnFloatConstantComparison() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
