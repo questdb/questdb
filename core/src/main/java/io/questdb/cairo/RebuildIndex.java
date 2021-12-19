@@ -42,7 +42,7 @@ import java.io.Closeable;
 import static io.questdb.cairo.TableUtils.lockName;
 
 /**
- * Rebuild index independently from TableWriter
+ * Rebuild index independently of TableWriter
  * Main purpose is for support cases when table data is corrupt and TableWriter cannot be opened
  */
 public class RebuildIndex implements Closeable, Mutable {
@@ -57,6 +57,7 @@ public class RebuildIndex implements Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(RebuildIndex.class);
     private TableReaderMetadata metadata;
     private final SymbolColumnIndexer indexer = new SymbolColumnIndexer();
+    private final StringSink tempStringSink = new StringSink();
 
     public RebuildIndex of(CharSequence tablePath, CairoConfiguration configuration) {
         this.path.concat(tablePath);
@@ -68,6 +69,7 @@ public class RebuildIndex implements Closeable, Mutable {
     @Override
     public void clear() {
         path.trimTo(0);
+        tempStringSink.clear();
     }
 
     public void rebuildAll() {
@@ -105,7 +107,6 @@ public class RebuildIndex implements Closeable, Mutable {
             path.trimTo(rootLen);
             int partitionBy = metadata.getPartitionBy();
             DateFormat partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
-            StringSink tempStringSink = Misc.getThreadLocalBuilder();
 
             try (TxReader txReader = new TxReader(ff, path, partitionBy)) {
                 txReader.unsafeLoadAll();
@@ -194,24 +195,22 @@ public class RebuildIndex implements Closeable, Mutable {
             try (final MemoryMR roMem = indexMem) {
                 removeIndexFiles(columnName, ff);
                 TableUtils.dFile(path.trimTo(plen), columnName);
-                LOG.info().$("indexing [path=").$(path).I$();
 
-                final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, false);
-
-                if (partitionSize > columnTop) {
+                if (ff.exists(path.$())) {
+                    LOG.info().$("indexing [path=").utf8(path).I$();
+                    final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, false);
                     createIndexFiles(columnName, indexValueBlockCapacity, plen, ff);
-                    TableUtils.dFile(path.trimTo(plen), columnName);
-                    if (ff.exists(path.$())) {
+
+                    if (partitionSize > columnTop) {
+                        TableUtils.dFile(path.trimTo(plen), columnName);
                         final long columnSize = (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT);
                         roMem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_WRITER);
                         indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnTop);
-
                         indexer.index(roMem, columnTop, partitionSize);
                     }
                 }
             }
         }
-
     }
 
     private void createIndexFiles(CharSequence columnName, int indexValueBlockCapacity, int plen, FilesFacade ff) {
@@ -239,7 +238,7 @@ public class RebuildIndex implements Closeable, Mutable {
                 ddlMem.close();
             }
             if (!ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName))) {
-                LOG.error().$("could not create index [name=").$(path).$(']').$();
+                LOG.error().$("could not create index [name=").utf8(path).$(']').$();
                 throw CairoException.instance(ff.errno()).put("could not create index [name=").put(path).put(']');
             }
             LOG.info().$("writing ").utf8(path).$();
@@ -258,8 +257,15 @@ public class RebuildIndex implements Closeable, Mutable {
     }
 
     private void removeFile(Path path, FilesFacade ff) {
-        LOG.info().$("deleting ").$(path).$();
-        ff.remove(this.path);
+        LOG.info().$("deleting ").utf8(path).$();
+        if (!ff.remove(this.path)) {
+            if (!ff.exists(this.path)) {
+                // This is fine, index can be corrupt, rewriting is what we try to do here
+                LOG.info().$("index file did not exist, file will be re-written [path=").utf8(path).I$();
+            } else {
+                throw CairoException.instance(ff.errno()).put("cannot remove index file");
+            }
+        }
     }
 
     private void lock(FilesFacade ff) {

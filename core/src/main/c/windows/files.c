@@ -124,7 +124,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readULong
         return result;
     }
     SaveLastError();
-    return 0;
+    return -1;
 }
 
 #define MILLIS_SINCE_1970 11644473600000

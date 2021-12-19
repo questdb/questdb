@@ -75,6 +75,25 @@ public class RebuildIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEmptyTable() throws Exception {
+        String createTableSql = "create table xxx as (" +
+                "select " +
+                "rnd_symbol('A', 'B', 'C') as sym1," +
+                "rnd_symbol(4,4,4,2) as sym2," +
+                "x," +
+                "timestamp_sequence(0, 100000000) ts " +
+                "from long_sequence(0)" +
+                "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
+
+        checkRebuildIndexes(
+                createTableSql,
+                (tablePath) -> {
+                },
+                RebuildIndex::rebuildAll
+        );
+    }
+
+    @Test
     public void testNonPartitionedWithColumnTop() throws Exception {
         String createAlterInsertSql = "create table xxx as (" +
                 "select " +
@@ -82,7 +101,7 @@ public class RebuildIndexTest extends AbstractCairoTest {
                 "x," +
                 "timestamp_sequence(0, 100000000) ts " +
                 "from long_sequence(5000)" +
-                "), index(sym1) timestamp(ts); " +
+                "), index(sym1); " +
 
                 "alter table xxx add column sym2 symbol index; " +
 
@@ -100,6 +119,30 @@ public class RebuildIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonPartitionedWithColumnTopAddedLast() throws Exception {
+        String createAlterInsertSql = "create table xxx as (" +
+                "select " +
+                "x," +
+                "timestamp_sequence(0, 100000000) ts " +
+                "from long_sequence(5000)" +
+                ");" +
+                "alter table xxx add column sym1 symbol index;" +
+                "alter table xxx add column sym2 symbol index";
+
+        checkRebuildIndexes(createAlterInsertSql,
+                tablePath -> {
+                },
+                RebuildIndex::rebuildAll);
+
+        engine.releaseAllWriters();
+        compiler.compile("insert into xxx values(500100000000L, 50001, 'D', 'I2')", sqlExecutionContext).execute(null).await();
+        int sym1D = countByFullScan("select * from xxx where sym1 = 'D'");
+        Assert.assertEquals(1, sym1D);
+        int sym2I2 = countByFullScan("select * from xxx where sym2 = 'I2'");
+        Assert.assertEquals(1, sym2I2);
+    }
+
+    @Test
     public void testNonePartitionedOneColumn() throws Exception {
         String createTableSql = "create table xxx as (" +
                 "select " +
@@ -108,7 +151,7 @@ public class RebuildIndexTest extends AbstractCairoTest {
                 "x," +
                 "timestamp_sequence(0, 100000000) ts " +
                 "from long_sequence(10000)" +
-                "), index(sym1), index(sym2) timestamp(ts)";
+                "), index(sym1), index(sym2)";
 
         checkRebuildIndexes(createTableSql,
                 tablePath -> {
@@ -148,7 +191,7 @@ public class RebuildIndexTest extends AbstractCairoTest {
                 "x," +
                 "timestamp_sequence(0, 100000000) ts " +
                 "from long_sequence(10000)" +
-                "), index(sym1), index(sym2) timestamp(ts)";
+                "), index(sym1), index(sym2)";
 
         checkRebuildIndexes(
                 createTableSql,
@@ -196,43 +239,6 @@ public class RebuildIndexTest extends AbstractCairoTest {
                     removeFileAtPartition("sym1.k", PartitionBy.DAY, tablePath, 0);
                 },
                 rebuildIndex -> rebuildIndex.rebuildPartitionColumn("1970-01-01", "sym1"));
-    }
-
-    @Test
-    public void testRebuildIndexCustomBlockSize() throws Exception {
-        String createTableSql = "create table xxx as (" +
-                "select " +
-                "rnd_symbol('A', 'B', 'C') as sym1," +
-                "rnd_symbol(4,4,4,2) as sym2," +
-                "x," +
-                "timestamp_sequence(0, 100000000) ts " +
-                "from long_sequence(10000)" +
-                "), index(sym1 capacity 512), index(sym2 capacity 1024) timestamp(ts) PARTITION BY DAY";
-
-        checkRebuildIndexes(createTableSql,
-                tablePath -> {
-                    removeFileAtPartition("sym1.v", PartitionBy.DAY, tablePath, 0);
-                    removeFileAtPartition("sym2.k", PartitionBy.DAY, tablePath, 0);
-                },
-                rebuildIndex -> rebuildIndex.rebuildPartition("1970-01-01"));
-
-        assertMemoryLeak(() -> {
-            try(TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "xxx")) {
-                TableReaderMetadata metadata = reader.getMetadata();
-                int columnIndex = metadata.getColumnIndex("sym1");
-                Assert.assertTrue("Column sym1 must exist", columnIndex >= 0);
-                int columnIndex2 = metadata.getColumnIndex("sym2");
-                Assert.assertTrue("Column sym2 must exist", columnIndex2 >= 0);
-                Assert.assertEquals(
-                        511,
-                        reader.getBitmapIndexReader(0, columnIndex, BitmapIndexReader.DIR_FORWARD).getValueBlockCapacity()
-                );
-                Assert.assertEquals(
-                        1023,
-                        reader.getBitmapIndexReader(0, columnIndex2, BitmapIndexReader.DIR_FORWARD).getValueBlockCapacity()
-                );
-            }
-        });
     }
 
     @Test
@@ -292,6 +298,29 @@ public class RebuildIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRebuildColumnWrongName() throws Exception {
+        String createTableSql = "create table xxx as (" +
+                "select " +
+                "rnd_symbol('A', 'B', 'C') as sym1," +
+                "rnd_symbol(4,4,4,2) as sym2," +
+                "rnd_symbol(4,4,4,2) as sym3," +
+                "x," +
+                "timestamp_sequence(0, 100000000) ts " +
+                "from long_sequence(10000)" +
+                "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
+
+        try {
+            checkRebuildIndexes(createTableSql,
+                    tablePath -> {
+                    },
+                    rebuildIndex -> rebuildIndex.rebuildColumn("sym4"));
+            Assert.fail();
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "Column does not exist");
+        }
+    }
+
+    @Test
     public void testRebuildFailsWriteKFile() throws Exception {
         assertMemoryLeak(() -> {
             String createTableSql = "create table xxx as (" +
@@ -308,7 +337,7 @@ public class RebuildIndexTest extends AbstractCairoTest {
             ff = new FilesFacadeImpl() {
                 @Override
                 public long openRW(LPSZ name) {
-                    if (Chars.contains(name, "sym2.k") && count.incrementAndGet() == 27) {
+                    if (Chars.contains(name, "sym2.k") && count.incrementAndGet() == 29) {
                         return -1;
                     }
                     return Files.openRW(name);
@@ -317,7 +346,8 @@ public class RebuildIndexTest extends AbstractCairoTest {
 
             try {
                 checkRebuildIndexes(createTableSql,
-                        tablePath -> {},
+                        tablePath -> {
+                        },
                         rebuildIndex -> rebuildIndex.rebuildColumn("sym2"));
                 Assert.fail();
             } catch (CairoException ex) {
@@ -343,7 +373,7 @@ public class RebuildIndexTest extends AbstractCairoTest {
             ff = new FilesFacadeImpl() {
                 @Override
                 public boolean touch(LPSZ path) {
-                    if (Chars.contains(path, "sym2.v") && count.incrementAndGet() == 14) {
+                    if (Chars.contains(path, "sym2.v") && count.incrementAndGet() == 17) {
                         return false;
                     }
                     return Files.touch(path);
@@ -352,7 +382,8 @@ public class RebuildIndexTest extends AbstractCairoTest {
 
             try {
                 checkRebuildIndexes(createTableSql,
-                        tablePath -> {},
+                        tablePath -> {
+                        },
                         rebuildIndex -> rebuildIndex.rebuildColumn("sym2"));
                 Assert.fail();
             } catch (CairoException ex) {
@@ -362,26 +393,75 @@ public class RebuildIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRebuildColumnWrongName() throws Exception {
+    public void testCannotRemoveOldFiles() throws Exception {
+        assertMemoryLeak(() -> {
+            String createTableSql = "create table xxx as (" +
+                    "select " +
+                    "rnd_symbol('A', 'B', 'C') as sym1," +
+                    "rnd_symbol(4,4,4,2) as sym2," +
+                    "rnd_symbol(4,4,4,2) as sym3," +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(10000)" +
+                    "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
+
+            ff = new FilesFacadeImpl() {
+                @Override
+                public boolean remove(LPSZ path) {
+                    if (Chars.endsWith(path, ".v") || Chars.endsWith(path, ".k")) {
+                        return false;
+                    }
+                    return Files.remove(path);
+                }
+            };
+
+            try {
+                checkRebuildIndexes(createTableSql,
+                        tablePath -> {
+                        },
+                        rebuildIndex -> rebuildIndex.rebuildColumn("sym2"));
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "cannot remove index file");
+            }
+        });
+    }
+
+    @Test
+    public void testRebuildIndexCustomBlockSize() throws Exception {
         String createTableSql = "create table xxx as (" +
                 "select " +
                 "rnd_symbol('A', 'B', 'C') as sym1," +
                 "rnd_symbol(4,4,4,2) as sym2," +
-                "rnd_symbol(4,4,4,2) as sym3," +
                 "x," +
                 "timestamp_sequence(0, 100000000) ts " +
                 "from long_sequence(10000)" +
-                "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
+                "), index(sym1 capacity 512), index(sym2 capacity 1024) timestamp(ts) PARTITION BY DAY";
 
-        try {
-            checkRebuildIndexes(createTableSql,
-                    tablePath -> {
-                    },
-                    rebuildIndex -> rebuildIndex.rebuildColumn("sym4"));
-            Assert.fail();
-        } catch (CairoException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), "Column does not exist");
-        }
+        checkRebuildIndexes(createTableSql,
+                tablePath -> {
+                    removeFileAtPartition("sym1.v", PartitionBy.DAY, tablePath, 0);
+                    removeFileAtPartition("sym2.k", PartitionBy.DAY, tablePath, 0);
+                },
+                rebuildIndex -> rebuildIndex.rebuildPartition("1970-01-01"));
+
+        assertMemoryLeak(() -> {
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "xxx")) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                int columnIndex = metadata.getColumnIndex("sym1");
+                Assert.assertTrue("Column sym1 must exist", columnIndex >= 0);
+                int columnIndex2 = metadata.getColumnIndex("sym2");
+                Assert.assertTrue("Column sym2 must exist", columnIndex2 >= 0);
+                Assert.assertEquals(
+                        511,
+                        reader.getBitmapIndexReader(0, columnIndex, BitmapIndexReader.DIR_FORWARD).getValueBlockCapacity()
+                );
+                Assert.assertEquals(
+                        1023,
+                        reader.getBitmapIndexReader(0, columnIndex2, BitmapIndexReader.DIR_FORWARD).getValueBlockCapacity()
+                );
+            }
+        });
     }
 
     @Test
@@ -435,6 +515,7 @@ public class RebuildIndexTest extends AbstractCairoTest {
             int sym1A = countByFullScan("select * from xxx where sym1 = 'A'");
             int sym1B = countByFullScan("select * from xxx where sym1 = 'B'");
             int sym1C = countByFullScan("select * from xxx where sym1 = 'C'");
+            compiler.compile("create table copy as (select * from xxx)", sqlExecutionContext).execute(null).await();
 
             engine.releaseAllReaders();
             engine.releaseAllWriters();
@@ -453,6 +534,16 @@ public class RebuildIndexTest extends AbstractCairoTest {
             Assert.assertEquals(sym1A, sym1A2);
             Assert.assertEquals(sym1B, sym1B2);
             Assert.assertEquals(sym1C, sym1C2);
+
+            compiler.compile("insert into xxx select * from copy", sqlExecutionContext).execute(null).await();
+
+            int sym1A3 = countByFullScan("select * from xxx where sym1 = 'A'");
+            int sym1B3 = countByFullScan("select * from xxx where sym1 = 'B'");
+            int sym1C3 = countByFullScan("select * from xxx where sym1 = 'C'");
+
+            Assert.assertEquals(2 * sym1A, sym1A3);
+            Assert.assertEquals(2 * sym1B, sym1B3);
+            Assert.assertEquals(2 * sym1C, sym1C3);
         });
     }
 
