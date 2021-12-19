@@ -29,6 +29,8 @@
 #include <asmjit/asmjit.h>
 #include <limits>
 #include <cassert>
+#include <utility>
+#include <variant>
 
 enum class data_type_t : uint8_t {
     i8,
@@ -164,6 +166,181 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv 
 
 JNIEXPORT void JNICALL Java_io_questdb_jit_FiltersCompiler_runTests(JNIEnv *e, jclass cl);
 
+}
+namespace questdb {
+    using namespace asmjit;
+    using namespace asmjit::x86;
+
+    enum class ConditionFlag {
+        e,   // ==
+        ne,  // !=
+        l,   // <
+        le,  // <=
+        b,   // unsigned <
+        be,  // unsigned <=
+        g,   // >
+        ge,  // >=
+        a,   // unsigned >
+        ae,  // unsigned >=
+    };
+
+    ConditionFlag operator!(ConditionFlag cond) {
+        switch(cond){
+            case ConditionFlag::e : return ConditionFlag::ne;
+            case ConditionFlag::ne: return ConditionFlag::e ;
+            case ConditionFlag::l : return ConditionFlag::ge;
+            case ConditionFlag::le: return ConditionFlag::g ;
+            case ConditionFlag::g : return ConditionFlag::le;
+            case ConditionFlag::ge: return ConditionFlag::l ;
+            case ConditionFlag::b : return ConditionFlag::ae;
+            case ConditionFlag::be: return ConditionFlag::a ;
+            case ConditionFlag::a : return ConditionFlag::be;
+            case ConditionFlag::ae: return ConditionFlag::b ;
+            default:
+                __builtin_unreachable();
+        }
+    }
+
+    struct Condition {
+        using operand_t = std::variant<Gp, int, Mem>;
+
+        Compiler &c;
+        Gp reg;
+        ConditionFlag cond;
+        operand_t operand;
+
+        Condition(Compiler &c, const Gp& reg, ConditionFlag cond, operand_t operand)
+            : c(c), reg(reg), cond(cond), operand(std::move(operand)) {}
+
+        Condition operator!() const {
+            return {c, reg, !cond, operand};
+        }
+
+        void compare() const {
+            switch(operand.index()){
+                case 0: c.cmp(reg, std::get<Gp>(operand)); break;
+                case 1: c.cmp(reg, imm(std::get<int>(operand))); break;
+                case 2: c.cmp(reg, std::get<Mem>(operand)); break;
+                default:
+                    __builtin_unreachable();
+            }
+        }
+
+        void set_byte(const Gp &dst) const {
+            switch(cond){
+                case ConditionFlag::e : c.sete (dst); break;
+                case ConditionFlag::ne: c.setne(dst); break;
+                case ConditionFlag::l : c.setl (dst); break;
+                case ConditionFlag::le: c.setle(dst); break;
+                case ConditionFlag::g : c.setg (dst); break;
+                case ConditionFlag::ge: c.setge(dst); break;
+                case ConditionFlag::b : c.setb (dst); break;
+                case ConditionFlag::be: c.setbe(dst); break;
+                case ConditionFlag::a : c.seta (dst); break;
+                case ConditionFlag::ae: c.setae(dst); break;
+                default:
+                    __builtin_unreachable();
+            }
+        }
+
+        void jump_to(const Label& label) const {
+            switch(cond){
+                case ConditionFlag::e : c.je (label); break;
+                case ConditionFlag::ne: c.jne(label); break;
+                case ConditionFlag::l : c.jl (label); break;
+                case ConditionFlag::le: c.jle(label); break;
+                case ConditionFlag::g : c.jg (label); break;
+                case ConditionFlag::ge: c.jge(label); break;
+                case ConditionFlag::b : c.jb (label); break;
+                case ConditionFlag::be: c.jbe(label); break;
+                case ConditionFlag::a : c.ja (label); break;
+                case ConditionFlag::ae: c.jae(label); break;
+                default:
+                    __builtin_unreachable();
+            }
+        }
+    };
+
+    inline void jump(const Condition &cond, const Label& label) {
+        cond.compare();
+        cond.jump_to(label);
+    }
+
+    template<typename Fn>
+    void while_do(Condition cond, Fn &&body, uint8_t unroll_factor = 1) {
+        auto &c = cond.c;
+
+        Label l_loop = c.newLabel();
+        Label l_exit = c.newLabel();
+
+        jump(!cond, l_exit);
+
+        c.bind(l_loop);
+
+        for (uint8_t i = 0; i < unroll_factor; ++i) {
+            body();
+        }
+
+        jump(cond, l_loop);
+        c.bind(l_exit);
+    }
+
+    void scalar_loop(Compiler &c, const Gp &rows_count, uint8_t unroll_factor = 1) {
+        assert(unroll_factor > 0);
+
+        Gp idx = c.newInt64("idx");
+        c.xor_(idx, idx);
+
+        Gp stop = c.newInt64("stop");
+        c.mov(stop, rows_count);
+
+        if(unroll_factor > 1) {
+            c.sub(stop, unroll_factor - 1);
+        }
+
+        Condition cond(c, idx, ConditionFlag::l, stop); // idx < stop
+        while_do(cond, [&] {
+            for (uint8_t i = 0; i < unroll_factor; ++i) {
+                //unrolled body
+            }
+            c.add(idx, unroll_factor);
+        }, unroll_factor);
+
+        if(unroll_factor > 1) {
+            Condition tail_cond(c, idx, ConditionFlag::l, rows_count); // idx < rows_count
+            while_do(tail_cond, [&] {
+                //tail body
+
+                c.add(idx, 1);
+            });
+        }
+    }
+
+    void simd_loop(Compiler &c, const Gp &rows_count, uint8_t simd_size, uint8_t unroll_factor = 1) {
+        assert(unroll_factor > 0);
+
+        Gp idx = c.newInt64("idx");
+        c.xor_(idx, idx);
+
+        Gp stop = c.newInt64("stop");
+        c.mov(stop, rows_count);
+        c.sub(stop, unroll_factor * simd_size - 1);
+
+        Condition cond(c, idx, ConditionFlag::l, stop); // idx < stop
+        while_do(cond, [&] {
+            for (uint8_t i = 0; i < unroll_factor; ++i) {
+                //simd body
+                c.add(idx, simd_size);
+            }
+        }, unroll_factor);
+
+        Condition tail_cond(c, idx, ConditionFlag::l, rows_count); // idx < rows_count
+        while_do(tail_cond, [&] {
+            //tail body
+
+            c.add(idx, 1);
+        });
+    }
 }
 
 namespace questdb::x86 {

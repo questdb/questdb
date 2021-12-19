@@ -1191,17 +1191,17 @@ struct JitCompiler {
         uint32_t type_size = (options >> 1) & 3; // 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B
         uint32_t exec_hint = (options >> 3) & 3; // 0 - scalar, 1 - single size type, 2 - mixed size types, ...
         bool null_check = (options >> 5) & 1; // 1 - with null check
-
+        int unroll_factor = 1;
         if (exec_hint == single_size && features.hasAVX2()) {
             auto step = 256 / ((1 << type_size) * 8);
             c.func()->frame().setAvxEnabled();
-            avx2_loop2(filter_expr, filter_size, step, null_check);
+            avx2_loop2(filter_expr, filter_size, step, null_check, unroll_factor);
         } else {
-            scalar_loop(filter_expr, filter_size, null_check);
+            scalar_loop(filter_expr, filter_size, null_check, unroll_factor);
         }
     };
 
-    void scalar_tail2(const uint8_t *filter_expr, size_t filter_size, bool null_check, const x86::Gp &stop) {
+    void scalar_tail2(const uint8_t *filter_expr, size_t filter_size, bool null_check, const x86::Gp &stop, int unroll_factor = 1) {
 
         Label l_loop = c.newLabel();
         Label l_exit = c.newLabel();
@@ -1211,30 +1211,40 @@ struct JitCompiler {
 
         c.bind(l_loop);
 
-        questdb::x86::emit_code(c, filter_expr, filter_size, registers, null_check, cols_ptr, vars_ptr, input_index);
+        for (int i = 0; i < unroll_factor; ++i) {
+            questdb::x86::emit_code(c, filter_expr, filter_size, registers, null_check, cols_ptr, vars_ptr, input_index);
 
-        auto mask = registers.top();
-        registers.pop();
+            auto mask = registers.top();
+            registers.pop();
 
-        x86::Gp adjusted_id = c.newInt64("input_index_+_rows_id_start_offset");
-        c.lea(adjusted_id, ptr(input_index, rows_id_start_offset)); // input_index + rows_id_start_offset
-        c.mov(qword_ptr(rows_ptr, output_index, 3), adjusted_id);
+            x86::Gp adjusted_id = c.newInt64("input_index_+_rows_id_start_offset");
+            c.lea(adjusted_id, ptr(input_index, rows_id_start_offset)); // input_index + rows_id_start_offset
+            c.mov(qword_ptr(rows_ptr, output_index, 3), adjusted_id);
 
-        c.and_(mask.gp(), 1);
-        c.add(output_index, mask.gp().r64());
+            c.and_(mask.gp(), 1);
+            c.add(output_index, mask.gp().r64());
+        }
+        c.add(input_index, unroll_factor);
 
-        c.add(input_index, 1);
         c.cmp(input_index, stop);
         c.jl(l_loop); // input_index < stop
         c.bind(l_exit);
     }
 
-    void scalar_loop(const uint8_t *filter_expr, size_t filter_size, bool null_check) {
-        scalar_tail2(filter_expr, filter_size, null_check, rows_size);
+    void scalar_loop(const uint8_t *filter_expr, size_t filter_size, bool null_check, int unroll_factor = 1) {
+        if(unroll_factor > 1) {
+            x86::Gp stop = c.newInt64("stop");
+            c.mov(stop, rows_size);
+            c.sub(stop, unroll_factor - 1);
+            scalar_tail2(filter_expr, filter_size, null_check, stop, unroll_factor);
+            scalar_tail2(filter_expr, filter_size, null_check, rows_size, 1); //tail
+        } else {
+            scalar_tail2(filter_expr, filter_size, null_check, rows_size, 1); //tail
+        }
         c.ret(output_index);
     }
 
-    void avx2_loop2(const uint8_t *filter_expr, size_t filter_size, uint32_t step, bool null_check) {
+    void avx2_loop2(const uint8_t *filter_expr, size_t filter_size, uint32_t step, bool null_check, int unroll_factor = 1) {
         using namespace asmjit::x86;
 
         Label l_loop = c.newLabel();
@@ -1244,7 +1254,7 @@ struct JitCompiler {
 
         Gp stop = c.newGpq();
         c.mov(stop, rows_size);
-        c.sub(stop, step - 1); // stop = rows_size - step + 1
+        c.sub(stop, unroll_factor * step - 1); // stop = rows_size - unroll_factor * step + 1
 
         c.cmp(input_index, stop);
         c.jge(l_exit);
@@ -1270,27 +1280,29 @@ struct JitCompiler {
 
         c.bind(l_loop);
 
-        questdb::avx2::emit_code(c, filter_expr, filter_size, registers, null_check, cols_ptr, vars_ptr, input_index);
+        for (int i = 0; i < unroll_factor; ++i) {
+            questdb::avx2::emit_code(c, filter_expr, filter_size, registers, null_check, cols_ptr, vars_ptr, input_index);
 
-        auto mask = registers.top();
-        registers.pop();
+            auto mask = registers.top();
+            registers.pop();
 
-        //mask compress optimization for longs
-        bool is_slow_zen = CpuInfo::host().familyId() == 23; // AMD Zen1, Zen1+ and Zen2
-        if (step == 4 && !is_slow_zen) {
-            Ymm compacted = questdb::avx2::compress_register(c, row_ids_reg, mask.ymm());
-            c.vmovdqu(ymmword_ptr(rows_ptr, output_index, 3), compacted);
-            Gp bits = questdb::avx2::to_bits4(c, mask.ymm());
-            c.popcnt(bits, bits);
-            c.add(output_index, bits.r64());
-            c.vpaddq(row_ids_reg, row_ids_reg, row_ids_step);
-        } else {
-            Gp bits = questdb::avx2::to_bits(c, mask.ymm(), step);
-            questdb::avx2::unrolled_loop2(c, bits.r64(), rows_ptr, input_index, output_index, rows_id_start_offset,
-                                          step);
+            //mask compress optimization for longs
+            bool is_slow_zen = CpuInfo::host().familyId() == 23; // AMD Zen1, Zen1+ and Zen2
+            if (step == 4 && !is_slow_zen) {
+                Ymm compacted = questdb::avx2::compress_register(c, row_ids_reg, mask.ymm());
+                c.vmovdqu(ymmword_ptr(rows_ptr, output_index, 3), compacted);
+                Gp bits = questdb::avx2::to_bits4(c, mask.ymm());
+                c.popcnt(bits, bits);
+                c.add(output_index, bits.r64());
+                c.vpaddq(row_ids_reg, row_ids_reg, row_ids_step);
+            } else {
+                Gp bits = questdb::avx2::to_bits(c, mask.ymm(), step);
+                questdb::avx2::unrolled_loop2(c, bits.r64(), rows_ptr, input_index, output_index, rows_id_start_offset,
+                                              step);
+            }
+            c.add(input_index, step); // index += step
         }
 
-        c.add(input_index, step); // index += step
         c.cmp(input_index, stop);
         c.jl(l_loop); // index < stop
         c.bind(l_exit);
