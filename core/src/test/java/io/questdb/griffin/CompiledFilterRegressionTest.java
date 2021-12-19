@@ -68,12 +68,34 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
                 " rnd_byte() i8," +
                 " rnd_short() i16," +
                 " rnd_int() i32," +
-                " rnd_long() i64 " +
+                " rnd_long() i64," +
+                " rnd_float() f32," +
+                " rnd_double() f64 " +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         FilterGenerator gen = new FilterGenerator()
-                .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64")
+                .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
                 .withComparisonOperator()
                 .withAnyOf("-50", "0", "50");
+        assertGeneratedQueryNotNull("select * from x", ddl, gen);
+    }
+
+    @Test
+    public void testColumnIntConstantComparisonBoundaryMatch() throws Exception {
+        final int boundary = 42;
+        Assert.assertTrue("boundary should be within the range", N_SIMD_WITH_SCALAR_TAIL > boundary);
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " cast(x as byte) i8," +
+                " cast(x as short) i16," +
+                " cast(x as int) i32," +
+                " x i64," +
+                " cast(x as float) f32," +
+                " cast(x as double) f64 " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
+                .withComparisonOperator()
+                .withAnyOf(String.valueOf(boundary));
         assertGeneratedQueryNotNull("select * from x", ddl, gen);
     }
 
@@ -89,7 +111,7 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
         FilterGenerator gen = new FilterGenerator()
                 .withOptionalNegation().withAnyOf("i32", "i64", "f32", "f64")
                 .withComparisonOperator()
-                .withAnyOf("-50", "-25.5", "0", "0.0", "0.000", "25.5", "50");
+                .withAnyOf("-42.5", "0.0", "0.000", "42.5");
         assertGeneratedQueryNotNull("select * from x", ddl, gen);
     }
 
