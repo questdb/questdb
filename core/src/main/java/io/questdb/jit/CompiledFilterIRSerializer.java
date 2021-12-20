@@ -91,6 +91,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private final PredicateContext predicateContext = new PredicateContext();
     // contains <memory_offset, constant_node> pairs for backfilling purposes
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
+    private final LongObjHashMap.LongObjConsumer<ExpressionNode> backfillNodeConsumer = this::backfillNode;
 
     // internal flag used to forcefully enable scalar mode based on filter's contents
     private boolean forceScalarMode;
@@ -230,29 +231,31 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
             // Then backfill constants and symbol bind variables and clean up
             try {
-                backfillNodes.forEach((key, value) -> {
-                    try {
-                        switch (value.type) {
-                            case ExpressionNode.CONSTANT:
-                            case ExpressionNode.OPERATION: // constant negation case
-                                backfillConstant(key, value);
-                                break;
-                            case ExpressionNode.BIND_VARIABLE:
-                                backfillSymbolBindVariable(key, value);
-                                break;
-                            default:
-                                throw SqlException.position(value.position)
-                                        .put("unexpected backfill token: ")
-                                        .put(value.token);
-                        }
-                    } catch (SqlException e) {
-                        throw new SqlWrapperException(e);
-                    }
-                });
+                backfillNodes.forEach(backfillNodeConsumer);
                 backfillNodes.clear();
             } catch (SqlWrapperException e) {
                 throw e.wrappedException;
             }
+        }
+    }
+
+    private void backfillNode(long key, ExpressionNode value) {
+        try {
+            switch (value.type) {
+                case ExpressionNode.CONSTANT:
+                case ExpressionNode.OPERATION: // constant negation case
+                    backfillConstant(key, value);
+                    break;
+                case ExpressionNode.BIND_VARIABLE:
+                    backfillSymbolBindVariable(key, value);
+                    break;
+                default:
+                    throw SqlException.position(value.position)
+                            .put("unexpected backfill token: ")
+                            .put(value.token);
+            }
+        } catch (SqlException e) {
+            throw new SqlWrapperException(e);
         }
     }
 
@@ -357,14 +360,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         bindVarFunctions.add(new CompiledFilterSymbolBindVariable(varFunction, predicateContext.symbolColumnIndex));
         int index = bindVarFunctions.size() - 1;
 
-        long originalOffset = memory.getAppendOffset();
-        try {
-            memory.jumpTo(offset);
-            memory.putByte(typeCode);
-            memory.putLong(index);
-        } finally {
-            memory.jumpTo(originalOffset);
-        }
+        memory.putByte(offset, typeCode);
+        memory.putLong(offset + Byte.BYTES, index);
     }
 
     private Function getBindVariableFunction(int position, CharSequence token) throws SqlException {
@@ -428,16 +425,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
         }
 
-        long originalOffset = memory.getAppendOffset();
-        try {
-            memory.jumpTo(offset);
-            serializeConstant(position, token, negate);
-        } finally {
-            memory.jumpTo(originalOffset);
-        }
+        serializeConstant(offset, position, token, negate);
     }
 
-    private void serializeConstant(int position, final CharSequence token, boolean negated) throws SqlException {
+    private void serializeConstant(long offset, int position, final CharSequence token, boolean negated) throws SqlException {
         final int len = token.length();
         final byte typeCode = predicateContext.localTypesObserver.constantTypeCode();
         if (typeCode == UNDEFINED_CODE) {
@@ -446,12 +437,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         if (SqlKeywords.isNullKeyword(token)) {
             boolean geoHashExpression = PredicateType.GEO_HASH == predicateContext.type;
-            serializeNull(position, typeCode, geoHashExpression);
+            serializeNull(offset, position, typeCode, geoHashExpression);
             return;
         }
 
         if (PredicateType.SYMBOL == predicateContext.type) {
-            serializeSymbolConstant(position, token);
+            serializeSymbolConstant(offset, position, token);
             return;
         }
 
@@ -461,8 +452,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
             if (len == 3) {
                 // this is 'x' - char
-                memory.putByte(IMM_I2);
-                memory.putLong(token.charAt(1));
+                memory.putByte(offset, IMM_I2);
+                memory.putLong(offset + Byte.BYTES, token.charAt(1));
                 return;
             }
             throw SqlException.position(position).put("unsupported string constant: ").put(token);
@@ -472,8 +463,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             if (PredicateType.BOOLEAN != predicateContext.type) {
                 throw SqlException.position(position).put("boolean constant in non-boolean expression: ").put(token);
             }
-            memory.putByte(IMM_I1);
-            memory.putLong(1);
+            memory.putByte(offset, IMM_I1);
+            memory.putLong(offset + Byte.BYTES, 1);
             return;
         }
 
@@ -481,8 +472,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             if (PredicateType.BOOLEAN != predicateContext.type) {
                 throw SqlException.position(position).put("boolean constant in non-boolean expression: ").put(token);
             }
-            memory.putByte(IMM_I1);
-            memory.putLong(0);
+            memory.putByte(offset, IMM_I1);
+            memory.putLong(offset + Byte.BYTES, 0);
             return;
         }
 
@@ -492,7 +483,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
             ConstantFunction geoConstant = GeoHashUtil.parseGeoHashConstant(position, token, len);
             if (geoConstant != null) {
-                serializeGeoHash(position, geoConstant, typeCode);
+                serializeGeoHash(offset, position, geoConstant, typeCode);
                 return;
             }
         }
@@ -501,45 +492,45 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             throw SqlException.position(position).put("numeric constant in non-numeric expression: ").put(token);
         }
         if (predicateContext.localTypesObserver.hasMixedSizes()) {
-            serializeUntypedNumber(position, token, negated);
+            serializeUntypedNumber(offset, position, token, negated);
         } else {
-            serializeNumber(position, token, typeCode, negated);
+            serializeNumber(offset, position, token, typeCode, negated);
         }
     }
 
-    private void serializeNull(int position, byte typeCode, boolean geoHashExpression) throws SqlException {
-        memory.putByte(typeCode);
+    private void serializeNull(long offset, int position, byte typeCode, boolean geoHashExpression) throws SqlException {
+        memory.putByte(offset, typeCode);
         switch (typeCode) {
             case IMM_I1:
                 if (!geoHashExpression) {
                     throw SqlException.position(position).put("byte type is not nullable");
                 }
-                memory.putLong(GeoHashes.BYTE_NULL);
+                memory.putLong(offset + Byte.BYTES, GeoHashes.BYTE_NULL);
                 break;
             case IMM_I2:
                 if (!geoHashExpression) {
                     throw SqlException.position(position).put("short type is not nullable");
                 }
-                memory.putLong(GeoHashes.SHORT_NULL);
+                memory.putLong(offset + Byte.BYTES, GeoHashes.SHORT_NULL);
                 break;
             case IMM_I4:
-                memory.putLong(geoHashExpression ? GeoHashes.INT_NULL : Numbers.INT_NaN);
+                memory.putLong(offset + Byte.BYTES, geoHashExpression ? GeoHashes.INT_NULL : Numbers.INT_NaN);
                 break;
             case IMM_I8:
-                memory.putLong(geoHashExpression ? GeoHashes.NULL : Numbers.LONG_NaN);
+                memory.putLong(offset + Byte.BYTES, geoHashExpression ? GeoHashes.NULL : Numbers.LONG_NaN);
                 break;
             case IMM_F4:
-                memory.putDouble(Float.NaN);
+                memory.putDouble(offset + Byte.BYTES, Float.NaN);
                 break;
             case IMM_F8:
-                memory.putDouble(Double.NaN);
+                memory.putDouble(offset + Byte.BYTES, Double.NaN);
                 break;
             default:
                 throw SqlException.position(position).put("unexpected null type: ").put(typeCode);
         }
     }
 
-    private void serializeSymbolConstant(int position, final CharSequence token) throws SqlException {
+    private void serializeSymbolConstant(long offset, int position, final CharSequence token) throws SqlException {
         final int len = token.length();
         CharSequence symbol = token;
         if (Chars.isQuoted(token)) {
@@ -556,8 +547,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final int key = predicateContext.symbolMapReader.keyOf(symbol);
         if (key != SymbolTable.VALUE_NOT_FOUND) {
             // Known symbol constant case
-            memory.putByte(IMM_I4);
-            memory.putLong(key);
+            memory.putByte(offset, IMM_I4);
+            memory.putLong(offset + Byte.BYTES, key);
             return;
         }
 
@@ -567,25 +558,25 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         int index = bindVarFunctions.size() - 1;
 
         byte typeCode = bindVariableTypeCode(ColumnType.STRING);
-        memory.putByte(typeCode);
-        memory.putLong(index);
+        memory.putByte(offset, typeCode);
+        memory.putLong(offset + Byte.BYTES, index);
     }
 
-    private void serializeGeoHash(int position, final ConstantFunction geoHashConstant, byte typeCode) throws SqlException {
-        memory.putByte(typeCode);
+    private void serializeGeoHash(long offset, int position, final ConstantFunction geoHashConstant, byte typeCode) throws SqlException {
+        memory.putByte(offset, typeCode);
         try {
             switch (typeCode) {
                 case IMM_I1:
-                    memory.putLong(geoHashConstant.getGeoByte(null));
+                    memory.putLong(offset + Byte.BYTES, geoHashConstant.getGeoByte(null));
                     break;
                 case IMM_I2:
-                    memory.putLong(geoHashConstant.getGeoShort(null));
+                    memory.putLong(offset + Byte.BYTES, geoHashConstant.getGeoShort(null));
                     break;
                 case IMM_I4:
-                    memory.putLong(geoHashConstant.getGeoInt(null));
+                    memory.putLong(offset + Byte.BYTES, geoHashConstant.getGeoInt(null));
                     break;
                 case IMM_I8:
-                    memory.putLong(geoHashConstant.getGeoLong(null));
+                    memory.putLong(offset + Byte.BYTES, geoHashConstant.getGeoLong(null));
                     break;
                 default:
                     throw SqlException.position(position).put("unexpected type code for geo hash: ").put(typeCode);
@@ -595,42 +586,42 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void serializeNumber(int position, final CharSequence token, byte typeCode, boolean negated) throws SqlException {
+    private void serializeNumber(long offset, int position, final CharSequence token, byte typeCode, boolean negated) throws SqlException {
         long sign = negated ? -1 : 1;
         try {
             switch (typeCode) {
                 case IMM_I1:
                     final byte b = (byte) Numbers.parseInt(token);
-                    memory.putByte(IMM_I1);
-                    memory.putLong(sign * b);
+                    memory.putByte(offset, IMM_I1);
+                    memory.putLong(offset + Byte.BYTES, sign * b);
                     break;
                 case IMM_I2:
                     final short s = (short) Numbers.parseInt(token);
-                    memory.putByte(IMM_I2);
-                    memory.putLong(sign * s);
+                    memory.putByte(offset, IMM_I2);
+                    memory.putLong(offset + Byte.BYTES, sign * s);
                     break;
                 case IMM_I4:
                 case IMM_F4:
                     try {
                         final int i = Numbers.parseInt(token);
-                        memory.putByte(IMM_I4);
-                        memory.putLong(sign * i);
+                        memory.putByte(offset, IMM_I4);
+                        memory.putLong(offset + Byte.BYTES, sign * i);
                     } catch (NumericException e) {
                         final float fi = Numbers.parseFloat(token);
-                        memory.putByte(IMM_F4);
-                        memory.putDouble(sign * fi);
+                        memory.putByte(offset, IMM_F4);
+                        memory.putDouble(offset + Byte.BYTES, sign * fi);
                     }
                     break;
                 case IMM_I8:
                 case IMM_F8:
                     try {
                         final long l = Numbers.parseLong(token);
-                        memory.putByte(IMM_I8);
-                        memory.putLong(sign * l);
+                        memory.putByte(offset, IMM_I8);
+                        memory.putLong(offset + Byte.BYTES, sign * l);
                     } catch (NumericException e) {
                         final double dl = Numbers.parseDouble(token);
-                        memory.putByte(IMM_F8);
-                        memory.putDouble(sign * dl);
+                        memory.putByte(offset, IMM_F8);
+                        memory.putDouble(offset + Byte.BYTES, sign * dl);
                     }
                     break;
                 default:
@@ -645,37 +636,37 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void serializeUntypedNumber(int position, final CharSequence token, boolean negated) throws SqlException {
+    private void serializeUntypedNumber(long offset, int position, final CharSequence token, boolean negated) throws SqlException {
         long sign = negated ? -1 : 1;
 
         try {
             final int i = Numbers.parseInt(token);
-            memory.putByte(IMM_I4);
-            memory.putLong(sign * i);
+            memory.putByte(offset, IMM_I4);
+            memory.putLong(offset + Byte.BYTES, sign * i);
             return;
         } catch (NumericException ignore) {
         }
 
         try {
             final long l = Numbers.parseLong(token);
-            memory.putByte(IMM_I8);
-            memory.putLong(sign * l);
+            memory.putByte(offset, IMM_I8);
+            memory.putLong(offset + Byte.BYTES, sign * l);
             return;
         } catch (NumericException ignore) {
         }
 
         try {
             final double d = Numbers.parseDouble(token);
-            memory.putByte(IMM_F8);
-            memory.putDouble(sign * d);
+            memory.putByte(offset, IMM_F8);
+            memory.putDouble(offset + Byte.BYTES, sign * d);
             return;
         } catch (NumericException ignore) {
         }
 
         try {
             final float f = Numbers.parseFloat(token);
-            memory.putByte(IMM_F4);
-            memory.putDouble(sign * f);
+            memory.putByte(offset, IMM_F4);
+            memory.putDouble(offset + Byte.BYTES, sign * f);
             return;
         } catch (NumericException ignore) {
         }
