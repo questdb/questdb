@@ -156,19 +156,20 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
     private boolean nextReenterPageFrame() {
         if (pageFrameIndex == -1) {
+            // cursor iteration -> toTop -> recordAt case
+            pageFrameCursor.toTop();
             next = nextPage;
             return next.getAsBoolean();
         }
 
-        PageFrame frame = seekPageFrame(recordA, pageFrameIndex);
+        // cursor iteration -> recordAt case
 
-        // Restore next
+        PageFrame frame = seekPageFrame(recordA, pageFrameIndex);
         if (hasColumnTops(frame)) {
             next = nextColTopsRow;
         } else {
             next = nextRow;
         }
-
         return next.getAsBoolean();
     }
 
@@ -204,13 +205,11 @@ class CompiledFilterRecordCursor implements RecordCursor {
     }
 
     private void seekNextColTopsRow() {
-        current += 1;
-        while (current < hi) {
+        while (++current < hi) {
             recordA.setIndex(current);
             if (colTopsFilter.getBool(recordA)) {
                 return;
             }
-            current += 1;
         }
     }
 
@@ -235,7 +234,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
             if (hasColumnTops(frame)) {
                 // Use Java filter implementation in case of a page frame with column tops.
 
-                current = 0;
+                current = -1;
                 hi = rowCount;
                 seekNextColTopsRow();
 
@@ -660,8 +659,8 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
             @Override
             public void copyTo(long address, final long start, final long length) {
-                long bytesRemaining = Math.min(length, this.len - start);
-                long addr = this.address + start;
+                final long bytesRemaining = Math.min(length, this.len - start);
+                final long addr = this.address + start;
                 Vect.memcpy(address, addr, bytesRemaining);
             }
 

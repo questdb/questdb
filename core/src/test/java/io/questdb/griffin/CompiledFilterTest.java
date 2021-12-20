@@ -26,8 +26,12 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.Numbers;
+import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
@@ -339,33 +343,33 @@ public class CompiledFilterTest extends AbstractGriffinTest {
     }
 
     private void testSelectAllBothPageFramesFilterWithColTops(int jitMode) throws Exception {
-        final String query = "select * from t1 where x = 3";
+        final String query = "select * from t1 where x >= 3 and x <= 4";
         final String expected = "x\tts\tj\n" +
                 "3\t1970-01-01T00:00:02.000000Z\tNaN\n" +
-                "3\t1970-01-01T00:01:42.000000Z\t7746536061816329025\n";
+                "4\t1970-01-01T00:00:03.000000Z\tNaN\n" +
+                "3\t1970-01-01T00:01:42.000000Z\t7746536061816329025\n" +
+                "4\t1970-01-01T00:01:43.000000Z\t-6945921502384501475\n";
 
         testFilterWithColTops(query, expected, jitMode);
     }
 
     @Test
-    public void testSelectNonColTopColumnFilterWithColTopsScalar() throws Exception {
-        testSelectNonColTopColumnFilterWithColTops(SqlJitMode.JIT_MODE_FORCE_SCALAR);
+    public void testSelectSingleColumnFilterWithColTopsScalar() throws Exception {
+        testSelectSingleColumnFilterWithColTops(SqlJitMode.JIT_MODE_FORCE_SCALAR);
     }
 
     @Test
-    public void testSelectNonColTopColumnFilterWithColTopsVectorized() throws Exception {
-        testSelectNonColTopColumnFilterWithColTops(SqlJitMode.JIT_MODE_ENABLED);
+    public void testSelectSingleColumnFilterWithColTopsVectorized() throws Exception {
+        testSelectSingleColumnFilterWithColTops(SqlJitMode.JIT_MODE_ENABLED);
     }
 
-    private void testSelectNonColTopColumnFilterWithColTops(int jitMode) throws Exception {
-        final String query = "select x from t1 where x < 4";
-        final String expected = "x\n" +
-                "1\n" +
-                "2\n" +
-                "3\n" +
-                "1\n" +
-                "2\n" +
-                "3\n";
+    private void testSelectSingleColumnFilterWithColTops(int jitMode) throws Exception {
+        // The column order is important here, since we want
+        // query and table column indexes to be different.
+        final String query = "select j from t1 where j <> null and x < 3";
+        final String expected = "j\n" +
+                "4689592037643856\n" +
+                "4729996258992366\n";
 
         testFilterWithColTops(query, expected, jitMode);
     }
@@ -392,5 +396,94 @@ public class CompiledFilterTest extends AbstractGriffinTest {
         });
     }
 
-    // TODO test iteration -> toTop -> recordAt and other random access scenarios
+    @Test
+    public void testRandomAccessAfterToTop() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select" +
+                    " x l," +
+                    " timestamp_sequence(400000000000, 500000000) ts" +
+                    " from long_sequence(5)) timestamp(ts)", sqlExecutionContext);
+
+            final String query = "select * from x where l > 3";
+            final String expected = "l\tts\n" +
+                    "4\t1970-01-05T15:31:40.000000Z\n" +
+                    "5\t1970-01-05T15:40:00.000000Z\n";
+
+            assertSql(query, expected);
+            assertSqlRunWithJit(query);
+
+            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    // 1. iteration
+                    Assert.assertTrue(cursor.hasNext());
+                    final long rowid = record.getRowId();
+                    Assert.assertTrue(cursor.hasNext());
+                    long l = record.getLong(factory.getMetadata().getColumnIndex("l"));
+                    Assert.assertEquals(5, l);
+
+                    // 2. reset iteration
+                    // TODO ???
+                    cursor.toTop();
+
+                    // 3. random access
+                    cursor.recordAt(record, rowid);
+                    l = record.getLong(factory.getMetadata().getColumnIndex("l"));
+                    Assert.assertEquals(4, l);
+
+                    // 4. iteration restarts
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertTrue(cursor.hasNext());
+                    l = record.getLong(factory.getMetadata().getColumnIndex("l"));
+                    Assert.assertEquals(5, l);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRandomAccessWithColTops() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select" +
+                    " x l," +
+                    " timestamp_sequence(400000000000, 500000000) ts" +
+                    " from long_sequence(5)) timestamp(ts)", sqlExecutionContext);
+
+            compile("alter table x add column j long", sqlExecutionContext);
+
+            compiler.compile("insert into x select " +
+                    " (x+5) l," +
+                    " timestamp_sequence(500000000000, 500000000) ts," +
+                    " rnd_long() j " +
+                    "from long_sequence(5)", sqlExecutionContext);
+
+            final String query = "select * from x where l > 3 and j = null";
+            final String expected = "l\tts\tj\n" +
+                    "4\t1970-01-05T15:31:40.000000Z\tNaN\n" +
+                    "5\t1970-01-05T15:40:00.000000Z\tNaN\n";
+
+            assertSql(query, expected);
+            assertSqlRunWithJit(query);
+
+            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    // 1. iteration
+                    Assert.assertTrue(cursor.hasNext());
+                    final long rowid = record.getRowId();
+                    Assert.assertTrue(cursor.hasNext());
+                    long l = record.getLong(factory.getMetadata().getColumnIndex("l"));
+                    Assert.assertEquals(5, l);
+
+                    // 2. random access
+                    cursor.recordAt(record, rowid);
+                    l = record.getLong(factory.getMetadata().getColumnIndex("l"));
+                    Assert.assertEquals(4, l);
+
+                    // 3. continue iteration
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
+        });
+    }
 }
