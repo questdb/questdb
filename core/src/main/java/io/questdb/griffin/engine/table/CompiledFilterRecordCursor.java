@@ -148,10 +148,11 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
             if (frameIndex == toFrameIndex) {
                 record.jumpTo(frame, frameIndex);
-                break;
+                return frame;
             }
         }
-        return frame;
+
+        throw NoMoreFramesException.INSTANCE;
     }
 
     private boolean nextReenterPageFrame() {
