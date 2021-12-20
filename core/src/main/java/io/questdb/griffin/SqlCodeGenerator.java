@@ -28,7 +28,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.RecordComparator;
@@ -1873,7 +1872,7 @@ public class SqlCodeGenerator implements Mutable {
 
             for(int i = 0, n = columns.size(); i < n; i++) {
                 QueryColumn queryColumn = columns.getQuick(i);
-                CharSequence columnName = columns.getQuick(i).getAlias();
+                CharSequence columnName = queryColumn.getAlias();
                 int index = metadata.getColumnIndexQuiet(queryColumn.getAst().token);
                 assert index > -1 : "wtf? " + queryColumn.getAst().token;
 

@@ -116,7 +116,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int orderByAdviceMnemonic;
     private int tableId;
     private boolean isUpdateModel;
-    private final QueryWithClauseModel withClauseModel = new QueryWithClauseModel();
+    private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauseModel = new LowerCaseCharSequenceObjHashMap<>();
     private int modelType;
     private final ObjList<ExpressionNode> updateSetColumns = new ObjList<>();
     private final IntList updateTableColumnTypes = new IntList();
@@ -340,7 +340,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return updateSetColumns;
     }
 
-    public QueryWithClauseModel getWithClauses() {
+    public LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses() {
         return withClauseModel;
     }
 

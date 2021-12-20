@@ -29,7 +29,6 @@ import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.Atomicity;
@@ -64,7 +63,6 @@ public class SqlCompiler implements Closeable {
     public static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
     private final static Log LOG = LogFactory.getLog(SqlCompiler.class);
     private static final IntList castGroups = new IntList();
-    private static final CastStrToGeoHashFunctionFactory GEO_HASH_FUNCTION_FACTORY = new CastStrToGeoHashFunctionFactory();
     private static final CastCharToStrFunctionFactory CHAR_TO_STR_FUNCTION_FACTORY = new CastCharToStrFunctionFactory();
     protected final GenericLexer lexer;
     protected final Path path = new Path();
@@ -2029,32 +2027,39 @@ public class SqlCompiler implements Closeable {
             long tableVersion,
             RecordCursorFactory updateToCursorFactory
     ) throws SqlException {
-        String tableName = Chars.toString(updateQueryModel.getTableName().token);
-        if (!updateToCursorFactory.supportTableRowId(tableName)) {
-            throw SqlException.$(updateQueryModel.getModelPosition(), "Only simple UPDATE statements without joins are supported");
-        }
-
-        // Check that updateDataFactoryMetadata match types of table to be updated exactly
-        RecordMetadata updateDataFactoryMetadata = updateToCursorFactory.getMetadata();
-
-        for (int i = 0, n = updateDataFactoryMetadata.getColumnCount(); i < n; i++) {
-            int virtualColumnType = updateDataFactoryMetadata.getColumnType(i);
-            CharSequence updateColumnName = updateDataFactoryMetadata.getColumnName(i);
-            int tableColumnIndex = tableColumnNames.indexOf(updateColumnName);
-            int tableColumnType = tableColumnTypes.get(tableColumnIndex);
-
-            if (virtualColumnType != tableColumnType) {
-                // get column position
-                ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
-                int position = setRhs.position;
-                throw SqlException.inconvertibleTypes(position, virtualColumnType, "", tableColumnType, updateColumnName);
+        try {
+            String tableName = Chars.toString(updateQueryModel.getTableName().token);
+            if (!updateToCursorFactory.supportTableRowId(tableName)) {
+                throw SqlException.$(updateQueryModel.getModelPosition(), "Only simple UPDATE statements without joins are supported");
             }
-        }
 
-        return new UpdateStatement(
-                tableName,
-                tableId, tableVersion, updateToCursorFactory
-        );
+            // Check that updateDataFactoryMetadata match types of table to be updated exactly
+            RecordMetadata updateDataFactoryMetadata = updateToCursorFactory.getMetadata();
+
+            for (int i = 0, n = updateDataFactoryMetadata.getColumnCount(); i < n; i++) {
+                int virtualColumnType = updateDataFactoryMetadata.getColumnType(i);
+                CharSequence updateColumnName = updateDataFactoryMetadata.getColumnName(i);
+                int tableColumnIndex = tableColumnNames.indexOf(updateColumnName);
+                int tableColumnType = tableColumnTypes.get(tableColumnIndex);
+
+                if (virtualColumnType != tableColumnType) {
+                    // get column position
+                    ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
+                    int position = setRhs.position;
+                    throw SqlException.inconvertibleTypes(position, virtualColumnType, "", tableColumnType, updateColumnName);
+                }
+            }
+
+            return new UpdateStatement(
+                    tableName,
+                    tableId,
+                    tableVersion,
+                    updateToCursorFactory
+            );
+        } catch (CairoException | SqlException e) {
+            updateToCursorFactory.close();
+            throw e;
+        }
     }
 
     RecordCursorFactory generate(QueryModel queryModel, SqlExecutionContext executionContext) throws SqlException {
@@ -2571,7 +2576,7 @@ public class SqlCompiler implements Closeable {
                         function = CHAR_TO_STR_FUNCTION_FACTORY.newInstance(function);
                         // fall through to STRING
                     default:
-                        function = GEO_HASH_FUNCTION_FACTORY.newInstance(functionPosition, columnType, function);
+                        function = CastStrToGeoHashFunctionFactory.newInstance(functionPosition, columnType, function);
                         break;
                 }
             }

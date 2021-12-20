@@ -38,7 +38,8 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
 
-import static io.questdb.griffin.model.ExpressionNode.*;
+import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
+import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 
 class SqlOptimiser {
 
@@ -688,6 +689,7 @@ class SqlOptimiser {
     }
 
     private void copyColumnTypesFromMetadata(QueryModel model, TableReaderMetadata m){
+        // TODO: optimise by copying column indexes, types of the columns used in SET clause in the UPDATE only
         for (int i = 0, k = m.getColumnCount(); i < k; i++) {
             model.addUpdateTableColumnMetadata(m.getColumnType(i), m.getColumnName(i));
         }

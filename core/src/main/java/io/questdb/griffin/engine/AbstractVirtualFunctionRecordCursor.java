@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -39,8 +38,13 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
 
     public AbstractVirtualFunctionRecordCursor(ObjList<Function> functions, boolean supportsRandomAccess) {
         this.functions = functions;
-        this.recordA = new VirtualRecord(functions);
-        this.recordB = new VirtualRecord(functions);
+        if (supportsRandomAccess) {
+            this.recordA = new VirtualRecord(functions);
+            this.recordB = new VirtualRecord(functions);
+        } else {
+            this.recordA = new VirtualRecord(functions);
+            this.recordB = null;
+        }
         this.supportsRandomAccess = supportsRandomAccess;
     }
 
@@ -95,7 +99,7 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
     public void of(RecordCursor cursor) {
         this.baseCursor = cursor;
         recordA.of(baseCursor.getRecord());
-        if (supportsRandomAccess) {
+        if (recordB != null) {
             recordB.of(baseCursor.getRecordB());
         }
     }

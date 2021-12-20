@@ -160,14 +160,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     public Function createImplicitCast(int position, Function function, int toType) throws SqlException {
         Function cast = createImplicitCastOrNull(position, function, toType);
         if (cast != null && cast.isConstant()) {
-            try {
-                Function constant = functionToConstant(cast);
-                function.close();
-                return constant;
-            } finally {
-                cast.close();
-            }
+            Function constant = functionToConstant(cast);
+            // incoming function is now converted to a constant and can be closed here
+            // since the returning constant will not use the function as underlying arg
+            function.close();
+            return constant;
         }
+        // Do not close incoming function if cast is not a constant
+        // it will be used inside the cast as an argument
         return cast;
     }
 
@@ -192,6 +192,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                         return CastGeoHashToGeoHashFunctionFactory.newInstance(position, function, fromType, toType);
                     }
                 }
+                break;
         }
         return null;
     }
@@ -294,11 +295,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             positionStack.pop();
             assert positionStack.size() == functionStack.size();
             if (function != null && function.isConstant() && (function instanceof ScalarFunction)) {
-                try {
-                    return functionToConstant(function);
-                } finally {
-                    function.close();
-                }
+                return functionToConstant(function);
             }
             return function;
         } finally {
@@ -802,6 +799,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     private Function functionToConstant(Function function) {
+        Function newFunction = functionToConstant0(function);
+        // Sometimes functionToConstant0 returns same instance as passed in parameter
+        if (newFunction != function) {
+            // and we want to close underlying function only in case it's different form returned newFunction
+            function.close();
+        }
+        return newFunction;
+    }
+
+    private Function functionToConstant0(Function function) {
         int type = function.getType();
         switch (ColumnType.tagOf(type)) {
             case ColumnType.INT:
