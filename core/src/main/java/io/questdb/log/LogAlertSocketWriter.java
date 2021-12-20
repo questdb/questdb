@@ -49,7 +49,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     static final CharSequenceObjHashMap<CharSequence> ALERT_PROPS = TemplateParser.adaptMap(System.getenv());
     private static final String DEFAULT_ENV_VALUE = "GLOBAL";
     private static final String ORG_ID_ENV = "ORGID";
-    private static final String QDB_VERSION_ENV = "QDB_VERSION";
+    public static final String QDB_VERSION_ENV = "QDB_VERSION";
     private static final String NAMESPACE_ENV = "NAMESPACE";
     private static final String CLUSTER_ENV = "CLUSTER_NAME";
     private static final String INSTANCE_ENV = "INSTANCE_NAME";
@@ -78,6 +78,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private String outBufferSize;
     private String alertTargets;
     private String reconnectDelay;
+    private final CharSequenceObjHashMap<CharSequence> properties;
 
     public LogAlertSocketWriter(RingQueue<LogRecordSink> alertsSrc, SCSequence writeSequence, int level) {
         this(
@@ -86,7 +87,8 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                 MicrosecondClockImpl.INSTANCE,
                 alertsSrc,
                 writeSequence,
-                level
+                level,
+                ALERT_PROPS
         );
     }
 
@@ -96,7 +98,8 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
             MicrosecondClock clock,
             RingQueue<LogRecordSink> alertsSrc,
             SCSequence writeSequence,
-            int level
+            int level,
+            CharSequenceObjHashMap<CharSequence> properties
     ) {
         this.ff = ff;
         this.nf = nf;
@@ -104,6 +107,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
         this.alertsSourceQueue = alertsSrc;
         this.writeSequence = writeSequence;
         this.level = level & ~(1 << Numbers.msb(LogLevel.ADVISORY)); // switch off ADVISORY
+        this.properties = properties;
     }
 
     @Override
@@ -293,7 +297,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                 byte[] buff = new byte[LogAlertSocket.IN_BUFFER_SIZE];
                 int len = is.read(buff, 0, buff.length);
                 String template = new String(buff, 0, len, Files.UTF_8);
-                alertTemplate.parse(template, now, ALERT_PROPS);
+                alertTemplate.parse(template, now, properties);
                 needsReading = false;
             }
         } catch (IOException e) {
@@ -308,7 +312,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
                     ff,
                     sink
             );
-            alertTemplate.parse(sink, now, ALERT_PROPS);
+            alertTemplate.parse(sink, now, properties);
         }
         if (alertTemplate.getKeyOffset(MESSAGE_ENV) < 0) {
             throw new LogError(String.format(
