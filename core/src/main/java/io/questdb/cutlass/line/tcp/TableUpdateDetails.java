@@ -252,9 +252,8 @@ public class TableUpdateDetails implements Closeable {
     }
 
     public class ThreadLocalDetails implements Closeable {
-        private static final int COLUMN_INDEX_NOT_CACHED = -2;
         private final Path path = new Path();
-        private final CharSequenceIntHashMap columnIndexByNameUtf8 = new CharSequenceIntHashMap(8, 0.3, COLUMN_INDEX_NOT_CACHED);
+        private final CharSequenceIntHashMap columnIndexByNameUtf8 = new CharSequenceIntHashMap();
         private final ObjList<SymbolCache> symbolCacheByColumnIndex = new ObjList<>();
         private final ObjList<SymbolCache> unusedSymbolCaches;
         // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)
@@ -314,12 +313,9 @@ public class TableUpdateDetails implements Closeable {
             columnTypeMeta.add(0);
         }
 
-        LowerCaseCharSequenceHashSet getAddedCols() {
+        LowerCaseCharSequenceHashSet resetAddedCols() {
+            addedCols.clear();
             return addedCols;
-        }
-
-        int getColumnCount() {
-            return columnCount;
         }
 
         StringSink getTempSink() {
@@ -328,11 +324,14 @@ public class TableUpdateDetails implements Closeable {
 
         int getColumnIndex(DirectByteCharSequence colName) {
             int colIndex = columnIndexByNameUtf8.get(colName);
-            if (colIndex == COLUMN_INDEX_NOT_CACHED) {
-                colIndex = getColumnIndexFromReader(colName);
-                if (colIndex < 0) {
-                    unresolvedColumnFlag = true;
+            if (colIndex < 0) {
+                if (!unresolvedColumnFlag) {
+                    colIndex = getColumnIndexFromReader(colName);
+                    if (colIndex < 0) {
+                        unresolvedColumnFlag = true;
+                    }
                 }
+                columnIndexByNameUtf8.put(colName.toString(), colIndex);
             }
             return colIndex;
         }
@@ -345,7 +344,7 @@ public class TableUpdateDetails implements Closeable {
                     throw CairoException.instance(0).put("invalid UTF8 in value for ").put(colName);
                 }
                 int colIndex = metadata.getColumnIndexQuiet(tempSink);
-                updateColumnCaches(colName.toString(), colIndex, metadata);
+                updateColumnTypeCache(colIndex, metadata);
                 return colIndex;
             }
         }
@@ -357,24 +356,21 @@ public class TableUpdateDetails implements Closeable {
 
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16)) {
                 TableReaderMetadata metadata = reader.getMetadata();
-                unresolvedColumnFlag = false;
                 ObjList<CharSequence> keys = columnIndexByNameUtf8.keys();
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     final CharSequence colName = keys.get(i);
                     if (columnIndexByNameUtf8.get(colName) < 0) {
                         int colIndex = metadata.getColumnIndexQuiet(colName);
-                        if (colIndex < 0) {
-                            unresolvedColumnFlag = true;
-                        } else {
-                            updateColumnCaches(colName, colIndex, metadata);
+                        if (colIndex > -1) {
+                            columnIndexByNameUtf8.put(colName, colIndex);
+                            updateColumnTypeCache(colIndex, metadata);
                         }
                     }
                 }
             }
         }
 
-        private void updateColumnCaches(CharSequence colName, int colIndex, TableReaderMetadata metadata) {
-            columnIndexByNameUtf8.put(colName, colIndex);
+        private void updateColumnTypeCache(int colIndex, TableReaderMetadata metadata) {
             if (colIndex < 0) {
                 return;
             }
@@ -389,8 +385,13 @@ public class TableUpdateDetails implements Closeable {
             return columnTypeMeta.getQuick(colIndex + 1); // first val accounts for new cols, index -1
         }
 
-        BoolList getProcessedCols() {
+        BoolList resetProcessedCols() {
+            processedCols.setAll(columnCount, false);
             return processedCols;
+        }
+
+        void resetUnresolvedColumnFlag() {
+            unresolvedColumnFlag = false;
         }
 
         int getSymbolIndex(int colIndex, CharSequence symValue) {
