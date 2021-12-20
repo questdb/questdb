@@ -36,7 +36,6 @@
 #include <chrono>
 #include <bitset>
 #include <iostream>
-#include <src/main/c/share/compiler.h>
 
 #include "cmdline.h"
 #include "performancetimer.h"
