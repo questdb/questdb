@@ -98,7 +98,7 @@ class LineTcpMeasurementEvent implements Closeable {
         tableUpdateDetails.releaseWriter(commitOnWriterClose);
     }
 
-    void append(StringSink charSink, FloatingDirectCharSink floatingCharSink) {
+    void append(FloatingDirectCharSink floatingCharSink) {
         TableWriter.Row row = null;
         try {
             TableWriter writer = tableUpdateDetails.getWriter();
@@ -120,30 +120,24 @@ class LineTcpMeasurementEvent implements Closeable {
                     entityType = Unsafe.getUnsafe().getByte(bufPos);
                     bufPos += Byte.BYTES;
                 } else {
-                    int colNameLen = -1 * colIndex;
-                    long nameLo = bufPos; // UTF8 encoded
-                    long nameHi = bufPos + colNameLen;
-                    charSink.clear();
-                    if (!Chars.utf8Decode(nameLo, nameHi, charSink)) {
-                        throw CairoException.instance(0)
-                                .put("invalid UTF8 in column name ");
-                        // todo: dump hex of bad column name
-                    }
+                    long nameLo = bufPos;
+                    long nameHi = bufPos + -2L * colIndex;
+                    floatingCharSink.asCharSequence(nameLo, nameHi);
                     bufPos = nameHi;
                     entityType = Unsafe.getUnsafe().getByte(bufPos);
                     bufPos += Byte.BYTES;
-                    colIndex = writer.getMetadata().getColumnIndexQuiet(charSink);
+                    colIndex = writer.getMetadata().getColumnIndexQuiet(floatingCharSink);
                     if (colIndex < 0) {
                         // Cannot create a column with an open row, writer will commit when a column is created
                         row.cancel();
                         row = null;
                         int colType = DefaultColumnTypes.DEFAULT_COLUMN_TYPES[entityType];
-                        if (TableUtils.isValidInfluxColumnName(charSink)) {
-                            writer.addColumn(charSink, colType);
+                        if (TableUtils.isValidInfluxColumnName(floatingCharSink)) {
+                            writer.addColumn(floatingCharSink, colType);
                         } else {
                             throw CairoException.instance(0)
                                     .put("invalid column name [table=").put(writer.getTableName())
-                                    .put(", columnName=").put(charSink)
+                                    .put(", columnName=").put(floatingCharSink)
                                     .put(']');
                         }
                         // Reset to beginning of entities
@@ -467,19 +461,15 @@ class LineTcpMeasurementEvent implements Closeable {
                     } else {
                         addedCols.addAt(index, colName.toString());
                     }
-                    int colNameLen = entity.getName().length();
+                    int colNameLen = colName.length();
                     Unsafe.getUnsafe().putInt(bufPos, -1 * colNameLen);
                     bufPos += Integer.BYTES;
-                    if (bufPos + colNameLen < bufMax) {
-                        // Memcpy the buffer with the column name to the message
-                        // so that writing thread will create the column
-                        // Note that writing thread will be responsible to convert it from utf8
-                        // to utf16. This should happen rarely
-                        Vect.memcpy(bufPos, entity.getName().getLo(), colNameLen);
+                    if (bufPos + 2L * colNameLen < bufMax) {
+                        Chars.copyStrChars(colName, 0, colNameLen, bufPos);
                     } else {
                         throw CairoException.instance(0).put("queue buffer overflow");
                     }
-                    bufPos += colNameLen;
+                    bufPos += 2L * colNameLen;
                 } else {
                     if (colIndex == tableUpdateDetails.getTimestampIndex()) {
                         timestamp = timestampAdapter.getMicros(entity.getLongValue());
