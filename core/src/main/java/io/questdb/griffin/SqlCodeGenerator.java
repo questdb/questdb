@@ -731,27 +731,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (useJit) {
             final boolean optimize = factory.supportPageFrameCursor() && JitUtil.isJitSupported();
             if (optimize) {
-                try (TableReader reader = engine.getReader(
-                        executionContext.getCairoSecurityContext(),
-                        model.getTableName().token,
-                        model.getTableId(),
-                        model.getTableVersion())
-                ) {
-                    // Restore column indexes from the base factory. We have to use table reader's
-                    // metadata, since factory's metadata is always a GenericRecordMetadata.
-                    final IntList columnIndexes = new IntList();
-                    final int columnCount = factory.getMetadata().getColumnCount();
-                    final TableReaderMetadata readerMetadata = reader.getMetadata();
-                    for (int i = 0; i < columnCount; i++) {
-                        int columnIndex = readerMetadata.getColumnIndexQuiet(factory.getMetadata().getColumnName(i));
-                        columnIndexes.add(columnIndex);
+                try {
+                    int jitOptions;
+                    final ObjList<Function> bindVarFunctions = new ObjList<>();
+                    try (PageFrameCursor cursor = factory.getPageFrameCursor(executionContext)) {
+                        final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
+                        jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), cursor, bindVarFunctions);
+                        jitOptions = jitIRSerializer.serialize(filter, forceScalar, enableJitDebug, enableJitNullChecks);
                     }
 
-                    // Serialize IR and try to compile the filter.
-                    final ObjList<Function> bindVarFunctions = new ObjList<>();
-                    final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
-                    jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), reader, columnIndexes, bindVarFunctions);
-                    int jitOptions = jitIRSerializer.serialize(filter, forceScalar, enableJitDebug, enableJitNullChecks);
                     final CompiledFilter jitFilter = new CompiledFilter();
                     jitFilter.compile(jitIRMem, jitOptions);
 

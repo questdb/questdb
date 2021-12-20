@@ -26,20 +26,19 @@ package io.questdb.jit;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.BaseFunctionFactoryTest;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -52,15 +51,22 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     private static final String KNOWN_SYMBOL_2 = "DEF";
     private static final String UNKNOWN_SYMBOL = "XYZ";
 
-    private static TableReader reader;
-    private static RecordMetadata metadata;
-    private static IntList columnIndexes;
     private static ObjList<Function> bindVarFunctions;
     private static MemoryCARW irMemory;
     private static CompiledFilterIRSerializer serializer;
 
+    private RecordCursorFactory factory;
+    private RecordMetadata metadata;
+
     @BeforeClass
-    public static void setUp2() {
+    public static void setUpStatic2() {
+        bindVarFunctions = new ObjList<>();
+        irMemory = Vm.getCARWInstance(1024, 1, MemoryTag.NATIVE_DEFAULT);
+        serializer = new CompiledFilterIRSerializer();
+    }
+
+    @Before
+    public void setUp2() throws SqlException {
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
             model.col("aboolean", ColumnType.BOOLEAN)
                     .col("abyte", ColumnType.BYTE)
@@ -91,21 +97,20 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             writer.commit();
         }
 
-        reader = new TableReader(configuration, "x");
-        metadata = reader.getMetadata();
-        columnIndexes = new IntList();
-        bindVarFunctions = new ObjList<>();
-        for (int i = 0; i < reader.getMetadata().getColumnCount(); i++) {
-            columnIndexes.add(i);
-        }
-        irMemory = Vm.getCARWInstance(1024, 1, MemoryTag.NATIVE_DEFAULT);
-        serializer = new CompiledFilterIRSerializer();
+        CompiledQuery query = compiler.compile("select * from x", sqlExecutionContext);
+        factory = query.getRecordCursorFactory();
+        Assert.assertTrue(factory.supportPageFrameCursor());
+        metadata = factory.getMetadata();
     }
 
     @AfterClass
-    public static void tearDown2() {
-        reader.close();
+    public static void tearDownStatic2() {
         irMemory.close();
+    }
+
+    @After
+    public void tearDown2() {
+        factory.close();
     }
 
     @Test
@@ -627,8 +632,10 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         bindVarFunctions.clear();
 
         ExpressionNode node = expr(seq);
-        return serializer.of(irMemory, sqlExecutionContext, metadata, reader, columnIndexes, bindVarFunctions)
-                .serialize(node, scalar, debug, nullChecks);
+        try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext)) {
+            return serializer.of(irMemory, sqlExecutionContext, metadata, cursor, bindVarFunctions)
+                    .serialize(node, scalar, debug, nullChecks);
+        }
     }
 
     private void assertIR(String message, String expectedIR) {

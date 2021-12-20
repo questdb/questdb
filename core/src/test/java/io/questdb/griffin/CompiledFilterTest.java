@@ -423,7 +423,6 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     Assert.assertEquals(5, l);
 
                     // 2. reset iteration
-                    // TODO ???
                     cursor.toTop();
 
                     // 3. random access

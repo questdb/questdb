@@ -26,11 +26,7 @@ package io.questdb.jit;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.SymbolMapReader;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
@@ -102,23 +98,20 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private MemoryCARW memory;
     private SqlExecutionContext executionContext;
     private RecordMetadata metadata;
-    private TableReader tableReader;
-    private IntList columnIndexes;
+    private PageFrameCursor pageFrameCursor;
     private ObjList<Function> bindVarFunctions;
 
     public CompiledFilterIRSerializer of(
             MemoryCARW memory,
             SqlExecutionContext executionContext,
             RecordMetadata metadata,
-            TableReader tableReader,
-            IntList columnIndexes,
+            PageFrameCursor pageFrameCursor,
             ObjList<Function> bindVarFunctions
     ) {
         this.memory = memory;
         this.executionContext = executionContext;
         this.metadata = metadata;
-        this.tableReader = tableReader;
-        this.columnIndexes = columnIndexes;
+        this.pageFrameCursor = pageFrameCursor;
         this.bindVarFunctions = bindVarFunctions;
         return this;
     }
@@ -170,8 +163,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     public void clear() {
         memory = null;
         metadata = null;
-        tableReader = null;
-        columnIndexes = null;
+        pageFrameCursor = null;
         forceScalarMode = false;
         predicateContext.clear();
         backfillNodes.clear();
@@ -975,8 +967,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             final int columnType = metadata.getColumnType(columnIndex);
             final int columnTypeTag = ColumnType.tagOf(columnType);
             if (columnTypeTag == ColumnType.SYMBOL) {
-                final int tableColumnIndex = columnIndexes.getQuick(columnIndex);
-                symbolMapReader = tableReader.getSymbolMapReader(tableColumnIndex);
+                symbolMapReader = pageFrameCursor.getSymbolMapReader(columnIndex);
                 symbolColumnIndex = columnIndex;
             }
 
