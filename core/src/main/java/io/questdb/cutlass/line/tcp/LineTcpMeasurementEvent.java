@@ -31,7 +31,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.StringSink;
 
@@ -637,7 +636,7 @@ class LineTcpMeasurementEvent implements Closeable {
                 throw CairoException.instance(0).put("queue buffer overflow");
             }
         }
-        localDetails.updateColumnIndexCache();
+        localDetails.resolveNewColumns();
         Unsafe.getUnsafe().putLong(timestampBufPos, timestamp);
         Unsafe.getUnsafe().putInt(timestampBufPos + Long.BYTES, entitiesWritten);
         writerWorkerId = tableUpdateDetails.getWriterThreadId();

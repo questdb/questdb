@@ -254,7 +254,7 @@ public class TableUpdateDetails implements Closeable {
     public class ThreadLocalDetails implements Closeable {
         private static final int COLUMN_INDEX_NOT_CACHED = -2;
         private final Path path = new Path();
-        private final ObjIntHashMap<CharSequence> columnIndexByNameUtf8 = new ObjIntHashMap<>(8, 0.3, COLUMN_INDEX_NOT_CACHED);
+        private final CharSequenceIntHashMap columnIndexByNameUtf8 = new CharSequenceIntHashMap(8, 0.3, COLUMN_INDEX_NOT_CACHED);
         private final ObjList<SymbolCache> symbolCacheByColumnIndex = new ObjList<>();
         private final ObjList<SymbolCache> unusedSymbolCaches;
         // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)
@@ -273,6 +273,7 @@ public class TableUpdateDetails implements Closeable {
             // the cache continue to live
             this.unusedSymbolCaches = unusedSymbolCaches;
             this.columnCount = columnCount;
+            columnTypeMeta.add(0);
         }
 
         @Override
@@ -310,6 +311,7 @@ public class TableUpdateDetails implements Closeable {
             }
             symbolCacheByColumnIndex.clear();
             columnTypeMeta.clear();
+            columnTypeMeta.add(0);
         }
 
         LowerCaseCharSequenceHashSet getAddedCols() {
@@ -343,13 +345,12 @@ public class TableUpdateDetails implements Closeable {
                     throw CairoException.instance(0).put("invalid UTF8 in value for ").put(colName);
                 }
                 int colIndex = metadata.getColumnIndexQuiet(tempSink);
-                columnIndexByNameUtf8.put(colName.toString(), colIndex);
-                updateColumTypeCache(metadata, colIndex);
+                updateColumnCaches(colName.toString(), colIndex, metadata);
                 return colIndex;
             }
         }
 
-        void updateColumnIndexCache() {
+        void resolveNewColumns() {
             if (!unresolvedColumnFlag) {
                 return;
             }
@@ -357,39 +358,27 @@ public class TableUpdateDetails implements Closeable {
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16)) {
                 TableReaderMetadata metadata = reader.getMetadata();
                 unresolvedColumnFlag = false;
-                boolean resolvedNewColumn = false;
-                Iterator<ObjIntHashMap.Entry<CharSequence>> entries = columnIndexByNameUtf8.iterator();
-                while (entries.hasNext()) {
-                    ObjIntHashMap.Entry<CharSequence> entry = entries.next();
-                    if (entry.value < 0) {
-                        int colIndex = metadata.getColumnIndexQuiet(entry.key);
+                ObjList<CharSequence> keys = columnIndexByNameUtf8.keys();
+                for (int i = 0, n = keys.size(); i < n; i++) {
+                    final CharSequence colName = keys.get(i);
+                    if (columnIndexByNameUtf8.get(colName) < 0) {
+                        int colIndex = metadata.getColumnIndexQuiet(colName);
                         if (colIndex < 0) {
                             unresolvedColumnFlag = true;
                         } else {
-                            resolvedNewColumn = true;
-                            columnIndexByNameUtf8.put(entry.key, colIndex);
+                            updateColumnCaches(colName, colIndex, metadata);
                         }
-                    }
-                }
-
-                if (resolvedNewColumn) {
-                    columnTypeMeta.clear();
-                    columnTypeMeta.add(0); // first value is for cols indexed with -1
-                    columnCount = metadata.getColumnCount();
-                    for (int i = 0, n = columnCount; i < n; i++) {
-                        updateColumTypeCache(metadata, i);
                     }
                 }
             }
         }
 
-        private void updateColumTypeCache(TableReaderMetadata metadata, int colIndex) {
+        private void updateColumnCaches(CharSequence colName, int colIndex, TableReaderMetadata metadata) {
+            columnIndexByNameUtf8.put(colName, colIndex);
             if (colIndex < 0) {
-                if (columnTypeMeta.size() < 1) {
-                    columnTypeMeta.add(0);
-                }
                 return;
             }
+            columnCount = metadata.getColumnCount();
             final int colType = metadata.getColumnType(colIndex);
             final int geoHashBits = ColumnType.getGeoHashBits(colType);
             columnTypeMeta.extendAndSet(colIndex + 1,
@@ -421,6 +410,5 @@ public class TableUpdateDetails implements Closeable {
             }
             return symIndex;
         }
-
     }
 }
