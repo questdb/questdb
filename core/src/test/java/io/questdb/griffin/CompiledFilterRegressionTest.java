@@ -44,6 +44,9 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+/**
+ * Basic tests that compare compiled filter output with the Java implementation.
+ */
 public class CompiledFilterRegressionTest extends AbstractGriffinTest {
 
     private static final Log LOG = LogFactory.getLog(CompiledFilterRegressionTest.class);

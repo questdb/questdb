@@ -36,6 +36,10 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
+/**
+ * Tests for advanced features and scenarios, such as  col tops, bind variables,
+ * random access, record behavior, and so on.
+ */
 public class CompiledFilterTest extends AbstractGriffinTest {
 
     @Before
