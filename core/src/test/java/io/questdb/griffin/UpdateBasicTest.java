@@ -80,6 +80,30 @@ public class UpdateBasicTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUpdateColumnsTypeMismatch() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesToJoin("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " rnd_symbol('a', 'b', null) s," +
+                    " x," +
+                    " x + 1 as y" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts) partition by DAY");
+
+            try {
+                executeUpdate("WITH jn AS (select down1.y + down2.y AS sm, down1.s, down2.y " +
+                        "                         FROM down1 JOIN down2 ON down1.s = down2.s" +
+                        ")" +
+                        "UPDATE up SET s = sm, y = jn.y" +
+                        " FROM jn " +
+                        " WHERE up.s = jn.s");
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "inconvertible types: LONG -> SYMBOL");
+            }
+        });
+    }
+
+    @Test
     public void testUpdateDifferentColumnTypes() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +

@@ -2398,6 +2398,10 @@ public class SqlCodeGenerator implements Mutable {
     }
 
     private static boolean builtInFunctionCast(int fromColumnType, int toColumnType) {
+        // This method returns true when a cast is not needed from type to type
+        // because of the way typed functions are implemented.
+        // For example IntFunction has getDouble() method implemented and does not need
+        // additional wrap function to CAST to double
         switch (fromColumnType) {
             case ColumnType.NULL:
                 return true;

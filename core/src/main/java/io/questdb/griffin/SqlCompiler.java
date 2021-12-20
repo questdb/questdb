@@ -2056,8 +2056,8 @@ public class SqlCompiler implements Closeable {
                     tableVersion,
                     updateToCursorFactory
             );
-        } catch (CairoException | SqlException e) {
-            updateToCursorFactory.close();
+        } catch (Throwable e) {
+            Misc.free(updateToCursorFactory);
             throw e;
         }
     }
