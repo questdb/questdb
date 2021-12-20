@@ -5170,6 +5170,40 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSelectDistinctOrderby() throws SqlException {
+        assertQuery("select-distinct x, y from (select-choose [x, y] x, y from (select [x, y] from tab)) order by y",
+                    "select distinct x, y from tab order by y",
+                    modelOf("tab")
+                            .col("x", ColumnType.INT)
+                            .col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectDistinctOrderbyColumnNotValid() throws Exception {
+        assertSyntaxError(
+                "select distinct x from tab order by y",
+                36,
+                "Invalid column: y",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectDistinctOrderbyColumnNotValidNested() throws Exception {
+        assertSyntaxError(
+                "select distinct x from (select x from tab order by y) order by y",
+                63,
+                "Invalid column: y",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testSelectDuplicateAlias() throws SqlException {
         assertQuery(
                 "select-choose x, x x1 from (select-choose [x] x from (select [x] from long_sequence(1)))",

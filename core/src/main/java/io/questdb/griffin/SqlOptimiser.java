@@ -2592,6 +2592,9 @@ class SqlOptimiser {
 
                                 if (alias == null) {
                                     alias = SqlUtil.createColumnAlias(characterStore, column, dot, baseParent.getAliasToColumnMap());
+                                    if (baseParent.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT) {
+                                        validateColumnAndGetModelIndex(baseParent, column, dot, orderBy.position);
+                                    }
                                     baseParent.addBottomUpColumn(nextColumn(alias, column));
                                 }
 
@@ -2599,6 +2602,9 @@ class SqlOptimiser {
                                 if (model != baseParent) {
                                     QueryModel m = model;
                                     do {
+                                        if (m.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT) {
+                                            validateColumnAndGetModelIndex(m, column, dot, orderBy.position);
+                                        }
                                         m.addBottomUpColumn(nextColumn(alias));
                                         m = m.getNestedModel();
                                     } while (m != baseParent);
