@@ -285,25 +285,31 @@ public class CompiledFilterTest extends AbstractGriffinTest {
     public void testDeferredSymbolConstants() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select" +
-                    " rnd_symbol('A','B','C') sym," +
-                    " timestamp_sequence(400000000000, 500000000) ts" +
+                    " timestamp_sequence(400000000000, 500000000) ts," +
+                    " x l," +
+                    " rnd_symbol('A','B','C') sym" +
                     " from long_sequence(5)) timestamp(ts)", sqlExecutionContext);
 
-            final String query = "select * from x where sym = 'D' or sym = 'F'";
-            final String expected = "sym\tts\n";
+            // The column order is important here, since we want
+            // query and table column indexes to be different.
+            final String query = "select sym, l, ts from x where sym = 'B' or sym = 'D' or sym = 'F'";
+            final String expected = "sym\tl\tts\n" +
+                    "B\t3\t1970-01-05T15:23:20.000000Z\n";
 
             assertSql(query, expected);
             assertSqlRunWithJit(query);
 
             compiler.compile("insert into x select " +
-                    " rnd_symbol('D','E','F') sym," +
-                    " timestamp_sequence(500000000000, 500000000) ts " +
+                    " timestamp_sequence(500000000000, 500000000) ts," +
+                    " (x+5) l," +
+                    " rnd_symbol('D','E','F') sym " +
                     "from long_sequence(5)", sqlExecutionContext);
 
-            final String expected2 = "sym\tts\n" +
-                    "F\t1970-01-06T18:53:20.000000Z\n" +
-                    "F\t1970-01-06T19:01:40.000000Z\n" +
-                    "D\t1970-01-06T19:18:20.000000Z\n";
+            final String expected2 = "sym\tl\tts\n" +
+                    "B\t3\t1970-01-05T15:23:20.000000Z\n" +
+                    "F\t6\t1970-01-06T18:53:20.000000Z\n" +
+                    "F\t7\t1970-01-06T19:01:40.000000Z\n" +
+                    "D\t9\t1970-01-06T19:18:20.000000Z\n";
 
             assertSql(query, expected2);
             assertSqlRunWithJit(query);
