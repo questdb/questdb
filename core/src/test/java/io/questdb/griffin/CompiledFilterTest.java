@@ -95,7 +95,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testMultiplePartitions() throws Exception {
+    public void testMultiplePartitionsOrderBy() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table t1 as (select " +
                     " x," +
@@ -107,12 +107,12 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     " timestamp_sequence(to_timestamp('1970-01-02', 'yyyy-MM-dd'), 100000L) ts " +
                     "from long_sequence(1000)", sqlExecutionContext);
 
-            final String query = "select * from t1 where x < 3";
+            final String query = "select * from t1 where x < 3 order by ts desc";
             final String expected = "x\tts\n" +
-                    "1\t1970-01-01T00:00:00.000000Z\n" +
-                    "2\t1970-01-01T00:00:00.100000Z\n" +
+                    "2\t1970-01-02T00:00:00.100000Z\n" +
                     "1\t1970-01-02T00:00:00.000000Z\n" +
-                    "2\t1970-01-02T00:00:00.100000Z\n";
+                    "2\t1970-01-01T00:00:00.100000Z\n" +
+                    "1\t1970-01-01T00:00:00.000000Z\n";
 
             assertSql(query, expected);
             assertSqlRunWithJit(query);
