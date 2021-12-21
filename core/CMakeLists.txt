@@ -45,8 +45,8 @@ set(
         src/main/c/share/bitmap_index_utils.h
         src/main/c/share/bitmap_index_utils.cpp
         src/main/c/share/geohash.cpp
-        src/main/c/share/compiler.h
-        src/main/c/share/compiler.cpp
+        src/main/c/share/jit/compiler.h
+        src/main/c/share/jit/compiler.cpp
 )
 
 # JNI includes

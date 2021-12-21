@@ -28,9 +28,12 @@
 // Altered source of asmjit_test_compiler.h
 // from AsmJit - Machine code generation for C++
 
-#include "src/main/c/share/compiler.h"
+#include <asmjit/asmjit.h>
 #include <memory>
 #include <vector>
+
+#include "src/main/c/share/jit/x86.h"
+#include "src/main/c/share/jit/avx2.h"
 
 class SimpleErrorHandler : public asmjit::ErrorHandler {
 public:
