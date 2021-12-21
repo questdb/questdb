@@ -84,7 +84,8 @@
   }
 }
 
-.qdb-list-add-btn, .qdb-list-delete-btn {
+.qdb-list-add-btn,
+.qdb-list-delete-btn {
   float: right;
   position: relative;
   top: -10px;
@@ -97,7 +98,6 @@
 // new things
 
 .config-tabs {
-
   height: calc(100% - 30px);
 
   .tab-content {
@@ -141,7 +141,8 @@
       margin-top: 0;
       position: relative;
 
-      a, a:hover {
+      a,
+      a:hover {
         border-top: none !important;
         font-weight: 400;
         border-radius: 0;
