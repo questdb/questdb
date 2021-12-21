@@ -1,8 +1,10 @@
 ## Compiling C, C++ Code
 
-Native code is platform specific and has to be complied on Linux, Mac, Windows and FreeBSD.
+Native code is platform specific and has to be complied on Linux, Mac, Windows
+and FreeBSD.
 
-To compile the code CMAKE v3.19 or higher is required, also gcc, g++ >=8.1 are required.
+To compile the code CMAKE v3.19 or higher is required, also gcc, g++ >=8.1 are
+required.
 
 To build in ./core run
 
@@ -13,9 +15,11 @@ make
 
 ### Installing and compiling on FreeBSD
 
-This is detailed example of how to install and build on FreeBSD 12 stock VM image.
+This is detailed example of how to install and build on FreeBSD 12 stock VM
+image.
 
-1. Install Open JDK (11 at the time of writing), gcc (10 in the below example), cmake
+1. Install Open JDK (11 at the time of writing), gcc (10 in the below example),
+   cmake
 
 ```bash
 pkg install openjdk11-11.0.8+10.1
@@ -29,16 +33,17 @@ pkg install cmake
 echo "export JAVA_HOME=/usr/local/openjdk11" >> ~/.profile
 ```
 
-reload the profile 
+reload the profile
 
-3. Open new shell to apply JAVA_HOME export and run cmake 
+3. Open new shell to apply JAVA_HOME export and run cmake
 
 ```bash
 cmake -DCMAKE_BUILD_TYPE=Release -B build/release -H.
 cmake --build build/release --config Release
 ```
 
-it is also possible to compile using g++ as c++ compiler instead of default clang 
+it is also possible to compile using g++ as c++ compiler instead of default
+clang
 
 ```bash
 cmake -DCMAKE_BUILD_TYPE:STRING=Release -DCMAKE_C_COMPILER=/usr/local/bin/gcc10 -DCMAKE_CXX_COMPILER=/usr/local/bin/g++10 .
