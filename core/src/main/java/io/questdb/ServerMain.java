@@ -125,6 +125,11 @@ public class ServerMain {
                 break;
         }
         log.advisory().$("available CPUs: ").$(Runtime.getRuntime().availableProcessors()).$();
+        try (Path path = new Path()) {
+            path.of(configuration.getCairoConfiguration().getRoot()).$();
+            int fsStatus = Files.isFSSupported(path);
+            log.advisory().$("FS status: ").$(fsStatus == 0 ? "SUPPORTED" : Integer.toString(fsStatus)).$(" [").$(path).I$();
+        }
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
         final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(
