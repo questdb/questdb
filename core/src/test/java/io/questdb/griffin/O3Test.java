@@ -984,6 +984,128 @@ public class O3Test extends AbstractO3Test {
         executeWithPool(0, O3Test::testWriterOpensUnmappedPage);
     }
 
+    @Test
+    public void testVarColumnPageBoundariesAppend() throws Exception {
+        dataAppendPageSize = 4096;
+        executeWithPool(0,
+                (CairoEngine engine,
+                SqlCompiler compiler,
+                SqlExecutionContext sqlExecutionContext) -> {
+
+                    for (int i = 0; i < dataAppendPageSize / 8 + 4; i++) {
+                        if (i > 0) {
+                            compiler.compile("drop table x", sqlExecutionContext);
+                        }
+
+                        // Day 1 '1970-01-01'
+                        compiler.compile(
+                                "create table x as (" +
+                                        "select" +
+                                        " 'aa' as str," +
+                                        " timestamp_sequence('1970-01-01',0L) ts" +
+                                        " from long_sequence(" + i +  ")" +
+                                        ") timestamp (ts) partition by DAY",
+                                sqlExecutionContext
+                        );
+
+
+                        // Day 2 '1970-01-02'
+                        compiler.compile(
+                                "insert into x " +
+                                        "select" +
+                                        " 'bb' as str," +
+                                        " timestamp_sequence('1970-01-02',0L) ts" +
+                                        " from long_sequence(4096 / 8 - 1)",
+                                sqlExecutionContext
+                        );
+
+                        // O3 insert Day 1
+                        compiler.compile(
+                                "insert into x " +
+                                        " select" +
+                                        " 'cc' as str," +
+                                        " timestamp_sequence('1970-01-01T00:00:01',0L) ts" +
+                                        " from long_sequence(2)" +
+                                        "union all " +
+                                        " select" +
+                                        " 'cc' as str," +
+                                        " timestamp_sequence('1970-01-02T00:00:01',0L) ts" +
+                                        " from long_sequence(2)",
+                                sqlExecutionContext
+                        );
+                    }
+                });
+    }
+
+    @Test
+    public void testVarColumnPageBoundariesAppend2() throws Exception {
+        dataAppendPageSize = 4096;
+        executeWithPool(0,
+                (CairoEngine engine,
+                 SqlCompiler compiler,
+                 SqlExecutionContext sqlExecutionContext) -> {
+
+                    for (int i = 0; i < 2 * (dataAppendPageSize / 8 + 4); i++) {
+                        LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
+
+                        if (i > 0) {
+                            compiler.compile("drop table x", sqlExecutionContext);
+                        }
+
+                        // Day 1 '1970-01-01'
+                        int initialCount = i / 2;
+                        compiler.compile(
+                                "create table x as (" +
+                                        "select" +
+                                        " 'aa' as str," +
+                                        " timestamp_sequence('1970-01-01',0L) ts" +
+                                        " from long_sequence(" + initialCount +  ")" +
+                                        ") timestamp (ts) partition by DAY",
+                                sqlExecutionContext
+                        );
+
+
+                        // Day 2 '1970-01-02'
+                        compiler.compile(
+                                "insert into x " +
+                                        "select" +
+                                        " 'bb' as str," +
+                                        " timestamp_sequence('1970-01-02',0L) ts" +
+                                        " from long_sequence(" + initialCount + ")",
+                                sqlExecutionContext
+                        );
+
+                        if (i % 2 == 0) {
+                            engine.releaseAllWriters();
+                        }
+
+                        // O3 insert Day 1
+                        compiler.compile(
+                                "insert into x " +
+                                        " select" +
+                                        " 'cc' as str," +
+                                        " timestamp_sequence('1970-01-01T00:00:01',0L) ts" +
+                                        " from long_sequence(1)" +
+                                        "union all " +
+                                        " select" +
+                                        " 'cc' as str," +
+                                        " timestamp_sequence('1970-01-02T00:00:01',0L) ts" +
+                                        " from long_sequence(1)",
+                                sqlExecutionContext
+                        );
+
+                        if (i % 2 == 0) {
+                            engine.releaseAllWriters();
+                        }
+
+                        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'cc'", sink,
+                                "str\tts\n" +
+                                "cc\t1970-01-01T00:00:01.000000Z\n" +
+                                "cc\t1970-01-02T00:00:01.000000Z\n");
+                    }
+                });
+    }
+
     private static void testWriterOpensCorrectTxnPartitionOnRestart0(
             CairoEngine engine,
             SqlCompiler compiler,
