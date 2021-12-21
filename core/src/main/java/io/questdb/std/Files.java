@@ -400,10 +400,4 @@ public final class Files {
         PAGE_SIZE = getPageSize();
         SEPARATOR = Os.type == Os.WINDOWS ? '\\' : '/';
     }
-
-    public static void main(String[] args) {
-        Path path = new Path();
-        path.of("/Users/").$();
-        System.out.println(Files.isFSSupported(path));
-    }
 }
