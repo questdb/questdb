@@ -75,7 +75,8 @@ $drag-drop-border: #c6c6c6;
 
 $transparent-border: 1px solid transparent;
 
-.ud-cell, .ud-header {
+.ud-cell,
+.ud-header {
   vertical-align: middle;
 }
 
@@ -98,7 +99,8 @@ $transparent-border: 1px solid transparent;
   transition: 0.05s ease-in-out;
 }
 
-.ud-c0, .ud-h0 {
+.ud-c0,
+.ud-h0 {
   width: 10%;
   -webkit-touch-callout: none; /* iOS Safari */
   -webkit-user-select: none; /* Safari */
@@ -109,7 +111,8 @@ $transparent-border: 1px solid transparent;
                                    supported by Chrome, Opera and Firefox */
 }
 
-.ud-c1, .ud-h1 {
+.ud-c1,
+.ud-h1 {
   left: 10%;
   width: 25%;
 }
@@ -123,36 +126,43 @@ $transparent-border: 1px solid transparent;
   cursor: pointer;
 }
 
-.js-row-overwrite, .js-row-toggle-header {
+.js-row-overwrite,
+.js-row-toggle-header {
   margin-right: 10px;
 }
 
-.ud-c2, .ud-h2 {
+.ud-c2,
+.ud-h2 {
   left: 35%;
   width: 5%;
 }
 
-.ud-c3, .ud-h3 {
+.ud-c3,
+.ud-h3 {
   left: 40%;
   width: 15%;
 }
 
-.ud-c4, .ud-h4 {
+.ud-c4,
+.ud-h4 {
   left: 55%;
   width: 8%;
 }
 
-.ud-c5, .ud-h5 {
+.ud-c5,
+.ud-h5 {
   left: 63%;
   width: 7%;
 }
 
-.ud-c6, .ud-h6 {
+.ud-c6,
+.ud-h6 {
   left: 70%;
   width: 10%;
 }
 
-.ud-c7, .ud-h7 {
+.ud-c7,
+.ud-h7 {
   left: 80%;
   width: 20%;
 }

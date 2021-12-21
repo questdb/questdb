@@ -28,7 +28,8 @@ diagnostics,name=truck_3985,fleet=West,driver=Seth,model=H-2,device_version=v1.5
 
 ## How to run the test
 
-Firstly, install and build the benchmark suite. This can be done in a temporary directory for the Go binaries.
+Firstly, install and build the benchmark suite. This can be done in a temporary
+directory for the Go binaries.
 
 ```bash
 mkdir -p ~/tmp/go/src/github.com/timescale/
@@ -75,8 +76,8 @@ Generated data can be loaded directly using the tool:
 ~/tmp/go/bin/tsbs_load_questdb --file /tmp/data --workers 4
 ```
 
-Alternatively, shell scripts are provided which can be used to
-generate and load data:
+Alternatively, shell scripts are provided which can be used to generate and load
+data:
 
 ```bash
 cd ~/tmp/go/src/github.com/timescale/
@@ -103,8 +104,8 @@ cd ~/tmp/go/src/github.com/timescale/
 
 ## Benchmarking influxdb and questdb on FreeBSD
 
-The following commands build and install the TSBS tool,
-this step can be skipped if installation has already been performed according to the instructions above.
+The following commands build and install the TSBS tool, this step can be skipped
+if installation has already been performed according to the instructions above.
 
 ```bash
 mkdir -p ~/tmp/go/src/github.com/timescale/
@@ -158,8 +159,8 @@ PATH=${PATH}:~/tmp/go/bin NUM_WORKERS=1 ./scripts/load/load_questdb.sh
 ## Query benchmarks
 
 This query benchmark assumes an iot data set including periods
-`2016-01-01T00:00:00Z` -> `2016-01-02T00:00:01Z` has been loaded.
-Queries are generated using the `questdb` format.
+`2016-01-01T00:00:00Z` -> `2016-01-02T00:00:01Z` has been loaded. Queries are
+generated using the `questdb` format.
 
 **single-groupby-5-8-1:**
 
@@ -177,7 +178,8 @@ cd ~/tmp/go/src/github.com/timescale/
 ~/tmp/go/bin/tsbs_run_queries_questdb --file /tmp/queries_questdb --print-interval 500
 ```
 
-Examples of the generated queries can be found on the [CPU-only example queries](./cpu-only-example-queries.md) document.
+Examples of the generated queries can be found on the
+[CPU-only example queries](./cpu-only-example-queries.md) document.
 Alternatively, query benchmarks may be run using the shell scripts
 
 ```bash

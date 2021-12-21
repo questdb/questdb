@@ -42,7 +42,6 @@
 }
 
 @media (max-width: 768px) {
-
   #page-wrapper {
     position: inherit;
     margin: 0 0 0 0;
@@ -100,11 +99,9 @@
     text-align: right;
     display: block;
   }
-
 }
 
 @media (max-width: 350px) {
-
   .timeline-item .date {
     text-align: left;
     width: 110px;
@@ -139,5 +136,4 @@
     text-align: left;
     display: inline-block;
   }
-
 }

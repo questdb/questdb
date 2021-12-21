@@ -26,12 +26,14 @@
         "owners": ["self"],
         "most_recent": true
       },
-      "launch_block_device_mappings": [ {
-        "device_name": "/dev/xvdb",
-        "volume_size": 100,
-        "delete_on_termination": true
-      }],
-      
+      "launch_block_device_mappings": [
+        {
+          "device_name": "/dev/xvdb",
+          "volume_size": 100,
+          "delete_on_termination": true
+        }
+      ],
+
       "ssh_username": "ec2-user",
       "tags": {
         "OS_Version": "Amazon Linux 2",
@@ -52,9 +54,7 @@
       "destination": "/tmp"
     },
     {
-      "environment_vars": [
-        "QUESTDB_VERSION={{user `questdb_version`}}"
-      ],
+      "environment_vars": ["QUESTDB_VERSION={{user `questdb_version`}}"],
       "type": "shell",
       "execute_command": "echo 'packer' | sudo -S sh -c '{{ .Vars }} {{ .Path }}'",
       "scripts": ["build.bash"]

@@ -26,7 +26,8 @@
   height: 100%;
   width: 100%;
   flex-direction: column;
-  font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   overflow: hidden;
 }
 
@@ -88,7 +89,6 @@
   /* Non-prefixed version, currently
                                    supported by Chrome, Opera and Firefox */
   background: #21222c;
-
 }
 
 .qg-header-name {
