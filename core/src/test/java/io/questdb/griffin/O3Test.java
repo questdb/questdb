@@ -985,62 +985,119 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    public void testVarColumnPageBoundariesAppend2() throws Exception {
-        dataAppendPageSize = (int)Files.PAGE_SIZE;
-        executeWithPool(0,
-                (CairoEngine engine,
-                 SqlCompiler compiler,
-                 SqlExecutionContext sqlExecutionContext) -> {
+    public void testVarColumnPageBoundariesAppend() throws Exception {
+        // Windows page size is way to big to iterate
+        if (Os.type != Os.WINDOWS) {
+            dataAppendPageSize = (int) Files.PAGE_SIZE;
+            executeWithPool(0,
+                    (CairoEngine engine,
+                     SqlCompiler compiler,
+                     SqlExecutionContext sqlExecutionContext) -> {
 
-                    for (int i = 0; i < 2 * (dataAppendPageSize / 8 + 4); i++) {
-                        LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
-                        if (i > 0) {
-                            compiler.compile("drop table x", sqlExecutionContext);
+                        for (int i = 2; i < 2 * (dataAppendPageSize / 8 + 8); i++) {
+                            LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
+                            if (i > 2) {
+                                compiler.compile("drop table x", sqlExecutionContext);
+                            }
+                            testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, "12:00:01.000000Z");
                         }
-                        testVarColumnPageBoundaryIteration(engine, compiler, sqlExecutionContext, i);
-                    }
-                });
+                    });
+        }
     }
 
-    private void testVarColumnPageBoundaryIteration(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, int i) throws SqlException {
+    @Test
+    public void testVarColumnPageBoundariesPrepend() throws Exception {
+        // Windows page size is way to big to iterate
+        if (Os.type != Os.WINDOWS) {
+            dataAppendPageSize = (int) Files.PAGE_SIZE;
+            executeWithPool(0,
+                    (CairoEngine engine,
+                     SqlCompiler compiler,
+                     SqlExecutionContext sqlExecutionContext) -> {
+
+                        for (int i = 2; i < 2 * (dataAppendPageSize / 8 + 8); i++) {
+                            LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
+                            if (i > 2) {
+                                compiler.compile("drop table x", sqlExecutionContext);
+                            }
+                            testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, "00:00:01.000000Z");
+                        }
+                    });
+        }
+    }
+
+    @Test
+    public void testVarColumnPageBoundariesInsertInTheMiddle() throws Exception {
+        // Windows page size is way to big to iterate
+        if (Os.type != Os.WINDOWS) {
+            dataAppendPageSize = (int) Files.PAGE_SIZE;
+            executeWithPool(0,
+                    (CairoEngine engine,
+                     SqlCompiler compiler,
+                     SqlExecutionContext sqlExecutionContext) -> {
+
+                        for (int i = 2; i < 2 * (dataAppendPageSize / 8 + 8); i++) {
+                            LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
+                            if (i > 2) {
+                                compiler.compile("drop table x", sqlExecutionContext);
+                            }
+                            testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, "11:00:00.002500Z");
+                        }
+                    });
+        }
+    }
+
+    private void testVarColumnPageBoundaryIterationWithColumnTop(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, int i, String o3Timestamp) throws SqlException {
         // Day 1 '1970-01-01'
         int initialCount = i / 2;
         compiler.compile(
                 "create table x as (" +
                         "select" +
                         " 'aa' as str," +
-                        " timestamp_sequence('1970-01-01',0L) ts" +
+                        " timestamp_sequence('1970-01-01T11:00:00',1000L) ts," +
+                        " x " +
                         " from long_sequence(" + initialCount +  ")" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
-
 
         // Day 2 '1970-01-02'
         compiler.compile(
                 "insert into x " +
                         "select" +
                         " 'bb' as str," +
-                        " timestamp_sequence('1970-01-02',0L) ts" +
+                        " timestamp_sequence('1970-01-02T11:00:00',1000L) ts," +
+                        " x " +
                         " from long_sequence(" + initialCount + ")",
                 sqlExecutionContext
         );
+
+        compiler.compile("alter table x add column str2 string", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column y long", sqlExecutionContext).execute(null).await();
 
         if (i % 2 == 0) {
             engine.releaseAllWriters();
         }
 
         // O3 insert Day 1
+        final String ts1 = "1970-01-01T" + o3Timestamp;
+        final String ts2 = "1970-01-02T" + o3Timestamp;
         compiler.compile(
                 "insert into x " +
                         " select" +
                         " 'cc' as str," +
-                        " timestamp_sequence('1970-01-01T00:00:01',0L) ts" +
+                        " timestamp_sequence('" + ts1 + "',0L) ts," +
+                        " 11111 as x," +
+                        " 'dd' as str2," +
+                        " 22222 as y" +
                         " from long_sequence(1)" +
                         "union all " +
                         " select" +
                         " 'cc' as str," +
-                        " timestamp_sequence('1970-01-02T00:00:01',0L) ts" +
+                        " timestamp_sequence('" + ts2 + "',0L) ts," +
+                        " 11111 as x," +
+                        " 'dd' as str2," +
+                        " 22222 as y" +
                         " from long_sequence(1)",
                 sqlExecutionContext
         );
@@ -1050,9 +1107,9 @@ public class O3Test extends AbstractO3Test {
         }
 
         TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'cc'", sink,
-                "str\tts\n" +
-                "cc\t1970-01-01T00:00:01.000000Z\n" +
-                "cc\t1970-01-02T00:00:01.000000Z\n");
+                "str\tts\tx\tstr2\ty\n" +
+                        "cc\t" + ts1 + "\t11111\tdd\t22222\n" +
+                        "cc\t" + ts2 + "\t11111\tdd\t22222\n");
     }
 
     private static void testWriterOpensCorrectTxnPartitionOnRestart0(

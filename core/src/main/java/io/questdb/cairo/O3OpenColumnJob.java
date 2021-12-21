@@ -850,6 +850,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long l = O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr);
             dstFixSize = (dstLen + 1) * Long.BYTES;
             if (dstFixMem == null || dstFixMem.getAppendAddressSize() < dstFixSize || dstVarMem.getAppendAddressSize() < l) {
+                assert dstFixMem == null || dstFixMem.getAppendOffset() - Long.BYTES == (srcDataMax - srcDataTop) * Long.BYTES;
+
                 dstFixOffset = (srcDataMax - srcDataTop) * Long.BYTES;
                 dstFixAddr = mapRW(ff, Math.abs(activeFixFd), dstFixSize, MemoryTag.MMAP_O3);
 
@@ -863,6 +865,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstVarAddr = mapRW(ff, Math.abs(activeVarFd), dstVarSize, MemoryTag.MMAP_O3);
                 dstVarAdjust = 0;
             } else {
+                assert dstFixMem.getAppendOffset() >= Long.BYTES;
+                assert dstFixMem.getAppendOffset() - Long.BYTES == (srcDataMax - srcDataTop) * Long.BYTES;
+
                 dstFixAddr = dstFixMem.getAppendAddress() - Long.BYTES;
                 dstVarAddr = dstVarMem.getAppendAddress();
                 dstFixOffset = 0;

@@ -4613,10 +4613,10 @@ public class TableWriter implements Closeable {
                     if (doubleAllocate) {
                         mem2.allocate(pos * Long.BYTES + Long.BYTES);
                     }
-                    // Jump to num of records to read length of var column
+                    // Jump to the number of records written to read length of var column correctly
                     mem2.jumpTo(pos * Long.BYTES);
                     m1pos = Unsafe.getUnsafe().getLong(mem2.getAppendAddress());
-                    // Jump to the end of file to correctly trip the file
+                    // Jump to the end of file to correctly trim the file
                     mem2.jumpTo((pos + 1) * Long.BYTES);
                     break;
                 default:
