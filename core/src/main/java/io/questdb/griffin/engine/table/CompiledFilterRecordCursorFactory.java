@@ -62,7 +62,7 @@ public class CompiledFilterRecordCursorFactory implements RecordCursorFactory {
         this.compiledFilter = compiledFilter;
         this.cursor = new CompiledFilterRecordCursor();
         this.bindVarFunctions = bindVarFunctions;
-        this.bindVarMemory = Vm.getCARWInstance(2048, 16, MemoryTag.NATIVE_DEFAULT);
+        this.bindVarMemory = Vm.getCARWInstance(2048, 8, MemoryTag.NATIVE_DEFAULT);
         this.rows = new DirectLongList(1024);
         this.columns = new DirectLongList(16);
     }

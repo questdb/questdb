@@ -44,6 +44,8 @@ import java.util.function.BooleanSupplier;
 
 class CompiledFilterRecordCursor implements RecordCursor {
 
+    private static final long ROWS_CAPACITY_THRESHOLD = Numbers.SIZE_1MB / Long.BYTES;
+
     private final PageFrameRecord recordA = new PageFrameRecord();
     private final PageFrameRecord recordB = new PageFrameRecord();
     private final PageAddressCache pageAddressCache = new PageAddressCache();
@@ -60,8 +62,8 @@ class CompiledFilterRecordCursor implements RecordCursor {
     private MemoryCARW bindVarMemory;
     private int bindVarCount;
 
-    // Important invariant:
-    // Only nextPage and other cursor iteration methods are allowed to modify the below fields
+    // Important invariant: only nextPage and other cursor iteration methods
+    // are allowed to modify the below three fields
     private int pageFrameIndex;
     // The following fields are used for table iteration:
     // when compiled filter is in use, they store rows array indexes;
@@ -113,6 +115,11 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
     @Override
     public void close() {
+        if (rows.getCapacity() > ROWS_CAPACITY_THRESHOLD) {
+            // This call will shrink down the underlying array
+            rows.extend(ROWS_CAPACITY_THRESHOLD);
+        }
+        bindVarMemory.truncate();
         pageAddressCache.clear();
         pageFrameCursor.close();
     }
@@ -672,16 +679,18 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
     private static class PageAddressCache implements Mutable {
 
+        private static final long CACHE_SIZE_THRESHOLD = Numbers.SIZE_1MB / Long.BYTES;
+
         private int columnCount;
         private int varLenColumnCount;
 
         // Index remapping for variable length columns.
         private final IntList varLenColumnIndexes = new IntList();
 
-        private final LongList pageAddresses = new LongList();
+        private LongList pageAddresses = new LongList();
         // Index page addresses and page sizes are stored only for variable length columns.
-        private final LongList indexPageAddresses = new LongList();
-        private final LongList pageSizes = new LongList();
+        private LongList indexPageAddresses = new LongList();
+        private LongList pageSizes = new LongList();
 
         public void of(RecordMetadata metadata) {
             this.columnCount = metadata.getColumnCount();
@@ -697,10 +706,16 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
         @Override
         public void clear() {
-            pageAddresses.clear();
-            indexPageAddresses.clear();
-            pageSizes.clear();
             varLenColumnIndexes.clear();
+            if (pageAddresses.size() > CACHE_SIZE_THRESHOLD) {
+                pageAddresses.clear();
+                indexPageAddresses.clear();
+                pageSizes.clear();
+            } else {
+                pageAddresses = new LongList();
+                indexPageAddresses = new LongList();
+                pageSizes = new LongList();
+            }
         }
 
         public void add(int frameIndex, PageFrame frame) {
