@@ -35,7 +35,6 @@
 #else
 
 #include <utime.h>
-#include <sys/vfs.h>
 
 #endif
 
@@ -226,21 +225,6 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
 }
 
 #else
-
-JNIEXPORT jint JNICALL Java_io_questdb_std_Files_isFSSupported
-        (JNIEnv *e, jclass cl, jlong lpszName) {
-    struct statfs sb;
-    if (statfs((const char *) lpszName, &sb) == 0) {
-        printf("fs: 0x%lX\n", sb.f_type);
-        switch (sb.f_type) {
-            case 0xEF53: // ext2, ext3, ext4
-                return 0;
-            default:
-                return 1;
-        }
-    }
-    return -1;
-}
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
         (JNIEnv *e, jclass cl, jlong fd, jlong len) {

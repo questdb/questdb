@@ -32,7 +32,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/fcntl.h>
-
+#include <sys/vfs.h>
 
 static inline jlong _io_questdb_std_Files_mremap0
         (jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
@@ -79,4 +79,19 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
     close(output);
 
     return result;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_isFSSupported
+        (JNIEnv *e, jclass cl, jlong lpszName) {
+    struct statfs sb;
+    if (statfs((const char *) lpszName, &sb) == 0) {
+        printf("fs: 0x%lX\n", sb.f_type);
+        switch (sb.f_type) {
+            case 0xEF53: // ext2, ext3, ext4
+                return 0;
+            default:
+                return 1;
+        }
+    }
+    return -1;
 }
