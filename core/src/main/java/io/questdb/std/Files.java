@@ -164,11 +164,9 @@ public final class Files {
     }
 
     /**
-     * Detects if filesystem is supported by QuestDB. On Unix
-     * argument can be any existing file or directory. On Windows the argument
-     * has to be drive letter.
+     * Detects if filesystem is supported by QuestDB.
      *
-     * @param lpszName drive letter on Windows or existing path on Unix
+     * @param lpszName existing path on the file system
      * @return -1 when OS call failed, errno should be checked. 0 if FS is supported, 1 if FS is not supported
      */
     public static int isFSSupported(LPSZ lpszName) {

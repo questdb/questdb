@@ -224,7 +224,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_mkdir(JNIEnv *e, jclass cl, jlo
     size_t len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, NULL, 0);
     if (len > 0) {
         wchar_t buf[len];
-        MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, buf, len);
+        MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, buf, (int) len);
 
         if (CreateDirectoryW(buf, NULL)) {
             return 0;
@@ -234,6 +234,39 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_mkdir(JNIEnv *e, jclass cl, jlo
     }
 
     return -2;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_isFSSupported(JNIEnv *e, jclass cl, jlong lpszName) {
+    DWORD fileSystemFlags;
+    char drive[MAX_PATH];
+    char fileSystemName[MAX_PATH];
+    char volumeName[MAX_PATH];
+    DWORD VolumeSerialNo;
+    unsigned long MaxComponentLength, FileSystemFlags;
+
+    if (GetVolumePathName((LPCSTR) lpszName, drive, MAX_PATH)) {
+        if (GetVolumeInformation(
+                drive,
+                volumeName,
+                MAX_PATH,
+                &VolumeSerialNo,
+                &MaxComponentLength,
+                &fileSystemFlags,
+                fileSystemName,
+                MAX_PATH
+                )) {
+            if ((fileSystemFlags & FILE_SUPPORTS_TRANSACTIONS) != 0) {
+                // windows share (CIFS) reports filesystem as NTFS
+                // local disks support transactions, but CIFS does not
+                return 0;
+            }
+            // unsupported file system
+            return 1;
+        }
+    }
+
+    SaveLastError();
+    return -1;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openRO(JNIEnv *e, jclass cl, jlong lpszName) {
@@ -588,7 +621,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
     } else {
         // file size is already 0, no cleanup but allocate the file.
         if (Java_io_questdb_std_Files_truncate(e, cl, fd, size)
-                && LockFileEx(handle, 0, 0, 0, 1, &sOverlapped)) {
+            && LockFileEx(handle, 0, 0, 0, 1, &sOverlapped)) {
             return fd;
         }
     }
