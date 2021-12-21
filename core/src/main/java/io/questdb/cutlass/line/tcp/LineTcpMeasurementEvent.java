@@ -122,17 +122,24 @@ class LineTcpMeasurementEvent implements Closeable {
                 } else {
                     long nameLo = bufPos;
                     long nameHi = bufPos + -2L * colIndex;
+                    // Column is passed by name, it is possible that
+                    // column is new and has to be added. It is also possible that column
+                    // already exist but the publisher is a little out of date and does not yet
+                    // have column index.
+
+                    // Column name will be UTF16 encoded already
                     floatingCharSink.asCharSequence(nameLo, nameHi);
                     bufPos = nameHi;
                     entityType = Unsafe.getUnsafe().getByte(bufPos);
                     bufPos += Byte.BYTES;
                     colIndex = writer.getMetadata().getColumnIndexQuiet(floatingCharSink);
                     if (colIndex < 0) {
-                        // Cannot create a column with an open row, writer will commit when a column is created
+                        // we have to cancel "active" row to avoid writer committing when
+                        // column is added
                         row.cancel();
                         row = null;
-                        int colType = DefaultColumnTypes.DEFAULT_COLUMN_TYPES[entityType];
                         if (TableUtils.isValidInfluxColumnName(floatingCharSink)) {
+                            final int colType = DefaultColumnTypes.DEFAULT_COLUMN_TYPES[entityType];
                             writer.addColumn(floatingCharSink, colType);
                         } else {
                             throw CairoException.instance(0)
@@ -434,7 +441,6 @@ class LineTcpMeasurementEvent implements Closeable {
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
             timestamp = timestampAdapter.getMicros(timestamp);
-            processedCols.setQuick(tableUpdateDetails.getTimestampIndex(), true);
         }
         long bufPos = bufLo;
         long bufMax = bufLo + bufSize;
@@ -467,6 +473,10 @@ class LineTcpMeasurementEvent implements Closeable {
                         addedCols.addAt(index, colName.toString());
                     }
                     int colNameLen = colName.length();
+
+                    // Negative length indicates to the writer thread that column is passed by
+                    // name rather than by index. When value is positive (on the else branch)
+                    // the value is treated as column index.
                     Unsafe.getUnsafe().putInt(bufPos, -1 * colNameLen);
                     bufPos += Integer.BYTES;
                     if (bufPos + 2L * colNameLen < bufMax) {
