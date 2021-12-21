@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
@@ -46,8 +47,14 @@ public class EqByteFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        throwSqlErrorIfRightNull(args.getQuick(1), argPositions.getQuick(1));
         return new Func(args.getQuick(0), args.getQuick(1));
+    }
+
+    static void throwSqlErrorIfRightNull(Function right, int argPositions) throws SqlException {
+        if(right.isNullConstant())
+            throw SqlException.$(argPositions,"Value for byte column cannot be Null");
     }
 
     private static class Func extends NegatableBooleanFunction implements BinaryFunction {

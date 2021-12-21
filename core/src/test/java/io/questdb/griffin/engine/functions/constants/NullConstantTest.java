@@ -76,6 +76,8 @@ public class NullConstantTest {
         Assert.assertEquals(0, sink.length());
         constant.getStr(null, sink);
         Assert.assertEquals(0, sink.length());
+
+        Assert.assertTrue(NullConstant.NULL.isNullConstant());
     }
 
     @Test(expected = UnsupportedOperationException.class)

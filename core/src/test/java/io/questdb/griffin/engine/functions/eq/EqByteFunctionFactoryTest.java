@@ -24,9 +24,15 @@
 
 package io.questdb.griffin.engine.functions.eq;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class EqByteFunctionFactoryTest extends AbstractFunctionFactoryTest {
@@ -35,6 +41,20 @@ public class EqByteFunctionFactoryTest extends AbstractFunctionFactoryTest {
     public void testAll() throws SqlException {
         call(0, 0).andAssert(true);
         call(0, 1).andAssert(false);
+    }
+
+    @Test
+    public void testRightNull() {
+        FunctionFactory factory = getFunctionFactory();
+        ObjList<Function> args = new ObjList<>();
+        args.add(new ShortConstant((short) 1));
+        args.add(NullConstant.NULL);
+
+        IntList argPositions = new IntList();
+        argPositions.add(1);
+        argPositions.add(2);
+        Assert.assertThrows("Value for byte column cannot be Null", SqlException.class,
+                () -> factory.newInstance(4, args, argPositions, configuration, sqlExecutionContext));
     }
 
     @Override
