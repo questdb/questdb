@@ -797,7 +797,7 @@ public class InsertTest extends AbstractGriffinTest {
             try {
                 executeInsert("insert into trades VALUES (1), (3), (2);");
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Cannot insert rows out of order.");
+                TestUtils.assertContains(e.getFlyweightMessage(), "Cannot insert rows out of order to non-partitioned table.");
             }
         });
     }
