@@ -42,50 +42,45 @@ import java.util.Arrays;
  * to be used in SQL JIT compiler.
  */
 public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
+    // IR instruction format:
+    // | opcode | options | payload |
+    // | int    | int     | long    |
 
-    // Column type codes
-    static final byte MEM_I1 = 0;
-    static final byte MEM_I2 = 1;
-    static final byte MEM_I4 = 2;
-    static final byte MEM_I8 = 3;
-    static final byte MEM_F4 = 4;
-    static final byte MEM_F8 = 5;
-    // Constant type codes
-    static final byte IMM_I1 = 6;
-    static final byte IMM_I2 = 7;
-    static final byte IMM_I4 = 8;
-    static final byte IMM_I8 = 9;
-    static final byte IMM_F4 = 10;
-    static final byte IMM_F8 = 11;
-    // Operator codes
-    static final byte NEG = 12;               // -a
-    static final byte NOT = 13;               // !a
-    static final byte AND = 14;               // a && b
-    static final byte OR = 15;                // a || b
-    static final byte EQ = 16;                // a == b
-    static final byte NE = 17;                // a != b
-    static final byte LT = 18;                // a <  b
-    static final byte LE = 19;                // a <= b
-    static final byte GT = 20;                // a >  b
-    static final byte GE = 21;                // a >= b
-    static final byte ADD = 22;               // a + b
-    static final byte SUB = 23;               // a - b
-    static final byte MUL = 24;               // a * b
-    static final byte DIV = 25;               // a / b
-    static final byte MOD = 26;               // a % b
-    static final byte JZ = 27;                // if a == 0 jp b
-    static final byte JNZ = 28;               // if a != 0 jp b
-    static final byte JP = 29;                // jp a
-    static final byte RET = 30;               // ret a
-    // Bind variables and deferred symbols
-    static final byte VAR_I1 = 32;
-    static final byte VAR_I2 = 33;
-    static final byte VAR_I4 = 34;
-    static final byte VAR_I8 = 35;
-    static final byte VAR_F4 = 36;
-    static final byte VAR_F8 = 37;
     // Temp code stub
-    static final byte UNDEFINED_CODE = -1;
+    static final int UNDEFINED_CODE = -1;
+    // Return code. Breaks the loop
+    static final int RET = 0; // ret
+    // Constants
+    static final int IMM = 1;
+    // Columns
+    static final int MEM = 2;
+    // Bind variables and deferred symbols
+    static final int VAR = 3;
+    // Operator codes
+    static final int NEG = 4;   // -a
+    static final int NOT = 5;   // !a
+    static final int AND = 6;   // a && b
+    static final int OR  = 7;   // a || b
+    static final int EQ  = 8;   // a == b
+    static final int NE  = 9;   // a != b
+    static final int LT  = 10;  // a <  b
+    static final int LE  = 11;  // a <= b
+    static final int GT  = 12;  // a >  b
+    static final int GE  = 13;  // a >= b
+    static final int ADD = 14;  // a + b
+    static final int SUB = 15;  // a - b
+    static final int MUL = 16;  // a * b
+    static final int DIV = 17;  // a / b
+    static final int REM = 18;  // a % b
+
+    // Data types
+    static final int I1_TYPE = 0;
+    static final int I2_TYPE = 1;
+    static final int I4_TYPE = 2;
+    static final int F4_TYPE = 3;
+    static final int I8_TYPE = 4;
+    static final int F8_TYPE = 5;
+
 
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final PredicateContext predicateContext = new PredicateContext();
@@ -140,7 +135,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      */
     public int serialize(ExpressionNode node, boolean scalar, boolean debug, boolean nullChecks) throws SqlException {
         traverseAlgo.traverse(node, this);
-        memory.putByte(RET);
+        putOperator(RET);
 
         TypesObserver typesObserver = predicateContext.globalTypesObserver;
         int options = debug ? 1 : 0;
@@ -259,6 +254,24 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
+    private void putOperand(int op, int type, long payload) {
+        memory.putInt(op);
+        memory.putInt(type);
+        memory.putLong(payload);
+    }
+
+    private void putOperand(long offset, int op, int type, long payload) {
+        memory.putInt(offset, op);
+        memory.putInt(offset + Integer.BYTES, type);
+        memory.putLong(offset + 2 * Integer.BYTES, payload);
+    }
+
+    private void putDoubleConst(long offset, int op, int type, double payload) {
+        memory.putInt(offset, op);
+        memory.putInt(offset + Integer.BYTES, type);
+        memory.putDouble(offset + 2 * Integer.BYTES, payload);
+    }
+
     private void serializeColumn(int position, final CharSequence token) throws SqlException {
         if (!predicateContext.isActive()) {
             throw SqlException.position(position)
@@ -273,7 +286,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         final int columnType = metadata.getColumnType(index);
         final int columnTypeTag = ColumnType.tagOf(columnType);
-        byte typeCode = columnTypeCode(columnTypeTag);
+        int typeCode = columnTypeCode(columnTypeTag);
         if (typeCode == UNDEFINED_CODE) {
             throw SqlException.position(position)
                     .put("unsupported column type: ")
@@ -283,18 +296,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // In case of a top level boolean column, expand it to "boolean_column = true" expression.
         if (predicateContext.singleBooleanColumn && columnTypeTag == ColumnType.BOOLEAN) {
             // "true" constant
-            memory.putByte(IMM_I1);
-            memory.putLong(1);
+            putOperand(IMM, I1_TYPE, 1);
             // column
-            memory.putByte(typeCode);
-            memory.putLong(index);
+            putOperand(MEM, typeCode, index);
             // =
-            memory.putByte(EQ);
+            putOperator(EQ);
             return;
         }
-
-        memory.putByte(typeCode);
-        memory.putLong(index);
+        putOperand(MEM, typeCode, index);
     }
 
     private void serializeBindVariable(final ExpressionNode node) throws SqlException {
@@ -313,13 +322,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // not have symbol column index at this point
             long offset = memory.getAppendOffset();
             backfillNodes.put(offset, node);
-            memory.putByte(UNDEFINED_CODE);
-            memory.putLong(0);
+            putOperand(UNDEFINED_CODE, 0, 0);
             return;
         }
 
         final int columnTypeTag = ColumnType.tagOf(columnType);
-        byte typeCode = bindVariableTypeCode(columnTypeTag);
+        int typeCode = bindVariableTypeCode(columnTypeTag);
         if (typeCode == UNDEFINED_CODE) {
             throw SqlException.position(node.position)
                     .put("unsupported bind variable type: ")
@@ -328,9 +336,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         bindVarFunctions.add(varFunction);
         int index = bindVarFunctions.size() - 1;
-
-        memory.putByte(typeCode);
-        memory.putLong(index);
+        putOperand(VAR, typeCode, index);
     }
 
     private void backfillSymbolBindVariable(long offset, final ExpressionNode node) throws SqlException {
@@ -350,7 +356,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     .put(ColumnType.nameOf(columnType));
         }
 
-        byte typeCode = bindVariableTypeCode(columnType);
+        int typeCode = bindVariableTypeCode(columnType);
         if (typeCode == UNDEFINED_CODE) {
             throw SqlException.position(node.position)
                     .put("unsupported bind variable type: ")
@@ -360,8 +366,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         bindVarFunctions.add(new CompiledFilterSymbolBindVariable(varFunction, predicateContext.symbolColumnIndex));
         int index = bindVarFunctions.size() - 1;
 
-        memory.putByte(offset, typeCode);
-        memory.putLong(offset + Byte.BYTES, index);
+        putOperand(offset, VAR, typeCode, index);
     }
 
     private Function getBindVariableFunction(int position, CharSequence token) throws SqlException {
@@ -407,8 +412,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         long offset = memory.getAppendOffset();
         backfillNodes.put(offset, node);
-        memory.putByte(UNDEFINED_CODE);
-        memory.putLong(0);
+        putOperand(UNDEFINED_CODE, 0, 0);
     }
 
     private void backfillConstant(long offset, final ExpressionNode node) throws SqlException {
@@ -430,7 +434,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     private void serializeConstant(long offset, int position, final CharSequence token, boolean negated) throws SqlException {
         final int len = token.length();
-        final byte typeCode = predicateContext.localTypesObserver.constantTypeCode();
+        final int typeCode = predicateContext.localTypesObserver.constantTypeCode();
         if (typeCode == UNDEFINED_CODE) {
             throw SqlException.position(position).put("all constants expression: ").put(token);
         }
@@ -452,8 +456,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
             if (len == 3) {
                 // this is 'x' - char
-                memory.putByte(offset, IMM_I2);
-                memory.putLong(offset + Byte.BYTES, token.charAt(1));
+                putOperand(offset, IMM, I2_TYPE, token.charAt(1));
                 return;
             }
             throw SqlException.position(position).put("unsupported string constant: ").put(token);
@@ -463,8 +466,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             if (PredicateType.BOOLEAN != predicateContext.type) {
                 throw SqlException.position(position).put("boolean constant in non-boolean expression: ").put(token);
             }
-            memory.putByte(offset, IMM_I1);
-            memory.putLong(offset + Byte.BYTES, 1);
+
+            putOperand(offset, IMM, I1_TYPE, 1);
             return;
         }
 
@@ -472,8 +475,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             if (PredicateType.BOOLEAN != predicateContext.type) {
                 throw SqlException.position(position).put("boolean constant in non-boolean expression: ").put(token);
             }
-            memory.putByte(offset, IMM_I1);
-            memory.putLong(offset + Byte.BYTES, 0);
+            putOperand(offset, IMM, I1_TYPE, 0);
             return;
         }
 
@@ -498,32 +500,33 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void serializeNull(long offset, int position, byte typeCode, boolean geoHashExpression) throws SqlException {
-        memory.putByte(offset, typeCode);
+    private void serializeNull(long offset, int position, int typeCode, boolean geoHashExpression) throws SqlException {
+        memory.putInt(offset, IMM);
+        memory.putInt(offset + Integer.BYTES, typeCode);
         switch (typeCode) {
-            case IMM_I1:
+            case I1_TYPE:
                 if (!geoHashExpression) {
                     throw SqlException.position(position).put("byte type is not nullable");
                 }
-                memory.putLong(offset + Byte.BYTES, GeoHashes.BYTE_NULL);
+                memory.putLong(offset + 2 * Integer.BYTES, GeoHashes.BYTE_NULL);
                 break;
-            case IMM_I2:
+            case I2_TYPE:
                 if (!geoHashExpression) {
                     throw SqlException.position(position).put("short type is not nullable");
                 }
-                memory.putLong(offset + Byte.BYTES, GeoHashes.SHORT_NULL);
+                memory.putLong(offset + 2 * Integer.BYTES, GeoHashes.SHORT_NULL);
                 break;
-            case IMM_I4:
-                memory.putLong(offset + Byte.BYTES, geoHashExpression ? GeoHashes.INT_NULL : Numbers.INT_NaN);
+            case I4_TYPE:
+                memory.putLong(offset + 2 * Integer.BYTES, geoHashExpression ? GeoHashes.INT_NULL : Numbers.INT_NaN);
                 break;
-            case IMM_I8:
-                memory.putLong(offset + Byte.BYTES, geoHashExpression ? GeoHashes.NULL : Numbers.LONG_NaN);
+            case I8_TYPE:
+                memory.putLong(offset + 2 * Integer.BYTES, geoHashExpression ? GeoHashes.NULL : Numbers.LONG_NaN);
                 break;
-            case IMM_F4:
-                memory.putDouble(offset + Byte.BYTES, Float.NaN);
+            case F4_TYPE:
+                memory.putDouble(offset + 2 * Integer.BYTES, Float.NaN);
                 break;
-            case IMM_F8:
-                memory.putDouble(offset + Byte.BYTES, Double.NaN);
+            case F8_TYPE:
+                memory.putDouble(offset + 2 * Integer.BYTES, Double.NaN);
                 break;
             default:
                 throw SqlException.position(position).put("unexpected null type: ").put(typeCode);
@@ -547,8 +550,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final int key = predicateContext.symbolMapReader.keyOf(symbol);
         if (key != SymbolTable.VALUE_NOT_FOUND) {
             // Known symbol constant case
-            memory.putByte(offset, IMM_I4);
-            memory.putLong(offset + Byte.BYTES, key);
+            putOperand(offset, IMM, I4_TYPE, key);
             return;
         }
 
@@ -557,26 +559,26 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         bindVarFunctions.add(new CompiledFilterSymbolBindVariable(function, predicateContext.symbolColumnIndex));
         int index = bindVarFunctions.size() - 1;
 
-        byte typeCode = bindVariableTypeCode(ColumnType.STRING);
-        memory.putByte(offset, typeCode);
-        memory.putLong(offset + Byte.BYTES, index);
+        int typeCode = bindVariableTypeCode(ColumnType.STRING);
+        putOperand(offset, VAR, typeCode, index);
     }
 
-    private void serializeGeoHash(long offset, int position, final ConstantFunction geoHashConstant, byte typeCode) throws SqlException {
-        memory.putByte(offset, typeCode);
+    private void serializeGeoHash(long offset, int position, final ConstantFunction geoHashConstant, int typeCode) throws SqlException {
+        memory.putInt(offset, IMM);
+        memory.putInt(offset + Integer.BYTES, typeCode);
         try {
             switch (typeCode) {
-                case IMM_I1:
-                    memory.putLong(offset + Byte.BYTES, geoHashConstant.getGeoByte(null));
+                case I1_TYPE:
+                    memory.putLong(offset + 2 * Integer.BYTES, geoHashConstant.getGeoByte(null));
                     break;
-                case IMM_I2:
-                    memory.putLong(offset + Byte.BYTES, geoHashConstant.getGeoShort(null));
+                case I2_TYPE:
+                    memory.putLong(offset + 2 * Integer.BYTES, geoHashConstant.getGeoShort(null));
                     break;
-                case IMM_I4:
-                    memory.putLong(offset + Byte.BYTES, geoHashConstant.getGeoInt(null));
+                case I4_TYPE:
+                    memory.putLong(offset + 2 * Integer.BYTES, geoHashConstant.getGeoInt(null));
                     break;
-                case IMM_I8:
-                    memory.putLong(offset + Byte.BYTES, geoHashConstant.getGeoLong(null));
+                case I8_TYPE:
+                    memory.putLong(offset + 2 * Integer.BYTES, geoHashConstant.getGeoLong(null));
                     break;
                 default:
                     throw SqlException.position(position).put("unexpected type code for geo hash: ").put(typeCode);
@@ -586,42 +588,36 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void serializeNumber(long offset, int position, final CharSequence token, byte typeCode, boolean negated) throws SqlException {
+    private void serializeNumber(long offset, int position, final CharSequence token, int typeCode, boolean negated) throws SqlException {
         long sign = negated ? -1 : 1;
         try {
             switch (typeCode) {
-                case IMM_I1:
+                case I1_TYPE:
                     final byte b = (byte) Numbers.parseInt(token);
-                    memory.putByte(offset, IMM_I1);
-                    memory.putLong(offset + Byte.BYTES, sign * b);
+                    putOperand(offset, IMM, I1_TYPE, sign * b);
                     break;
-                case IMM_I2:
+                case I2_TYPE:
                     final short s = (short) Numbers.parseInt(token);
-                    memory.putByte(offset, IMM_I2);
-                    memory.putLong(offset + Byte.BYTES, sign * s);
+                    putOperand(offset, IMM, I2_TYPE, sign * s);
                     break;
-                case IMM_I4:
-                case IMM_F4:
+                case I4_TYPE:
+                case F4_TYPE:
                     try {
                         final int i = Numbers.parseInt(token);
-                        memory.putByte(offset, IMM_I4);
-                        memory.putLong(offset + Byte.BYTES, sign * i);
+                        putOperand(offset, IMM, I4_TYPE, sign * i);
                     } catch (NumericException e) {
                         final float fi = Numbers.parseFloat(token);
-                        memory.putByte(offset, IMM_F4);
-                        memory.putDouble(offset + Byte.BYTES, sign * fi);
+                        putDoubleConst(offset, IMM, F4_TYPE, sign * fi);
                     }
                     break;
-                case IMM_I8:
-                case IMM_F8:
+                case I8_TYPE:
+                case F8_TYPE:
                     try {
                         final long l = Numbers.parseLong(token);
-                        memory.putByte(offset, IMM_I8);
-                        memory.putLong(offset + Byte.BYTES, sign * l);
+                        putOperand(offset, IMM, I8_TYPE, sign * l);
                     } catch (NumericException e) {
                         final double dl = Numbers.parseDouble(token);
-                        memory.putByte(offset, IMM_F8);
-                        memory.putDouble(offset + Byte.BYTES, sign * dl);
+                        putDoubleConst(offset, IMM, F8_TYPE, sign * dl);
                     }
                     break;
                 default:
@@ -641,32 +637,28 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         try {
             final int i = Numbers.parseInt(token);
-            memory.putByte(offset, IMM_I4);
-            memory.putLong(offset + Byte.BYTES, sign * i);
+            putOperand(offset, IMM, I4_TYPE, sign * i);
             return;
         } catch (NumericException ignore) {
         }
 
         try {
             final long l = Numbers.parseLong(token);
-            memory.putByte(offset, IMM_I8);
-            memory.putLong(offset + Byte.BYTES, sign * l);
+            putOperand(offset, IMM, I8_TYPE, sign * l);
             return;
         } catch (NumericException ignore) {
         }
 
         try {
             final double d = Numbers.parseDouble(token);
-            memory.putByte(offset, IMM_F8);
-            memory.putDouble(offset + Byte.BYTES, sign * d);
+            putDoubleConst(offset, IMM, F8_TYPE, sign * d);
             return;
         } catch (NumericException ignore) {
         }
 
         try {
             final float f = Numbers.parseFloat(token);
-            memory.putByte(offset, IMM_F4);
-            memory.putDouble(offset + Byte.BYTES, sign * f);
+            putDoubleConst(offset, IMM, F4_TYPE, sign * f);
             return;
         } catch (NumericException ignore) {
         }
@@ -674,91 +666,102 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         throw SqlException.position(position).put("unexpected non-numeric constant: ").put(token);
     }
 
+    private void putOperator(int opcode) {
+        memory.putInt(opcode);
+        // pad unused fields with zeros
+        memory.putInt(0);
+        memory.putLong(0L);
+    }
+
     private void serializeOperator(int position, final CharSequence token, int argCount) throws SqlException {
         if (SqlKeywords.isNotKeyword(token)) {
-            memory.putByte(NOT);
+            putOperator(NOT);
             return;
         }
         if (SqlKeywords.isAndKeyword(token)) {
-            memory.putByte(AND);
+            putOperator(AND);
             return;
         }
         if (SqlKeywords.isOrKeyword(token)) {
-            memory.putByte(OR);
+            putOperator(OR);
             return;
         }
         if (Chars.equals(token, "=")) {
-            memory.putByte(EQ);
+            putOperator(EQ);
             return;
         }
         if (Chars.equals(token, "<>") || Chars.equals(token, "!=")) {
-            memory.putByte(NE);
+            putOperator(NE);
             return;
         }
         if (Chars.equals(token, "<")) {
-            memory.putByte(LT);
+            putOperator(LT);
             return;
         }
         if (Chars.equals(token, "<=")) {
-            memory.putByte(LE);
+            putOperator(LE);
             return;
         }
         if (Chars.equals(token, ">")) {
-            memory.putByte(GT);
+            putOperator(GT);
             return;
         }
         if (Chars.equals(token, ">=")) {
-            memory.putByte(GE);
+            putOperator(GE);
             return;
         }
         if (Chars.equals(token, "+")) {
             if (argCount == 2) {
-                memory.putByte(ADD);
+                putOperator(ADD);
             } // ignore unary
             return;
         }
         if (Chars.equals(token, "-")) {
             if (argCount == 2) {
-                memory.putByte(SUB);
+                putOperator(SUB);
             } else if (argCount == 1) {
-                memory.putByte(NEG);
+                putOperator(NEG);
             }
             return;
         }
         if (Chars.equals(token, "*")) {
-            memory.putByte(MUL);
+            putOperator(MUL);
             return;
         }
         if (Chars.equals(token, "/")) {
-            memory.putByte(DIV);
+            putOperator(DIV);
             return;
         }
+//        if (Chars.equals(token, "%")) {
+//            putOperator(REM);
+//            return;
+//        }
         throw SqlException.position(position).put("invalid operator: ").put(token);
     }
 
-    private static byte columnTypeCode(int columnTypeTag) {
+    private static int columnTypeCode(int columnTypeTag) {
         switch (columnTypeTag) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
             case ColumnType.GEOBYTE:
-                return MEM_I1;
+                return I1_TYPE;
             case ColumnType.SHORT:
             case ColumnType.GEOSHORT:
             case ColumnType.CHAR:
-                return MEM_I2;
+                return I2_TYPE;
             case ColumnType.INT:
             case ColumnType.GEOINT:
             case ColumnType.SYMBOL:
-                return MEM_I4;
+                return I4_TYPE;
             case ColumnType.FLOAT:
-                return MEM_F4;
+                return F4_TYPE;
             case ColumnType.LONG:
             case ColumnType.GEOLONG:
             case ColumnType.DATE:
             case ColumnType.TIMESTAMP:
-                return MEM_I8;
+                return I8_TYPE;
             case ColumnType.DOUBLE:
-                return MEM_F8;
+                return F8_TYPE;
             default:
                 return UNDEFINED_CODE;
         }
@@ -769,24 +772,24 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
             case ColumnType.GEOBYTE:
-                return VAR_I1;
+                return I1_TYPE;
             case ColumnType.SHORT:
             case ColumnType.GEOSHORT:
             case ColumnType.CHAR:
-                return VAR_I2;
+                return I2_TYPE;
             case ColumnType.INT:
             case ColumnType.GEOINT:
             case ColumnType.STRING: // symbol variables are represented with string type
-                return VAR_I4;
+                return I4_TYPE;
             case ColumnType.FLOAT:
-                return VAR_F4;
+                return F4_TYPE;
             case ColumnType.LONG:
             case ColumnType.GEOLONG:
             case ColumnType.DATE:
             case ColumnType.TIMESTAMP:
-                return VAR_I8;
+                return I8_TYPE;
             case ColumnType.DOUBLE:
-                return VAR_F8;
+                return F8_TYPE;
             default:
                 return UNDEFINED_CODE;
         }
@@ -964,9 +967,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
             updateType(node.position, columnTypeTag);
 
-            byte code = columnTypeCode(columnTypeTag);
-            localTypesObserver.observe(code);
-            globalTypesObserver.observe(code);
+            int typeCode = columnTypeCode(columnTypeTag);
+            localTypesObserver.observe(typeCode);
+            globalTypesObserver.observe(typeCode);
         }
 
         private void handleBindVariable(ExpressionNode node) throws SqlException {
@@ -981,7 +984,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
             updateType(node.position, columnTypeTag);
 
-            byte code = columnTypeCode(columnTypeTag);
+            int code = columnTypeCode(columnTypeTag);
             localTypesObserver.observe(code);
             globalTypesObserver.observe(code);
         }
@@ -1054,24 +1057,24 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         private final byte[] sizes = new byte[TYPES_COUNT];
 
-        public void observe(byte code) {
+        public void observe(int code) {
             switch (code) {
-                case MEM_I1:
+                case I1_TYPE:
                     sizes[I1_INDEX] = 1;
                     break;
-                case MEM_I2:
+                case I2_TYPE:
                     sizes[I2_INDEX] = 2;
                     break;
-                case MEM_I4:
+                case I4_TYPE:
                     sizes[I4_INDEX] = 4;
                     break;
-                case MEM_F4:
+                case F4_TYPE:
                     sizes[F4_INDEX] = 4;
                     break;
-                case MEM_I8:
+                case I8_TYPE:
                     sizes[I8_INDEX] = 8;
                     break;
-                case MEM_F8:
+                case F8_TYPE:
                     sizes[F8_INDEX] = 8;
                     break;
             }
@@ -1081,13 +1084,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
          * Returns the expected constant type calculated based on the "widest" observed column
          * or bind variable type. The result contains IMM_* value or UNDEFINED_CODE value.
          */
-        public byte constantTypeCode() {
+        public int constantTypeCode() {
             for (int i = sizes.length - 1; i > -1; i--) {
                 byte size = sizes[i];
                 if (size > 0) {
                     // If floats are present, we need to cast longs to double.
                     if (i == I8_INDEX && sizes[F4_INDEX] > 0) {
-                        return IMM_F8;
+                        return F8_TYPE;
                     }
                     return indexToTypeCode(i);
                 }
@@ -1098,17 +1101,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         private byte indexToTypeCode(int index) {
             switch (index) {
                 case I1_INDEX:
-                    return IMM_I1;
+                    return I1_TYPE;
                 case I2_INDEX:
-                    return IMM_I2;
+                    return I2_TYPE;
                 case I4_INDEX:
-                    return IMM_I4;
+                    return I4_TYPE;
                 case F4_INDEX:
-                    return IMM_F4;
+                    return F4_TYPE;
                 case I8_INDEX:
-                    return IMM_I8;
+                    return I8_TYPE;
                 case F8_INDEX:
-                    return IMM_F8;
+                    return F8_TYPE;
             }
             return UNDEFINED_CODE;
         }

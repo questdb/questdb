@@ -698,125 +698,109 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             offset = 0;
             sb = new StringBuilder();
             while (offset < irMem.getAppendOffset()) {
-                byte b = irMem.getByte(offset);
-                offset += Byte.BYTES;
-                switch (b) {
+                int opcode = irMem.getInt(offset);
+                offset += Integer.BYTES;
+                int type = irMem.getInt(offset);
+                offset += Integer.BYTES;
+                switch (opcode) {
                     // Columns
-                    case MEM_I1:
-                    case MEM_I2:
-                    case MEM_I4:
-                    case MEM_I8:
-                    case MEM_F4:
-                    case MEM_F8:
-                        appendColumn(b);
+                    case MEM:
+                        appendColumn(type);
                         break;
                     // Bind variables
-                    case VAR_I1:
-                    case VAR_I2:
-                    case VAR_I4:
-                    case VAR_I8:
-                    case VAR_F4:
-                    case VAR_F8:
-                        appendBindVariable(b);
+                    case VAR:
+                        appendBindVariable(type);
                         break;
                     // Constants
-                    case IMM_I1:
-                    case IMM_I2:
-                    case IMM_I4:
-                    case IMM_I8:
-                        appendLongConst(b);
-                        break;
-                    case IMM_F4:
-                    case IMM_F8:
-                        appendDoubleConst(b);
+                    case IMM: {
+                        switch (type) {
+                            case F4_TYPE:
+                            case F8_TYPE:
+                                appendDoubleConst(type);
+                                break;
+                            default:
+                                appendLongConst(type);
+                                break;
+                        }
+                    }
                         break;
                     // Operators
                     default:
-                        appendOperator(b);
+                        appendOperator(opcode);
                         break;
                 }
             }
             return sb.toString();
         }
 
-        private void appendColumn(byte type) {
-            sb.append("(");
+        private void appendColumn(int type) {
             long index = irMem.getLong(offset);
             offset += Long.BYTES;
+            sb.append("(");
             sb.append(typeName(type));
             sb.append(" ");
             sb.append(metadata.getColumnName((int) index));
             sb.append(")");
         }
 
-        private void appendBindVariable(byte type) {
-            sb.append("(");
+        private void appendBindVariable(int type) {
             long index = irMem.getLong(offset);
             offset += Long.BYTES;
+            sb.append("(");
             sb.append(typeName(type));
             sb.append(" :");
             sb.append(index);
             sb.append(")");
         }
 
-        private void appendLongConst(byte type) {
-            sb.append("(");
+        private void appendLongConst(int type) {
             long value = irMem.getLong(offset);
             offset += Long.BYTES;
+            sb.append("(");
             sb.append(typeName(type));
             sb.append(" ");
             sb.append(value);
             sb.append("L)");
         }
 
-        private void appendDoubleConst(byte type) {
-            sb.append("(");
+        private void appendDoubleConst(int type) {
             double value = irMem.getDouble(offset);
             offset += Double.BYTES;
+            sb.append("(");
             sb.append(typeName(type));
             sb.append(" ");
             sb.append(value);
             sb.append("D)");
         }
 
-        private void appendOperator(byte operator) {
+        private void appendOperator(int operator) {
+            irMem.getLong(offset);
+            offset += Long.BYTES;
             sb.append("(");
             sb.append(operatorName(operator));
             sb.append(")");
         }
 
-        private String typeName(byte type) {
+        private String typeName(int type) {
             switch (type) {
-                case MEM_I1:
-                case IMM_I1:
-                case VAR_I1:
+                case I1_TYPE:
                     return "i8";
-                case MEM_I2:
-                case IMM_I2:
-                case VAR_I2:
+                case I2_TYPE:
                     return "i16";
-                case MEM_I4:
-                case IMM_I4:
-                case VAR_I4:
+                case I4_TYPE:
                     return "i32";
-                case MEM_I8:
-                case IMM_I8:
-                case VAR_I8:
+                case I8_TYPE:
                     return "i64";
-                case MEM_F4:
-                case IMM_F4:
-                case VAR_F4:
+                case F4_TYPE:
                     return "f32";
-                case MEM_F8:
-                case IMM_F8:
-                case VAR_F8:
+                case F8_TYPE:
                     return "f64";
                 default:
-                    return "unknown";
+                    return "unknown: " + type;
             }
         }
 
-        private String operatorName(byte operator) {
+        private String operatorName(int operator) {
             switch (operator) {
                 case NEG:
                     return "neg";
