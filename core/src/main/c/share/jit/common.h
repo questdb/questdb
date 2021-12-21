@@ -37,8 +37,8 @@ enum class data_type_t : uint8_t {
     i8,
     i16,
     i32,
-    i64,
     f32,
+    i64,
     f64,
 };
 
@@ -47,49 +47,36 @@ enum class data_kind_t : uint8_t {
     kConst,
 };
 
-enum class instruction_t : uint8_t {
-    MEM_I1 = 0,
-    MEM_I2 = 1,
-    MEM_I4 = 2,
-    MEM_I8 = 3,
-    MEM_F4 = 4,
-    MEM_F8 = 5,
+enum class opcodes : int32_t {
+    Inv = -1,
+    Ret =  0,
+    Imm =  1,
+    Mem =  2,
+    Var =  3,
+    Neg =  4,
+    Not =  5,
+    And =  6,
+    Or  =  7,
+    Eq  =  8,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+};
 
-    IMM_I1 = 6,
-    IMM_I2 = 7,
-    IMM_I4 = 8,
-    IMM_I8 = 9,
-    IMM_F4 = 10,
-    IMM_F8 = 11,
-
-    NEG = 12,               // -a
-    NOT = 13,               // !a
-    AND = 14,               // a && b
-    OR = 15,                // a || b
-    EQ = 16,                // a == b
-    NE = 17,                // a != b
-    LT = 18,                // a <  b
-    LE = 19,                // a <= b
-    GT = 20,                // a >  b
-    GE = 21,                // a >= b
-    ADD = 22,               // a + b
-    SUB = 23,               // a - b
-    MUL = 24,               // a * b
-    DIV = 25,               // a / b
-    MOD = 26,               // a % b
-    JZ = 27,                // if a == 0 jp b
-    JNZ = 28,               // if a != 0 jp b
-    JP = 29,                // jp a
-    RET = 30,               // ret a
-    IMM_NULL = 31,          // generic null const
-
-    //todo: change serialisation format IMM/MEM/VAR + type info
-    VAR_I1 = 32,
-    VAR_I2 = 33,
-    VAR_I4 = 34,
-    VAR_I8 = 35,
-    VAR_F4 = 36,
-    VAR_F8 = 37,
+struct instruction_t {
+   opcodes opcode;
+   int32_t options;
+   union {
+       int64_t ipayload;
+       double  dpayload;
+   };
 };
 
 struct jit_value_t {
@@ -121,20 +108,6 @@ private:
     data_type_t type_;
     data_kind_t kind_;
 };
-
-template<typename T>
-T read_at(const uint8_t *buf, size_t size, uint32_t pos) {
-    if (pos + sizeof(T) <= size)
-        return *((T *) &buf[pos]);
-    return 0;
-}
-
-template<typename T>
-T read(const uint8_t *buf, size_t size, uint32_t &pos) {
-    T data = read_at<T>(buf, size, pos);
-    pos += sizeof(T);
-    return data;
-}
 
 inline uint32_t type_shift(data_type_t type) {
     switch (type) {

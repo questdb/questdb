@@ -61,9 +61,8 @@ namespace questdb::avx2 {
     }
 
     jit_value_t
-    read_vars_mem(Compiler &c, data_type_t type, const uint8_t *istream, size_t size, uint32_t &pos,
-                  const Gp &vars_ptr) {
-        auto value = x86::read_vars_mem(c, type, istream, size, pos, vars_ptr);
+    read_vars_mem(Compiler &c, data_type_t type, int32_t idx, const Gp &vars_ptr) {
+        auto value = x86::read_vars_mem(c, type, idx, vars_ptr);
         Mem mem = value.op().as<Mem>();
         Ymm val = c.newYmm();
         switch (type) {
@@ -98,10 +97,8 @@ namespace questdb::avx2 {
     }
 
     jit_value_t
-    read_mem(Compiler &c, data_type_t type, const uint8_t *istream, size_t size, uint32_t &pos, const Gp &cols_ptr,
-             const Gp &input_index) {
+    read_mem(Compiler &c, data_type_t type, int32_t column_idx, const Gp &cols_ptr, const Gp &input_index) {
 
-        auto column_idx = static_cast<int32_t>(read<int64_t>(istream, size, pos));
         Gp column_address = c.newInt64();
         c.mov(column_address, ptr(cols_ptr, 8 * column_idx, 8));
 
@@ -128,42 +125,43 @@ namespace questdb::avx2 {
         return {row_data, type, data_kind_t::kMemory};
     }
 
-    jit_value_t read_imm(Compiler &c, data_type_t type, const uint8_t *istream, size_t size, uint32_t &pos) {
+    jit_value_t read_imm(Compiler &c, const instruction_t &instr) {
         const auto scope = ConstPool::kScopeLocal;
         Ymm val = c.newYmm("imm_value");
+        auto type = static_cast<data_type_t>(instr.options);
         switch (type) {
             case data_type_t::i8: {
-                auto value = static_cast<int8_t>(read<int64_t>(istream, size, pos));
+                auto value = static_cast<int8_t>(instr.ipayload);
                 Mem mem = c.newConst(scope, &value, 1);
                 c.vpbroadcastb(val, mem);
             }
                 break;
             case data_type_t::i16: {
-                auto value = static_cast<int16_t>(read<int64_t>(istream, size, pos));
+                auto value = static_cast<int16_t>(instr.ipayload);
                 Mem mem = c.newConst(scope, &value, 2);
                 c.vpbroadcastw(val, mem);
             }
                 break;
             case data_type_t::i32: {
-                auto value = static_cast<int32_t>(read<int64_t>(istream, size, pos));
+                auto value = static_cast<int32_t>(instr.ipayload);
                 Mem mem = c.newConst(scope, &value, 4);
                 c.vpbroadcastd(val, mem);
             }
                 break;
             case data_type_t::i64: {
-                auto value = read<int64_t>(istream, size, pos);
+                auto value = instr.ipayload;
                 Mem mem = c.newConst(scope, &value, 8);
                 c.vpbroadcastq(val, mem);
             }
                 break;
             case data_type_t::f32: {
-                auto value = read<double>(istream, size, pos);
+                auto value = instr.dpayload;
                 Mem mem = c.newFloatConst(scope, static_cast<float>(value));
                 c.vbroadcastss(val, mem);
             }
                 break;
             case data_type_t::f64: {
-                auto value = read<double>(istream, size, pos);
+                auto value = instr.dpayload;
                 Mem mem = c.newDoubleConst(scope, value);
                 c.vbroadcastsd(val, mem);
             }
@@ -325,44 +323,46 @@ namespace questdb::avx2 {
         return convert(c, lhs, rhs, ncheck);
     }
 
-    void emit_bin_op(Compiler &c, instruction_t ic, std::stack<jit_value_t> &values, bool ncheck) {
+    void emit_bin_op(Compiler &c, const instruction_t &instr, std::stack<jit_value_t> &values, bool ncheck) {
         auto args = get_arguments(c, values, ncheck);
-        switch (ic) {
-            case instruction_t::AND:
-                values.push(bin_and(c, args.first, args.second));
+        auto lhs = args.first;
+        auto rhs = args.second;
+        switch (instr.opcode) {
+            case opcodes::And:
+                values.push(bin_and(c, lhs, rhs));
                 break;
-            case instruction_t::OR:
-                values.push(bin_or(c, args.first, args.second));
+            case opcodes::Or:
+                values.push(bin_or(c, lhs, rhs));
                 break;
-            case instruction_t::EQ:
-                values.push(cmp_eq(c, args.first, args.second));
+            case opcodes::Eq:
+                values.push(cmp_eq(c, lhs, rhs));
                 break;
-            case instruction_t::NE:
-                values.push(cmp_ne(c, args.first, args.second));
+            case opcodes::Ne:
+                values.push(cmp_ne(c, lhs, rhs));
                 break;
-            case instruction_t::GT:
-                values.push(cmp_gt(c, args.first, args.second, ncheck));
+            case opcodes::Gt:
+                values.push(cmp_gt(c, lhs, rhs, ncheck));
                 break;
-            case instruction_t::GE:
-                values.push(cmp_ge(c, args.first, args.second, ncheck));
+            case opcodes::Ge:
+                values.push(cmp_ge(c, lhs, rhs, ncheck));
                 break;
-            case instruction_t::LT:
-                values.push(cmp_lt(c, args.first, args.second, ncheck));
+            case opcodes::Lt:
+                values.push(cmp_lt(c, lhs, rhs, ncheck));
                 break;
-            case instruction_t::LE:
-                values.push(cmp_le(c, args.first, args.second, ncheck));
+            case opcodes::Le:
+                values.push(cmp_le(c, lhs, rhs, ncheck));
                 break;
-            case instruction_t::ADD:
-                values.push(add(c, args.first, args.second, ncheck));
+            case opcodes::Add:
+                values.push(add(c, lhs, rhs, ncheck));
                 break;
-            case instruction_t::SUB:
-                values.push(sub(c, args.first, args.second, ncheck));
+            case opcodes::Sub:
+                values.push(sub(c, lhs, rhs, ncheck));
                 break;
-            case instruction_t::MUL:
-                values.push(mul(c, args.first, args.second, ncheck));
+            case opcodes::Mul:
+                values.push(mul(c, lhs, rhs, ncheck));
                 break;
-            case instruction_t::DIV:
-                values.push(div(c, args.first, args.second, ncheck));
+            case opcodes::Div:
+                values.push(div(c, lhs, rhs, ncheck));
                 break;
             default:
                 __builtin_unreachable();
@@ -370,88 +370,38 @@ namespace questdb::avx2 {
     }
 
     void
-    emit_code(Compiler &c, const uint8_t *filter_expr, size_t filter_size, std::stack<jit_value_t> &values, bool ncheck,
+    emit_code(Compiler &c, const instruction_t *istream, size_t size, std::stack<jit_value_t> &values, bool ncheck,
               const Gp &cols_ptr, const Gp &vars_ptr, const Gp &input_index) {
-        uint32_t read_pos = 0;
-        while (read_pos < filter_size) {
-            auto ic = static_cast<instruction_t>(read<uint8_t>(filter_expr, filter_size, read_pos));
-            switch (ic) {
-                case instruction_t::RET:
+        for (size_t i = 0; i < size; ++i) {
+            auto instr = istream[i];
+            switch (instr.opcode) {
+                case opcodes::Inv:
+                    return; // todo: throw exception
+                case opcodes::Ret:
+                    return;
+                case opcodes::Var: {
+                    auto type = static_cast<data_type_t>(instr.options);
+                    auto idx = static_cast<int32_t>(instr.ipayload);
+                    values.push(read_vars_mem(c, type, idx, vars_ptr));
+                }
                     break;
-                case instruction_t::VAR_I1:
-                    values.push(
-                            read_vars_mem(c, data_type_t::i8, filter_expr, filter_size, read_pos, vars_ptr));
+                case opcodes::Mem: {
+                    auto type = static_cast<data_type_t>(instr.options);
+                    auto idx = static_cast<int32_t>(instr.ipayload);
+                    values.push(read_mem(c, type, idx, cols_ptr, input_index));
+                }
                     break;
-                case instruction_t::VAR_I2:
-                    values.push(
-                            read_vars_mem(c, data_type_t::i16, filter_expr, filter_size, read_pos, vars_ptr));
+                case opcodes::Imm:
+                    values.push(read_imm(c, instr));
                     break;
-                case instruction_t::VAR_I4:
-                    values.push(
-                            read_vars_mem(c, data_type_t::i32, filter_expr, filter_size, read_pos, vars_ptr));
-                    break;
-                case instruction_t::VAR_I8:
-                    values.push(
-                            read_vars_mem(c, data_type_t::i64, filter_expr, filter_size, read_pos, vars_ptr));
-                    break;
-                case instruction_t::VAR_F4:
-                    values.push(
-                            read_vars_mem(c, data_type_t::f32, filter_expr, filter_size, read_pos, vars_ptr));
-                    break;
-                case instruction_t::VAR_F8:
-                    values.push(
-                            read_vars_mem(c, data_type_t::f64, filter_expr, filter_size, read_pos, vars_ptr));
-                    break;
-                case instruction_t::MEM_I1:
-                    values.push(
-                            read_mem(c, data_type_t::i8, filter_expr, filter_size, read_pos, cols_ptr, input_index));
-                    break;
-                case instruction_t::MEM_I2:
-                    values.push(
-                            read_mem(c, data_type_t::i16, filter_expr, filter_size, read_pos, cols_ptr, input_index));
-                    break;
-                case instruction_t::MEM_I4:
-                    values.push(
-                            read_mem(c, data_type_t::i32, filter_expr, filter_size, read_pos, cols_ptr, input_index));
-                    break;
-                case instruction_t::MEM_I8:
-                    values.push(
-                            read_mem(c, data_type_t::i64, filter_expr, filter_size, read_pos, cols_ptr, input_index));
-                    break;
-                case instruction_t::MEM_F4:
-                    values.push(
-                            read_mem(c, data_type_t::f32, filter_expr, filter_size, read_pos, cols_ptr, input_index));
-                    break;
-                case instruction_t::MEM_F8:
-                    values.push(
-                            read_mem(c, data_type_t::f64, filter_expr, filter_size, read_pos, cols_ptr, input_index));
-                    break;
-                case instruction_t::IMM_I1:
-                    values.push(read_imm(c, data_type_t::i8, filter_expr, filter_size, read_pos));
-                    break;
-                case instruction_t::IMM_I2:
-                    values.push(read_imm(c, data_type_t::i16, filter_expr, filter_size, read_pos));
-                    break;
-                case instruction_t::IMM_I4:
-                    values.push(read_imm(c, data_type_t::i32, filter_expr, filter_size, read_pos));
-                    break;
-                case instruction_t::IMM_I8:
-                    values.push(read_imm(c, data_type_t::i64, filter_expr, filter_size, read_pos));
-                    break;
-                case instruction_t::IMM_F4:
-                    values.push(read_imm(c, data_type_t::f32, filter_expr, filter_size, read_pos));
-                    break;
-                case instruction_t::IMM_F8:
-                    values.push(read_imm(c, data_type_t::f64, filter_expr, filter_size, read_pos));
-                    break;
-                case instruction_t::NEG:
+                case opcodes::Neg:
                     values.push(neg(c, get_argument(values), ncheck));
                     break;
-                case instruction_t::NOT:
+                case opcodes::Not:
                     values.push(bin_not(c, get_argument(values)));
                     break;
                 default:
-                    emit_bin_op(c, ic, values, ncheck);
+                    emit_bin_op(c, instr, values, ncheck);
                     break;
             }
         }

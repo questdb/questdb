@@ -63,7 +63,7 @@ struct Function {
     explicit Function(x86::Compiler &cc)
             : c(cc) {};
 
-    void compile(const uint8_t *filter_expr, int64_t filter_size, uint32_t options) {
+    void compile(const instruction_t *istream, size_t size, uint32_t options) {
         auto features = CpuInfo::host().features().as<x86::Features>();
         enum type_size : uint32_t {
             scalar = 0,
@@ -78,13 +78,13 @@ struct Function {
         if (exec_hint == single_size && features.hasAVX2()) {
             auto step = 256 / ((1 << type_size) * 8);
             c.func()->frame().setAvxEnabled();
-            avx2_loop(filter_expr, filter_size, step, null_check, unroll_factor);
+            avx2_loop(istream, size, step, null_check, unroll_factor);
         } else {
-            scalar_loop(filter_expr, filter_size, null_check, unroll_factor);
+            scalar_loop(istream, size, null_check, unroll_factor);
         }
     };
 
-    void scalar_tail(const uint8_t *filter_expr, size_t filter_size, bool null_check, const x86::Gp &stop, int unroll_factor = 1) {
+    void scalar_tail(const instruction_t *istream, size_t size, bool null_check, const x86::Gp &stop, int unroll_factor = 1) {
 
         Label l_loop = c.newLabel();
         Label l_exit = c.newLabel();
@@ -95,10 +95,10 @@ struct Function {
         c.bind(l_loop);
 
         for (int i = 0; i < unroll_factor; ++i) {
-            questdb::x86::emit_code(c, filter_expr, filter_size, registers, null_check, cols_ptr, vars_ptr, input_index);
+            questdb::x86::emit_code(c, istream, size, values, null_check, cols_ptr, vars_ptr, input_index);
 
-            auto mask = registers.top();
-            registers.pop();
+            auto mask = values.top();
+            values.pop();
 
             x86::Gp adjusted_id = c.newInt64("input_index_+_rows_id_start_offset");
             c.lea(adjusted_id, ptr(input_index, rows_id_start_offset)); // input_index + rows_id_start_offset
@@ -114,20 +114,20 @@ struct Function {
         c.bind(l_exit);
     }
 
-    void scalar_loop(const uint8_t *filter_expr, size_t filter_size, bool null_check, int unroll_factor = 1) {
+    void scalar_loop(const instruction_t *istream, size_t size, bool null_check, int unroll_factor = 1) {
         if(unroll_factor > 1) {
             x86::Gp stop = c.newInt64("stop");
             c.mov(stop, rows_size);
             c.sub(stop, unroll_factor - 1);
-            scalar_tail(filter_expr, filter_size, null_check, stop, unroll_factor);
-            scalar_tail(filter_expr, filter_size, null_check, rows_size, 1);
+            scalar_tail(istream, size, null_check, stop, unroll_factor);
+            scalar_tail(istream, size, null_check, rows_size, 1);
         } else {
-            scalar_tail(filter_expr, filter_size, null_check, rows_size, 1);
+            scalar_tail(istream, size, null_check, rows_size, 1);
         }
         c.ret(output_index);
     }
 
-    void avx2_loop(const uint8_t *filter_expr, size_t filter_size, uint32_t step, bool null_check, int unroll_factor = 1) {
+    void avx2_loop(const instruction_t *istream, size_t size, uint32_t step, bool null_check, int unroll_factor = 1) {
         using namespace asmjit::x86;
 
         Label l_loop = c.newLabel();
@@ -164,10 +164,10 @@ struct Function {
         c.bind(l_loop);
 
         for (int i = 0; i < unroll_factor; ++i) {
-            questdb::avx2::emit_code(c, filter_expr, filter_size, registers, null_check, cols_ptr, vars_ptr, input_index);
+            questdb::avx2::emit_code(c, istream, size, values, null_check, cols_ptr, vars_ptr, input_index);
 
-            auto mask = registers.top();
-            registers.pop();
+            auto mask = values.top();
+            values.pop();
 
             //mask compress optimization for longs
             bool is_slow_zen = CpuInfo::host().familyId() == 23; // AMD Zen1, Zen1+ and Zen2
@@ -190,7 +190,7 @@ struct Function {
         c.jl(l_loop); // index < stop
         c.bind(l_exit);
 
-        scalar_tail(filter_expr, filter_size, null_check, rows_size);
+        scalar_tail(istream, size, null_check, rows_size);
         c.ret(output_index);
     }
 
@@ -231,7 +231,7 @@ struct Function {
 
     x86::Compiler &c;
 
-    std::stack<jit_value_t> registers{};
+    std::stack<jit_value_t> values{};
 
     x86::Gp cols_ptr;
     x86::Gp cols_size;
@@ -274,7 +274,8 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
                                                     jobject error) {
 #ifndef __aarch64__
 
-    if (filterAddress <= 0 || filterSize <= 0) {
+    auto size = static_cast<size_t>(filterSize) / sizeof(instruction_t);
+    if (filterAddress <= 0 || size <= 0) {
         fillJitErrorObject(e, error, ErrorCode::kErrorInvalidArgument, "Invalid argument passed");
         return 0;
     }
@@ -296,7 +297,7 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
     CompiledFn fn;
     try {
         function.begin_fn();
-        function.compile(reinterpret_cast<uint8_t *>(filterAddress), filterSize, options);
+        function.compile(reinterpret_cast<const instruction_t *>(filterAddress), size, options);
         function.end_fn();
         c.finalize();
         gGlobalContext.rt.add(&fn, &code);
