@@ -35,7 +35,9 @@
   height: 32px;
 }
 
-.sidebard-panel .feed-element, .media-body, .sidebard-panel p {
+.sidebard-panel .feed-element,
+.media-body,
+.sidebard-panel p {
   font-size: 12px;
 }
 
@@ -54,11 +56,13 @@
   border: 0;
 }
 
-.sidebar-content .wrapper, .wrapper.sidebar-content {
+.sidebar-content .wrapper,
+.wrapper.sidebar-content {
   padding-right: 230px !important;
 }
 
-.body-small .sidebar-content .wrapper, .body-small .wrapper.sidebar-content {
+.body-small .sidebar-content .wrapper,
+.body-small .wrapper.sidebar-content {
   padding-right: 20px !important;
 }
 
@@ -87,7 +91,6 @@
 }
 
 .sidebar-container {
-
   ul.nav-tabs {
     border: none;
   }
@@ -123,14 +126,11 @@
     background: #f9f9f9;
     color: $text-color;
     font-weight: bold;
-
   }
 
   .nav-tabs > li.active > a:hover,
   .nav-tabs > li.active > a:focus {
-
     border: none;
-
   }
 
   ul.sidebar-list {
@@ -146,11 +146,11 @@
     font-size: 12px;
   }
 
-  ul.sidebar-list li:nth-child(2n+2) {
+  ul.sidebar-list li:nth-child(2n + 2) {
     //    background: #f9f9f9;
   }
 
-  .sidebar-message:nth-child(2n+2) {
+  .sidebar-message:nth-child(2n + 2) {
     background: #f9f9f9;
   }
 
@@ -165,7 +165,6 @@
   }
 
   .date-item {
-
   }
 
   .sidebar-title {
@@ -180,11 +179,9 @@
   }
 
   .tab-content {
-
     h4 {
       margin-bottom: 5px;
     }
-
   }
 
   .sidebar-message > a > .pull-left {
@@ -214,6 +211,4 @@
     padding: 15px 20px;
     border-bottom: 1px solid $border-color;
   }
-
 }
-

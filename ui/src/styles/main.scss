@@ -27,17 +27,17 @@ $fa-font-path: "~@fortawesome/fontawesome-free/webfonts";
 @import "@fortawesome/fontawesome-free/scss/fontawesome.scss";
 
 @font-face {
-    font-family: 'Font Awesome 5 Free';
-    font-style: normal;
-    font-weight: 900;
-    font-display: $fa-font-display;
-    src: url('#{$fa-font-path}/fa-solid-900.woff') format('woff');
+  font-family: "Font Awesome 5 Free";
+  font-style: normal;
+  font-weight: 900;
+  font-display: $fa-font-display;
+  src: url("#{$fa-font-path}/fa-solid-900.woff") format("woff");
 }
 
 .fa,
 .fas {
-    font-family: 'Font Awesome 5 Free';
-    font-weight: 900;
+  font-family: "Font Awesome 5 Free";
+  font-weight: 900;
 }
 
 @import "~bootstrap-sass/assets/stylesheets/bootstrap/_variables";
@@ -72,7 +72,6 @@ $fa-font-path: "~@fortawesome/fontawesome-free/webfonts";
 @import "~bootstrap-sass/assets/stylesheets/bootstrap/_wells";
 @import "~bootstrap-sass/assets/stylesheets/bootstrap/_close";
 
-
 @import "~animate.css/source/_base.css";
 
 $height: 3rem !default;
@@ -91,8 +90,8 @@ $spacing-s: 4px !default;
 @import "slim-select/src/slim-select/slimselect.scss";
 
 .ss-content .ss-search input {
-    background: #fafafa;
-    color: #585858;
+  background: #fafafa;
+  color: #585858;
 }
 
 @import "variables";
