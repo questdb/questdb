@@ -43,6 +43,9 @@ import org.junit.Test;
 
 import java.util.function.Consumer;
 
+import static io.questdb.log.LogAlertSocketWriter.ALERT_PROPS;
+import static io.questdb.log.LogAlertSocketWriter.QDB_VERSION_ENV;
+
 public class LogAlertSocketWriterTest {
     private static final FilesFacade ff = FilesFacadeImpl.INSTANCE;
 
@@ -61,6 +64,13 @@ public class LogAlertSocketWriterTest {
 
     @Test
     public void testOnLogRecord() throws Exception {
+        BuildInformation buildInfo = new BuildInformationHolder("0.1", "0x010101", "17");
+        CharSequenceObjHashMap<CharSequence> properties = new CharSequenceObjHashMap<>();
+        properties.putAll(ALERT_PROPS);
+        properties.put(QDB_VERSION_ENV, buildInfo.toString());
+
+        // replace build info
+
         withLogAlertSocketWriter(
                 () -> 1637091363010000L,
                 writer -> {
@@ -85,14 +95,13 @@ public class LogAlertSocketWriterTest {
                         recordSink.put("A \"simple\" $message$\n");
 
                         writer.onLogRecord(recordSink);
-                        BuildInformation binf = BuildInformationHolder.INSTANCE;
                         TestUtils.assertEquals(
                                 "POST /api/v1/alerts HTTP/1.1\r\n" +
                                         "Host: " + LogAlertSocket.localHostIp + "\r\n" +
                                         "User-Agent: QuestDB/LogAlert\r\n" +
                                         "Accept: */*\r\n" +
                                         "Content-Type: application/json\r\n" +
-                                        "Content-Length:      564\r\n" +
+                                        "Content-Length:      534\r\n" +
                                         "\r\n" +
                                         "[\n" +
                                         "  {\n" +
@@ -102,7 +111,7 @@ public class LogAlertSocketWriterTest {
                                         "      \"service\": \"QuestDB\",\n" +
                                         "      \"category\": \"application-logs\",\n" +
                                         "      \"severity\": \"critical\",\n" +
-                                        "      \"version\": \"" + binf.getQuestDbVersion() + ":" + binf.getCommitHash() + ":" + binf.getJdkVersion() + "\",\n" +
+                                        "      \"version\": \"" + buildInfo.getQuestDbVersion() + ":" + buildInfo.getCommitHash() + ":" + buildInfo.getJdkVersion() + "\",\n" +
                                         "      \"cluster\": \"GLOBAL\",\n" +
                                         "      \"orgid\": \"GLOBAL\",\n" +
                                         "      \"namespace\": \"GLOBAL\",\n" +
@@ -128,7 +137,7 @@ public class LogAlertSocketWriterTest {
                                         "User-Agent: QuestDB/LogAlert\r\n" +
                                         "Accept: */*\r\n" +
                                         "Content-Type: application/json\r\n" +
-                                        "Content-Length:      560\r\n" +
+                                        "Content-Length:      530\r\n" +
                                         "\r\n" +
                                         "[\n" +
                                         "  {\n" +
@@ -138,7 +147,7 @@ public class LogAlertSocketWriterTest {
                                         "      \"service\": \"QuestDB\",\n" +
                                         "      \"category\": \"application-logs\",\n" +
                                         "      \"severity\": \"critical\",\n" +
-                                        "      \"version\": \"" + binf.getQuestDbVersion() + ":" + binf.getCommitHash() + ":" + binf.getJdkVersion() + "\",\n" +
+                                        "      \"version\": \"" + buildInfo.getQuestDbVersion() + ":" + buildInfo.getCommitHash() + ":" + buildInfo.getJdkVersion() + "\",\n" +
                                         "      \"cluster\": \"GLOBAL\",\n" +
                                         "      \"orgid\": \"GLOBAL\",\n" +
                                         "      \"namespace\": \"GLOBAL\",\n" +
@@ -161,7 +170,10 @@ public class LogAlertSocketWriterTest {
                     } finally {
                         Unsafe.free(logRecordBuffPtr, logRecordBuffSize, MemoryTag.NATIVE_DEFAULT);
                     }
-                });
+                },
+                NetworkFacadeImpl.INSTANCE,
+                properties
+        );
     }
 
     @Test
@@ -541,6 +553,20 @@ public class LogAlertSocketWriterTest {
             Consumer<LogAlertSocketWriter> consumer,
             NetworkFacade nf
     ) throws Exception {
+        withLogAlertSocketWriter(
+                clock,
+                consumer,
+                nf,
+                ALERT_PROPS
+        );
+    }
+
+    private static void withLogAlertSocketWriter(
+            MicrosecondClock clock,
+            Consumer<LogAlertSocketWriter> consumer,
+            NetworkFacade nf,
+            CharSequenceObjHashMap<CharSequence> properties
+    ) throws Exception {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log-silent.conf");
         TestUtils.assertMemoryLeak(() -> {
             try (LogAlertSocketWriter writer = new LogAlertSocketWriter(
@@ -549,7 +575,8 @@ public class LogAlertSocketWriterTest {
                     clock,
                     null,
                     null,
-                    LogLevel.ERROR
+                    LogLevel.ERROR,
+                    properties
             )) {
                 consumer.accept(writer);
             }
