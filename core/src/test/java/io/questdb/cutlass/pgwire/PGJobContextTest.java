@@ -3505,6 +3505,49 @@ nodejs code:
     }
 
     @Test
+    public void testBindVariablesInFilterBinaryTransfer() throws Exception {
+        testBindVariablesInFilter(true);
+    }
+
+    @Test
+    public void testBindVariablesInFilterStringTransfer() throws Exception {
+        testBindVariablesInFilter(false);
+    }
+
+    private void testBindVariablesInFilter(boolean binary) throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, binary)
+            ) {
+                connection.setAutoCommit(false);
+                connection.prepareStatement("create table x (l long, ts timestamp) timestamp(ts)").execute();
+                connection.prepareStatement("insert into x values (100, 0)").execute();
+                connection.prepareStatement("insert into x values (101, 1)").execute();
+                connection.prepareStatement("insert into x values (102, 2)").execute();
+                connection.prepareStatement("insert into x values (103, 3)").execute();
+                connection.commit();
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("select * from x where l != ?")) {
+                    ps.setLong(1, 0);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "l[BIGINT],ts[TIMESTAMP]\n" +
+                                        "100,1970-01-01 00:00:00.0\n" +
+                                        "101,1970-01-01 00:00:00.000001\n" +
+                                        "102,1970-01-01 00:00:00.000002\n" +
+                                        "103,1970-01-01 00:00:00.000003\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSimpleSyntaxErrorReporting() throws Exception {
         testSyntaxErrorReporting(true);
     }

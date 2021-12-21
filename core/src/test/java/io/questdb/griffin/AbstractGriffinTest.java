@@ -27,8 +27,8 @@ package io.questdb.griffin;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.*;
 import io.questdb.test.tools.TestUtils;
@@ -59,9 +59,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                         null,
                         -1,
                         null);
-        // JIT compiler is a beta feature and thus is disabled by default,
-        // but we want to have it enabled in SQL tests.
-        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
         bindVariableService.clear();
     }
 
