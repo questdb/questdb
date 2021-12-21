@@ -192,7 +192,7 @@ public class TxReader implements Closeable {
         return roTxMem.getPageAddress(0);
     }
 
-    void unsafeLoadAll() {
+    public void unsafeLoadAll() {
         this.txn = roTxMem.getLong(TX_OFFSET_TXN);
         this.transientRowCount = roTxMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
         this.fixedRowCount = roTxMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
