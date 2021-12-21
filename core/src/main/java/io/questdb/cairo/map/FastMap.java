@@ -48,6 +48,8 @@ public class FastMap implements Map {
     private final int keyBlockOffset;
     private final int keyDataOffset;
     private final int maxResizes;
+    private final int initialKeyCapacity;
+    private final int initialPageSize;
     private long capacity;
     private DirectLongList offsets;
     private long kStart;
@@ -55,8 +57,6 @@ public class FastMap implements Map {
     private long kPos;
     private int free;
     private int keyCapacity;
-    private final int initialKeyCapacity;
-    private final int initialPageSize;
     private int size = 0;
     private int mask;
     private int nResizes;
@@ -170,19 +170,6 @@ public class FastMap implements Map {
         this.cursor = new FastMapCursor(record, this);
     }
 
-    public void restoreInitialCapacity() {
-        this.kStart = kPos = Unsafe.realloc(this.kStart, this.kLimit - this.kStart, this.capacity = initialPageSize, MemoryTag.NATIVE_FAST_MAP);
-        this.kLimit = kStart + this.initialPageSize;
-        this.keyCapacity = (int) (this.initialKeyCapacity / loadFactor);
-        this.keyCapacity = this.keyCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(this.keyCapacity);
-        this.mask = this.keyCapacity - 1;
-        this.free = (int) (this.keyCapacity * loadFactor);
-        this.offsets.extend(this.keyCapacity);
-        this.offsets.setPos(this.keyCapacity);
-        this.offsets.zero(-1);
-        this.nResizes = 0;
-    }
-
     @Override
     public void clear() {
         kPos = kStart;
@@ -223,6 +210,27 @@ public class FastMap implements Map {
     @Override
     public MapKey withKey() {
         return key.init();
+    }
+
+    public void restoreInitialCapacity() {
+        this.kStart = kPos = Unsafe.realloc(this.kStart, this.kLimit - this.kStart, this.capacity = initialPageSize, MemoryTag.NATIVE_FAST_MAP);
+        this.kLimit = kStart + this.initialPageSize;
+        this.keyCapacity = (int) (this.initialKeyCapacity / loadFactor);
+        this.keyCapacity = this.keyCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(this.keyCapacity);
+        this.mask = this.keyCapacity - 1;
+        this.free = (int) (this.keyCapacity * loadFactor);
+        this.offsets.extend(this.keyCapacity);
+        this.offsets.setPos(this.keyCapacity);
+        this.offsets.zero(-1);
+        this.nResizes = 0;
+    }
+
+    public long getAreaSize() {
+        return kLimit - kStart;
+    }
+
+    public int getKeyCapacity() {
+        return keyCapacity;
     }
 
     private static boolean eqMixed(long a, long b, long lim) {
