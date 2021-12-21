@@ -138,7 +138,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         this.functionParser = functionParser;
         this.recordComparatorCompiler = new RecordComparatorCompiler(asm);
         this.enableJitDebug = configuration.isSqlJitDebugEnabled();
-        this.jitIRMem = Vm.getCARWInstance(4096, 8, MemoryTag.NATIVE_DEFAULT);
+        this.jitIRMem = Vm.getCARWInstance(configuration.getSqlJitIRMemoryPageSize(),
+                configuration.getSqlJitIRMemoryMaxPages(), MemoryTag.NATIVE_DEFAULT);
         // Pre-touch JIT IR memory to avoid false positive memleak detections.
         jitIRMem.putByte((byte) 0);
         jitIRMem.truncate();
@@ -746,7 +747,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     LOG.info()
                             .$("JIT enabled for (sub)query [tableName=").utf8(model.getName())
                             .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
-                    return new CompiledFilterRecordCursorFactory(factory, bindVarFunctions, f, jitFilter);
+                    return new CompiledFilterRecordCursorFactory(configuration, factory, bindVarFunctions, f, jitFilter);
                 } catch (SqlException | LimitOverflowException ex) {
                     LOG.debug()
                             .$("JIT cannot be applied to (sub)query [tableName=").utf8(model.getName())

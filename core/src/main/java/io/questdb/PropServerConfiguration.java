@@ -152,6 +152,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlBindVariablePoolSize;
     private final int sqlJitMode;
+    private final long sqlJitIRMemoryPageSize;
+    private final int sqlJitIRMemoryMaxPages;
+    private final long sqlJitBindVarsMemoryPageSize;
+    private final int sqlJitBindVarsMemoryMaxPages;
+    private final long sqlJitRowsThreshold;
+    private final long sqlJitPageAddressCacheThreshold;
     private final boolean sqlJitDebugEnabled;
     private final DateLocale locale;
     private final String backupRoot;
@@ -643,7 +649,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
             this.sqlDistinctTimestampKeyCapacity = getInt(properties, env, "cairo.sql.distinct.timestamp.key.capacity", 512);
             this.sqlDistinctTimestampLoadFactor = getDouble(properties, env, "cairo.sql.distinct.timestamp.load.factor", 0.5);
+
             this.sqlJitMode = getSqlJitMode(properties, env);
+            this.sqlJitIRMemoryPageSize = getLongSize(properties, env, "cairo.sql.jit.ir.memory.page.size", 4 * 1024);
+            this.sqlJitIRMemoryMaxPages = getInt(properties, env, "cairo.sql.jit.ir.memory.max.pages", 8);
+            this.sqlJitBindVarsMemoryPageSize = getLongSize(properties, env, "cairo.sql.jit.bind.vars.memory.page.size", 2 * 1024);
+            this.sqlJitBindVarsMemoryMaxPages = getInt(properties, env, "cairo.sql.jit.bind.vars.memory.max.pages", 8);
+            this.sqlJitRowsThreshold = getLongSize(properties, env, "cairo.sql.jit.rows.threshold", 1024 * 1024);
+            this.sqlJitPageAddressCacheThreshold = getLongSize(properties, env, "cairo.sql.jit.page.address.cache.threshold", 1024 * 1024);
             this.sqlJitDebugEnabled = getBoolean(properties, env, "cairo.sql.jit.debug.enabled", false);
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
@@ -2020,6 +2033,36 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlJitMode() {
             return sqlJitMode;
+        }
+
+        @Override
+        public long getSqlJitIRMemoryPageSize() {
+            return sqlJitIRMemoryPageSize;
+        }
+
+        @Override
+        public int getSqlJitIRMemoryMaxPages() {
+            return sqlJitIRMemoryMaxPages;
+        }
+
+        @Override
+        public long getSqlJitBindVarsMemoryPageSize() {
+            return sqlJitBindVarsMemoryPageSize;
+        }
+
+        @Override
+        public int getSqlJitBindVarsMemoryMaxPages() {
+            return sqlJitBindVarsMemoryMaxPages;
+        }
+
+        @Override
+        public long getSqlJitRowsThreshold() {
+            return sqlJitRowsThreshold;
+        }
+
+        @Override
+        public long getSqlJitPageAddressCacheThreshold() {
+            return sqlJitPageAddressCacheThreshold;
         }
 
         @Override

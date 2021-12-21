@@ -262,6 +262,18 @@ public interface CairoConfiguration {
 
     int getSqlJitMode();
 
+    long getSqlJitIRMemoryPageSize();
+
+    int getSqlJitIRMemoryMaxPages();
+
+    long getSqlJitBindVarsMemoryPageSize();
+
+    int getSqlJitBindVarsMemoryMaxPages();
+
+    long getSqlJitRowsThreshold();
+
+    long getSqlJitPageAddressCacheThreshold();
+
     boolean isSqlJitDebugEnabled();
 
     int getTableBlockWriterQueueCapacity();

@@ -203,6 +203,12 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().ownThread());
 
         Assert.assertEquals(SqlJitMode.JIT_MODE_DISABLED, configuration.getCairoConfiguration().getSqlJitMode());
+        Assert.assertEquals(4096, configuration.getCairoConfiguration().getSqlJitIRMemoryPageSize());
+        Assert.assertEquals(8, configuration.getCairoConfiguration().getSqlJitIRMemoryMaxPages());
+        Assert.assertEquals(2048, configuration.getCairoConfiguration().getSqlJitBindVarsMemoryPageSize());
+        Assert.assertEquals(8, configuration.getCairoConfiguration().getSqlJitBindVarsMemoryMaxPages());
+        Assert.assertEquals(1024 * 1024, configuration.getCairoConfiguration().getSqlJitRowsThreshold());
+        Assert.assertEquals(1024 * 1024, configuration.getCairoConfiguration().getSqlJitPageAddressCacheThreshold());
         Assert.assertFalse(configuration.getCairoConfiguration().isSqlJitDebugEnabled());
 
         // statics
@@ -571,6 +577,12 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getLineUdpReceiverConfiguration().ownThread());
 
             Assert.assertEquals(SqlJitMode.JIT_MODE_FORCE_SCALAR, configuration.getCairoConfiguration().getSqlJitMode());
+            Assert.assertEquals(2048, configuration.getCairoConfiguration().getSqlJitIRMemoryPageSize());
+            Assert.assertEquals(2, configuration.getCairoConfiguration().getSqlJitIRMemoryMaxPages());
+            Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlJitBindVarsMemoryPageSize());
+            Assert.assertEquals(1, configuration.getCairoConfiguration().getSqlJitBindVarsMemoryMaxPages());
+            Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlJitRowsThreshold());
+            Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlJitPageAddressCacheThreshold());
             Assert.assertTrue(configuration.getCairoConfiguration().isSqlJitDebugEnabled());
 
             // influxdb line TCP protocol

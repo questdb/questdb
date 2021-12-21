@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.NullColumn;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
@@ -44,11 +41,9 @@ import java.util.function.BooleanSupplier;
 
 class CompiledFilterRecordCursor implements RecordCursor {
 
-    private static final long ROWS_CAPACITY_THRESHOLD = Numbers.SIZE_1MB / Long.BYTES;
-
     private final PageFrameRecord recordA = new PageFrameRecord();
     private final PageFrameRecord recordB = new PageFrameRecord();
-    private final PageAddressCache pageAddressCache = new PageAddressCache();
+    private final PageAddressCache pageAddressCache;
 
     private PageFrameCursor pageFrameCursor;
     private RecordMetadata metadata;
@@ -57,6 +52,8 @@ class CompiledFilterRecordCursor implements RecordCursor {
     private Function colTopsFilter;
     // JIT compiled filter; used for dense page frames (no column tops)
     private CompiledFilter compiledFilter;
+
+    private final long rowsCapacityThreshold;
     private DirectLongList rows;
     private DirectLongList columns;
     private MemoryCARW bindVarMemory;
@@ -77,6 +74,11 @@ class CompiledFilterRecordCursor implements RecordCursor {
     private final BooleanSupplier nextColTopsRow = this::nextColTopsRow;
     private final BooleanSupplier nextRow = this::nextRow;
     private final BooleanSupplier nextReenterPageFrame = this::nextReenterPageFrame;
+
+    public CompiledFilterRecordCursor(CairoConfiguration configuration) {
+        rowsCapacityThreshold = configuration.getSqlJitRowsThreshold() / Long.BYTES;
+        pageAddressCache = new PageAddressCache(configuration);
+    }
 
     public void of(
             RecordCursorFactory factory,
@@ -115,9 +117,9 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
     @Override
     public void close() {
-        if (rows.getCapacity() > ROWS_CAPACITY_THRESHOLD) {
+        if (rows.getCapacity() > rowsCapacityThreshold) {
             // This call will shrink down the underlying array
-            rows.extend(ROWS_CAPACITY_THRESHOLD);
+            rows.extend(rowsCapacityThreshold);
         }
         bindVarMemory.truncate();
         pageAddressCache.clear();
@@ -679,8 +681,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
     private static class PageAddressCache implements Mutable {
 
-        private static final long CACHE_SIZE_THRESHOLD = Numbers.SIZE_1MB / Long.BYTES;
-
+        private final long cacheSizeThreshold;
         private int columnCount;
         private int varLenColumnCount;
 
@@ -691,6 +692,10 @@ class CompiledFilterRecordCursor implements RecordCursor {
         // Index page addresses and page sizes are stored only for variable length columns.
         private LongList indexPageAddresses = new LongList();
         private LongList pageSizes = new LongList();
+
+        public PageAddressCache(CairoConfiguration configuration) {
+            cacheSizeThreshold = configuration.getSqlJitPageAddressCacheThreshold() / Long.BYTES;
+        }
 
         public void of(RecordMetadata metadata) {
             this.columnCount = metadata.getColumnCount();
@@ -707,7 +712,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
         @Override
         public void clear() {
             varLenColumnIndexes.clear();
-            if (pageAddresses.size() > CACHE_SIZE_THRESHOLD) {
+            if (pageAddresses.size() > cacheSizeThreshold) {
                 pageAddresses.clear();
                 indexPageAddresses.clear();
                 pageSizes.clear();

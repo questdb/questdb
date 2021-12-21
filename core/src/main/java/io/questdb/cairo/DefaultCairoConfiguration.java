@@ -611,6 +611,36 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlJitIRMemoryPageSize() {
+        return 4096;
+    }
+
+    @Override
+    public int getSqlJitIRMemoryMaxPages() {
+        return 8;
+    }
+
+    @Override
+    public long getSqlJitBindVarsMemoryPageSize() {
+        return 2048;
+    }
+
+    @Override
+    public int getSqlJitBindVarsMemoryMaxPages() {
+        return 8;
+    }
+
+    @Override
+    public long getSqlJitRowsThreshold() {
+        return Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public long getSqlJitPageAddressCacheThreshold() {
+        return Numbers.SIZE_1MB;
+    }
+
+    @Override
     public boolean isSqlJitDebugEnabled() {
         return false;
     }

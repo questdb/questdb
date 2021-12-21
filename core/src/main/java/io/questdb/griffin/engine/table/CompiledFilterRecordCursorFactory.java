@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -50,6 +51,7 @@ public class CompiledFilterRecordCursorFactory implements RecordCursorFactory {
     private final DirectLongList columns;
 
     public CompiledFilterRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
             @NotNull RecordCursorFactory factory,
             @NotNull ObjList<Function> bindVarFunctions,
             @NotNull Function filter,
@@ -60,9 +62,10 @@ public class CompiledFilterRecordCursorFactory implements RecordCursorFactory {
         this.factory = factory;
         this.filter = filter;
         this.compiledFilter = compiledFilter;
-        this.cursor = new CompiledFilterRecordCursor();
+        this.cursor = new CompiledFilterRecordCursor(configuration);
         this.bindVarFunctions = bindVarFunctions;
-        this.bindVarMemory = Vm.getCARWInstance(2048, 8, MemoryTag.NATIVE_DEFAULT);
+        this.bindVarMemory = Vm.getCARWInstance(configuration.getSqlJitBindVarsMemoryPageSize(),
+                configuration.getSqlJitBindVarsMemoryMaxPages(), MemoryTag.NATIVE_DEFAULT);
         this.rows = new DirectLongList(1024);
         this.columns = new DirectLongList(16);
     }
