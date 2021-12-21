@@ -28,10 +28,10 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.mp.MPSequence;
-import io.questdb.mp.RingQueue;
+import io.questdb.mp.*;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Rnd;
 import io.questdb.tasks.PageFrameTask;
 
 import java.util.ArrayDeque;
@@ -41,6 +41,7 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
     private final RecordCursorFactory base;
     private final FilteredRecordCursor cursor;
     private final Function filter;
+    private final PageFrameRecord pageFrameRecord = new PageFrameRecord();
 
     public FilteredRecordCursorFactory(RecordCursorFactory base, Function filter) {
         assert !(base instanceof FilteredRecordCursorFactory);
@@ -67,46 +68,90 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
         }
     }
 
-    private final PageFrameRecord pageFrameRecord = new PageFrameRecord();
-
-    @Override
-    public void execute(SqlExecutionContext executionContext) throws SqlException {
-        final PageFrameCursor cursor = base.getPageFrameCursor(executionContext);
-        final MessageBus bus = executionContext.getMessageBus();
-        final RingQueue<PageFrameTask> queue = bus.getPageFrameQueue();
-        final MPSequence pubSeq = bus.getPageFramePubSeq();
-
-        Deque<DirectLongList> listDeque = new ArrayDeque<>();
-
-        PageFrame frame;
-        while ((frame = cursor.next()) != null) {
-
-            long c = pubSeq.next();
-            if (c > -1) {
-                queue.get(c).of(
-                        frame,
-                        filter,
-                        new DirectLongList(1024)
-                );
-                pubSeq.done(c);
-            } else {
-                RecordFilterJob.filter(
-                        frame,
-                        filter,
-                        pageFrameRecord,
-
-                );
-            }
-        }
-    }
-
     @Override
     public RecordMetadata getMetadata() {
         return base.getMetadata();
     }
 
     @Override
+    public void execute(SqlExecutionContext executionContext) throws SqlException {
+
+        // todo: this has to be spun by a thread
+        final Rnd rnd = executionContext.getRandom();
+        final MessageBus bus = executionContext.getMessageBus();
+        final int shard = rnd.nextInt(bus.getPageFrameQueueShardCount());
+        // subscriber sequence to receive recycle events
+        final SCSequence subSeq = new SCSequence();
+
+        // The recycle subscriber sequence should pick up queue items that
+        // has been released by the user code. The motivation is to place used
+        // row lists back on stack to be reused
+        final FanOut recycleFanOut = bus.getPageFrameRecycleFanOut(shard);
+        recycleFanOut.and(subSeq);
+
+        // before thread begins we will need to pick a shard
+        // of queues that we will interact with
+
+        final PageFrameCursor cursor = base.getPageFrameCursor(executionContext);
+        final RingQueue<PageFrameTask> queue = bus.getPageFrameQueue(shard);
+
+        // publisher sequence to pass work to worker jobs
+        final MPSequence pubSeq = bus.getPageFramePubSeq(shard);
+
+        // this is the identifier of events we are producing
+        final long producerId = rnd.nextLong();
+
+        final Deque<DirectLongList> listDeque = new ArrayDeque<>();
+
+        DirectLongList reuseRows = null;
+        PageFrame frame;
+        while ((frame = cursor.next()) != null) {
+            long c = pubSeq.next();
+
+            if (c > -1) {
+                queue.get(c).of(
+                        producerId,
+                        frame,
+                        filter,
+                        reuseRows != null ? reuseRows : popRows(listDeque)
+                );
+                reuseRows = null;
+                pubSeq.done(c);
+
+                c = subSeq.next();
+
+                if (c > -1) {
+                    final PageFrameTask tsk = queue.get(c);
+                    // each producer will see "returns" for all active producers on this
+                    // queue, therefore we will only grab our own row lists to avoid potential
+                    // imbalance between producers. By imbalance, I mean one producer could be
+                    // allocating lists while another could be stashing it on its dequeue.
+                    if (tsk.getProducerId() == producerId) {
+                        listDeque.push(tsk.getRows());
+                    }
+                    subSeq.done(c);
+                }
+            } else {
+                RecordFilterJob.filter(
+                        frame,
+                        filter,
+                        pageFrameRecord,
+                        reuseRows != null ? reuseRows : (reuseRows = popRows(listDeque))
+                );
+            }
+        }
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
+    }
+
+    private static DirectLongList popRows(Deque<DirectLongList> deque) {
+        DirectLongList result = deque.getFirst();
+        if (result == null) {
+            result = new DirectLongList(1024);
+        }
+        return result;
     }
 }

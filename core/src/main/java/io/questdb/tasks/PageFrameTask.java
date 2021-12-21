@@ -32,9 +32,14 @@ public class PageFrameTask {
     private DirectLongList rows;
     private PageFrame pageFrame;
     private Function filter;
+    private long producerId;
 
     public Function getFilter() {
         return filter;
+    }
+
+    public long getProducerId() {
+        return producerId;
     }
 
     public PageFrame getPageFrame() {
@@ -45,9 +50,21 @@ public class PageFrameTask {
         return rows;
     }
 
-    public void of(PageFrame pageFrame, Function filter, DirectLongList rows) {
+    public void of(
+            long producerId,
+            PageFrame pageFrame,
+            Function filter,
+            DirectLongList rows
+    ) {
+        this.producerId = producerId;
         this.pageFrame = pageFrame;
         this.filter = filter;
         this.rows = rows;
+    }
+
+    public DirectLongList takeRows() {
+        DirectLongList dll = rows;
+        rows = null;
+        return dll;
     }
 }

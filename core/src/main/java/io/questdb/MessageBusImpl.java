@@ -26,7 +26,6 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.mp.*;
-import io.questdb.std.DirectObjectFactory;
 import io.questdb.std.MemoryTag;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
@@ -76,6 +75,12 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence tableWriterEventPubSeq;
     private final FanOut tableWriterEventSubSeq;
     private final CairoConfiguration configuration;
+    private final int pageFrameQueueSharedCount = 4;
+    private final FanOut[] pageFrameRecycleFanOut;
+    private final MPSequence[] pageFramePubSeq;
+    private final MCSequence[] pageFrameWorkerSubSeq;
+    private final RingQueue<PageFrameTask>[] pageFrameQueue;
+    private final FanOut[] pageFrameConsumerFanOut;
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -145,6 +150,27 @@ public class MessageBusImpl implements MessageBus {
         this.tableWriterEventPubSeq = new MPSequence(this.tableWriterCommandQueue.getCycle());
         this.tableWriterEventSubSeq = new FanOut();
         this.tableWriterEventPubSeq.then(this.tableWriterEventSubSeq).then(this.tableWriterEventPubSeq);
+
+        pageFrameQueue = new RingQueue[pageFrameQueueSharedCount];
+        pageFramePubSeq = new MPSequence[pageFrameQueueSharedCount];
+        pageFrameWorkerSubSeq = new MCSequence[pageFrameQueueSharedCount];
+        pageFrameRecycleFanOut = new FanOut[pageFrameQueueSharedCount];
+        pageFrameConsumerFanOut = new FanOut[pageFrameQueueSharedCount];
+
+        for (int i = 0; i < pageFrameQueueSharedCount; i++) {
+            RingQueue<PageFrameTask> queue = new RingQueue<>(PageFrameTask::new, 8);
+            MPSequence pubSeq = new MPSequence(queue.getCycle());
+            MCSequence subSeq = new MCSequence(queue.getCycle());
+            FanOut consumerFanOut = new FanOut();
+            FanOut recycleFanOut = new FanOut();
+            pubSeq.then(subSeq).then(consumerFanOut).then(recycleFanOut).then(pubSeq);
+
+            pageFrameQueue[i] = queue;
+            pageFramePubSeq[i] = pubSeq;
+            pageFrameWorkerSubSeq[i] = subSeq;
+            pageFrameRecycleFanOut[i] = recycleFanOut;
+            pageFrameConsumerFanOut[i] = consumerFanOut;
+        }
     }
 
     @Override
@@ -315,5 +341,30 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public Sequence getVectorAggregateSubSeq() {
         return vectorAggregateSubSeq;
+    }
+
+    @Override
+    public RingQueue<PageFrameTask> getPageFrameQueue(int shard) {
+        return pageFrameQueue[shard];
+    }
+
+    @Override
+    public MCSequence getPageFrameWorkerSubSeq(int shard) {
+        return pageFrameWorkerSubSeq[shard];
+    }
+
+    @Override
+    public MPSequence getPageFramePubSeq(int shard) {
+        return pageFramePubSeq[shard];
+    }
+
+    @Override
+    public FanOut getPageFrameRecycleFanOut(int shard) {
+        return pageFrameRecycleFanOut[shard];
+    }
+
+    @Override
+    public int getPageFrameQueueShardCount() {
+        return pageFrameQueueSharedCount;
     }
 }

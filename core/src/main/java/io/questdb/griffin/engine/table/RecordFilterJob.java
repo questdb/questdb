@@ -33,41 +33,44 @@ import io.questdb.mp.Job;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.Rnd;
 import io.questdb.tasks.PageFrameTask;
 
 public class RecordFilterJob implements Job {
 
-    private final RingQueue<PageFrameTask> queue;
-    private final MCSequence subSeq;
     private final PageFrameRecord[] records;
+    private final int[] shards;
+    private final int shardCount;
+    private final MessageBus messageBus;
 
     public RecordFilterJob(SqlExecutionContext executionContext) {
-        final MessageBus messageBus = executionContext.getMessageBus();
+        this.messageBus = executionContext.getMessageBus();
+        this.shardCount = messageBus.getPageFrameQueueShardCount();
+        this.shards = new int[shardCount];
+        // fill shards[] with shard indexes
+        for (int i = 0; i < shardCount; i++) {
+            shards[i] = i;
+        }
+
+        // shuffle shard indexes such that each job has its own
+        // pass order over the shared queues
+        final Rnd rnd = executionContext.getRandom();
+        int currentIndex = shardCount;
+        int randomIndex;
+        while (currentIndex != 0) {
+            randomIndex = (int) Math.floor(rnd.nextDouble() * currentIndex);
+            currentIndex--;
+
+            final int tmp = shards[currentIndex];
+            shards[currentIndex] = shards[randomIndex];
+            shards[randomIndex] = tmp;
+        }
+
         final int n = executionContext.getWorkerCount();
-        this.queue = messageBus.getPageFrameQueue();
-        this.subSeq = messageBus.getO3CopySubSeq();
         this.records = new PageFrameRecord[n];
         for (int i = 0; i < n; i++) {
             records[i] = new PageFrameRecord();
         }
-    }
-
-    @Override
-    public boolean run(int workerId) {
-        long cursor = subSeq.next();
-        if (cursor > -1) {
-            final PageFrameTask task = queue.get(cursor);
-            // do not release task until filtering is done
-            final PageFrame frame = task.getPageFrame();
-            final Function filter = task.getFilter();
-            final PageFrameRecord record = records[workerId];
-            final DirectLongList rows = task.getRows();
-            rows.clear();
-            filter(frame, filter, record, rows);
-            subSeq.done(cursor);
-            return true;
-        }
-        return false;
     }
 
     public static void filter(PageFrame frame, Function filter, PageFrameRecord record, DirectLongList rows) {
@@ -79,5 +82,34 @@ public class RecordFilterJob implements Job {
                 rows.add(r);
             }
         }
+    }
+
+    @Override
+    public boolean run(int workerId) {
+        final PageFrameRecord record = records[workerId];
+        boolean useful = false;
+        for (int i = 0; i < shardCount; i++) {
+            final int shard = shards[i];
+            MCSequence subSeq = messageBus.getPageFrameWorkerSubSeq(shard);
+            RingQueue<PageFrameTask> queue = messageBus.getPageFrameQueue(shard);
+            useful = consumeQueue(queue, subSeq, record) || useful;
+        }
+        return useful;
+    }
+
+    private boolean consumeQueue(RingQueue<PageFrameTask> queue, MCSequence subSeq, PageFrameRecord record) {
+        long cursor = subSeq.next();
+        if (cursor > -1) {
+            final PageFrameTask task = queue.get(cursor);
+            // do not release task until filtering is done
+            final PageFrame frame = task.getPageFrame();
+            final Function filter = task.getFilter();
+            final DirectLongList rows = task.getRows();
+            rows.clear();
+            filter(frame, filter, record, rows);
+            subSeq.done(cursor);
+            return true;
+        }
+        return false;
     }
 }

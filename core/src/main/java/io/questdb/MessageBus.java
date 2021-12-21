@@ -107,11 +107,13 @@ public interface MessageBus extends Closeable {
 
     Sequence getVectorAggregateSubSeq();
 
-    RingQueue<PageFrameTask> getPageFrameQueue();
+    RingQueue<PageFrameTask> getPageFrameQueue(int shard);
 
-    MCSequence getPageFrameSubSeq();
+    MCSequence getPageFrameWorkerSubSeq(int shard);
 
-    MPSequence getPageFramePubSeq();
+    MPSequence getPageFramePubSeq(int shard);
 
+    FanOut getPageFrameRecycleFanOut(int shard);
 
+    int getPageFrameQueueShardCount();
 }
