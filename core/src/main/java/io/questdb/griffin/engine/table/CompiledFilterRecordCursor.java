@@ -246,8 +246,10 @@ class CompiledFilterRecordCursor implements RecordCursor {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 columns.add(pageAddressCache.getPageAddress(pageFrameIndex, columnIndex));
             }
-            // TODO: page frames may be quite large; we may want to break them into smaller subframes
-            rows.extend(rowCount);
+            // TODO: page frames may be quite large; we may want to break them into smaller sub-frames
+            if (rows.getCapacity() < rowCount) {
+                rows.extend(rowCount);
+            }
 
             current = 0;
             hi = compiledFilter.call(

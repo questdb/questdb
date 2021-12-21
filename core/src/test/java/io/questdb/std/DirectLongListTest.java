@@ -98,8 +98,13 @@ public class DirectLongListTest {
         long expected = Unsafe.getMemUsed();
         DirectLongList list = new DirectLongList(1024);
         Assert.assertEquals(1024, list.getCapacity());
+
         list.extend(2048);
         Assert.assertEquals(2048, list.getCapacity());
+        // verify that extend also shrinks capacity
+        list.extend(1024);
+        Assert.assertEquals(1024, list.getCapacity());
+
         Assert.assertEquals(0, list.size());
         long addr = list.getAddress();
         Unsafe.getUnsafe().putLong(addr, 42);
