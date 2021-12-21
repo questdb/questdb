@@ -252,6 +252,8 @@ public class TableUpdateDetails implements Closeable {
 
     public class ThreadLocalDetails implements Closeable {
         private final Path path = new Path();
+        // maps column names to their indexes
+        // keys are mangled strings created from the utf-8 encoded byte representations of the column names
         private final CharSequenceIntHashMap columnIndexByNameUtf8 = new CharSequenceIntHashMap();
         private final ObjList<SymbolCache> symbolCacheByColumnIndex = new ObjList<>();
         private final ObjList<SymbolCache> unusedSymbolCaches;
@@ -262,6 +264,7 @@ public class TableUpdateDetails implements Closeable {
         private final LowerCaseCharSequenceHashSet addedCols = new LowerCaseCharSequenceHashSet();
         private final LineTcpReceiverConfiguration configuration;
         private int columnCount;
+        // indicates if the currently processed event contains any columns which are not present in the table yet
         private boolean unresolvedColumnFlag = false;
 
         ThreadLocalDetails(LineTcpReceiverConfiguration configuration, ObjList<SymbolCache> unusedSymbolCaches, int columnCount) {
@@ -325,8 +328,16 @@ public class TableUpdateDetails implements Closeable {
             int colIndex = columnIndexByNameUtf8.get(colName);
             if (colIndex < 0) {
                 if (!unresolvedColumnFlag) {
+                    // not in column index cache and have not seen any unresolved columns yet
+                    // trying to resolve column index using table reader
                     colIndex = getColumnIndexFromReader(colName);
                     if (colIndex < 0) {
+                        // could not resolve column index even from the reader, field has not been created yet
+                        // field will be passed by name to the writer
+                        // setting this flag to make sure all new columns on this line will be processed by name too
+                        // if we allowed further lookups from the reader there would be a chance of resolving a
+                        // duplicate column by index successfully (after the column is created on the writer thread)
+                        // and we would pass the duplicate by index to the writer
                         unresolvedColumnFlag = true;
                     }
                 }
@@ -348,8 +359,11 @@ public class TableUpdateDetails implements Closeable {
             }
         }
 
+        // called for each event after all columns of the line have been processed
+        // here we can try to update column indexes in the cache without risking that duplicates are sent to the writer
         void resolveNewColumns() {
             if (!unresolvedColumnFlag) {
+                // all columns resolved by index on this line so nothing to do
                 return;
             }
 
@@ -359,8 +373,10 @@ public class TableUpdateDetails implements Closeable {
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     final CharSequence colName = keys.get(i);
                     if (columnIndexByNameUtf8.get(colName) < 0) {
+                        // try to resolve column indexes for fields have not been present in the table earlier
                         int colIndex = metadata.getColumnIndexQuiet(colName);
                         if (colIndex > -1) {
+                            // found column index, field has been created by writer
                             columnIndexByNameUtf8.put(colName, colIndex);
                             updateColumnTypeCache(colIndex, metadata);
                         }
@@ -390,6 +406,7 @@ public class TableUpdateDetails implements Closeable {
         }
 
         void resetUnresolvedColumnFlag() {
+            // reset for each line
             unresolvedColumnFlag = false;
         }
 

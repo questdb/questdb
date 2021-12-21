@@ -424,7 +424,10 @@ class LineTcpMeasurementEvent implements Closeable {
         writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_INCOMPLETE_EVENT;
         final TableUpdateDetails.ThreadLocalDetails localDetails = tableUpdateDetails.getThreadLocalDetails(workerId);
         final StringSink tempSink = localDetails.getTempSink();
+        // tracking of processed columns by their index, duplicates will be ignored
         final BoolList processedCols = localDetails.resetProcessedCols();
+        // tracking of processed columns by their name, duplicates will be ignored
+        // columns end up in this set only if their index cannot be resolved, i.e. new columns
         final LowerCaseCharSequenceHashSet addedCols = localDetails.resetAddedCols();
         localDetails.resetUnresolvedColumnFlag();
         this.tableUpdateDetails = tableUpdateDetails;
@@ -446,8 +449,10 @@ class LineTcpMeasurementEvent implements Closeable {
                 LineTcpParser.ProtoEntity entity = parser.getEntity(nEntity);
                 int colIndex = localDetails.getColumnIndex(entity.getName());
                 if (colIndex < 0) {
+                    // column index not found, processing column by name
                     CharSequence colName = entity.getName();
                     if (parser.hasNonAsciiChars()) {
+                        // column name utf-8 to utf-16 conversion required
                         tempSink.clear();
                         if (!Chars.utf8Decode(entity.getName().getLo(), entity.getName().getHi(), tempSink)) {
                             throw CairoException.instance(0).put("invalid UTF8 in value for ").put(colName);
@@ -456,6 +461,7 @@ class LineTcpMeasurementEvent implements Closeable {
                     }
                     int index = addedCols.keyIndex(colName);
                     if (index < 0) {
+                        // column has been processed earlier on this event, duplicate should be skipped
                         continue;
                     } else {
                         addedCols.addAt(index, colName.toString());
@@ -470,6 +476,7 @@ class LineTcpMeasurementEvent implements Closeable {
                     }
                     bufPos += 2L * colNameLen;
                 } else {
+                    // column index found, processing column by index
                     if (colIndex == tableUpdateDetails.getTimestampIndex()) {
                         timestamp = timestampAdapter.getMicros(entity.getLongValue());
                         continue;
@@ -478,6 +485,7 @@ class LineTcpMeasurementEvent implements Closeable {
                         Unsafe.getUnsafe().putInt(bufPos, colIndex);
                         bufPos += Integer.BYTES;
                     } else {
+                        // column has been processed earlier on this event, duplicate should be skipped
                         continue;
                     }
                 }
