@@ -32,6 +32,7 @@
 #include <copyfile.h>
 #include <unistd.h>
 #include <sys/fcntl.h>
+#include <sys/mount.h>
 #else
 #include <unistd.h>
 #include <sys/fcntl.h>
@@ -92,6 +93,21 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
 
     return result;
 }
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_isFSSupported
+        (JNIEnv *e, jclass cl, jlong lpszName) {
+    struct statfs sb;
+    if (statfs((const char *) lpszName, &sb) == 0) {
+        switch (sb.f_type) {
+            case 0x1C: // apfs
+                return 0;
+            default:
+                return 1;
+        }
+    }
+    return -1;
+}
+
 #else
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
         (JNIEnv *e, jclass cls, jlong lpszFrom, jlong lpszTo) {

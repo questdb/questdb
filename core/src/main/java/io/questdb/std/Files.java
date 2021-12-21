@@ -86,6 +86,10 @@ public final class Files {
         return fd;
     }
 
+    public static long ceilPageSize(long size) {
+        return ((size + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
+    }
+
     public static int close(long fd) {
         assert auditClose(fd);
         int res = close0(fd);
@@ -119,6 +123,10 @@ public final class Files {
 
     public native static int findType(long findPtr);
 
+    public static long floorPageSize(long size) {
+        return size - size % PAGE_SIZE;
+    }
+
     public static native int fsync(long fd);
 
     public static long getLastModified(LPSZ lpsz) {
@@ -138,8 +146,33 @@ public final class Files {
 
     public native static long getStdOutFd();
 
+    public static boolean isDir(long pUtf8NameZ, long type, StringSink nameSink) {
+        if (type == DT_DIR) {
+            nameSink.clear();
+            Chars.utf8DecodeZ(pUtf8NameZ, nameSink);
+            return notDots(nameSink);
+        }
+        return false;
+    }
+
+    public static boolean isDir(long pUtf8NameZ, long type) {
+        return type == DT_DIR && notDots(pUtf8NameZ);
+    }
+
     public static boolean isDots(CharSequence name) {
         return Chars.equals(name, '.') || Chars.equals(name, "..");
+    }
+
+    /**
+     * Detects if filesystem is supported by QuestDB. On Unix
+     * argument can be any existing file or directory. On Windows the argument
+     * has to be drive letter.
+     *
+     * @param lpszName drive letter on Windows or existing path on Unix
+     * @return -1 when OS call failed, errno should be checked. 0 if FS is supported, 1 if FS is not supported
+     */
+    public static int isFSSupported(LPSZ lpszName) {
+        return isFSSupported(lpszName.address());
     }
 
     public static long length(LPSZ lpsz) {
@@ -231,22 +264,15 @@ public final class Files {
         return b1 != 0 && (b1 != '.' || Unsafe.getUnsafe().getByte(pUtf8NameZ + 2) != 0);
     }
 
-    public static boolean isDir(long pUtf8NameZ, long type, StringSink nameSink) {
-        if (type == DT_DIR) {
-            nameSink.clear();
-            Chars.utf8DecodeZ(pUtf8NameZ, nameSink);
-            return notDots(nameSink);
-        }
-        return false;
-    }
-
-    public static boolean isDir(long pUtf8NameZ, long type) {
-        return type == DT_DIR && notDots(pUtf8NameZ);
-    }
-
     public static long openAppend(LPSZ lpsz) {
         return bumpFileCount(openAppend(lpsz.address()));
     }
+
+    public static long openCleanRW(LPSZ lpsz, long size) {
+        return bumpFileCount(openCleanRW(lpsz.address(), size));
+    }
+
+    public native static long openCleanRW(long lpszName, long size);
 
     public static long openRO(LPSZ lpsz) {
         return bumpFileCount(openRO(lpsz.address()));
@@ -254,10 +280,6 @@ public final class Files {
 
     public static long openRW(LPSZ lpsz) {
         return bumpFileCount(openRW(lpsz.address()));
-    }
-
-    public static long openCleanRW(LPSZ lpsz, long size) {
-        return bumpFileCount(openCleanRW(lpsz.address(), size));
     }
 
     public native static long read(long fd, long address, long len, long offset);
@@ -327,6 +349,8 @@ public final class Files {
 
     public native static long write(long fd, long address, long len, long offset);
 
+    private static native int isFSSupported(long lpszName);
+
     private native static int close0(long fd);
 
     private static native boolean exists0(long lpsz);
@@ -364,8 +388,6 @@ public final class Files {
 
     private native static long openRW(long lpszName);
 
-    public native static long openCleanRW(long lpszName, long size);
-
     private native static long openAppend(long lpszName);
 
     private native static long findFirst(long lpszName);
@@ -373,14 +395,6 @@ public final class Files {
     private native static boolean setLastModified(long lpszName, long millis);
 
     private static native boolean rename(long lpszOld, long lpszNew);
-
-    public static long ceilPageSize(long size) {
-        return ((size + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
-    }
-
-    public static long floorPageSize(long size) {
-        return size - size % PAGE_SIZE;
-    }
 
     static {
         Os.init();
