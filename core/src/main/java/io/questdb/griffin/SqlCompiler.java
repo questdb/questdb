@@ -2028,7 +2028,7 @@ public class SqlCompiler implements Closeable {
             RecordCursorFactory updateToCursorFactory
     ) throws SqlException {
         try {
-            String tableName = Chars.toString(updateQueryModel.getTableName().token);
+            String tableName = updateQueryModel.getUpdateTableName();
             if (!updateToCursorFactory.supportTableRowId(tableName)) {
                 throw SqlException.$(updateQueryModel.getModelPosition(), "Only simple UPDATE statements without joins are supported");
             }

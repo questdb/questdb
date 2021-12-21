@@ -1944,6 +1944,8 @@ class SqlOptimiser {
                     }
                 }
             }
+            // Save update table name as a String to not re-create string later on from CharSequence
+            updateQueryModel.setUpdateTableName(r.getTableName());
         } catch (EntryLockedException e) {
             throw SqlException.position(updateQueryModel.getModelPosition()).put("table is locked: ").put(tableLookupSequence);
         } catch (CairoException e) {

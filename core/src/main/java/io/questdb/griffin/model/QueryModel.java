@@ -122,6 +122,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final IntList updateTableColumnTypes = new IntList();
     private final ObjList<CharSequence> updateTableColumnNames = new ObjList<>();
     private QueryModel updateTableModel;
+    private String updateTableName;
 
     private QueryModel() {
         joinModels.add(this);
@@ -250,6 +251,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         updateTableColumnTypes.clear();
         updateTableColumnNames.clear();
         updateTableModel = null;
+        updateTableName = null;
     }
 
     public void clearColumnMapStructs() {
@@ -338,6 +340,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ObjList<ExpressionNode> getUpdateExpressions() {
         return updateSetColumns;
+    }
+
+    public String getUpdateTableName() {
+        return updateTableName;
     }
 
     public LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses() {
@@ -665,6 +671,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ExpressionNode getWhereClause() {
         return whereClause;
+    }
+
+    public void setUpdateTableName(String tableName) {
+        this.updateTableName = tableName;
     }
 
     public void setWhereClause(ExpressionNode whereClause) {
