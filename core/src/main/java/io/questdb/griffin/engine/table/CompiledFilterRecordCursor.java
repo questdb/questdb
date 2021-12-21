@@ -673,7 +673,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
     private static class PageAddressCache implements Mutable {
 
         private int columnCount;
-        private int varLengthColumnCount;
+        private int varLenColumnCount;
 
         // Index remapping for variable length columns.
         private final IntList varLenColumnIndexes = new IntList();
@@ -686,11 +686,11 @@ class CompiledFilterRecordCursor implements RecordCursor {
         public void of(RecordMetadata metadata) {
             this.columnCount = metadata.getColumnCount();
             this.varLenColumnIndexes.setAll(columnCount, -1);
-            this.varLengthColumnCount = 0;
+            this.varLenColumnCount = 0;
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 final int columnType = metadata.getColumnType(columnIndex);
                 if (ColumnType.isVariableLength(columnType)) {
-                    varLenColumnIndexes.setQuick(columnIndex, varLengthColumnCount++);
+                    varLenColumnIndexes.setQuick(columnIndex, varLenColumnCount++);
                 }
             }
         }
@@ -723,17 +723,17 @@ class CompiledFilterRecordCursor implements RecordCursor {
         }
 
         public long getIndexPageAddress(int frameIndex, int columnIndex) {
-            assert indexPageAddresses.size() >= varLengthColumnCount * (frameIndex + 1);
+            assert indexPageAddresses.size() >= varLenColumnCount * (frameIndex + 1);
             int varLenColumnIndex = varLenColumnIndexes.getQuick(columnIndex);
             assert varLenColumnIndex > -1;
-            return indexPageAddresses.getQuick(varLengthColumnCount * frameIndex + varLenColumnIndex);
+            return indexPageAddresses.getQuick(varLenColumnCount * frameIndex + varLenColumnIndex);
         }
 
         public long getPageSize(int frameIndex, int columnIndex) {
-            assert pageSizes.size() >= varLengthColumnCount * (frameIndex + 1);
+            assert pageSizes.size() >= varLenColumnCount * (frameIndex + 1);
             int varLenColumnIndex = varLenColumnIndexes.getQuick(columnIndex);
             assert varLenColumnIndex > -1;
-            return pageSizes.getQuick(varLengthColumnCount * frameIndex + varLenColumnIndex);
+            return pageSizes.getQuick(varLenColumnCount * frameIndex + varLenColumnIndex);
         }
 
         public boolean hasColumnTops(int frameIndex) {
