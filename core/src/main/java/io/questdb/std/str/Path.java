@@ -98,6 +98,11 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return ptr;
     }
 
+    @Override
+    public int capacity() {
+        return capacity;
+    }
+
     /**
      * Removes trailing zero from path to allow reuse of path as parent.
      *

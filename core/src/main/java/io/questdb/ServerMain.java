@@ -126,18 +126,10 @@ public class ServerMain {
         }
         log.advisory().$("available CPUs: ").$(Runtime.getRuntime().availableProcessors()).$();
         log.advisory().$("db root: ").$(configuration.getCairoConfiguration().getRoot()).$();
+        log.advisory().$("backup root: ").$(configuration.getCairoConfiguration().getBackupRoot()).$();
         try (Path path = new Path()) {
-            path.of(configuration.getCairoConfiguration().getRoot()).$();
-            // path will contain file system name
-            long fsStatus = Files.getFileSystemStatus(path);
-            path.seekZ();
-            LogRecord rec = log.advisory().$("db file system magic: 0x");
-            if (fsStatus < 0) {
-                rec.$hex(-fsStatus).$(" [").$(path).$("] SUPPORTED").$();
-            } else {
-                rec.$hex(fsStatus).$(" [").$(path).$("] EXPERIMENTAL").$();
-                log.advisory().$("\n\n\n\t\t\t*** SYSTEM IS USING UNSUPPORTED FILE SYSTEM AND COULD BE UNSTABLE ***\n\n").$();
-            }
+            verifyFileSystem("db", configuration.getCairoConfiguration().getRoot(), path, log);
+            verifyFileSystem("backup", configuration.getCairoConfiguration().getBackupRoot(), path, log);
         }
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
@@ -241,6 +233,22 @@ public class ServerMain {
             log.error().$((Sinkable) e).$();
             LockSupport.parkNanos(10000000L);
             System.exit(55);
+        }
+    }
+
+    private void verifyFileSystem(String kind, CharSequence dir, Path path, Log log) {
+        if (dir != null) {
+            path.of(dir).$();
+            // path will contain file system name
+            long fsStatus = Files.getFileSystemStatus(path);
+            path.seekZ();
+            LogRecord rec = log.advisory().$(kind).$(" file system magic: 0x");
+            if (fsStatus < 0) {
+                rec.$hex(-fsStatus).$(" [").$(path).$("] SUPPORTED").$();
+            } else {
+                rec.$hex(fsStatus).$(" [").$(path).$("] EXPERIMENTAL").$();
+                log.advisory().$("\n\n\n\t\t\t*** SYSTEM IS USING UNSUPPORTED FILE SYSTEM AND COULD BE UNSTABLE ***\n\n").$();
+            }
         }
     }
 

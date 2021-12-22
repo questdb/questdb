@@ -173,6 +173,7 @@ public final class Files {
      * positive number is magic that is not supported.
      */
     public static int getFileSystemStatus(LPSZ lpszName) {
+        assert lpszName.capacity() > 127;
         return getFileSystemStatus(lpszName.address());
     }
 
