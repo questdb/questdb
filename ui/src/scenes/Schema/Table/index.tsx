@@ -143,8 +143,47 @@ const Table = ({
       name,
       kind: "table",
       initiallyOpen: expanded,
-      onOpen: () => {
+      async onOpen({ setChildren }) {
         onChange(name)
+        const response = (await quest.showColumns(name)) ?? []
+
+        if (response && response.type === QuestDB.Type.DQL) {
+          setColumns(response.data)
+
+          const indexes = response.data.filter(({ indexed }) => indexed)
+          const makeIndexes = (): TreeNode => ({
+            name: "Indexes",
+            onOpen({ setChildren }) {
+              setChildren(
+                indexes.map((column: QuestDB.Column) => ({
+                  name: column.column,
+                  render: columnRender({ column, designatedTimestamp }),
+                })),
+              )
+            },
+            render({ toggleOpen, isOpen, isLoading }) {
+              return (
+                <Row
+                  expanded={isOpen}
+                  kind="folder"
+                  name="Indexes"
+                  onClick={() => toggleOpen()}
+                  suffix={isLoading && <Loader size="18px" />}
+                />
+              )
+            },
+            wrapper: Columns,
+          })
+
+          setChildren([
+            ...(indexes.length ? [makeIndexes()] : []),
+
+            ...response.data.map((column) => ({
+              name: column.column,
+              render: columnRender({ column, designatedTimestamp }),
+            })),
+          ])
+        }
       },
       render({ toggleOpen, isLoading }) {
         return (
@@ -161,37 +200,6 @@ const Table = ({
           </ContextMenuTrigger>
         )
       },
-
-      children: [
-        {
-          name: "Columns",
-          initiallyOpen: true,
-          async onOpen({ setChildren }) {
-            const response = await quest.showColumns(name)
-
-            if (response && response.type === QuestDB.Type.DQL) {
-              setChildren(
-                response.data.map((column: QuestDB.Column) => ({
-                  name: column.column,
-                  render: columnRender({ column, designatedTimestamp }),
-                })),
-              )
-            }
-          },
-          render({ toggleOpen, isOpen, isLoading }) {
-            return (
-              <Row
-                expanded={isOpen}
-                kind="folder"
-                name="Columns"
-                onClick={() => toggleOpen()}
-                suffix={isLoading && <Loader size="18px" />}
-              />
-            )
-          },
-          wrapper: Columns,
-        },
-      ],
     },
   ]
 
