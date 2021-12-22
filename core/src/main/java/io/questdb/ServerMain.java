@@ -136,6 +136,7 @@ public class ServerMain {
                 rec.$hex(-fsStatus).$(" [").$(path).$("] SUPPORTED").$();
             } else {
                 rec.$hex(fsStatus).$(" [").$(path).$("] EXPERIMENTAL").$();
+                log.advisory().$("\n\n\n\t\t\t*** SYSTEM IS USING UNSUPPORTED FILE SYSTEM AND COULD BE UNSTABLE ***\n\n").$();
             }
         }
 
