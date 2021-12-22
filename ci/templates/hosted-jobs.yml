@@ -1,40 +1,43 @@
 jobs:
-- job: RunOn
-  displayName: "on"
-  strategy:
-    matrix:
-      linux:
-        imageName: "ubuntu-latest"
-        poolName: "Azure Pipelines"
-        os: Linux
-        jdk: "1.11"
-      mac:
-        imageName: "macos-latest"
-        poolName: "Azure Pipelines"
-        os: macOS
-        jdk: "1.11"
-      windows:
-        imageName: "windows-latest"
-        poolName: "Azure Pipelines"
-        os: Windows
-        jdk: "1.11"
-      linux-jdk8:
-        imageName: "ubuntu-latest"
-        poolName: "Azure Pipelines"
-        os: Linux
-        jdk: "1.8"
-      mac-jdk17:
-        imageName: "macos-latest"
-        poolName: "Azure Pipelines"
-        os: macOS
-        jdk: "1.17"
-  pool:
-    vmImage: $(imageName)
-    name: $(poolName) 
-  timeoutInMinutes: 60
-  variables:
-    SOURCE_CODE_CHANGED: $[ stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED'] ]
-    MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
-    MAVEN_OPTS: '-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m'
-  steps:
-  - template: steps.yml
+  - job: RunOn
+    displayName: "on"
+    strategy:
+      matrix:
+        linux:
+          imageName: "ubuntu-latest"
+          poolName: "Azure Pipelines"
+          os: Linux
+          jdk: "1.11"
+        mac:
+          imageName: "macos-latest"
+          poolName: "Azure Pipelines"
+          os: macOS
+          jdk: "1.11"
+        windows:
+          imageName: "windows-latest"
+          poolName: "Azure Pipelines"
+          os: Windows
+          jdk: "1.11"
+        linux-jdk8:
+          imageName: "ubuntu-latest"
+          poolName: "Azure Pipelines"
+          os: Linux
+          jdk: "1.8"
+        mac-jdk17:
+          imageName: "macos-latest"
+          poolName: "Azure Pipelines"
+          os: macOS
+          jdk: "1.17"
+    pool:
+      vmImage: $(imageName)
+      name: $(poolName)
+    timeoutInMinutes: 60
+    variables:
+      SOURCE_CODE_CHANGED:
+        $[
+        stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']
+        ]
+      MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
+      MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m"
+    steps:
+      - template: steps.yml

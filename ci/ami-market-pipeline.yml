@@ -1,10 +1,10 @@
 trigger:
   tags:
     include:
-      - '*'
+      - "*"
   branches:
     exclude:
-      - '*'
+      - "*"
 
 pr: none
 
@@ -21,4 +21,4 @@ steps:
       AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
       AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
       AWS_DEFAULT_REGION: eu-west-1
-    displayName: 'Deploy public image'
+    displayName: "Deploy public image"
