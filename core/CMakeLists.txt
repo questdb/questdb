@@ -141,6 +141,7 @@ include(FetchContent)
 FetchContent_Declare(
         asmjit
         GIT_REPOSITORY https://github.com/questdb/asmjit.git
+        GIT_TAG        4ec760a3d1f69e32ba460ecd2513f29b8428700b # Fixed typos in documentation
 )
 
 FetchContent_GetProperties(asmjit)
