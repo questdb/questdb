@@ -236,7 +236,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_mkdir(JNIEnv *e, jclass cl, jlo
     return -2;
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_std_Files_isFSSupported(JNIEnv *e, jclass cl, jlong lpszName) {
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus(JNIEnv *e, jclass cl, jlong lpszName) {
     DWORD fileSystemFlags;
     char drive[MAX_PATH];
     char fileSystemName[MAX_PATH];
@@ -258,15 +258,17 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_isFSSupported(JNIEnv *e, jclass
             if ((fileSystemFlags & FILE_SUPPORTS_TRANSACTIONS) != 0) {
                 // windows share (CIFS) reports filesystem as NTFS
                 // local disks support transactions, but CIFS does not
-                return 0;
+                strcpy((char*) lpszName, fileSystemName);
+                return -1 * 0x2b;
             }
             // unsupported file system
-            return 1;
+            strcpy((char*) lpszName, "SMB");
+            return 0x3b;
         }
     }
 
     SaveLastError();
-    return -1;
+    return 0;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openRO(JNIEnv *e, jclass cl, jlong lpszName) {

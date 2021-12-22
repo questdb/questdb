@@ -138,4 +138,9 @@ final class NullLogRecord implements LogRecord {
     public LogRecord put(char c) {
         return this;
     }
+
+    @Override
+    public LogRecord $hex(long value) {
+        return null;
+    }
 }

@@ -125,10 +125,18 @@ public class ServerMain {
                 break;
         }
         log.advisory().$("available CPUs: ").$(Runtime.getRuntime().availableProcessors()).$();
+        log.advisory().$("db root: ").$(configuration.getCairoConfiguration().getRoot()).$();
         try (Path path = new Path()) {
             path.of(configuration.getCairoConfiguration().getRoot()).$();
-            int fsStatus = Files.isFSSupported(path);
-            log.advisory().$("FS status: ").$(fsStatus == 0 ? "SUPPORTED" : Integer.toString(fsStatus)).$(" [").$(path).I$();
+            // path will contain file system name
+            long fsStatus = Files.getFileSystemStatus(path);
+            path.seekZ();
+            LogRecord rec = log.advisory().$("db file system magic: 0x");
+            if (fsStatus < 0) {
+                rec.$hex(-fsStatus).$(" [").$(path).$("] SUPPORTED").$();
+            } else {
+                rec.$hex(fsStatus).$(" [").$(path).$("] EXPERIMENTAL").$();
+            }
         }
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
