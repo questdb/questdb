@@ -149,6 +149,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         while (count < capacity+1) {
             if (Unsafe.getUnsafe().getByte(ptr + count) == 0) {
                 len = count;
+                wptr = ptr + len;
                 break;
             }
             count++;

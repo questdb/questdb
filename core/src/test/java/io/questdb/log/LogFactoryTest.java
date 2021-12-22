@@ -202,6 +202,44 @@ public class LogFactoryTest {
     }
 
     @Test
+    public void testHexLongWrite() throws Exception {
+        final File x = temp.newFile();
+        final File y = temp.newFile();
+
+        try (LogFactory factory = new LogFactory()) {
+
+            factory.add(new LogWriterConfig(LogLevel.INFO | LogLevel.DEBUG, (ring, seq, level) -> {
+                LogFileWriter w = new LogFileWriter(ring, seq, level);
+                w.setLocation(x.getAbsolutePath());
+                return w;
+            }));
+
+            factory.add(new LogWriterConfig(LogLevel.DEBUG | LogLevel.ERROR, (ring, seq, level) -> {
+                LogFileWriter w = new LogFileWriter(ring, seq, level);
+                w.setLocation(y.getAbsolutePath());
+                return w;
+            }));
+
+            factory.bind();
+            factory.startThread();
+
+            try {
+                Log logger = factory.create("x");
+                for (int i = 0; i < 64; i++) {
+                    logger.xerror().$("test ").$hex(i).$();
+                }
+
+                Os.sleep(100);
+
+                Assert.assertEquals(0, x.length());
+                Assert.assertEquals(576, y.length());
+            } finally {
+                factory.haltThread();
+            }
+        }
+    }
+
+    @Test
     public void testPackageHierarchy() throws Exception {
         final File a = temp.newFile();
         final File b = temp.newFile();
