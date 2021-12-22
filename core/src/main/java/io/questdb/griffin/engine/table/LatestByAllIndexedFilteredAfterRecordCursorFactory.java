@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -47,7 +48,7 @@ public class LatestByAllIndexedFilteredAfterRecordCursorFactory extends Abstract
             @NotNull LongList prefixes
     ) {
         super(metadata, dataFrameCursorFactory, configuration);
-        this.prefixes = new DirectLongList(Math.max(2, prefixes.size()));
+        this.prefixes = new DirectLongList(Math.max(2, prefixes.size()), MemoryTag.NATIVE_LATEST_BY_LONG_LIST);
 
         // copy into owned direct memory
         for (int i = 0; i < prefixes.size(); i++) {
