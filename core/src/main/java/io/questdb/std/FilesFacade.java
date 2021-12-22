@@ -96,6 +96,8 @@ public interface FilesFacade {
 
     long read(long fd, long buf, long size, long offset);
 
+    long readULong(long fd, long offset);
+
     boolean remove(LPSZ name);
 
     boolean rename(LPSZ from, LPSZ to);

@@ -98,12 +98,12 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long read(long fd, long buf, long len, long offset) {
+                public long readULong(long fd, long offset) {
                     if (fd == this.fd) {
                         this.fd = -1;
                         return -1;
                     }
-                    return super.read(fd, buf, len, offset);
+                    return super.readULong(fd, offset);
                 }
             }
 
