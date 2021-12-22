@@ -249,7 +249,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
             case 0x43415d53:
                 strcpy((char *) lpszName, "SMACK");
                 return sb.f_type;
-            case 0x90x517bfa0:
+            case 0x517b:
                 strcpy((char *) lpszName, "SMB");
                 return sb.f_type;
             case 0xfe534d42:
