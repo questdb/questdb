@@ -54,14 +54,14 @@ public class LtIntFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new IntTimestampFunction(args.getQuick(0), args.getQuick(1));
+        return new LtIntFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class IntTimestampFunction extends NegatableBooleanFunction implements BinaryFunction {
+    private static class LtIntFunction extends NegatableBooleanFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
 
-        public IntTimestampFunction(Function left, Function right) {
+        public LtIntFunction(Function left, Function right) {
             this.left = left;
             this.right = right;
         }

@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class MulLongFunctionFactory implements FunctionFactory {
@@ -66,7 +67,13 @@ public class MulLongFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            return left.getLong(rec) * right.getLong(rec);
+            final long l = left.getLong(rec);
+            final long r = right.getLong(rec);
+
+            if (l == Numbers.LONG_NaN || r == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return l * r;
         }
     }
 }

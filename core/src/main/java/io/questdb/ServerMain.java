@@ -33,6 +33,7 @@ import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -130,6 +131,26 @@ public class ServerMain {
         try (Path path = new Path()) {
             verifyFileSystem("db", configuration.getCairoConfiguration().getRoot(), path, log);
             verifyFileSystem("backup", configuration.getCairoConfiguration().getBackupRoot(), path, log);
+        }
+
+        if (JitUtil.isJitSupported()) {
+            final int jitMode = configuration.getCairoConfiguration().getSqlJitMode();
+            switch (jitMode) {
+                case SqlJitMode.JIT_MODE_ENABLED:
+                    log.advisory().$("SQL JIT compiler mode: on").$();
+                    log.advisory().$("Note: JIT compiler mode is a beta feature.").$();
+                    break;
+                case SqlJitMode.JIT_MODE_FORCE_SCALAR:
+                    log.advisory().$("SQL JIT compiler mode: scalar").$();
+                    log.advisory().$("Note: JIT compiler mode is a beta feature.").$();
+                    break;
+                case SqlJitMode.JIT_MODE_DISABLED:
+                    log.advisory().$("SQL JIT compiler mode: off").$();
+                    break;
+                default:
+                    log.error().$("Unknown SQL JIT compiler mode: ").$(jitMode).$();
+                    break;
+            }
         }
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());

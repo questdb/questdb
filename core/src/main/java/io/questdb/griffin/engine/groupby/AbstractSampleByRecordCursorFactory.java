@@ -65,6 +65,11 @@ public abstract class AbstractSampleByRecordCursorFactory implements RecordCurso
         return false;
     }
 
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
+
     protected abstract AbstractNoRecordSampleByCursor getRawCursor();
 
     protected RecordCursor initFunctionsAndCursor(

@@ -240,6 +240,8 @@ public class GeoHashes {
         return start < len;
     }
 
+
+
     private static long fromBitString(CharSequence bits, int start, int limit) throws NumericException {
         long result = 0;
         for (int i = start; i < limit; i++) {

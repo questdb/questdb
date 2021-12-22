@@ -71,4 +71,9 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
     }
+
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
 }
