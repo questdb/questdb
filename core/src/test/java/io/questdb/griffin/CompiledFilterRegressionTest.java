@@ -35,7 +35,10 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -51,15 +54,6 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
     private static final int N_SIMD_WITH_SCALAR_TAIL = N_SIMD + 3;
 
     private static final StringSink jitSink = new StringSink();
-
-    @BeforeClass
-    public static void setUpStatic() {
-        // Increase ir memory limit.
-        // This is necessary for the testHugeFilter to pass
-        // todo: change defaults?
-        sqlJitIRMemoryMaxPages = 16;
-       AbstractGriffinTest.setUpStatic();
-    }
 
     @Override
     @Before

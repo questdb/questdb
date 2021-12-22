@@ -40,14 +40,19 @@ import java.util.Arrays;
 /**
  * Intermediate representation (IR) serializer for filters (think, WHERE clause)
  * to be used in SQL JIT compiler.
+ *
+ * <pre>
+ * IR instruction format:
+ * | opcode | options | payload |
+ * | int    | int     | long    |
+ * </pre>
  */
 public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
-    // IR instruction format:
-    // | opcode | options | payload |
-    // | int    | int     | long    |
 
-    // Temp code stub
+    // Stub value for opcodes and options
     static final int UNDEFINED_CODE = -1;
+
+    // Opcodes:
     // Return code. Breaks the loop
     static final int RET = 0; // ret
     // Constants
@@ -73,6 +78,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     static final int DIV = 17;  // a / b
     static final int REM = 18;  // a % b
 
+    // Options:
     // Data types
     static final int I1_TYPE = 0;
     static final int I2_TYPE = 1;
@@ -80,7 +86,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     static final int F4_TYPE = 3;
     static final int I8_TYPE = 4;
     static final int F8_TYPE = 5;
-
 
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final PredicateContext predicateContext = new PredicateContext();
@@ -254,20 +259,27 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void putOperand(int op, int type, long payload) {
-        memory.putInt(op);
+    private void putOperator(int opcode) {
+        memory.putInt(opcode);
+        // pad unused fields with zeros
+        memory.putInt(0);
+        memory.putLong(0L);
+    }
+
+    private void putOperand(int opcode, int type, long payload) {
+        memory.putInt(opcode);
         memory.putInt(type);
         memory.putLong(payload);
     }
 
-    private void putOperand(long offset, int op, int type, long payload) {
-        memory.putInt(offset, op);
+    private void putOperand(long offset, int opcode, int type, long payload) {
+        memory.putInt(offset, opcode);
         memory.putInt(offset + Integer.BYTES, type);
         memory.putLong(offset + 2 * Integer.BYTES, payload);
     }
 
-    private void putDoubleConst(long offset, int op, int type, double payload) {
-        memory.putInt(offset, op);
+    private void putDoubleOperand(long offset, int opcode, int type, double payload) {
+        memory.putInt(offset, opcode);
         memory.putInt(offset + Integer.BYTES, type);
         memory.putDouble(offset + 2 * Integer.BYTES, payload);
     }
@@ -322,7 +334,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // not have symbol column index at this point
             long offset = memory.getAppendOffset();
             backfillNodes.put(offset, node);
-            putOperand(UNDEFINED_CODE, 0, 0);
+            putOperand(UNDEFINED_CODE, UNDEFINED_CODE, 0);
             return;
         }
 
@@ -412,7 +424,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         long offset = memory.getAppendOffset();
         backfillNodes.put(offset, node);
-        putOperand(UNDEFINED_CODE, 0, 0);
+        putOperand(UNDEFINED_CODE, UNDEFINED_CODE, 0);
     }
 
     private void backfillConstant(long offset, final ExpressionNode node) throws SqlException {
@@ -500,33 +512,31 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void serializeNull(long offset, int position, int typeCode, boolean geoHashExpression) throws SqlException {
-        memory.putInt(offset, IMM);
-        memory.putInt(offset + Integer.BYTES, typeCode);
+    private void serializeNull(long offset, int position, int typeCode, boolean geoHashPredicate) throws SqlException {
         switch (typeCode) {
             case I1_TYPE:
-                if (!geoHashExpression) {
+                if (!geoHashPredicate) {
                     throw SqlException.position(position).put("byte type is not nullable");
                 }
-                memory.putLong(offset + 2 * Integer.BYTES, GeoHashes.BYTE_NULL);
+                putOperand(offset, IMM, typeCode, GeoHashes.BYTE_NULL);
                 break;
             case I2_TYPE:
-                if (!geoHashExpression) {
+                if (!geoHashPredicate) {
                     throw SqlException.position(position).put("short type is not nullable");
                 }
-                memory.putLong(offset + 2 * Integer.BYTES, GeoHashes.SHORT_NULL);
+                putOperand(offset, IMM, typeCode, GeoHashes.SHORT_NULL);
                 break;
             case I4_TYPE:
-                memory.putLong(offset + 2 * Integer.BYTES, geoHashExpression ? GeoHashes.INT_NULL : Numbers.INT_NaN);
+                putOperand(offset, IMM, typeCode, geoHashPredicate ? GeoHashes.INT_NULL : Numbers.INT_NaN);
                 break;
             case I8_TYPE:
-                memory.putLong(offset + 2 * Integer.BYTES, geoHashExpression ? GeoHashes.NULL : Numbers.LONG_NaN);
+                putOperand(offset, IMM, typeCode, geoHashPredicate ? GeoHashes.NULL : Numbers.LONG_NaN);
                 break;
             case F4_TYPE:
-                memory.putDouble(offset + 2 * Integer.BYTES, Float.NaN);
+                putDoubleOperand(offset, IMM, typeCode, Float.NaN);
                 break;
             case F8_TYPE:
-                memory.putDouble(offset + 2 * Integer.BYTES, Double.NaN);
+                putDoubleOperand(offset, IMM, typeCode, Double.NaN);
                 break;
             default:
                 throw SqlException.position(position).put("unexpected null type: ").put(typeCode);
@@ -564,21 +574,19 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private void serializeGeoHash(long offset, int position, final ConstantFunction geoHashConstant, int typeCode) throws SqlException {
-        memory.putInt(offset, IMM);
-        memory.putInt(offset + Integer.BYTES, typeCode);
         try {
             switch (typeCode) {
                 case I1_TYPE:
-                    memory.putLong(offset + 2 * Integer.BYTES, geoHashConstant.getGeoByte(null));
+                    putOperand(offset, IMM, typeCode, geoHashConstant.getGeoByte(null));
                     break;
                 case I2_TYPE:
-                    memory.putLong(offset + 2 * Integer.BYTES, geoHashConstant.getGeoShort(null));
+                    putOperand(offset, IMM, typeCode, geoHashConstant.getGeoShort(null));
                     break;
                 case I4_TYPE:
-                    memory.putLong(offset + 2 * Integer.BYTES, geoHashConstant.getGeoInt(null));
+                    putOperand(offset, IMM, typeCode, geoHashConstant.getGeoInt(null));
                     break;
                 case I8_TYPE:
-                    memory.putLong(offset + 2 * Integer.BYTES, geoHashConstant.getGeoLong(null));
+                    putOperand(offset, IMM, typeCode, geoHashConstant.getGeoLong(null));
                     break;
                 default:
                     throw SqlException.position(position).put("unexpected type code for geo hash: ").put(typeCode);
@@ -607,7 +615,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                         putOperand(offset, IMM, I4_TYPE, sign * i);
                     } catch (NumericException e) {
                         final float fi = Numbers.parseFloat(token);
-                        putDoubleConst(offset, IMM, F4_TYPE, sign * fi);
+                        putDoubleOperand(offset, IMM, F4_TYPE, sign * fi);
                     }
                     break;
                 case I8_TYPE:
@@ -617,7 +625,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                         putOperand(offset, IMM, I8_TYPE, sign * l);
                     } catch (NumericException e) {
                         final double dl = Numbers.parseDouble(token);
-                        putDoubleConst(offset, IMM, F8_TYPE, sign * dl);
+                        putDoubleOperand(offset, IMM, F8_TYPE, sign * dl);
                     }
                     break;
                 default:
@@ -651,26 +659,19 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         try {
             final double d = Numbers.parseDouble(token);
-            putDoubleConst(offset, IMM, F8_TYPE, sign * d);
+            putDoubleOperand(offset, IMM, F8_TYPE, sign * d);
             return;
         } catch (NumericException ignore) {
         }
 
         try {
             final float f = Numbers.parseFloat(token);
-            putDoubleConst(offset, IMM, F4_TYPE, sign * f);
+            putDoubleOperand(offset, IMM, F4_TYPE, sign * f);
             return;
         } catch (NumericException ignore) {
         }
 
         throw SqlException.position(position).put("unexpected non-numeric constant: ").put(token);
-    }
-
-    private void putOperator(int opcode) {
-        memory.putInt(opcode);
-        // pad unused fields with zeros
-        memory.putInt(0);
-        memory.putLong(0L);
     }
 
     private void serializeOperator(int position, final CharSequence token, int argCount) throws SqlException {
@@ -1082,7 +1083,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         /**
          * Returns the expected constant type calculated based on the "widest" observed column
-         * or bind variable type. The result contains IMM_* value or UNDEFINED_CODE value.
+         * or bind variable type. The result contains *_TYPE value or UNDEFINED_CODE value.
          */
         public int constantTypeCode() {
             for (int i = sizes.length - 1; i > -1; i--) {
@@ -1098,7 +1099,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return UNDEFINED_CODE;
         }
 
-        private byte indexToTypeCode(int index) {
+        private int indexToTypeCode(int index) {
             switch (index) {
                 case I1_INDEX:
                     return I1_TYPE;

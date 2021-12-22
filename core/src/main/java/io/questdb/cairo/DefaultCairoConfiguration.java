@@ -612,7 +612,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getSqlJitIRMemoryPageSize() {
-        return 4096;
+        return 8192;
     }
 
     @Override
@@ -622,7 +622,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getSqlJitBindVarsMemoryPageSize() {
-        return 2048;
+        return 4096;
     }
 
     @Override

@@ -69,8 +69,6 @@ public class AbstractCairoTest {
     protected static int binaryEncodingMaxLength = -1;
     protected static CharSequence defaultMapType;
 
-    protected static int sqlJitIRMemoryMaxPages = -1;
-
     @Rule
     public TestName testName = new TestName();
     public static long writerAsyncCommandBusyWaitTimeout = -1;
@@ -158,13 +156,6 @@ public class AbstractCairoTest {
                 // but we want to have it enabled in tests.
                 return SqlJitMode.JIT_MODE_ENABLED;
             }
-
-            @Override
-            public int getSqlJitIRMemoryMaxPages() {
-                if (sqlJitIRMemoryMaxPages >= 0) return sqlJitIRMemoryMaxPages;
-                return super.getSqlJitIRMemoryMaxPages();
-            }
-
         };
         engine = new CairoEngine(configuration);
         messageBus = engine.getMessageBus();
@@ -198,7 +189,6 @@ public class AbstractCairoTest {
         defaultMapType = null;
         writerAsyncCommandBusyWaitTimeout = -1;
         writerAsyncCommandMaxTimeout = -1;
-        sqlJitIRMemoryMaxPages = -1;
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {

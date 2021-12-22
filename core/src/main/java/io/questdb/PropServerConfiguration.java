@@ -651,9 +651,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlDistinctTimestampLoadFactor = getDouble(properties, env, "cairo.sql.distinct.timestamp.load.factor", 0.5);
 
             this.sqlJitMode = getSqlJitMode(properties, env);
-            this.sqlJitIRMemoryPageSize = getLongSize(properties, env, "cairo.sql.jit.ir.memory.page.size", 4 * 1024);
+            this.sqlJitIRMemoryPageSize = getLongSize(properties, env, "cairo.sql.jit.ir.memory.page.size", 8 * 1024);
             this.sqlJitIRMemoryMaxPages = getInt(properties, env, "cairo.sql.jit.ir.memory.max.pages", 8);
-            this.sqlJitBindVarsMemoryPageSize = getLongSize(properties, env, "cairo.sql.jit.bind.vars.memory.page.size", 2 * 1024);
+            this.sqlJitBindVarsMemoryPageSize = getLongSize(properties, env, "cairo.sql.jit.bind.vars.memory.page.size", 4 * 1024);
             this.sqlJitBindVarsMemoryMaxPages = getInt(properties, env, "cairo.sql.jit.bind.vars.memory.max.pages", 8);
             this.sqlJitRowsThreshold = getLongSize(properties, env, "cairo.sql.jit.rows.threshold", 1024 * 1024);
             this.sqlJitPageAddressCacheThreshold = getLongSize(properties, env, "cairo.sql.jit.page.address.cache.threshold", 1024 * 1024);
