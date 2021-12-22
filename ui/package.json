@@ -122,8 +122,11 @@
     "name": "QuestDB"
   },
   "lint-staged": {
+    "../**/**/*.{js.jsx,js,es6,jsx,ts,tsx,md,yml}": [
+      "prettier --config ./prettier.config.js --write ../"
+    ],
     "**/**/*.{js.jsx,js,es6,jsx,ts,tsx,md,yml}": [
-      "prettier --config ./prettier.config.js --write"
+      "prettier --config ./prettier.config.js --write ."
     ]
   },
   "husky": {

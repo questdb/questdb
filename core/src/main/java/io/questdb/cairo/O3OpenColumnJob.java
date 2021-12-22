@@ -466,7 +466,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final FilesFacade ff = tableWriter.getFilesFacade();
         if (srcDataTop == -1) {
             try {
-                srcDataTop = getSrcDataTop(ff, pathToPartition, plen, columnName, srcDataMax, tmpBuf);
+                srcDataTop = getSrcDataTop(ff, pathToPartition, plen, columnName, srcDataMax);
                 if (srcDataTop == srcDataMax) {
                     TableUtils.writeColumnTop(
                             ff,
@@ -1536,7 +1536,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         // not set, we need to check file existence and read
         if (srcDataTop == -1) {
             try {
-                srcDataTop = getSrcDataTop(ff, pathToPartition, plen, columnName, srcDataMax, tmpBuf);
+                srcDataTop = getSrcDataTop(ff, pathToPartition, plen, columnName, srcDataMax);
             } catch (Throwable e) {
                 LOG.error().$("merge mid partition error 1 [table=").$(tableWriter.getTableName())
                         .$(", e=").$(e)
@@ -1689,8 +1689,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             Path path,
             int plen,
             CharSequence columnName,
-            long srcDataMax,
-            long tmpBuf
+            long srcDataMax
     ) {
         boolean dFileExists = ff.exists(dFile(path.trimTo(plen), columnName));
         if (dFileExists) {
@@ -1699,7 +1698,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     path.trimTo(plen),
                     columnName,
                     plen,
-                    tmpBuf,
                     true
             );
         }

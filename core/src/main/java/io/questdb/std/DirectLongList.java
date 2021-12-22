@@ -34,15 +34,17 @@ public class DirectLongList implements Mutable, Closeable {
 
     private static final Log LOG = LogFactory.getLog(DirectLongList.class);
 
-    long pos;
-    long start;
-    long limit;
+    private long pos;
+    private long start;
+    private long limit;
     private long address;
     private long capacity;
+    private final int memoryTag;
 
-    public DirectLongList(long capacity) {
+    public DirectLongList(long capacity, int memoryTag) {
+        this.memoryTag = memoryTag;
         this.capacity = (capacity * Long.BYTES);
-        this.address = Unsafe.malloc(this.capacity, MemoryTag.NATIVE_LONG_LIST);
+        this.address = Unsafe.malloc(this.capacity, memoryTag);
         this.start = this.pos = address;
         this.limit = pos + this.capacity;
     }
@@ -84,7 +86,7 @@ public class DirectLongList implements Mutable, Closeable {
     @Override
     public void close() {
         if (address != 0) {
-            Unsafe.free(address, capacity, MemoryTag.NATIVE_LONG_LIST);
+            Unsafe.free(address, capacity, memoryTag);
             address = 0;
         }
     }
@@ -172,7 +174,7 @@ public class DirectLongList implements Mutable, Closeable {
     private void extendBytes(long capacity) {
         final long oldCapacity = this.capacity;
         this.capacity = capacity;
-        long address = Unsafe.realloc(this.address, oldCapacity, capacity, MemoryTag.NATIVE_LONG_LIST);
+        long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);
         this.pos = address + (this.pos - this.start);
         this.address = address;
         this.start = address;

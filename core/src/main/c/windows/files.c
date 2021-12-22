@@ -110,6 +110,23 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
     return 0;
 }
 
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readULong
+        (JNIEnv *e, jclass cl,
+         jlong fd,
+         jlong offset) {
+    DWORD count;
+    jlong result;
+    if (set_file_pos((HANDLE) fd, offset) &&
+        ReadFile((HANDLE) fd, (LPVOID) &result, (DWORD) 8, &count, NULL)) {
+        if (count != 8) {
+            return -1;
+        }
+        return result;
+    }
+    SaveLastError();
+    return -1;
+}
+
 #define MILLIS_SINCE_1970 11644473600000
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified

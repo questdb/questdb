@@ -22,11 +22,11 @@
  *
  ******************************************************************************/
 
-
 .label {
   background-color: $light-gray;
   color: $label-badget-color;
-  font-family: "Open Sans", -apple-system, BlinkMacSystemFont, Helvetica, Roboto, sans-serif;
+  font-family: "Open Sans", -apple-system, BlinkMacSystemFont, Helvetica, Roboto,
+    sans-serif;
   font-size: 10px;
   font-weight: 600;
   padding: 3px 8px;
@@ -36,7 +36,8 @@
 .badge {
   background-color: $light-gray;
   color: $label-badget-color;
-  font-family: "Open Sans", -apple-system, BlinkMacSystemFont, Helvetica, Roboto, sans-serif;
+  font-family: "Open Sans", -apple-system, BlinkMacSystemFont, Helvetica, Roboto,
+    sans-serif;
   font-size: 11px;
   font-weight: 600;
   padding-bottom: 4px;
@@ -45,47 +46,56 @@
   text-shadow: none;
 }
 
-.label-primary, .badge-primary {
+.label-primary,
+.badge-primary {
   background-color: $navy;
-  color: #FFFFFF;
+  color: #ffffff;
 }
 
-.label-success, .badge-success {
+.label-success,
+.badge-success {
   background-color: $blue;
-  color: #FFFFFF;
+  color: #ffffff;
 }
 
-.label-warning, .badge-warning {
-  background-color: $yellow;
-  color: #FFFFFF;
-}
-
-.label-warning-light, .badge-warning-light {
+.label-warning,
+.badge-warning {
   background-color: $yellow;
   color: #ffffff;
 }
 
-.label-danger, .badge-danger {
+.label-warning-light,
+.badge-warning-light {
+  background-color: $yellow;
+  color: #ffffff;
+}
+
+.label-danger,
+.badge-danger {
   background-color: $red;
-  color: #FFFFFF;
+  color: #ffffff;
 }
 
-.label-info, .badge-info {
+.label-info,
+.badge-info {
   background-color: $lazur;
-  color: #FFFFFF;
+  color: #ffffff;
 }
 
-.label-inverse, .badge-inverse {
+.label-inverse,
+.badge-inverse {
   background-color: #262626;
-  color: #FFFFFF;
+  color: #ffffff;
 }
 
-.label-white, .badge-white {
-  background-color: #FFFFFF;
-  color: #5E5E5E;
+.label-white,
+.badge-white {
+  background-color: #ffffff;
+  color: #5e5e5e;
 }
 
-.label-white, .badge-disable {
-  background-color: #2A2E36;
-  color: #8B91A0;
+.label-white,
+.badge-disable {
+  background-color: #2a2e36;
+  color: #8b91a0;
 }

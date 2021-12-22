@@ -2,36 +2,38 @@ name: Feature request
 description: Suggest an idea for this project
 labels: New feature
 body:
-- type: markdown
-  attributes:
-    value: |
-      Thanks for taking the time to request a feature for QuestDB!
-- type: textarea
-  attributes:
-    label: Is your feature request related to a problem?
-    description: A concise description of the problem you are facing or the motivation behind this feature request.
-    placeholder: |
-      I experienced difficulties with...
-  validations:
-    required: false
-- type: textarea
-  attributes:
-    label: Describe the solution you'd like.
-    description: A concise description of what you want to happen.
-    placeholder: |
-      I would like to have...
-  validations:
-    required: false
-- type: textarea
-  attributes:
-    label: Describe alternatives you've considered.
-    description: Is there another approach to solve the problem?
-  validations:
-    required: false
-- type: textarea
-  attributes:
-    label: Additional context.
-    description: |
-      Add any other context, screenshots, links to provide more context about the feature request.
-  validations:
-    required: false
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to request a feature for QuestDB!
+  - type: textarea
+    attributes:
+      label: Is your feature request related to a problem?
+      description:
+        A concise description of the problem you are facing or the motivation
+        behind this feature request.
+      placeholder: |
+        I experienced difficulties with...
+    validations:
+      required: false
+  - type: textarea
+    attributes:
+      label: Describe the solution you'd like.
+      description: A concise description of what you want to happen.
+      placeholder: |
+        I would like to have...
+    validations:
+      required: false
+  - type: textarea
+    attributes:
+      label: Describe alternatives you've considered.
+      description: Is there another approach to solve the problem?
+    validations:
+      required: false
+  - type: textarea
+    attributes:
+      label: Additional context.
+      description: |
+        Add any other context, screenshots, links to provide more context about the feature request.
+    validations:
+      required: false

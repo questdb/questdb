@@ -22,6 +22,5 @@
 #  limitations under the License.
 #
 ################################################################################
-
 . "$(dirname "$0")/_/husky.sh"
 cd ./ui && npx lint-staged

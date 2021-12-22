@@ -262,6 +262,8 @@ public final class Files {
 
     public native static long read(long fd, long address, long len, long offset);
 
+    public native static long readULong(long fd, long offset);
+
     public static boolean remove(LPSZ lpsz) {
         return remove(lpsz.address());
     }
