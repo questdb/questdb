@@ -1195,4 +1195,22 @@ public class MemoryCARWImplTest {
             }
         }
     }
+
+    @Test
+    public void testTruncate() {
+        final int pageSize = 256;
+        final int maxPages = 3;
+        final int sz = 256 * 3;
+        try (MemoryARW mem = new MemoryCARWImpl(pageSize, maxPages, MemoryTag.NATIVE_DEFAULT)) {
+            for (int i = 0; i < sz; i++) {
+                mem.putByte(i, (byte) i);
+            }
+            Assert.assertEquals(sz, mem.size());
+
+            mem.truncate();
+
+            Assert.assertEquals(pageSize, mem.size());
+            Assert.assertEquals(0, mem.getAppendOffset());
+        }
+    }
 }

@@ -127,39 +127,6 @@ public final class SqlParser {
         }
     }
 
-    static int parseGeoHashBits(int position, int start, CharSequence sizeStr) throws SqlException {
-        assert start >= 0;
-        if (sizeStr.length() - start < 2) {
-            throw SqlException.position(position)
-                    .put("invalid GEOHASH size, must be number followed by 'C' or 'B' character");
-        }
-        int size;
-        try {
-            size = Numbers.parseInt(sizeStr, start, sizeStr.length() - 1);
-        } catch (NumericException e) {
-            throw SqlException.position(position)
-                    .put("invalid GEOHASH size, must be number followed by 'C' or 'B' character");
-        }
-        switch (sizeStr.charAt(sizeStr.length() - 1)) {
-            case 'C':
-            case 'c':
-                size *= 5;
-                break;
-            case 'B':
-            case 'b':
-                break;
-            default:
-                throw SqlException.position(position)
-                        .put("invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits");
-        }
-        if (size < 1 || size > ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
-            throw SqlException.position(position)
-                    .put("invalid GEOHASH type precision range, mast be [1, 60] bits, provided=")
-                    .put(size);
-        }
-        return size;
-    }
-
     private void addConcatArgs(ObjList<ExpressionNode> args, ExpressionNode leaf) {
         if (leaf.type != ExpressionNode.FUNCTION || !isConcatFunction(leaf.token)) {
             args.add(leaf);
@@ -1716,7 +1683,7 @@ public final class SqlParser {
         }
         if (ColumnType.GEOHASH == type) {
             expectTok(lexer, '(');
-            final int bits = parseGeoHashBits(lexer.lastTokenPosition(), 0, expectLiteral(lexer).token);
+            final int bits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, expectLiteral(lexer).token);
             expectTok(lexer, ')');
             return ColumnType.getGeoHashTypeWithBits(bits);
         }
