@@ -122,6 +122,7 @@ public class AbstractCairoTest {
                 return super.getMaxUncommittedRows();
             }
 
+            @Override
             public int getSampleByIndexSearchPageSize() {
                 return sampleByIndexSearchPageSize > 0 ? sampleByIndexSearchPageSize : super.getSampleByIndexSearchPageSize();
             }
@@ -139,12 +140,21 @@ public class AbstractCairoTest {
                 return defaultMapType;
             }
 
+            @Override
             public long getWriterAsyncCommandBusyWaitTimeout() {
                 return writerAsyncCommandBusyWaitTimeout < 0 ? super.getWriterAsyncCommandBusyWaitTimeout() : writerAsyncCommandBusyWaitTimeout;
             }
 
+            @Override
             public long getWriterAsyncCommandMaxTimeout() {
                 return writerAsyncCommandMaxTimeout < 0 ? super.getWriterAsyncCommandMaxTimeout() : writerAsyncCommandMaxTimeout;
+            }
+
+            @Override
+            public int getSqlJitMode() {
+                // JIT compiler is a beta feature and thus is disabled by default,
+                // but we want to have it enabled in tests.
+                return SqlJitMode.JIT_MODE_ENABLED;
             }
         };
         engine = new CairoEngine(configuration);

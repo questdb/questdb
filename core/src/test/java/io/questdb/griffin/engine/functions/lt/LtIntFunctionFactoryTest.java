@@ -22,21 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.math;
+package io.questdb.griffin.engine.functions.lt;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.std.Numbers;
 import org.junit.Test;
 
-public class AddShortFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class LtIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
-    public void testSimple() throws SqlException {
-        call(45, 51).andAssert((short) 96);
+    public void testAll() throws SqlException {
+        call(1024, 4560).andAssert(true);
+        call(-13, -1).andAssert(true);
+        call(77, 77).andAssert(false);
+        call(Numbers.INT_NaN, 7).andAssert(false);
+        call(42, Numbers.INT_NaN).andAssert(false);
+        call(Numbers.INT_NaN, Numbers.INT_NaN).andAssert(false);
     }
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new AddShortFunctionFactory();
+        return new LtIntFunctionFactory();
     }
 }

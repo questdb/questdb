@@ -39,7 +39,6 @@ public class IntObjHashMapTest {
         for (int i = 0; i < N; i++) {
             CharSequence cs = rnd.nextChars(15);
             map.put(rnd.nextInt(), cs.toString());
-//            Assert.assertTrue(b);
         }
         Assert.assertEquals(N, map.size());
 

@@ -43,11 +43,11 @@ git to make build of development process Java-centric and simplified.
 
 ## Setup Java and JAVA_HOME
 
-JAVA_HOME is required by Maven. It is possible to have multiple version of Java
+JAVA*HOME is required by Maven. It is possible to have multiple version of Java
 on the same platform. Please set up JAVA_HOME to point to Java 11. Other
 versions of Java may not work. If you are new to Java please check that
 JAVA_HOME is pointing to the root of Java directory:
-`C:\Users\me\dev\jdk-11.0.8` and _not_ `C:\Users\me\dev\jdk-11.0.8\bin\java`.
+`C:\Users\me\dev\jdk-11.0.8` and \_not* `C:\Users\me\dev\jdk-11.0.8\bin\java`.
 
 Linux/OSX
 
@@ -83,12 +83,12 @@ C-libraries will have to be compiled for each platform separately. Cmake will
 also need JAVA_HOME to be set. The following commands will compile on Linux/OSX.
 
 ```text
-cmake
+cmake .
 make
 ```
 
-For C development we use Intellij CLion. This IDEA "understands" cmake files and
-will make compilation easier.
+For C/С++ development we use CLion. This IDE "understands" cmake files and makes
+compilation easier.
 
 The build will copy artifacts as follows:
 

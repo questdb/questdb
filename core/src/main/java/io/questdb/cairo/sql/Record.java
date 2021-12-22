@@ -178,7 +178,7 @@ public interface Record {
      * Get record by column index
      *
      * @param col numeric index of the column
-     * @return TODO
+     * @return record
      */
     default Record getRecord(int col) {
         throw new UnsupportedOperationException();

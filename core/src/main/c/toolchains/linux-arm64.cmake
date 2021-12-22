@@ -13,7 +13,7 @@ set(CMAKE_RANLIB                    ${ARM_TOOLCHAIN_PATH}aarch64-linux-gnu-ranli
 set(CMAKE_SIZE                      ${ARM_TOOLCHAIN_PATH}aarch64-linux-gnu-size${CMAKE_EXECUTABLE_SUFFIX} CACHE INTERNAL "")
 set(CMAKE_STRIP                     ${ARM_TOOLCHAIN_PATH}aarch64-linux-gnu-strip${CMAKE_EXECUTABLE_SUFFIX} CACHE INTERNAL "")
 
-set(CMAKE_CXX_FLAGS                 "${CMAKE_C_FLAGS} -fno-exceptions" CACHE INTERNAL "")
+set(CMAKE_CXX_FLAGS                 "${CMAKE_C_FLAGS} -fexceptions" CACHE INTERNAL "")
 
 set(CMAKE_C_FLAGS_DEBUG             "-Os -g" CACHE INTERNAL "")
 set(CMAKE_C_FLAGS_RELEASE           "-Os -DNDEBUG" CACHE INTERNAL "")
