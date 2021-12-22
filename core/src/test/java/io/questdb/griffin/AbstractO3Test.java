@@ -413,6 +413,17 @@ public class AbstractO3Test {
         );
 
         TestUtils.assertEquals(sink, sink2);
+
+        engine.releaseAllWriters();
+
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "x",
+                sink2
+        );
+
+        TestUtils.assertEquals(sink, sink2);
     }
 
     static void assertMaxTimestamp(

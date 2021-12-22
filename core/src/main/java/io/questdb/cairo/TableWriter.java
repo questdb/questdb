@@ -3067,8 +3067,8 @@ public class TableWriter implements Closeable {
                 o3IndexMem.jumpTo(o3LagRowCount * 8 + 8);
             }
 
-            o3DataMem.jumpTo(size);
             Vect.memmove(o3DataMem.addressOf(0), o3DataMem.addressOf(sourceOffset), size);
+            o3DataMem.jumpTo(size);
         } else {
             // Special case, designated timestamp column
             // Move values and set index to  0..o3LagRowCount

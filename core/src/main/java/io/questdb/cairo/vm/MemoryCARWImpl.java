@@ -58,6 +58,11 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         return result;
     }
 
+    @Override
+    public long getPageSize() {
+        return getExtendSegmentSize();
+    }
+
     /**
      * Updates append pointer with address for the given offset. All put* functions will be
      * appending from this offset onwards effectively overwriting data. Size of virtual memory remains
@@ -122,6 +127,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
             long baseLength = lim - pageAddress;
             Unsafe.free(pageAddress, baseLength, memoryTag);
             handleMemoryReleased();
+            size = 0;
         }
     }
 
@@ -142,6 +148,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         long appendOffset = getAppendOffset();
         this.pageAddress = this.appendAddress = address;
         this.lim = pageAddress + size;
+        this.size = size;
         jumpTo(appendOffset);
     }
 
@@ -189,6 +196,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         pageAddress = 0;
         lim = 0;
         appendAddress = 0;
+        size = 0;
     }
 
     protected long reallocateMemory(long currentBaseAddress, long currentSize, long newSize) {
@@ -199,7 +207,6 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     }
 
     protected final void setPageSize(long size) {
-        this.size = Numbers.ceilPow2(size);
-        this.sizeMsb = Numbers.msb(this.size);
+        this.sizeMsb = Numbers.msb(Numbers.ceilPow2(size));
     }
 }

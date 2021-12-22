@@ -986,65 +986,56 @@ public class O3Test extends AbstractO3Test {
 
     @Test
     public void testVarColumnPageBoundariesAppend() throws Exception {
-        // Windows page size is way to big to iterate
-        if (Os.type != Os.WINDOWS) {
-            dataAppendPageSize = (int) Files.PAGE_SIZE;
-            executeWithPool(0,
-                    (CairoEngine engine,
-                     SqlCompiler compiler,
-                     SqlExecutionContext sqlExecutionContext) -> {
-
-                        for (int i = 2; i < 2 * (dataAppendPageSize / 8 + 8); i++) {
-                            LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
-                            if (i > 2) {
-                                compiler.compile("drop table x", sqlExecutionContext);
-                            }
-                            testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, "12:00:01.000000Z");
-                        }
-                    });
-        }
+        dataAppendPageSize = (int) Files.PAGE_SIZE;
+        executeWithPool(0,
+                (CairoEngine engine,
+                 SqlCompiler compiler,
+                 SqlExecutionContext sqlExecutionContext) -> {
+                    int longsPerPage = dataAppendPageSize / 8;
+                    int hi = (longsPerPage + 8) * 2;
+                    int lo = (longsPerPage - 8) * 2;
+                    for (int i = lo; i < hi; i++) {
+                        LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
+                        testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, "12:00:01.000000Z");
+                        compiler.compile("drop table x", sqlExecutionContext);
+                    }
+                });
     }
 
     @Test
     public void testVarColumnPageBoundariesPrepend() throws Exception {
-        // Windows page size is way to big to iterate
-        if (Os.type != Os.WINDOWS) {
-            dataAppendPageSize = (int) Files.PAGE_SIZE;
-            executeWithPool(0,
-                    (CairoEngine engine,
-                     SqlCompiler compiler,
-                     SqlExecutionContext sqlExecutionContext) -> {
-
-                        for (int i = 2; i < 2 * (dataAppendPageSize / 8 + 8); i++) {
-                            LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
-                            if (i > 2) {
-                                compiler.compile("drop table x", sqlExecutionContext);
-                            }
-                            testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, "00:00:01.000000Z");
-                        }
-                    });
-        }
+        dataAppendPageSize = (int) Files.PAGE_SIZE;
+        executeWithPool(0,
+                (CairoEngine engine,
+                 SqlCompiler compiler,
+                 SqlExecutionContext sqlExecutionContext) -> {
+                    int longsPerPage = dataAppendPageSize / 8;
+                    int hi = (longsPerPage + 8) * 2;
+                    int lo = (longsPerPage - 8) * 2;
+                    for (int i = lo; i < hi; i++) {
+                        LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
+                        testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, "00:00:01.000000Z");
+                        compiler.compile("drop table x", sqlExecutionContext);
+                    }
+                });
     }
 
     @Test
     public void testVarColumnPageBoundariesInsertInTheMiddle() throws Exception {
-        // Windows page size is way to big to iterate
-        if (Os.type != Os.WINDOWS) {
-            dataAppendPageSize = (int) Files.PAGE_SIZE;
-            executeWithPool(0,
-                    (CairoEngine engine,
-                     SqlCompiler compiler,
-                     SqlExecutionContext sqlExecutionContext) -> {
-
-                        for (int i = 2; i < 2 * (dataAppendPageSize / 8 + 8); i++) {
-                            LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
-                            if (i > 2) {
-                                compiler.compile("drop table x", sqlExecutionContext);
-                            }
-                            testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, "11:00:00.002500Z");
-                        }
-                    });
-        }
+        dataAppendPageSize = (int) Files.PAGE_SIZE;
+        executeWithPool(0,
+                (CairoEngine engine,
+                 SqlCompiler compiler,
+                 SqlExecutionContext sqlExecutionContext) -> {
+                    int longsPerPage = dataAppendPageSize / 8;
+                    int hi = (longsPerPage + 8) * 2;
+                    int lo = (longsPerPage - 8) * 2;
+                    for (int i = lo; i < hi; i++) {
+                        LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
+                        testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, "11:00:00.002500Z");
+                        compiler.compile("drop table x", sqlExecutionContext);
+                    }
+                });
     }
 
     private void testVarColumnPageBoundaryIterationWithColumnTop(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, int i, String o3Timestamp) throws SqlException {
@@ -1311,6 +1302,10 @@ public class O3Test extends AbstractO3Test {
             pool2.halt();
 
             Assert.assertEquals(0, errorCount.get());
+            TestUtils.assertSqlCursors(compiler, executionContext, "z order by ts", "x", LOG);
+            TestUtils.assertSqlCursors(compiler, executionContext, "z order by ts", "x1", LOG);
+
+            engine.releaseAllWriters();
             TestUtils.assertSqlCursors(compiler, executionContext, "z order by ts", "x", LOG);
             TestUtils.assertSqlCursors(compiler, executionContext, "z order by ts", "x1", LOG);
         }
