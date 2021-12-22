@@ -53,7 +53,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
     private final SampleByFirstLastRecordCursor sampleByFirstLastRecordCursor;
     private DirectLongList rowIdOutAddress;
     private DirectLongList samplePeriodAddress;
-    private DirectLongList crossFrameRow;
+    private final LongList crossFrameRow;
     private int groupByTimestampIndex = -1;
 
     public SampleByFirstLastRecordCursorFactory(
@@ -74,7 +74,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         this.groupBySymbolColIndex = symbolFilter.getColumnIndex();
         this.queryToFrameColumnMapping = new int[columns.size()];
         this.firstLastIndexByCol = new int[columns.size()];
-        this.crossFrameRow = new DirectLongList(columns.size());
+        this.crossFrameRow = new LongList(columns.size());
         this.crossFrameRow.setPos(columns.size());
         this.groupByMetadata = groupByMetadata;
         this.timestampIndex = timestampIndex;
@@ -83,9 +83,9 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         this.pageSize = configPageSize < 16 ? Math.max(blockSize, 16) : configPageSize;
         this.maxSamplePeriodSize = this.pageSize * 4;
         int outSize = pageSize << ITEMS_PER_OUT_ARRAY_SHIFT;
-        this.rowIdOutAddress = new DirectLongList(outSize);
+        this.rowIdOutAddress = new DirectLongList(outSize, MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST);
         this.rowIdOutAddress.setPos(outSize);
-        this.samplePeriodAddress = new DirectLongList(pageSize);
+        this.samplePeriodAddress = new DirectLongList(pageSize, MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST);
         this.symbolFilter = symbolFilter;
         this.sampleByFirstLastRecordCursor = new SampleByFirstLastRecordCursor(
                 timestampSampler,
@@ -100,7 +100,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
     public void close() {
         base.close();
         rowIdOutAddress = Misc.free(rowIdOutAddress);
-        crossFrameRow = Misc.free(crossFrameRow);
         samplePeriodAddress = Misc.free(samplePeriodAddress);
     }
 
@@ -247,10 +246,10 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         @Override
         public boolean hasNext() {
             // This loop never returns last found sample by row.
-            // The reason is that last row last() value can be changed on next data frame pass.
+            // The reason is that last row() value can be changed on next data frame pass.
             // That's why the last row values are buffered
-            // (not only rowid stored but all the values needed) in crossFrameRow.
-            // Buffering values are unavoidable since rowids of last() and first() are from different data frames
+            // (not only row id stored but all the values needed) in crossFrameRow.
+            // Buffering values are unavoidable since row ids of last() and first() are from different data frames
             if (++currentRow < rowsFound - 1) {
                 record.of(currentRow);
                 return true;
@@ -454,7 +453,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                         // output rows filled the output buffers or
                         newState = STATE_OUT_BUFFER_FULL;
                     } else if (samplePeriodIndexOffset - prevSamplePeriodOffset == maxSamplePeriodSize - 1) {
-                        //  search came to the end of sample by by periods
+                        //  search came to the end of sample by periods
                         // re-fill periods and search again
                         newState = STATE_SEARCH;
                     } else {
@@ -527,19 +526,19 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             }
         }
 
-        private void saveFixedColToBufferWithLongAlignment(int index, DirectLongList saveBufferAddress, int columnType, long pageAddress, long rowId) {
+        private void saveFixedColToBufferWithLongAlignment(int index, LongList crossFrameRow, int columnType, long pageAddress, long rowId) {
             switch (ColumnType.pow2SizeOf(columnType)) {
                 case 3:
-                    saveBufferAddress.set(index, Unsafe.getUnsafe().getLong(pageAddress + (rowId << 3)));
+                    crossFrameRow.set(index, Unsafe.getUnsafe().getLong(pageAddress + (rowId << 3)));
                     break;
                 case 2:
-                    saveBufferAddress.set(index, Unsafe.getUnsafe().getInt(pageAddress + (rowId << 2)));
+                    crossFrameRow.set(index, Unsafe.getUnsafe().getInt(pageAddress + (rowId << 2)));
                     break;
                 case 1:
-                    saveBufferAddress.set(index, Unsafe.getUnsafe().getShort(pageAddress + (rowId << 1)));
+                    crossFrameRow.set(index, Unsafe.getUnsafe().getShort(pageAddress + (rowId << 1)));
                     break;
                 case 0:
-                    saveBufferAddress.set(index, Unsafe.getUnsafe().getByte(pageAddress + rowId));
+                    crossFrameRow.set(index, Unsafe.getUnsafe().getByte(pageAddress + rowId));
                     break;
 
                 default:
@@ -654,72 +653,70 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             }
 
             private class SampleByCrossRecord implements Record {
-                private final long address = crossFrameRow.getAddress();
-
                 @Override
                 public byte getByte(int col) {
-                    return Unsafe.getUnsafe().getByte(address + ((long) col << 3));
+                    return (byte) crossFrameRow.getQuick(col);
                 }
 
                 @Override
                 public byte getGeoByte(int col) {
-                    return Unsafe.getUnsafe().getByte(address + ((long) col << 3));
+                    return getByte(col);
                 }
 
                 @Override
                 public char getChar(int col) {
-                    return Unsafe.getUnsafe().getChar(address + ((long) col << 3));
+                    return (char) crossFrameRow.getQuick(col);
                 }
 
                 @Override
                 public double getDouble(int col) {
-                    return Unsafe.getUnsafe().getDouble(address + ((long) col << 3));
+                    return Double.longBitsToDouble(crossFrameRow.getQuick(col));
                 }
 
                 @Override
                 public float getFloat(int col) {
-                    return Unsafe.getUnsafe().getFloat(address + ((long) col << 3));
+                    return Float.intBitsToFloat((int) crossFrameRow.getQuick(col));
                 }
 
                 @Override
                 public int getInt(int col) {
-                    return Unsafe.getUnsafe().getInt(address + ((long) col << 3));
+                    return (int) crossFrameRow.getQuick(col);
                 }
 
                 @Override
                 public int getGeoInt(int col) {
-                    return Unsafe.getUnsafe().getInt(address + ((long) col << 3));
+                    return getInt(col);
                 }
 
                 @Override
                 public long getLong(int col) {
-                    return Unsafe.getUnsafe().getLong(address + ((long) col << 3));
+                    return crossFrameRow.getQuick(col);
                 }
 
                 @Override
                 public long getGeoLong(int col) {
-                    return Unsafe.getUnsafe().getLong(address + ((long) col << 3));
+                    return getLong(col);
                 }
 
                 @Override
                 public short getShort(int col) {
-                    return Unsafe.getUnsafe().getShort(address + ((long) col << 3));
+                    return (short) crossFrameRow.getQuick(col);
                 }
 
                 @Override
                 public short getGeoShort(int col) {
-                    return Unsafe.getUnsafe().getShort(address + ((long) col << 3));
+                    return getShort(col);
                 }
 
                 @Override
                 public CharSequence getSym(int col) {
-                    int symbolId = Unsafe.getUnsafe().getInt(address + ((long) col << 3));
+                    int symbolId = (int) crossFrameRow.getQuick(col);
                     return pageFrameCursor.getSymbolMapReader(queryToFrameColumnMapping[col]).valueBOf(symbolId);
                 }
 
                 @Override
                 public long getTimestamp(int col) {
-                    return Unsafe.getUnsafe().getLong(address + ((long) col << 3));
+                    return getLong(col);
                 }
             }
 

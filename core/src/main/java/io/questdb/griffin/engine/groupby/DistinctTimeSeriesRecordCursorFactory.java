@@ -121,7 +121,7 @@ public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactor
         @Override
         public void close() {
             Misc.free(baseCursor);
-            dataMap.clear();
+            dataMap.restoreInitialCapacity();
         }
 
         @Override
