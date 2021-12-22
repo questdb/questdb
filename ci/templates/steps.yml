@@ -12,7 +12,9 @@ steps:
       scriptPath: $(Build.SourcesDirectory)/ci/coverage.sh
       args: $(System.PullRequest.PullRequestNumber)
       failOnStandardError: true
-    condition: and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')), not(eq(variables['System.PullRequest.PullRequestId'], '')) )
+    condition:
+      and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')),
+      not(eq(variables['System.PullRequest.PullRequestId'], '')) )
   - task: Cache@2
     inputs:
       key: '"questdb_main" | "maven"'
@@ -23,7 +25,9 @@ steps:
     inputs:
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
-      options: "compile -DskipTests -P build-web-console,use-built-in-nodejs -Dhttp.keepAlive=false"
+      options:
+        "compile -DskipTests -P build-web-console,use-built-in-nodejs
+        -Dhttp.keepAlive=false"
       jdkVersionOption: $(jdk)
     condition: eq(variables['SOURCE_CODE_CHANGED'], 'false')
   - task: Maven@3
@@ -32,7 +36,9 @@ steps:
       mavenPomFile: "core/pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "test"
-      options: "--batch-mode --quiet -P build-web-console,use-built-in-nodejs -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
+      options:
+        "--batch-mode --quiet -P build-web-console,use-built-in-nodejs
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
       jdkVersionOption: $(jdk)
       codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
       codeCoverageClassFilter: "$(COVERAGE_DIFF)"
@@ -51,7 +57,9 @@ steps:
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "clean test"
-      options: "--batch-mode --quiet -P build-web-console,use-built-in-nodejs -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
+      options:
+        "--batch-mode --quiet -P build-web-console,use-built-in-nodejs
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
       jdkVersionOption: $(jdk)
     timeoutInMinutes: 55
     condition: |
@@ -64,7 +72,13 @@ steps:
         ),
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
-  - bash: if [ "$CODE_COVERAGE_TOOL_OPTION" == "JaCoCo" ] && [ "$IF_FORK" != "YES" ]; then $JAVA_HOME_11_X64/bin/java -jar $SOURCES/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar -c $SOURCES/$COVERAGE_REPORT_PATH --github-token $SYSTEM_ACCESSTOKEN --repo "questdb/questdb" --pr $PR_ID -t $DIFF_CONVER_THRESHOLD_PCT -type jacoco; fi
+  - bash:
+      if [ "$CODE_COVERAGE_TOOL_OPTION" == "JaCoCo" ] && [ "$IF_FORK" != "YES"
+      ]; then $JAVA_HOME_11_X64/bin/java -jar
+      $SOURCES/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar -c
+      $SOURCES/$COVERAGE_REPORT_PATH --github-token $SYSTEM_ACCESSTOKEN --repo
+      "questdb/questdb" --pr $PR_ID -t $DIFF_CONVER_THRESHOLD_PCT -type jacoco;
+      fi
     displayName: "Diff coverage PR report"
     env:
       CODE_COVERAGE_TOOL_OPTION: "$(CODE_COVERAGE_TOOL_OPTION)"
