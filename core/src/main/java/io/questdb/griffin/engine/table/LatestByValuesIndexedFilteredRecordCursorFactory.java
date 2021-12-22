@@ -36,7 +36,6 @@ import org.jetbrains.annotations.Nullable;
 public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDeferredTreeSetRecordCursorFactory {
 
     private final Function filter;
-    private final DirectLongList rowidList = new DirectLongList(1024 * 1024);
 
     public LatestByValuesIndexedFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -52,7 +51,7 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
         if (filter != null) {
             this.cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, filter, columnIndexes);
         } else {
-            this.cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, rowidList, columnIndexes);
+            this.cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, rows, columnIndexes);
         }
         this.filter = filter;
     }
@@ -63,7 +62,6 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
         if (filter != null) {
             filter.close();
         }
-        Misc.free(rowidList);
     }
 
     @Override
