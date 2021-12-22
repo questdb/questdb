@@ -43,10 +43,11 @@ git to make build of development process Java-centric and simplified.
 
 ## Setup Java and JAVA_HOME
 
-JAVA_HOME is required by Maven. It is possible to have multiple version of Java on the same platform. Please
-set up JAVA_HOME to point to Java 11. Other versions of Java may not work. If you are new to Java please
-check that JAVA_HOME is pointing to the root of Java directory: `C:\Users\me\dev\jdk-11.0.8` and *not* `C:\Users\me\dev\jdk-11.0.8\bin\java`.
-
+JAVA*HOME is required by Maven. It is possible to have multiple version of Java
+on the same platform. Please set up JAVA_HOME to point to Java 11. Other
+versions of Java may not work. If you are new to Java please check that
+JAVA_HOME is pointing to the root of Java directory:
+`C:\Users\me\dev\jdk-11.0.8` and \_not* `C:\Users\me\dev\jdk-11.0.8\bin\java`.
 
 Linux/OSX
 
@@ -78,15 +79,16 @@ The web console will available at [localhost:9000](http://localhost:9000).
 
 ## Compiling C-libraries
 
-C-libraries will have to be compiled for each platform separately. Cmake will also need JAVA_HOME to be set. The following
-commands will compile on Linux/OSX.
+C-libraries will have to be compiled for each platform separately. Cmake will
+also need JAVA_HOME to be set. The following commands will compile on Linux/OSX.
 
 ```text
 cmake .
 make
 ```
 
-For C/C++ development we use CLion. This IDE "understands" cmake files and will make compilation easier.
+For C/С++ development we use CLion. This IDE "understands" cmake files and makes
+compilation easier.
 
 The build will copy artifacts as follows:
 
@@ -109,8 +111,9 @@ rebuild the artifacts and restart QuestDB. Instead, we use `webpack-dev-server`:
 The web console should now be accessible at
 [localhost:9999](http://localhost:9999)
 
-Development server running on port 9999 will monitor for web console file changes and will rebuild/deploy on the fly. The 
-web console front end will be connecting to QuestDB REST API on port 9000. Keep QuestDB server running. 
+Development server running on port 9999 will monitor for web console file
+changes and will rebuild/deploy on the fly. The web console front end will be
+connecting to QuestDB REST API on port 9000. Keep QuestDB server running.
 
 ## Building web console bundle into questdb.jar
 
@@ -137,9 +140,9 @@ removed.
 # Dependencies
 
 QuestDB does not have dependencies. This may sound unorthodox but in reality we
-try not to reinvent the wheel but rather than using libraries we implement algorithms on first principles
-to ensure perfect fit with existing code. With that in mind
-we expect contributions that do not add third-party dependencies.
+try not to reinvent the wheel but rather than using libraries we implement
+algorithms on first principles to ensure perfect fit with existing code. With
+that in mind we expect contributions that do not add third-party dependencies.
 
 # Allocations, "new" operator and garbage collection
 

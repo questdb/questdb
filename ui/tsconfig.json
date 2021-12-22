@@ -16,7 +16,7 @@
     "strict": true,
     "target": "es5",
     "baseUrl": "./src",
-    "rootDir": "./src",
+    "rootDir": "./src"
   },
   "include": ["types", "src"]
 }

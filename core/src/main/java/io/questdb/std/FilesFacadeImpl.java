@@ -224,6 +224,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public long readULong(long fd, long offset) {
+        return Files.readULong(fd, offset);
+    }
+
+    @Override
     public boolean remove(LPSZ name) {
         return Files.remove(name);
     }

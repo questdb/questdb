@@ -1,21 +1,35 @@
 <div align="center">
-  <img alt="QuestDB Logo" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/logo-readme.png" width="305px"/>
+  <img
+    alt="QuestDB Logo"
+    src="https://raw.githubusercontent.com/questdb/questdb/master/.github/logo-readme.png"
+    width="305px"
+  />
 </div>
 <p>&nbsp;</p>
 
 <p align="center">
   <a href="https://slack.questdb.io">
-    <img src="https://slack.questdb.io/badge.svg" alt="QuestDB community Slack channel"/>
+    <img
+      src="https://slack.questdb.io/badge.svg"
+      alt="QuestDB community Slack channel"
+    />
   </a>
   <a href="#contribute">
-    <img src="https://img.shields.io/github/all-contributors/questdb/questdb" alt="QuestDB open source contributors"/>
+    <img
+      src="https://img.shields.io/github/all-contributors/questdb/questdb"
+      alt="QuestDB open source contributors"
+    />
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
-    <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB on Apache Maven"/>
+    <img
+      src="https://img.shields.io/maven-central/v/org.questdb/questdb"
+      alt="QuestDB on Apache Maven"
+    />
   </a>
 </p>
 
-简体中文 | [English](https://github.com/questdb/questdb) | [العربية](README.ar-dz.md)
+简体中文 | [English](https://github.com/questdb/questdb) |
+[العربية](README.ar-dz.md)
 
 # QuestDB
 
@@ -29,7 +43,11 @@ C++从头开始构建的，没有任何依赖性，并且 100%没有垃圾回收
 
 <div align="center">
   <a href="https://demo.questdb.io">
-    <img alt="QuestDB Web Console showing multiple SQL statements and visualizing a query as a chart" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="600" />
+    <img
+      alt="QuestDB Web Console showing multiple SQL statements and visualizing a query as a chart"
+      src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png"
+      width="600"
+    />
   </a>
 </div>
 
@@ -72,7 +90,10 @@ brew services start questdb
 
 <div align="center">
   <a href="https://questdb.io/time-series-benchmark-suite/">
-    <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src="https://raw.githubusercontent.com/questdb/questdb/master/.github/tsbs-results.png"/>
+    <img
+      alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB."
+      src="https://raw.githubusercontent.com/questdb/questdb/master/.github/tsbs-results.png"
+    />
   </a>
 </div>
 
