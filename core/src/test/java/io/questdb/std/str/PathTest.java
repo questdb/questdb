@@ -124,4 +124,22 @@ public class PathTest {
         path2.of(path2);
         TestUtils.assertEquals(path, path2);
     }
+
+    @Test
+    public void testSeekZ() {
+        try (Path path = new Path()) {
+            path.of("12345656788990").$();
+
+            Assert.assertEquals(14, path.length());
+
+            String inject = "hello\0";
+            Chars.asciiStrCpy(inject, 0, inject.length(), path.address());
+
+            Assert.assertSame(path, path.seekZ());
+            TestUtils.assertEquals("hello", path);
+
+            path.chop$().concat("next");
+            TestUtils.assertEquals("hello" + Files.SEPARATOR  + "next", path);
+        }
+    }
 }
