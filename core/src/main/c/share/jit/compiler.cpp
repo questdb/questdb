@@ -301,6 +301,7 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
         function.end_fn();
         c.finalize();
         gGlobalContext.rt.add(&fn, &code);
+        fflush(logger.file());
     } catch (JitException &ex) {
         fillJitErrorObject(e, error, ex.err, ex.what());
         return 0;
