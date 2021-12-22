@@ -77,4 +77,9 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
+
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
 }

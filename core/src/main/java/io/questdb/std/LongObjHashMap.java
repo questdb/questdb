@@ -72,6 +72,20 @@ public class LongObjHashMap<V> extends AbstractLongHashSet {
         return values[-index - 1];
     }
 
+    public void forEach(LongObjConsumer<V> action) {
+        for (int i = 0; i < values.length; i++) {
+            if (keys[i] == noEntryKeyValue) {
+                continue;
+            }
+            action.accept(keys[i], values[i]);
+        }
+    }
+
+    @FunctionalInterface
+    public interface LongObjConsumer<V> {
+        void accept(long key, V value);
+    }
+
     @Override
     protected void erase(int index) {
         keys[index] = this.noEntryKeyValue;

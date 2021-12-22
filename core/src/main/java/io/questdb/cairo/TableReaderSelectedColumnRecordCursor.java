@@ -41,7 +41,7 @@ public class TableReaderSelectedColumnRecordCursor implements RecordCursor {
     private int partitionLimit;
     private long maxRecordIndex = -1;
     private int partitionLo;
-    private long recodLo;
+    private long recordLo;
     private int partitionHi;
     private long recordHi;
 
@@ -93,7 +93,7 @@ public class TableReaderSelectedColumnRecordCursor implements RecordCursor {
         } else {
             partitionLimit = Math.min(partitionHi + 1, reader.getPartitionCount());
         }
-        maxRecordIndex = recodLo - 1;
+        maxRecordIndex = recordLo - 1;
         recordA.jumpTo(0, maxRecordIndex);
     }
 
@@ -104,7 +104,7 @@ public class TableReaderSelectedColumnRecordCursor implements RecordCursor {
 
     public void of(TableReader reader) {
         this.partitionLo = 0;
-        this.recodLo = 0;
+        this.recordLo = 0;
         this.partitionHi = reader.getPartitionCount();
         // because we set partitionHi to partition count
         // the recordHi value becomes irrelevant - partition index never gets to partitionCount.
@@ -115,7 +115,7 @@ public class TableReaderSelectedColumnRecordCursor implements RecordCursor {
     public void of(TableReader reader, int partitionLo, long recordLo, int partitionHi, long recordHi) {
         this.partitionLo = partitionLo;
         this.partitionHi = partitionHi;
-        this.recodLo = recordLo;
+        this.recordLo = recordLo;
         this.recordHi = recordHi;
         of0(reader);
     }

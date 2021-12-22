@@ -29,7 +29,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class TableColumnMetadata {
     private final int type;
-    private long hash;
+    private final long hash;
     private final boolean symbolTableStatic;
     @Nullable
     private final RecordMetadata metadata;
