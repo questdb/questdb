@@ -220,6 +220,11 @@ public class CompactMap implements Map {
         return key;
     }
 
+    @Override
+    public void restoreInitialCapacity() {
+        // no op
+    }
+
     public long getKeyCapacity() {
         return keyCapacity;
     }

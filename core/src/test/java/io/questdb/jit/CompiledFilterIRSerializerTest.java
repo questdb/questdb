@@ -61,7 +61,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @BeforeClass
     public static void setUpStatic2() {
         bindVarFunctions = new ObjList<>();
-        irMemory = Vm.getCARWInstance(1024, 1, MemoryTag.NATIVE_DEFAULT);
+        irMemory = Vm.getCARWInstance(1024, 1, MemoryTag.NATIVE_JIT);
         serializer = new CompiledFilterIRSerializer();
     }
 

@@ -45,9 +45,12 @@ public class FastMap implements Map {
     private final FastMapRecord record;
     private final int valueColumnCount;
     private final HashFunction hashFunction;
-    private long capacity;
     private final int keyBlockOffset;
     private final int keyDataOffset;
+    private final int maxResizes;
+    private final int initialKeyCapacity;
+    private final int initialPageSize;
+    private long capacity;
     private DirectLongList offsets;
     private long kStart;
     private long kLimit;
@@ -57,48 +60,49 @@ public class FastMap implements Map {
     private int size = 0;
     private int mask;
     private int nResizes;
-    private final int maxResizes;
 
-    public FastMap(int pageSize,
-                   @Transient @NotNull ColumnTypes keyTypes,
-                   int keyCapacity,
-                   double loadFactor,
-                   int maxResizes
+    public FastMap(
+            int pageSize,
+            @Transient @NotNull ColumnTypes keyTypes,
+            int keyCapacity,
+            double loadFactor,
+            int maxResizes
     ) {
         this(pageSize, keyTypes, null, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes);
     }
 
-    public FastMap(int pageSize,
-                   @Transient @NotNull ColumnTypes keyTypes,
-                   @Transient @Nullable ColumnTypes valueTypes,
-                   int keyCapacity,
-                   double loadFactor,
-                   int maxResizes
+    public FastMap(
+            int pageSize,
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @Nullable ColumnTypes valueTypes,
+            int keyCapacity,
+            double loadFactor,
+            int maxResizes
     ) {
         this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes);
     }
 
-    FastMap(int pageSize,
+    FastMap(
+            int pageSize,
             @Transient ColumnTypes keyTypes,
             @Transient ColumnTypes valueTypes,
             int keyCapacity,
             double loadFactor,
             HashFunction hashFunction,
             int maxResizes
-
     ) {
         assert pageSize > 3;
         assert loadFactor > 0 && loadFactor < 1d;
-
+        this.initialKeyCapacity = keyCapacity;
+        this.initialPageSize = pageSize;
         this.loadFactor = loadFactor;
         this.kStart = kPos = Unsafe.malloc(this.capacity = pageSize, MemoryTag.NATIVE_FAST_MAP);
         this.kLimit = kStart + pageSize;
-
         this.keyCapacity = (int) (keyCapacity / loadFactor);
         this.keyCapacity = this.keyCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(this.keyCapacity);
         this.mask = this.keyCapacity - 1;
         this.free = (int) (this.keyCapacity * loadFactor);
-        this.offsets = new DirectLongList(this.keyCapacity);
+        this.offsets = new DirectLongList(this.keyCapacity, MemoryTag.NATIVE_FAST_MAP_LONG_LIST);
         this.offsets.setPos(this.keyCapacity);
         this.offsets.zero(-1);
         this.hashFunction = hashFunction;
@@ -166,6 +170,69 @@ public class FastMap implements Map {
         this.cursor = new FastMapCursor(record, this);
     }
 
+    @Override
+    public void clear() {
+        kPos = kStart;
+        free = (int) (keyCapacity * loadFactor);
+        size = 0;
+        offsets.zero(-1);
+    }
+
+    @Override
+    public final void close() {
+        offsets = Misc.free(offsets);
+        if (kStart != 0) {
+            Unsafe.free(kStart, capacity, MemoryTag.NATIVE_FAST_MAP);
+            kStart = 0;
+        }
+    }
+
+    @Override
+    public RecordCursor getCursor() {
+        return cursor.init(kStart, size);
+    }
+
+    @Override
+    public MapRecord getRecord() {
+        return record;
+    }
+
+    @Override
+    public long size() {
+        return size;
+    }
+
+    @Override
+    public MapValue valueAt(long address) {
+        return valueOf(address, false, this.value);
+    }
+
+    @Override
+    public MapKey withKey() {
+        return key.init();
+    }
+
+    public void restoreInitialCapacity() {
+        this.kStart = kPos = Unsafe.realloc(this.kStart, this.kLimit - this.kStart, this.capacity = initialPageSize, MemoryTag.NATIVE_FAST_MAP);
+        this.kLimit = kStart + this.initialPageSize;
+        this.keyCapacity = (int) (this.initialKeyCapacity / loadFactor);
+        this.keyCapacity = this.keyCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(this.keyCapacity);
+        this.mask = this.keyCapacity - 1;
+        this.free = (int) (this.keyCapacity * loadFactor);
+        this.offsets.extend(this.keyCapacity);
+        this.offsets.setPos(this.keyCapacity);
+        this.offsets.zero(-1);
+        this.nResizes = 0;
+    }
+
+    public long getAreaSize() {
+        return kLimit - kStart;
+    }
+
+    public int getKeyCapacity() {
+        return keyCapacity;
+    }
+
     private static boolean eqMixed(long a, long b, long lim) {
         while (b < lim - 8) {
             if (Unsafe.getUnsafe().getLong(a) != Unsafe.getUnsafe().getLong(b)) {
@@ -205,43 +272,6 @@ public class FastMap implements Map {
         return true;
     }
 
-    @Override
-    public void clear() {
-        kPos = kStart;
-        free = (int) (keyCapacity * loadFactor);
-        size = 0;
-        offsets.zero(-1);
-    }
-
-    @Override
-    public final void close() {
-        offsets = Misc.free(offsets);
-        if (kStart != 0) {
-            Unsafe.free(kStart, capacity, MemoryTag.NATIVE_FAST_MAP);
-            kStart = 0;
-        }
-    }
-
-    @Override
-    public RecordCursor getCursor() {
-        return cursor.init(kStart, size);
-    }
-
-    @Override
-    public MapRecord getRecord() {
-        return record;
-    }
-
-    @Override
-    public long size() {
-        return size;
-    }
-
-    @Override
-    public MapValue valueAt(long address) {
-        return valueOf(address, false, this.value);
-    }
-
     private FastMapValue asNew(Key keyWriter, int index, FastMapValue value) {
         kPos = keyWriter.appendAddress;
         offsets.set(index, keyWriter.startAddress - kStart);
@@ -250,21 +280,6 @@ public class FastMap implements Map {
         }
         size++;
         return valueOf(keyWriter.startAddress, true, value);
-    }
-
-    @Override
-    public MapKey withKey() {
-        return key.init();
-    }
-
-    private FastMapValue probe0(Key keyWriter, int index, FastMapValue value) {
-        long offset;
-        while ((offset = offsets.get(index = (++index & mask))) != -1) {
-            if (eq(keyWriter, offset)) {
-                return valueOf(kStart + offset, false, value);
-            }
-        }
-        return asNew(keyWriter, index, value);
     }
 
     private boolean eq(Key keyWriter, long offset) {
@@ -306,6 +321,16 @@ public class FastMap implements Map {
         return hashFunction.hash(key.startAddress + keyDataOffset, key.len - keyDataOffset) & mask;
     }
 
+    private FastMapValue probe0(Key keyWriter, int index, FastMapValue value) {
+        long offset;
+        while ((offset = offsets.get(index = (++index & mask))) != -1) {
+            if (eq(keyWriter, offset)) {
+                return valueOf(kStart + offset, false, value);
+            }
+        }
+        return asNew(keyWriter, index, value);
+    }
+
     private FastMapValue probeReadOnly(Key keyWriter, int index, FastMapValue value) {
         long offset;
         while ((offset = offsets.get(index = (++index & mask))) != -1) {
@@ -314,6 +339,30 @@ public class FastMap implements Map {
             }
         }
         return null;
+    }
+
+    private void rehash() {
+        int capacity = keyCapacity << 1;
+        mask = capacity - 1;
+        DirectLongList pointers = new DirectLongList(capacity, MemoryTag.NATIVE_FAST_MAP_LONG_LIST);
+        pointers.setPos(capacity);
+        pointers.zero(-1);
+
+        for (long i = 0, k = this.offsets.size(); i < k; i++) {
+            long offset = this.offsets.get(i);
+            if (offset == -1) {
+                continue;
+            }
+            int index = hashFunction.hash(kStart + offset + keyDataOffset, Unsafe.getUnsafe().getInt(kStart + offset) - keyDataOffset) & mask;
+            while (pointers.get(index) != -1) {
+                index = (index + 1) & mask;
+            }
+            pointers.set(index, offset);
+        }
+        this.offsets.close();
+        this.offsets = pointers;
+        this.free += (capacity - keyCapacity) * loadFactor;
+        this.keyCapacity = capacity;
     }
 
     private void resize(int size) {
@@ -344,30 +393,6 @@ public class FastMap implements Map {
         } else {
             throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in FastMap");
         }
-    }
-
-    private void rehash() {
-        int capacity = keyCapacity << 1;
-        mask = capacity - 1;
-        DirectLongList pointers = new DirectLongList(capacity);
-        pointers.setPos(capacity);
-        pointers.zero(-1);
-
-        for (long i = 0, k = this.offsets.size(); i < k; i++) {
-            long offset = this.offsets.get(i);
-            if (offset == -1) {
-                continue;
-            }
-            int index = hashFunction.hash(kStart + offset + keyDataOffset, Unsafe.getUnsafe().getInt(kStart + offset) - keyDataOffset) & mask;
-            while (pointers.get(index) != -1) {
-                index = (index + 1) & mask;
-            }
-            pointers.set(index, offset);
-        }
-        this.offsets.close();
-        this.offsets = pointers;
-        this.free += (capacity - keyCapacity) * loadFactor;
-        this.keyCapacity = capacity;
     }
 
     private FastMapValue valueOf(long address, boolean _new, FastMapValue value) {
@@ -413,36 +438,6 @@ public class FastMap implements Map {
         @Override
         public MapValue findValue3() {
             return findValue(value3);
-        }
-
-        private MapValue createValue(FastMapValue value) {
-            commit();
-            // calculate hash remembering "key" structure
-            // [ len | value block | key offset block | key data block ]
-            int index = keyIndex();
-            long offset = offsets.get(index);
-
-            if (offset == -1) {
-                return asNew(this, index, value);
-            } else if (eq(this, offset)) {
-                return valueOf(kStart + offset, false, value);
-            } else {
-                return probe0(this, index, value);
-            }
-        }
-
-        private MapValue findValue(FastMapValue value) {
-            commit();
-            int index = keyIndex();
-            long offset = offsets.get(index);
-
-            if (offset == -1) {
-                return null;
-            } else if (eq(this, offset)) {
-                return valueOf(kStart + offset, false, value);
-            } else {
-                return probeReadOnly(this, index, value);
-            }
         }
 
         @Override
@@ -541,13 +536,6 @@ public class FastMap implements Map {
         }
 
         @Override
-        public void skip(int bytes) {
-            checkSize(bytes);
-            appendAddress += bytes;
-            writeOffset();
-        }
-
-        @Override
         public void putShort(short value) {
             checkSize(2);
             Unsafe.getUnsafe().putShort(appendAddress, value);
@@ -636,6 +624,13 @@ public class FastMap implements Map {
             putLong(value);
         }
 
+        @Override
+        public void skip(int bytes) {
+            checkSize(bytes);
+            appendAddress += bytes;
+            writeOffset();
+        }
+
         private void checkSize(int size) {
             if (appendAddress + size > kLimit) {
                 resize(size);
@@ -644,6 +639,36 @@ public class FastMap implements Map {
 
         private void commit() {
             Unsafe.getUnsafe().putInt(startAddress, len = (int) (appendAddress - startAddress));
+        }
+
+        private MapValue createValue(FastMapValue value) {
+            commit();
+            // calculate hash remembering "key" structure
+            // [ len | value block | key offset block | key data block ]
+            int index = keyIndex();
+            long offset = offsets.get(index);
+
+            if (offset == -1) {
+                return asNew(this, index, value);
+            } else if (eq(this, offset)) {
+                return valueOf(kStart + offset, false, value);
+            } else {
+                return probe0(this, index, value);
+            }
+        }
+
+        private MapValue findValue(FastMapValue value) {
+            commit();
+            int index = keyIndex();
+            long offset = offsets.get(index);
+
+            if (offset == -1) {
+                return null;
+            } else if (eq(this, offset)) {
+                return valueOf(kStart + offset, false, value);
+            } else {
+                return probeReadOnly(this, index, value);
+            }
         }
 
         private void putNull() {

@@ -65,9 +65,9 @@ public class CompiledFilterRecordCursorFactory implements RecordCursorFactory {
         this.cursor = new CompiledFilterRecordCursor(configuration);
         this.bindVarFunctions = bindVarFunctions;
         this.bindVarMemory = Vm.getCARWInstance(configuration.getSqlJitBindVarsMemoryPageSize(),
-                configuration.getSqlJitBindVarsMemoryMaxPages(), MemoryTag.NATIVE_DEFAULT);
-        this.rows = new DirectLongList(1024);
-        this.columns = new DirectLongList(16);
+                configuration.getSqlJitBindVarsMemoryMaxPages(), MemoryTag.NATIVE_JIT);
+        this.rows = new DirectLongList(1024, MemoryTag.NATIVE_JIT_LONG_LIST);
+        this.columns = new DirectLongList(32, MemoryTag.NATIVE_JIT_LONG_LIST);
     }
 
     @Override

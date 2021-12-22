@@ -113,6 +113,7 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
         @Override
         public void close() {
             Misc.free(baseCursor);
+            dataMap.restoreInitialCapacity();
         }
 
         @Override
