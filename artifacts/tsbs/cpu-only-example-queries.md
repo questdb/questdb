@@ -1,7 +1,9 @@
 # CPU-only queries
 
-For context see [the accompanying TSBS QuestDB guide](https://github.com/questdb/questdb/blob/master/artifacts/tsbs/README.md).
-The dataset used to generate the queries was created with commands (for `high-cpu-1`) as follows:
+For context see
+[the accompanying TSBS QuestDB guide](https://github.com/questdb/questdb/blob/master/artifacts/tsbs/README.md).
+The dataset used to generate the queries was created with commands (for
+`high-cpu-1`) as follows:
 
 ```bash
 ~/tmp/go/bin/tsbs_generate_data --use-case="cpu-only" --seed=123 --scale=4000 \

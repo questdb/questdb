@@ -2,13 +2,14 @@
 
 ### TxSerializer
 
-Serializes binary `_txn` file to / from readable JSON format. Primary usage to investigate storage issues
+Serializes binary `_txn` file to / from readable JSON format. Primary usage to
+investigate storage issues
 
-Usage 
+Usage
 
 ```
-io.questdb.cliutil.TxSerializer -d <json_path> | -s <json_path> <txn_path> 
+io.questdb.cliutil.TxSerializer -d <json_path> | -s <json_path> <txn_path>
 ```
 
 - `-d` option prints contents of `_txn` file to std output in JSON format
-- `-s` option transforms existing JSON file into binary _txn format
+- `-s` option transforms existing JSON file into binary \_txn format

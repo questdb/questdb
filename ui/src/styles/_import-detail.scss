@@ -24,7 +24,8 @@
 
 $stats-height: 40px;
 
-#js-import-editor, #js-import-error {
+#js-import-editor,
+#js-import-error {
   display: none;
 }
 
@@ -49,7 +50,9 @@ $stats-transition: top 0.25s ease-in-out;
   border-radius: $border-radius;
 }
 
-.import-stats, .import-imported-table, .import-imported-stats {
+.import-stats,
+.import-imported-table,
+.import-imported-stats {
   height: $stats-height;
 }
 
@@ -59,7 +62,8 @@ $stats-transition: top 0.25s ease-in-out;
   padding: 0;
 }
 
-.import-imported, .import-rejected {
+.import-imported,
+.import-rejected {
   height: 8px;
   cursor: pointer;
 }

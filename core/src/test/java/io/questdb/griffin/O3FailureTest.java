@@ -429,12 +429,12 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
-            public long read(long fd, long address, long len, long offset) {
+            public long readULong(long fd, long offset) {
                 if (fd == theFd) {
                     theFd = 0;
-                    return 5;
+                    return -5;
                 }
-                return super.read(fd, address, len, offset);
+                return super.readULong(fd, offset);
             }
         });
     }
@@ -457,12 +457,12 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
-            public long read(long fd, long address, long len, long offset) {
+            public long readULong(long fd, long offset) {
                 if (fd == theFd) {
                     theFd = 0;
-                    return 5;
+                    return -5;
                 }
-                return super.read(fd, address, len, offset);
+                return super.readULong(fd, offset);
             }
         });
     }
