@@ -45,7 +45,9 @@ stages:
           - bash: |
               echo "##vso[task.setvariable variable=OS_MAPPING]$(Linux-X64)"
               sudo apt-get install -y nasm g++-10-aarch64-linux-gnu gcc-10-aarch64-linux-gnu gcc-mingw-w64 g++-mingw-w64
-            condition: and(eq(variables['Agent.OS'], 'Linux'), eq(variables['Agent.OSArchitecture'], 'x64'))
+            condition:
+              and(eq(variables['Agent.OS'], 'Linux'),
+              eq(variables['Agent.OSArchitecture'], 'x64'))
             displayName: "Install NASM for Linux x64"
           - bash: |
               echo "##vso[task.setvariable variable=OS_MAPPING]$(Darwin-X64)"
@@ -56,7 +58,9 @@ stages:
           - task: CMake@1
             inputs:
               workingDirectory: core
-              cmakeArgs: -G "$(generator)" -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
+              cmakeArgs:
+                -G "$(generator)" -DCMAKE_BUILD_TYPE=Release -B
+                cmake-build-release -S.
             displayName: "Genearting Makefiles for: $(generator)"
 
           - task: CMake@1
@@ -65,11 +69,13 @@ stages:
               cmakeArgs: --build cmake-build-release --config Release
             displayName: "Build source-code $(Agent.OS)"
 
-
           - task: CMake@1
             inputs:
               workingDirectory: core
-              cmakeArgs: -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/linux-arm64.cmake -DCMAKE_EXECUTABLE_SUFFIX=-10 -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release -B cmake-build-release-arm64
+              cmakeArgs:
+                -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/linux-arm64.cmake
+                -DCMAKE_EXECUTABLE_SUFFIX=-10 -DCMAKE_CROSSCOMPILING=True
+                -DCMAKE_BUILD_TYPE=Release -B cmake-build-release-arm64
             displayName: "CMAKE Linux arm"
             condition: eq(variables['Agent.OS'], 'Linux')
 
@@ -80,14 +86,20 @@ stages:
             displayName: "Build source-code $(Agent.OS) for ARM Linux"
             condition: eq(variables['Agent.OS'], 'Linux')
 
-          - bash: curl https://raw.githubusercontent.com/AdoptOpenJDK/openjdk-jdk11/master/src/java.base/windows/native/include/jni_md.h > $JAVA_HOME/include/jni_md.h
+          - bash:
+              curl
+              https://raw.githubusercontent.com/AdoptOpenJDK/openjdk-jdk11/master/src/java.base/windows/native/include/jni_md.h
+              > $JAVA_HOME/include/jni_md.h
             condition: eq(variables['Agent.OS'], 'Linux')
             displayName: "Download windows jni_md.h from JDK 11"
 
           - task: CMake@1
             inputs:
               workingDirectory: core
-              cmakeArgs: -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/windows-x86_64.cmake -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release -B cmake-build-release-win64
+              cmakeArgs:
+                -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/windows-x86_64.cmake
+                -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release -B
+                cmake-build-release-win64
             displayName: "CMake for Windows"
             condition: eq(variables['Agent.OS'], 'Linux')
 
@@ -97,7 +109,6 @@ stages:
               cmakeArgs: --build cmake-build-release-win64 --config Release
             displayName: "Build source-code $(Agent.OS) for Windows"
             condition: eq(variables['Agent.OS'], 'Linux')
-
 
           - task: S3Upload@1
             inputs:
@@ -110,7 +121,7 @@ stages:
                 *.dylib 
                 *.dll
               targetFolder: "releases/c_binaries/$(Build.BuildId)/$(OS_MAPPING)"
-              filesAcl: 'bucket-owner-full-control'
+              filesAcl: "bucket-owner-full-control"
             displayName: "Upload binaries to S3 $(Agent.OS)"
 
           - task: S3Upload@1
@@ -124,7 +135,7 @@ stages:
                 *.dylib 
                 *.dll
               targetFolder: "releases/c_binaries/$(Build.BuildId)/windows"
-              filesAcl: 'bucket-owner-full-control'
+              filesAcl: "bucket-owner-full-control"
             displayName: "Upload binaries to S3 for cross-compiled windows"
             condition: eq(variables['Agent.OS'], 'Linux')
 
@@ -139,11 +150,11 @@ stages:
                 *.dylib 
                 *.dll
               targetFolder: "releases/c_binaries/$(Build.BuildId)/armlinux"
-              filesAcl: 'bucket-owner-full-control'
+              filesAcl: "bucket-owner-full-control"
             displayName: "Upload binaries to S3 for cross-compiled armlinux"
             condition: eq(variables['Agent.OS'], 'Linux')
 
           - task: PublishBuildArtifacts@1
             inputs:
               pathToPublish: ./core/src/main/resources/io/questdb/bin
-            displayName: "Publish c++ artifacts" 
+            displayName: "Publish c++ artifacts"
