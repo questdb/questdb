@@ -36,8 +36,8 @@ public class DirectLongListTest {
 
     @Test
     public void testAddList() {
-        DirectLongList list = new DirectLongList(256);
-        DirectLongList list2 = new DirectLongList(256);
+        DirectLongList list = new DirectLongList(256, MemoryTag.NATIVE_LONG_LIST);
+        DirectLongList list2 = new DirectLongList(256, MemoryTag.NATIVE_LONG_LIST);
         final int N = 100;
         for (int i = 0; i < N; ++i) {
             list.add(i);
@@ -55,8 +55,8 @@ public class DirectLongListTest {
 
     @Test
     public void testAddListExpand() {
-        DirectLongList list = new DirectLongList(128);
-        DirectLongList list2 = new DirectLongList(128);
+        DirectLongList list = new DirectLongList(128, MemoryTag.NATIVE_LONG_LIST);
+        DirectLongList list2 = new DirectLongList(128, MemoryTag.NATIVE_LONG_LIST);
         final int N = 100;
         for (int i = 0; i < N; ++i) {
             list.add(i);
@@ -96,7 +96,7 @@ public class DirectLongListTest {
         // use logger so that static memory allocation happens before our control measurement
         LOG.info().$("testCapacityAndSize").$();
         long expected = Unsafe.getMemUsed();
-        DirectLongList list = new DirectLongList(1024);
+        DirectLongList list = new DirectLongList(1024, MemoryTag.NATIVE_LONG_LIST);
         Assert.assertEquals(1024, list.getCapacity());
 
         list.extend(2048);
@@ -133,7 +133,7 @@ public class DirectLongListTest {
         // use logger so that static memory allocation happens before our control measurement
         LOG.info().$("testResizeMemLeak").$();
         long expected = Unsafe.getMemUsed();
-        try (DirectLongList list = new DirectLongList(1024)) {
+        try (DirectLongList list = new DirectLongList(1024, MemoryTag.NATIVE_LONG_LIST)) {
             for (int i = 0; i < 1_000_000; i++) {
                 list.add(i);
             }
@@ -143,7 +143,7 @@ public class DirectLongListTest {
 
     @Test
     public void testSearch() {
-        DirectLongList list = new DirectLongList(256);
+        DirectLongList list = new DirectLongList(256, MemoryTag.NATIVE_LONG_LIST);
         final int N = 100;
         for (int i = 0; i < N; ++i) {
             list.add(i);
@@ -155,7 +155,7 @@ public class DirectLongListTest {
 
     @Test
     public void testToString() {
-        DirectLongList list = new DirectLongList(1001);
+        DirectLongList list = new DirectLongList(1001, MemoryTag.NATIVE_LONG_LIST);
         final int N = 1000;
         for (int i = 0; i < N; ++i) {
             list.add(i);
@@ -169,7 +169,7 @@ public class DirectLongListTest {
 
     private void testBinarySearchFuzz0(int N, int skipRate, int dupeRate, int dupeCountBound) {
         final Rnd rnd = new Rnd();
-        try (final DirectLongList list = new DirectLongList(N)) {
+        try (final DirectLongList list = new DirectLongList(N, MemoryTag.NATIVE_LONG_LIST)) {
             final IntList skipList = new IntList();
             for (int i = 0; i < N; i++) {
                 // not skipping ?
