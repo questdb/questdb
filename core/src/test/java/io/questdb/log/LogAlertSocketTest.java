@@ -28,6 +28,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.StringSink;
@@ -558,6 +559,12 @@ public class LogAlertSocketTest {
         @Override
         public LogRecord $(char c) {
             sink.put(c);
+            return this;
+        }
+
+        @Override
+        public LogRecord $hex(long value) {
+            Numbers.appendHex(sink, value, false);
             return this;
         }
 

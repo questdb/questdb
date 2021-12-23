@@ -86,6 +86,11 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
         return false;
     }
 
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
+
     private class GroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
 
         // hold on to reference of base cursor here

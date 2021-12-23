@@ -47,6 +47,11 @@ public class MulIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
+    public void testBothNan() throws SqlException {
+        call(Numbers.INT_NaN, Numbers.INT_NaN).andAssert(Numbers.INT_NaN);
+    }
+
+    @Test
     public void testSimple() throws SqlException {
         call(10, 81).andAssert(810);
     }

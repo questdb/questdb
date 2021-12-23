@@ -443,7 +443,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             }
         }
 
-        DirectLongList rows = new DirectLongList(keyCount);
+        DirectLongList rows = new DirectLongList(keyCount, MemoryTag.NATIVE_LONG_LIST);
 
         rows.extend(keyCount);
         rows.setPos(rows.getCapacity());
@@ -500,7 +500,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             }
         }
 
-        DirectLongList rows = new DirectLongList(keyCount);
+        DirectLongList rows = new DirectLongList(keyCount, MemoryTag.NATIVE_LONG_LIST);
 
         rows.extend(keyCount);
         rows.setPos(rows.getCapacity());
@@ -612,7 +612,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     row.append();
                 }
                 writer.commit();
-                DirectLongList rows = new DirectLongList(N);
+                DirectLongList rows = new DirectLongList(N, MemoryTag.NATIVE_LONG_LIST);
 
                 rows.setPos(rows.getCapacity());
                 GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);

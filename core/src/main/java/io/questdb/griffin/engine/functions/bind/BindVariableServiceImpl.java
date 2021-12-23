@@ -273,12 +273,25 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     @Override
+    public void setGeoHash(CharSequence name, long value, int type) throws SqlException {
+        int index = namedVariables.keyIndex(name);
+        if (index > -1) {
+            final GeoHashBindVariable function;
+            namedVariables.putAt(index, name, function = geoHashVarPool.next());
+            function.value = value;
+            function.setType(type);
+        } else {
+            setGeoHash0(namedVariables.valueAtQuick(index), value, type, -1, name);
+        }
+    }
+
+    @Override
     public void setGeoHash(int index, long value, int type) throws SqlException {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
-            setGeoByte0(function, value, type, index, null);
+            setGeoHash0(function, value, type, index, null);
         } else {
             indexedVariables.setQuick(index, function = geoHashVarPool.next());
             ((GeoHashBindVariable) function).value = value;
@@ -907,7 +920,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
-    private static void setGeoByte0(Function function, long value, int type, int index, @Nullable CharSequence name) throws SqlException {
+    private static void setGeoHash0(Function function, long value, int type, int index, @Nullable CharSequence name) throws SqlException {
         final int varType = function.getType();
         switch (ColumnType.tagOf(varType)) {
             case ColumnType.GEOBYTE:

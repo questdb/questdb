@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 
 abstract class AbstractTreeSetRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
@@ -43,7 +44,7 @@ abstract class AbstractTreeSetRecordCursorFactory extends AbstractDataFrameRecor
             CairoConfiguration configuration
     ) {
         super(metadata, dataFrameCursorFactory);
-        this.rows = new DirectLongList(configuration.getSqlLatestByRowCount());
+        this.rows = new DirectLongList(configuration.getSqlLatestByRowCount(), MemoryTag.NATIVE_LATEST_BY_LONG_LIST);
     }
 
     @Override

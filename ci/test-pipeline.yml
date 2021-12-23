@@ -23,7 +23,7 @@ stages:
       - CheckChanges
     jobs:
       - job: StartArmAgent
-        displayName: 'Start ARM Agent'
+        displayName: "Start ARM Agent"
         pool:
           vmImage: "ubuntu-latest"
         steps:
@@ -33,26 +33,29 @@ stages:
               echo ${AZURE_DEVOPS_CLI_PAT} | az devops login
             env:
               AZURE_DEVOPS_CLI_PAT: $(System.AccessToken)
-            displayName: 'Login Azure DevOps Extension'
-          - bash: az devops configure --defaults organization=$(System.TeamFoundationCollectionUri) project=$(System.TeamProject) --use-git-aliases true
-            displayName: 'Set default Azure DevOps organization and project'
+            displayName: "Login Azure DevOps Extension"
+          - bash:
+              az devops configure --defaults
+              organization=$(System.TeamFoundationCollectionUri)
+              project=$(System.TeamProject) --use-git-aliases true
+            displayName: "Set default Azure DevOps organization and project"
           - task: LambdaInvokeFunction@1
-            displayName: 'Start Agent'
-            name: 'Start_Agent'
+            displayName: "Start Agent"
+            name: "Start_Agent"
             inputs:
-              awsCredentials: 'ondemand-dev'
-              regionName: 'eu-west-1'
-              functionName: 'ondemand-pipeline'
+              awsCredentials: "ondemand-dev"
+              regionName: "eu-west-1"
+              functionName: "ondemand-pipeline"
               payload: |
                 {
                   "pool": "arm64",
                   "buildid": "$(Build.BuildId)"
                 }
-              outputVariable: 'functionResult'
+              outputVariable: "functionResult"
           - bash: |
               echo "Instance: $(functionResult)"
-            name: 'Display_Instance'
-            displayName: 'Display Instance'
+            name: "Display_Instance"
+            displayName: "Display Instance"
           - bash: |
               echo "Starting agent... for pool arm64"
               POOLID=$(az pipelines pool list | jq '.[]| select(.name == "arm64") | .id' -r)
@@ -62,8 +65,8 @@ stages:
                 sleep 3
               done
               echo "Agent found ..."
-            name: 'Check_agent'
-            displayName: 'Check agent'
+            name: "Check_agent"
+            displayName: "Check agent"
       - template: templates/self-hosted-jobs.yml
 
   - stage: HostedRunTestsBranches

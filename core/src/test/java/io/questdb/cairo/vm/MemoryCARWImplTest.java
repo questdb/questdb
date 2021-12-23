@@ -1051,7 +1051,8 @@ public class MemoryCARWImplTest {
         binarySequence.of(buffer);
 
         try (MemoryARW mem = new MemoryCARWImpl(mem1Size, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-            Assert.assertEquals(Numbers.ceilPow2(mem1Size), mem.size());
+            Assert.assertEquals(0, mem.size());
+            Assert.assertEquals(Numbers.ceilPow2(mem1Size), mem.getPageSize());
             long offset1 = 8;
             for (int i = 0; i < n; i++) {
                 long o;
@@ -1077,7 +1078,8 @@ public class MemoryCARWImplTest {
             }
 
             try (MemoryARW mem2 = new MemoryCARWImpl(mem2Size, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                Assert.assertEquals(Numbers.ceilPow2(mem2Size), mem2.size());
+                Assert.assertEquals(0, mem2.size());
+                Assert.assertEquals(Numbers.ceilPow2(mem2Size), mem2.getPageSize());
                 offset1 = 0;
                 for (int i = 0; i < n; i++) {
                     BinarySequence sequence = mem.getBin(offset1);
@@ -1172,7 +1174,9 @@ public class MemoryCARWImplTest {
         int maxPages = 3;
         int sz = 256 * 3;
         try (MemoryARW mem = new MemoryCARWImpl(pageSize, maxPages, MemoryTag.NATIVE_DEFAULT)) {
-            Assert.assertEquals(pageSize, mem.size());
+            Assert.assertEquals(0, mem.size());
+            Assert.assertEquals(256, mem.getExtendSegmentSize());
+            Assert.assertEquals(256, mem.getPageSize());
             int n = 0;
             try {
                 while (n <= sz) {
@@ -1189,6 +1193,24 @@ public class MemoryCARWImplTest {
                 byte b = mem.getByte(n);
                 Assert.assertEquals((byte) n, b);
             }
+        }
+    }
+
+    @Test
+    public void testTruncate() {
+        final int pageSize = 256;
+        final int maxPages = 3;
+        final int sz = 256 * 3;
+        try (MemoryARW mem = new MemoryCARWImpl(pageSize, maxPages, MemoryTag.NATIVE_DEFAULT)) {
+            for (int i = 0; i < sz; i++) {
+                mem.putByte(i, (byte) i);
+            }
+            Assert.assertEquals(sz, mem.size());
+
+            mem.truncate();
+
+            Assert.assertEquals(pageSize, mem.size());
+            Assert.assertEquals(0, mem.getAppendOffset());
         }
     }
 }

@@ -1035,7 +1035,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             MemoryMR mem1 = columns.getQuick(primaryIndex);
             MemoryMR mem2 = columns.getQuick(secondaryIndex);
 
-            final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), name, plen, tempMem8b, false);
+            final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), name, plen, false);
             final long columnRowCount = partitionRowCount - columnTop;
 
             // When column is added mid-table existence the .top file is only
