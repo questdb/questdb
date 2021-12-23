@@ -30,6 +30,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.*;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.tasks.PageFrameTask;
@@ -150,7 +151,7 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
     private static DirectLongList popRows(Deque<DirectLongList> deque) {
         DirectLongList result = deque.getFirst();
         if (result == null) {
-            result = new DirectLongList(1024);
+            result = new DirectLongList(1024, MemoryTag.NATIVE_LONG_LIST);
         }
         return result;
     }
