@@ -124,6 +124,11 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
 
         @Override
+        public long getCommitTimeout() {
+            return 25;
+        }
+
+        @Override
         public String getAuthDbPath() {
             if (null == authKeyId) {
                 return null;

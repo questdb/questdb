@@ -123,6 +123,11 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
+    public long getCommitTimeout() {
+        return 1000;
+    }
+
+    @Override
     public String getAuthDbPath() {
         return null;
     }

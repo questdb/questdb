@@ -333,6 +333,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineTcpNUpdatesPerLoadRebalance;
     private double lineTcpMaxLoadRatio;
     private long lineTcpMaintenanceInterval;
+    private long lineTcpCommitTimeout;
     private String lineTcpAuthDbPath;
     private int lineDefaultPartitionBy;
     private int lineTcpAggressiveReadRetryCount;
@@ -750,6 +751,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpNUpdatesPerLoadRebalance = getInt(properties, env, "line.tcp.n.updates.per.load.balance", 10_000_000);
                 this.lineTcpMaxLoadRatio = getDouble(properties, env, "line.tcp.max.load.ratio", 1.9);
                 this.lineTcpMaintenanceInterval = getInt(properties, env, "line.tcp.maintenance.job.interval", 30_000);
+                this.lineTcpCommitTimeout = getInt(properties, env, "line.tcp.commit.timeout", 1000);
                 this.lineTcpAuthDbPath = getString(properties, env, "line.tcp.auth.db.path", null);
                 String defaultPartitionByProperty = getString(properties, env, "line.tcp.default.partition.by", "DAY");
                 this.lineDefaultPartitionBy = PartitionBy.fromString(defaultPartitionByProperty);
@@ -2309,6 +2311,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getMaintenanceInterval() {
             return lineTcpMaintenanceInterval;
+        }
+
+        @Override
+        public long getCommitTimeout() {
+            return lineTcpCommitTimeout;
         }
 
         @Override

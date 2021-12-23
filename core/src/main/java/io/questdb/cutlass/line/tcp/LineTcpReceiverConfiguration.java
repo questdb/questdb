@@ -52,6 +52,13 @@ public interface LineTcpReceiverConfiguration {
      */
     long getMaintenanceInterval();
 
+    /**
+     * After this timeout elapsed all uncommitted rows will be committed
+     *
+     * @return timeout in milliseconds
+     */
+    long getCommitTimeout();
+
     double getMaxLoadRatio();
 
     int getMaxMeasurementSize();
