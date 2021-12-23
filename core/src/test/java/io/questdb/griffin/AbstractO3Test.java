@@ -54,6 +54,7 @@ public class AbstractO3Test {
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static CharSequence root;
+    protected static int dataAppendPageSize = -1;
 
     @BeforeClass
     public static void setupStatic() {
@@ -76,6 +77,7 @@ public class AbstractO3Test {
     @After
     public void tearDown() {
         TestUtils.removeTestPath(root);
+        dataAppendPageSize = -1;
     }
 
     protected static void assertIndexConsistency(
@@ -263,6 +265,16 @@ public class AbstractO3Test {
                     public FilesFacade getFilesFacade() {
                         return ff;
                     }
+
+                    @Override
+                    public long getDataAppendPageSize() {
+                        return dataAppendPageSize > 0 ? dataAppendPageSize : super.getDataAppendPageSize();
+                    }
+
+                    @Override
+                    public int getO3ColumnMemorySize() {
+                        return dataAppendPageSize > 0 ? dataAppendPageSize : super.getO3ColumnMemorySize();
+                    }
                 };
 
                 execute(pool, runnable, configuration);
@@ -307,6 +319,16 @@ public class AbstractO3Test {
                     @Override
                     public int getO3PartitionUpdateQueueCapacity() {
                         return 0;
+                    }
+
+                    @Override
+                    public long getDataAppendPageSize() {
+                        return dataAppendPageSize > 0 ? dataAppendPageSize : super.getDataAppendPageSize();
+                    }
+
+                    @Override
+                    public int getO3ColumnMemorySize() {
+                        return dataAppendPageSize > 0 ? dataAppendPageSize : super.getO3ColumnMemorySize();
                     }
                 };
                 execute(null, runnable, configuration);
@@ -382,6 +404,17 @@ public class AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
 
         engine.releaseAllReaders();
+
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "x",
+                sink2
+        );
+
+        TestUtils.assertEquals(sink, sink2);
+
+        engine.releaseAllWriters();
 
         TestUtils.printSql(
                 compiler,
