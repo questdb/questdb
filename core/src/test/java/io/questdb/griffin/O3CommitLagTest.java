@@ -35,11 +35,9 @@ import io.questdb.griffin.SqlCompiler.RecordToRowCopier;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.IntList;
-import io.questdb.std.NumericException;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -299,6 +297,102 @@ public class O3CommitLagTest extends AbstractO3Test {
         });
     }
 
+    @Test
+    public void testVarColumnPageBoundariesAppend() throws Exception {
+        dataAppendPageSize = (int) Files.PAGE_SIZE;
+        executeWithPool(0,
+                (CairoEngine engine,
+                 SqlCompiler compiler,
+                 SqlExecutionContext sqlExecutionContext) -> {
+                    int longsPerPage = dataAppendPageSize / 8;
+                    int hi = (longsPerPage + 8) * 2;
+                    int lo = (longsPerPage - 8) * 2;
+                    for (int i = lo; i < hi; i++) {
+                        LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
+                        testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, 1000);
+                        compiler.compile("drop table x", sqlExecutionContext);
+                    }
+                });
+    }
+
+    @Test
+    public void testVarColumnPageBoundariesAppendRndPageSize() throws Exception {
+        int rndPagesMultiplier = new Rnd(Os.currentTimeMicros(), Os.currentTimeNanos()).nextInt(129);
+        int multiplier = Numbers.ceilPow2(rndPagesMultiplier);
+        dataAppendPageSize = (int) Files.PAGE_SIZE * multiplier;
+        LOG.info().$("Testing with random pages size of ").$(dataAppendPageSize).$();
+
+        executeWithPool(0,
+                (CairoEngine engine,
+                 SqlCompiler compiler,
+                 SqlExecutionContext sqlExecutionContext) -> {
+                    int longsPerPage = dataAppendPageSize / 8;
+                    int hi = (longsPerPage + 8) * 2;
+                    int lo = (longsPerPage - 8) * 2;
+                    for (int i = lo; i < hi; i++) {
+                        LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
+                        testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, 1000);
+                        compiler.compile("drop table x", sqlExecutionContext);
+                    }
+                });
+    }
+
+    @Test
+    public void testVarColumnPageBoundariesInO3Memory() throws Exception {
+        dataAppendPageSize = (int) Files.PAGE_SIZE;
+        executeWithPool(0,
+                (CairoEngine engine,
+                 SqlCompiler compiler,
+                 SqlExecutionContext sqlExecutionContext) -> {
+                    int longsPerPage = dataAppendPageSize / 8;
+                    int hi = (longsPerPage + 8) * 2;
+                    int lo = (longsPerPage - 8) * 2;
+                    for (int i = lo; i < hi; i++) {
+                        LOG.info().$("=========== iteration ").$(i).$(", max uncommitted ").$(longsPerPage).$(" ===================").$();
+                        testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, longsPerPage);
+                        compiler.compile("drop table x", sqlExecutionContext);
+                    }
+                });
+    }
+
+    @Test
+    public void testVarColumnPageBoundariesRndMaxUncommitted() throws Exception {
+        dataAppendPageSize = (int) Files.PAGE_SIZE;
+        executeWithPool(0,
+                (CairoEngine engine,
+                 SqlCompiler compiler,
+                 SqlExecutionContext sqlExecutionContext) -> {
+                    int longsPerPage = dataAppendPageSize / 8;
+                    int hi = (longsPerPage + 8) * 2;
+                    int lo = (longsPerPage - 8) * 2;
+                    int maxUncommitted = new Rnd(Os.currentTimeMicros(), Os.currentTimeNanos()).nextInt(hi);
+                    for (int i = lo; i < hi; i++) {
+                        LOG.info().$("=========== iteration ").$(i).$(", max uncommitted ").$(maxUncommitted).$(" ===================").$();
+                        testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, maxUncommitted);
+                        compiler.compile("drop table x", sqlExecutionContext);
+                    }
+                });
+    }
+
+    private void appendRows(String ts1, String ts2, TableWriter tw, int count, Rnd rnd) throws NumericException {
+        for (int i = 0; i < count; i++) {
+            Row row = tw.newRow(IntervalUtils.parseFloorPartialDate(ts1) + rnd.nextLong(Timestamps.DAY_MICROS));
+
+            row.putStr(0, "cc");
+            row.putLong(2, 11111L);
+            row.putStr(3, "dd");
+            row.putLong(4, 22222L);
+            row.append();
+
+            row = tw.newRow(IntervalUtils.parseFloorPartialDate(ts2));
+            row.putStr(0, "cc");
+            row.putLong(2, 333333L);
+            row.putStr(3, "dd");
+            row.putLong(4, 444444L);
+            row.append();
+        }
+    }
+
     private void assertXY(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
@@ -434,6 +528,9 @@ public class O3CommitLagTest extends AbstractO3Test {
                 ordered.commit();
             }
             TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "ordered", "o3", LOG);
+            engine.releaseAllWriters();
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "ordered", "o3", LOG);
+
             engine.releaseAllReaders();
             try (TableWriter o3 = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "o3", "testing");
                  TableWriter ordered = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "ordered", "testing")) {
@@ -1357,5 +1454,74 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (select * from x where i<=375 or i>380)", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select count() from y", sink2);
         TestUtils.assertEquals(sink, sink2);
+    }
+
+    private void testVarColumnPageBoundaryIterationWithColumnTop(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, int iteration, int maxUncommittedRows) throws SqlException, NumericException {
+        // Day 1 '1970-01-01'
+        int appendCount = iteration / 2;
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " 'aa' as str," +
+                        " timestamp_sequence('1970-01-01T11:00:00',1000L) ts," +
+                        " x " +
+                        " from long_sequence(1)" +
+                        ") timestamp (ts) partition by DAY with maxUncommittedRows = " + maxUncommittedRows,
+                sqlExecutionContext
+        );
+
+        // Day 2 '1970-01-02'
+        compiler.compile(
+                "insert into x " +
+                        "select" +
+                        " 'aa' as str," +
+                        " timestamp_sequence('1970-01-02T00:00:00',1000L) ts," +
+                        " x " +
+                        " from long_sequence(1)",
+                sqlExecutionContext
+        );
+
+        compiler.compile("alter table x add column str2 string", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column y long", sqlExecutionContext).execute(null).await();
+
+        if (iteration % 2 == 0) {
+            engine.releaseAllWriters();
+        }
+
+        final String ts1 = "1970-01-01";
+        final String ts2 = "1970-01-02T10:00:01.000000Z";
+
+        Rnd rnd = new Rnd();
+        try (TableWriter tw = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test")) {
+            int halfCount = appendCount / 2;
+            appendRows(ts1, ts2, tw, halfCount, rnd);
+            tw.commitWithLag(Timestamps.HOUR_MICROS);
+
+            TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
+                    "str\tts\tx\tstr2\ty\n" +
+                            "aa\t1970-01-01T11:00:00.000000Z\t1\t\tNaN\n" +
+                            "aa\t1970-01-02T00:00:00.000000Z\t1\t\tNaN\n");
+
+            appendRows(ts1, ts2, tw, appendCount - halfCount, rnd);
+            tw.commitWithLag(Timestamps.HOUR_MICROS);
+
+            TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
+                    "str\tts\tx\tstr2\ty\n" +
+                            "aa\t1970-01-01T11:00:00.000000Z\t1\t\tNaN\n" +
+                            "aa\t1970-01-02T00:00:00.000000Z\t1\t\tNaN\n");
+
+            if (iteration % 2 == 0) {
+                tw.commit();
+            }
+        }
+
+        if (iteration % 3 == 0) {
+            engine.releaseAllWriters();
+        }
+
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
+                "str\tts\tx\tstr2\ty\n" +
+                        "aa\t1970-01-01T11:00:00.000000Z\t1\t\tNaN\n" +
+                        "aa\t1970-01-02T00:00:00.000000Z\t1\t\tNaN\n");
     }
 }
