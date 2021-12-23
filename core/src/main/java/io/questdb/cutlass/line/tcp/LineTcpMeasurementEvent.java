@@ -32,11 +32,11 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.FloatingDirectCharSink;
-import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
+import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
 
 class LineTcpMeasurementEvent implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementEvent.class);
@@ -430,13 +430,11 @@ class LineTcpMeasurementEvent implements Closeable {
     ) {
         writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_INCOMPLETE_EVENT;
         final TableUpdateDetails.ThreadLocalDetails localDetails = tableUpdateDetails.getThreadLocalDetails(workerId);
-        final StringSink tempSink = localDetails.getTempSink();
         // tracking of processed columns by their index, duplicates will be ignored
         final BoolList processedCols = localDetails.resetProcessedCols();
         // tracking of processed columns by their name, duplicates will be ignored
         // columns end up in this set only if their index cannot be resolved, i.e. new columns
-        final LowerCaseCharSequenceHashSet addedCols = localDetails.resetAddedCols();
-        localDetails.resetUnresolvedColumnFlag();
+        final LowerCaseCharSequenceHashSet addedColsUtf16 = localDetails.resetAddedCols();
         this.tableUpdateDetails = tableUpdateDetails;
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
@@ -453,26 +451,19 @@ class LineTcpMeasurementEvent implements Closeable {
         for (int nEntity = 0, n = parser.getEntityCount(); nEntity < n; nEntity++) {
             if (bufPos + Long.BYTES < bufMax) {
                 LineTcpParser.ProtoEntity entity = parser.getEntity(nEntity);
-                int colIndex = localDetails.getColumnIndex(entity.getName());
+                int colIndex = localDetails.getColumnIndex(entity.getName(), parser.hasNonAsciiChars());
                 if (colIndex < 0) {
                     // column index not found, processing column by name
-                    CharSequence colName = entity.getName();
-                    if (parser.hasNonAsciiChars()) {
-                        // column name utf-8 to utf-16 conversion required
-                        tempSink.clear();
-                        if (!Chars.utf8Decode(entity.getName().getLo(), entity.getName().getHi(), tempSink)) {
-                            throw CairoException.instance(0).put("invalid UTF8 in value for ").put(colName);
-                        }
-                        colName = tempSink;
-                    }
-                    int index = addedCols.keyIndex(colName);
+                    CharSequence colNameUtf16 = utf8ToUtf16(entity.getName(), parser.hasNonAsciiChars());
+                    int index = addedColsUtf16.keyIndex(colNameUtf16);
                     if (index < 0) {
                         // column has been processed earlier on this event, duplicate should be skipped
                         continue;
-                    } else {
-                        addedCols.addAt(index, colName.toString());
                     }
-                    int colNameLen = colName.length();
+
+                    colNameUtf16 = colNameUtf16.toString();
+                    addedColsUtf16.addAt(index, colNameUtf16);
+                    int colNameLen = colNameUtf16.length();
 
                     // Negative length indicates to the writer thread that column is passed by
                     // name rather than by index. When value is positive (on the else branch)
@@ -480,7 +471,7 @@ class LineTcpMeasurementEvent implements Closeable {
                     Unsafe.getUnsafe().putInt(bufPos, -1 * colNameLen);
                     bufPos += Integer.BYTES;
                     if (bufPos + 2L * colNameLen < bufMax) {
-                        Chars.copyStrChars(colName, 0, colNameLen, bufPos);
+                        Chars.copyStrChars(colNameUtf16, 0, colNameLen, bufPos);
                     } else {
                         throw CairoException.instance(0).put("queue buffer overflow");
                     }
@@ -491,13 +482,13 @@ class LineTcpMeasurementEvent implements Closeable {
                         timestamp = timestampAdapter.getMicros(entity.getLongValue());
                         continue;
                     }
-                    if (!processedCols.extendAndReplace(colIndex, true)) {
-                        Unsafe.getUnsafe().putInt(bufPos, colIndex);
-                        bufPos += Integer.BYTES;
-                    } else {
+                    if (processedCols.extendAndReplace(colIndex, true)) {
                         // column has been processed earlier on this event, duplicate should be skipped
                         continue;
                     }
+
+                    Unsafe.getUnsafe().putInt(bufPos, colIndex);
+                    bufPos += Integer.BYTES;
                 }
                 entitiesWritten++;
                 switch (entity.getType()) {
@@ -643,7 +634,6 @@ class LineTcpMeasurementEvent implements Closeable {
                 throw CairoException.instance(0).put("queue buffer overflow");
             }
         }
-        localDetails.resolveNewColumns();
         Unsafe.getUnsafe().putLong(timestampBufPos, timestamp);
         Unsafe.getUnsafe().putInt(timestampBufPos + Long.BYTES, entitiesWritten);
         writerWorkerId = tableUpdateDetails.getWriterThreadId();

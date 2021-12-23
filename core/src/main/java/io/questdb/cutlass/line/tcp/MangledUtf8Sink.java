@@ -37,6 +37,11 @@ class MangledUtf8Sink extends AbstractCharSink {
 
     public CharSequence encodeMangledUtf8(CharSequence value) {
         tempSink.clear();
+        // encodeUtf8() will use the below overridden put() method to convert each byte of the utf8 encoded
+        // representation of the input value to an ASCII char and add it to the sink
+        // the returned sink will work fine with DirectByteCharSequence.equals() assuming DirectByteCharSequence
+        // contains a utf8 encoded string
+        // DirectByteCharSequence.equals() will use charAt() to compare the CharSequences byte by byte (char by char)
         encodeUtf8(value);
         return tempSink;
     }

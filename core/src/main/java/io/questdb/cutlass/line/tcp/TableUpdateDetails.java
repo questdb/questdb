@@ -33,9 +33,11 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
+
+import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
+import static io.questdb.cutlass.line.tcp.LineTcpUtils.toMangledUtf8String;
 
 public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
@@ -259,13 +261,10 @@ public class TableUpdateDetails implements Closeable {
         private final ObjList<SymbolCache> unusedSymbolCaches;
         // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)
         private final IntList columnTypeMeta = new IntList();
-        private final StringSink tempSink = new StringSink();
         private final BoolList processedCols = new BoolList();
-        private final LowerCaseCharSequenceHashSet addedCols = new LowerCaseCharSequenceHashSet();
+        private final LowerCaseCharSequenceHashSet addedColsUtf16 = new LowerCaseCharSequenceHashSet();
         private final LineTcpReceiverConfiguration configuration;
         private int columnCount;
-        // indicates if the currently processed event contains any columns which are not present in the table yet
-        private boolean unresolvedColumnFlag = false;
 
         ThreadLocalDetails(LineTcpReceiverConfiguration configuration, ObjList<SymbolCache> unusedSymbolCaches, int columnCount) {
             this.configuration = configuration;
@@ -316,72 +315,48 @@ public class TableUpdateDetails implements Closeable {
         }
 
         LowerCaseCharSequenceHashSet resetAddedCols() {
-            addedCols.clear();
-            return addedCols;
+            addedColsUtf16.clear();
+            return addedColsUtf16;
         }
 
-        StringSink getTempSink() {
-            return tempSink;
-        }
+        int getColumnIndex(DirectByteCharSequence colNameUtf8, boolean hasNonAsciiChars) {
+            int colIndex = columnIndexByNameUtf8.get(colNameUtf8);
 
-        int getColumnIndex(DirectByteCharSequence colName) {
-            int colIndex = columnIndexByNameUtf8.get(colName);
+            // if the lookup in the cache is successful we can just return with the index
+            // if lookup was unsuccessful we have to check whether the column can be passed by name to the writer
             if (colIndex < 0) {
-                if (!unresolvedColumnFlag) {
-                    // not in column index cache and have not seen any unresolved columns yet
-                    // trying to resolve column index using table reader
-                    colIndex = getColumnIndexFromReader(colName);
-                    if (colIndex < 0) {
-                        // could not resolve column index even from the reader, field has not been created yet
-                        // field will be passed by name to the writer
-                        // setting this flag to make sure all new columns on this line will be processed by name too
-                        // if we allowed further lookups from the reader there would be a chance of resolving a
-                        // duplicate column by index successfully (after the column is created on the writer thread)
-                        // and we would pass the duplicate by index to the writer
-                        unresolvedColumnFlag = true;
+                final CharSequence colNameUtf16 = utf8ToUtf16(colNameUtf8, hasNonAsciiChars);
+                final int index = addedColsUtf16.keyIndex(colNameUtf16);
+
+                // non-negative index means this column is not in the set, meaning it has not been sent
+                // to the writer by name on this line before
+                // we can try to resolve column index using table reader
+                // if the column is in the set already (index is negative) the field has to be passed by name
+                if (index > -1) {
+                    colIndex = getColumnIndexFromReader(colNameUtf16.toString());
+
+                    // if we cannot not resolve column index even from the reader then this field
+                    // has not been created by the writer yet, it will be passed by name to the writer
+                    // if we resolve the index from the reader we will cache it
+                    if (colIndex > -1) {
+                        // keys of this map will be checked against DirectByteCharSequence when get() is called
+                        // DirectByteCharSequence.equals() compares chars created from each byte, basically it
+                        // assumes that each char is encoded on a single byte (ASCII)
+                        // we have to make sure that keys containing non-ASCII chars are converted into their
+                        // mangled utf8 representation before used as key (see more details in MangledUtf8Sink)
+                        columnIndexByNameUtf8.put(toMangledUtf8String(colNameUtf8.toString(), hasNonAsciiChars), colIndex);
                     }
                 }
-                columnIndexByNameUtf8.put(colName.toString(), colIndex);
             }
             return colIndex;
         }
 
-        private int getColumnIndexFromReader(DirectByteCharSequence colName) {
+        private int getColumnIndexFromReader(CharSequence colNameUtf16) {
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16)) {
                 TableReaderMetadata metadata = reader.getMetadata();
-                tempSink.clear();
-                if (!Chars.utf8Decode(colName.getLo(), colName.getHi(), tempSink)) {
-                    throw CairoException.instance(0).put("invalid UTF8 in value for ").put(colName);
-                }
-                int colIndex = metadata.getColumnIndexQuiet(tempSink);
+                int colIndex = metadata.getColumnIndexQuiet(colNameUtf16);
                 updateColumnTypeCache(colIndex, metadata);
                 return colIndex;
-            }
-        }
-
-        // called for each event after all columns of the line have been processed
-        // here we can try to update column indexes in the cache without risking that duplicates are sent to the writer
-        void resolveNewColumns() {
-            if (!unresolvedColumnFlag) {
-                // all columns resolved by index on this line so nothing to do
-                return;
-            }
-
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16)) {
-                TableReaderMetadata metadata = reader.getMetadata();
-                ObjList<CharSequence> keys = columnIndexByNameUtf8.keys();
-                for (int i = 0, n = keys.size(); i < n; i++) {
-                    final CharSequence colName = keys.get(i);
-                    if (columnIndexByNameUtf8.get(colName) < 0) {
-                        // try to resolve column indexes for fields have not been present in the table earlier
-                        int colIndex = metadata.getColumnIndexQuiet(colName);
-                        if (colIndex > -1) {
-                            // found column index, field has been created by writer
-                            columnIndexByNameUtf8.put(colName, colIndex);
-                            updateColumnTypeCache(colIndex, metadata);
-                        }
-                    }
-                }
             }
         }
 
@@ -403,11 +378,6 @@ public class TableUpdateDetails implements Closeable {
         BoolList resetProcessedCols() {
             processedCols.setAll(columnCount, false);
             return processedCols;
-        }
-
-        void resetUnresolvedColumnFlag() {
-            // reset for each line
-            unresolvedColumnFlag = false;
         }
 
         int getSymbolIndex(int colIndex, CharSequence symValue) {
