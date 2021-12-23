@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -59,6 +60,11 @@ public class NegatingFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         Function function = delegate.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
+
+        // Return boolean constant if short/byte null comparison
+        if(byteRShortNullComparison(args)){
+            return function;
+        }
         if (function instanceof NegatableBooleanFunction) {
             NegatableBooleanFunction negateableFunction = (NegatableBooleanFunction) function;
             negateableFunction.setNegated();
@@ -68,5 +74,13 @@ public class NegatingFunctionFactory implements FunctionFactory {
             return BooleanConstant.of(!function.getBool(null));
         }
         throw SqlException.$(position, "negating operation is not supported for result of function ").put(delegate.getSignature());
+    }
+
+    private boolean byteRShortNullComparison(ObjList<Function> args) {
+        Function left = args.getQuick(0);
+        Function right = args.getQuick(1);
+
+        return (ColumnType.BYTE == left.getType() || ColumnType.SHORT == left.getType())
+                && (right.isNullConstant() || left.isNullConstant());
     }
 }

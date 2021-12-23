@@ -91,8 +91,8 @@ public class InsertNullTest extends AbstractGriffinTest {
                         String.format("create table x (value %s)", type[0]),
                         null,
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
-                        expectedNullInserts("value\n", type[1], NULL_INSERTS),
-                        true,
+                        expectedNullInserts("value\n", type[0], type[1], NULL_INSERTS),
+                        randomAccessCheck(type[0]),
                         true,
                         type[0].equals("long256")
                 );
@@ -117,7 +117,7 @@ public class InsertNullTest extends AbstractGriffinTest {
                         null,
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
                         "value\n",
-                        !type[0].equals("long256"),
+                        randomAccessCheck(type[0]) && !type[0].equals("long256"),
                         true,
                         false
                 );
@@ -175,6 +175,23 @@ public class InsertNullTest extends AbstractGriffinTest {
         StringSink sb = Misc.getThreadLocalBuilder();
         sb.put(header);
         for (int i = 0; i < count; i++) {
+            sb.put(nullValue);
+            sb.put("\n");
+        }
+        return sb.toString();
+    }
+
+    private boolean randomAccessCheck(String type) {
+        return !type.equalsIgnoreCase("short") && !type.equalsIgnoreCase("byte");
+    }
+
+    static String expectedNullInserts(String header, String type, String nullValue, int count) {
+        StringSink sb = Misc.getThreadLocalBuilder();
+        sb.put(header);
+        for (int i = 0; i < count; i++) {
+            if (type.equalsIgnoreCase("short") || type.equalsIgnoreCase("byte")) {
+                continue;
+            }
             sb.put(nullValue);
             sb.put("\n");
         }

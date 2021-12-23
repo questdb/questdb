@@ -24,9 +24,17 @@
 
 package io.questdb.griffin.engine.functions.eq;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.constants.ByteConstant;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class EqByteFunctionFactoryTest extends AbstractFunctionFactoryTest {
@@ -35,6 +43,27 @@ public class EqByteFunctionFactoryTest extends AbstractFunctionFactoryTest {
     public void testAll() throws SqlException {
         call(0, 0).andAssert(true);
         call(0, 1).andAssert(false);
+    }
+
+    @Test
+    public void testNullArgs() throws SqlException {
+        FunctionFactory factory = getFunctionFactory();
+
+        assertNullArgs(factory, new ByteConstant((byte) 1),NullConstant.NULL);
+        assertNullArgs(factory, NullConstant.NULL, new ByteConstant((byte) 1));
+    }
+
+    private void assertNullArgs(FunctionFactory factory, Function left, Function right) throws SqlException {
+        ObjList<Function> args = new ObjList<>();
+        args.add(left);
+        args.add(right);
+
+        IntList argPositions = new IntList();
+        argPositions.add(1);
+        argPositions.add(2);
+        Function function = factory.newInstance(4, args, argPositions, configuration, sqlExecutionContext);
+        Assert.assertTrue(function instanceof BooleanConstant);
+        Assert.assertFalse(function.getBool(null));
     }
 
     @Override
