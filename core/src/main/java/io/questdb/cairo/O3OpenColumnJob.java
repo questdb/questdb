@@ -2030,6 +2030,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
                         // now set the "empty" bit of fixed size column with references to those
                         // null strings we just added
+                        // Call to setVarColumnRefs32Bit must be after shiftCopyFixedSizeColumnData
+                        // because data first have to be shifted before overwritten
                         Vect.setVarColumnRefs32Bit(srcDataFixAddr + srcDataActualBytes, 0, srcDataTop);
                     } else {
                         // We need to reserve null values for every column top value
