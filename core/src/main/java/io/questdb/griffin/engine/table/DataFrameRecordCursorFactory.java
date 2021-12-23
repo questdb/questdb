@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.NullColumn;
-import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -184,7 +183,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         }
 
         @Override
-        public SymbolMapReader getSymbolMapReader(int columnIndex) {
+        public StaticSymbolTable getSymbolTable(int columnIndex) {
             return reader.getSymbolMapReader(columnIndexes.getQuick(columnIndex));
         }
 
@@ -271,6 +270,11 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             private long partitionLo;
             private long partitionHi;
             private int partitionIndex;
+
+            @Override
+            public void copyColumnAddressesTo(LongList destColumnAddresses) {
+                destColumnAddresses.add(columnPageAddress);
+            }
 
             @Override
             public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {

@@ -44,8 +44,6 @@ public interface CairoConfiguration {
 
     int getAnalyticColumnPoolCapacity();
 
-    long getDataAppendPageSize();
-
     DateFormat getBackupDirTimestampFormat();
 
     int getBackupMkDirMode();
@@ -83,6 +81,8 @@ public interface CairoConfiguration {
 
     int getCreateTableModelPoolCapacity();
 
+    long getDataAppendPageSize();
+
     long getDataIndexKeyAppendPageSize();
 
     long getDataIndexValueAppendPageSize();
@@ -106,6 +106,8 @@ public interface CairoConfiguration {
     int getFileOperationRetryCount();
 
     FilesFacade getFilesFacade();
+
+    int getFilterQueueCapacity();
 
     int getFloatToStrCastScale();
 
@@ -138,6 +140,8 @@ public interface CairoConfiguration {
 
     MillisecondClock getMillisecondClock();
 
+    long getMiscAppendPageSize();
+
     int getMkDirMode();
 
     default NanosecondClock getNanosecondClock() {
@@ -160,6 +164,8 @@ public interface CairoConfiguration {
 
     int getO3PurgeQueueCapacity();
 
+    int getPageFrameQueueCapacity();
+
     int getParallelIndexThreshold();
 
     default Rnd getRandom() {
@@ -180,8 +186,6 @@ public interface CairoConfiguration {
     CharSequence getRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
 
     int getSampleByIndexSearchPageSize();
-
-    long getMiscAppendPageSize();
 
     long getSpinLockTimeoutUs();
 
@@ -223,6 +227,20 @@ public interface CairoConfiguration {
 
     int getSqlHashJoinValuePageSize();
 
+    int getSqlJitBindVarsMemoryMaxPages();
+
+    long getSqlJitBindVarsMemoryPageSize();
+
+    int getSqlJitIRMemoryMaxPages();
+
+    long getSqlJitIRMemoryPageSize();
+
+    int getSqlJitMode();
+
+    long getSqlJitPageAddressCacheThreshold();
+
+    long getSqlJitRowsThreshold();
+
     int getSqlJoinContextPoolCapacity();
 
     int getSqlJoinMetadataMaxResizes();
@@ -260,24 +278,6 @@ public interface CairoConfiguration {
 
     int getSqlSortValuePageSize();
 
-    int getSqlJitMode();
-
-    long getSqlJitIRMemoryPageSize();
-
-    int getSqlJitIRMemoryMaxPages();
-
-    long getSqlJitBindVarsMemoryPageSize();
-
-    int getSqlJitBindVarsMemoryMaxPages();
-
-    long getSqlJitRowsThreshold();
-
-    long getSqlJitPageAddressCacheThreshold();
-
-    boolean isSqlJitDebugEnabled();
-
-    int getTableBlockWriterQueueCapacity();
-
     TelemetryConfiguration getTelemetryConfiguration();
 
     TextConfiguration getTextConfiguration();
@@ -296,9 +296,13 @@ public interface CairoConfiguration {
 
     int getWriterCommandQueueCapacity();
 
+    int getWriterCommandQueueSlotSize();
+
     int getWriterTickRowsCountMod();
 
     boolean isO3QuickSortEnabled();
 
     boolean isParallelIndexingEnabled();
+
+    boolean isSqlJitDebugEnabled();
 }

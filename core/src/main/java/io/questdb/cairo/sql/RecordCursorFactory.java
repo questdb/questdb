@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.mp.SCSequence;
 import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
 
@@ -87,8 +88,8 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
         return null;
     }
 
-    default void execute(SqlExecutionContext executionContext) throws SqlException {
-
+    default ExecutionToken execute(SqlExecutionContext executionContext, SCSequence consumerSubSeq) throws SqlException {
+        return null;
     }
 
     boolean recordCursorSupportsRandomAccess();

@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
@@ -61,7 +60,8 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
                 null,
                 false,
                 columnIndexes,
-                columnSizes);
+                columnSizes
+        );
         this.symbolValue = symbolValue;
         this.symbolKey = SymbolTable.VALUE_NOT_FOUND;
         this.columnIndexes = columnIndexes;
@@ -112,7 +112,7 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
 
         pageFrameCursor.of(dataFrameCursor);
         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-            SymbolMapReader symbolMapReader = pageFrameCursor.getSymbolMapReader(symbolColumnIndex);
+            StaticSymbolTable symbolMapReader = pageFrameCursor.getSymbolTable(symbolColumnIndex);
             this.symbolKey = symbolMapReader.keyOf(symbolValue);
             if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
                 this.symbolKey = TableUtils.toIndexKey(symbolKey);

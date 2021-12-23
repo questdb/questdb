@@ -372,7 +372,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            return parent.getSymbolMapReader(symbolTableSkewIndex.getQuick(columnIndex));
+            return parent.getSymbolTable(symbolTableSkewIndex.getQuick(columnIndex));
         }
 
         private class RostiRecord implements Record {
@@ -483,12 +483,12 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
 
             @Override
             public CharSequence getSym(int col) {
-                return parent.getSymbolMapReader(symbolTableSkewIndex.getQuick(col)).valueOf(getInt(col));
+                return parent.getSymbolTable(symbolTableSkewIndex.getQuick(col)).valueOf(getInt(col));
             }
 
             @Override
             public CharSequence getSymB(int col) {
-                return parent.getSymbolMapReader(symbolTableSkewIndex.getQuick(col)).valueBOf(getInt(col));
+                return parent.getSymbolTable(symbolTableSkewIndex.getQuick(col)).valueBOf(getInt(col));
             }
 
             @Override

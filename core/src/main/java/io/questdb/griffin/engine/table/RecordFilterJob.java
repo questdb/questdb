@@ -26,8 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.PageFrame;
-import io.questdb.cairo.sql.PageFrameRecord;
+import io.questdb.cairo.sql.PageAddressCacheRecord;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.Job;
 import io.questdb.mp.MCSequence;
@@ -38,7 +37,7 @@ import io.questdb.tasks.PageFrameTask;
 
 public class RecordFilterJob implements Job {
 
-    private final PageFrameRecord[] records;
+    private final PageAddressCacheRecord[] records;
     private final int[] shards;
     private final int shardCount;
     private final MessageBus messageBus;
@@ -67,17 +66,15 @@ public class RecordFilterJob implements Job {
         }
 
         final int n = executionContext.getWorkerCount();
-        this.records = new PageFrameRecord[n];
+        this.records = new PageAddressCacheRecord[n];
         for (int i = 0; i < n; i++) {
-            records[i] = new PageFrameRecord();
+            records[i] = new PageAddressCacheRecord();
         }
     }
 
-    public static void filter(PageFrame frame, Function filter, PageFrameRecord record, DirectLongList rows) {
-        final long count = frame.getPartitionHi() - frame.getPartitionLo();
-        record.setPageFrame(frame);
-        for (long r = 0; r < count; r++) {
-            record.setRow(r);
+    public static void filter(long frameRowCount, Function filter, PageAddressCacheRecord record, DirectLongList rows) {
+        for (long r = 0; r < frameRowCount; r++) {
+            record.setRowIndex(r);
             if (filter.getBool(record)) {
                 rows.add(r);
             }
@@ -86,7 +83,7 @@ public class RecordFilterJob implements Job {
 
     @Override
     public boolean run(int workerId) {
-        final PageFrameRecord record = records[workerId];
+        final PageAddressCacheRecord record = records[workerId];
         boolean useful = false;
         for (int i = 0; i < shardCount; i++) {
             final int shard = shards[i];
@@ -97,17 +94,28 @@ public class RecordFilterJob implements Job {
         return useful;
     }
 
-    private boolean consumeQueue(RingQueue<PageFrameTask> queue, MCSequence subSeq, PageFrameRecord record) {
+    private boolean consumeQueue(RingQueue<PageFrameTask> queue, MCSequence subSeq, PageAddressCacheRecord record) {
         long cursor = subSeq.next();
         if (cursor > -1) {
             final PageFrameTask task = queue.get(cursor);
             // do not release task until filtering is done
-            final PageFrame frame = task.getPageFrame();
-            final Function filter = task.getFilter();
-            final DirectLongList rows = task.getRows();
-            rows.clear();
-            filter(frame, filter, record, rows);
-            subSeq.done(cursor);
+            try {
+                final DirectLongList rows = task.getRows();
+                rows.clear();
+                record.of(task.getSymbolTableSource(), task.getPageAddressCache());
+                record.setFrameIndex(task.getFrameIndex());
+                filter(
+                        task.getFrameRowCount(),
+                        task.getFilter(),
+                        record,
+                        rows
+                );
+            } catch (Throwable e) {
+                task.setFailed(true);
+                throw e;
+            } finally {
+                subSeq.done(cursor);
+            }
             return true;
         }
         return false;

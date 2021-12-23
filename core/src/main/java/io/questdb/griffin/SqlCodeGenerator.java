@@ -113,7 +113,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ObjList<VectorAggregateFunctionConstructor> tempVecConstructors = new ObjList<>();
     private final IntList tempVecConstructorArgIndexes = new IntList();
     private final IntList tempKeyKinds = new IntList();
-    private final ObjObjHashMap<IntList, ObjList<AnalyticFunction>> grouppedAnalytic = new ObjObjHashMap<>();
+    private final ObjObjHashMap<IntList, ObjList<AnalyticFunction>> groupedAnalytic = new ObjObjHashMap<>();
     private final IntList recordFunctionPositions = new IntList();
     private final IntList groupByFunctionPositions = new IntList();
     private boolean fullFatJoins = false;
@@ -140,7 +140,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         this.enableJitDebug = configuration.isSqlJitDebugEnabled();
         this.jitIRMem = Vm.getCARWInstance(configuration.getSqlJitIRMemoryPageSize(),
                 configuration.getSqlJitIRMemoryMaxPages(), MemoryTag.NATIVE_JIT);
-        // Pre-touch JIT IR memory to avoid false positive memleak detections.
+        // Pre-touch JIT IR memory to avoid false positive memory leak detections.
         jitIRMem.putByte((byte) 0);
         jitIRMem.truncate();
     }
@@ -362,7 +362,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
 
         // map doesn't support variable length types in map value, which is ok
-        // when we join tables on strings - technically string is the key
+        // when we join tables on strings - technically string is the key,
         // and we do not need to store it in value, but we will still reject
         //
         // never mind, this is a stop-gap measure until I understand the problem
@@ -760,7 +760,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
-        return new FilteredRecordCursorFactory(factory, f);
+        return new FilteredRecordCursorFactory(configuration, factory, f);
     }
 
     private RecordCursorFactory generateFunctionQuery(QueryModel model) throws SqlException {
@@ -965,7 +965,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // check if there are post-filters
                 ExpressionNode filter = slaveModel.getPostJoinWhereClause();
                 if (filter != null) {
-                    master = new FilteredRecordCursorFactory(master, functionParser.parseFunction(filter, master.getMetadata(), executionContext));
+                    master = new FilteredRecordCursorFactory(configuration, master, functionParser.parseFunction(filter, master.getMetadata(), executionContext));
                 }
             }
 
@@ -1712,7 +1712,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final RecordMetadata baseMetadata = base.getMetadata();
         final ObjList<QueryColumn> columns = model.getColumns();
         final int columnCount = columns.size();
-        grouppedAnalytic.clear();
+        groupedAnalytic.clear();
         ObjList<AnalyticFunction> naturalOrderFunctions = null;
 
         valueTypes.clear();
@@ -1851,9 +1851,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 if (osz > 0 && !dismissOrder) {
                     IntList order = toOrderIndices(chainMetadata, ac.getOrderBy(), ac.getOrderByDirection());
-                    ObjList<AnalyticFunction> funcs = grouppedAnalytic.get(order);
+                    ObjList<AnalyticFunction> funcs = groupedAnalytic.get(order);
                     if (funcs == null) {
-                        grouppedAnalytic.put(order, funcs = new ObjList<>());
+                        groupedAnalytic.put(order, funcs = new ObjList<>());
                     }
                     funcs.add(analyticFunction);
                 } else {
@@ -1888,9 +1888,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
-        final ObjList<RecordComparator> analyticComparators = new ObjList<>(grouppedAnalytic.size());
-        final ObjList<ObjList<AnalyticFunction>> functionGroups = new ObjList<>(grouppedAnalytic.size());
-        for (ObjObjHashMap.Entry<IntList, ObjList<AnalyticFunction>> e : grouppedAnalytic) {
+        final ObjList<RecordComparator> analyticComparators = new ObjList<>(groupedAnalytic.size());
+        final ObjList<ObjList<AnalyticFunction>> functionGroups = new ObjList<>(groupedAnalytic.size());
+        for (ObjObjHashMap.Entry<IntList, ObjList<AnalyticFunction>> e : groupedAnalytic) {
             analyticComparators.add(recordComparatorCompiler.compile(chainTypes, e.key));
             functionGroups.add(e.value);
         }

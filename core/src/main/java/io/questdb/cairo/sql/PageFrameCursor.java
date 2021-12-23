@@ -24,12 +24,11 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.SymbolMapReader;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-public interface PageFrameCursor extends Closeable {
+public interface PageFrameCursor extends Closeable, SymbolTableSource {
 
     @Override
     void close(); // we don't throw IOException
@@ -46,6 +45,4 @@ public interface PageFrameCursor extends Closeable {
      * @return size of page in bytes
      */
     long size();
-
-    SymbolMapReader getSymbolMapReader(int columnIndex);
 }

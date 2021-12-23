@@ -41,6 +41,12 @@ public interface MessageBus extends Closeable {
 
     CairoConfiguration getConfiguration();
 
+    MPSequence getFilterDispatchPubSeq();
+
+    RingQueue<FilterDispatchTask> getFilterDispatchQueue();
+
+    MCSequence getFilterDispatchSubSeq();
+
     Sequence getIndexerPubSequence();
 
     RingQueue<ColumnIndexerTask> getIndexerQueue();
@@ -89,31 +95,33 @@ public interface MessageBus extends Closeable {
 
     MCSequence getO3PurgeSubSeq();
 
+    FanOut getPageFrameConsumerFanOut(int shard);
+
+    MPSequence getPageFramePubSeq(int shard);
+
+    RingQueue<PageFrameTask> getPageFrameQueue(int shard);
+
+    int getPageFrameQueueShardCount();
+
+    FanOut getPageFrameRecycleFanOut(int shard);
+
+    MCSequence getPageFrameWorkerSubSeq(int shard);
+
+    FanOut getTableWriterCommandFanOut();
+
     MPSequence getTableWriterCommandPubSeq();
 
     RingQueue<TableWriterTask> getTableWriterCommandQueue();
 
-    FanOut getTableWriterCommandFanOut();
+    FanOut getTableWriterEventFanOut();
 
     MPSequence getTableWriterEventPubSeq();
 
     RingQueue<TableWriterTask> getTableWriterEventQueue();
-
-    FanOut getTableWriterEventFanOut();
 
     Sequence getVectorAggregatePubSeq();
 
     RingQueue<VectorAggregateTask> getVectorAggregateQueue();
 
     Sequence getVectorAggregateSubSeq();
-
-    RingQueue<PageFrameTask> getPageFrameQueue(int shard);
-
-    MCSequence getPageFrameWorkerSubSeq(int shard);
-
-    MPSequence getPageFramePubSeq(int shard);
-
-    FanOut getPageFrameRecycleFanOut(int shard);
-
-    int getPageFrameQueueShardCount();
 }

@@ -245,7 +245,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            return pageFrameCursor.getSymbolMapReader(queryToFrameColumnMapping[columnIndex]);
+            return pageFrameCursor.getSymbolTable(queryToFrameColumnMapping[columnIndex]);
         }
 
         @Override
@@ -716,7 +716,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 @Override
                 public CharSequence getSym(int col) {
                     int symbolId = (int) crossFrameRow.getQuick(col);
-                    return pageFrameCursor.getSymbolMapReader(queryToFrameColumnMapping[col]).valueBOf(symbolId);
+                    return pageFrameCursor.getSymbolTable(queryToFrameColumnMapping[col]).valueBOf(symbolId);
                 }
 
                 @Override
@@ -808,7 +808,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                     } else {
                         symbolId = SymbolTable.VALUE_IS_NULL;
                     }
-                    return pageFrameCursor.getSymbolMapReader(queryToFrameColumnMapping[col]).valueBOf(symbolId);
+                    return pageFrameCursor.getSymbolTable(queryToFrameColumnMapping[col]).valueBOf(symbolId);
                 }
 
                 @Override

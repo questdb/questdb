@@ -24,22 +24,30 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.std.Unsafe;
+import io.questdb.mp.RingQueue;
+import io.questdb.std.Mutable;
+import io.questdb.tasks.PageFrameTask;
 
-public class PageFrameRecord implements Record {
-    private PageFrame pageFrame;
-    private long row;
+public class ExecutionToken implements Mutable {
+    private RingQueue<PageFrameTask> queue;
+    private long producerId;
 
     @Override
-    public int getInt(int col) {
-        return Unsafe.getUnsafe().getInt(pageFrame.getPageAddress(col) + row * 4);
+    public void clear() {
+        this.queue = null;
+        this.producerId = -1;
     }
 
-    public void setPageFrame(PageFrame pageFrame) {
-        this.pageFrame = pageFrame;
+    public long getProducerId() {
+        return producerId;
     }
 
-    public void setRow(long row) {
-        this.row = row;
+    public RingQueue<PageFrameTask> getQueue() {
+        return queue;
+    }
+
+    public void of(RingQueue<PageFrameTask> queue, long producerId) {
+        this.queue = queue;
+        this.producerId = producerId;
     }
 }

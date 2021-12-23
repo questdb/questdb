@@ -81,6 +81,9 @@ public class MessageBusImpl implements MessageBus {
     private final MCSequence[] pageFrameWorkerSubSeq;
     private final RingQueue<PageFrameTask>[] pageFrameQueue;
     private final FanOut[] pageFrameConsumerFanOut;
+    private final MPSequence filterDispatchPubSeq;
+    private final MCSequence filterDispatchSubSeq;
+    private final RingQueue<FilterDispatchTask> filterDispatchQueue;
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -129,10 +132,9 @@ public class MessageBusImpl implements MessageBus {
         this.latestBySubSeq = new MCSequence(latestByQueue.getCycle());
         latestByPubSeq.then(latestBySubSeq).then(latestByPubSeq);
 
-        // todo: move to configuration
         this.tableWriterCommandQueue = new RingQueue<>(
                 TableWriterTask::new,
-                2048,
+                configuration.getWriterCommandQueueSlotSize(),
                 configuration.getWriterCommandQueueCapacity(),
                 MemoryTag.NATIVE_REPL
         );
@@ -142,7 +144,7 @@ public class MessageBusImpl implements MessageBus {
 
         this.tableWriterEventQueue = new RingQueue<>(
                 TableWriterTask::new,
-                2048,
+                configuration.getWriterCommandQueueSlotSize(),
                 configuration.getWriterCommandQueueCapacity(),
                 MemoryTag.NATIVE_REPL
 
@@ -151,6 +153,7 @@ public class MessageBusImpl implements MessageBus {
         this.tableWriterEventSubSeq = new FanOut();
         this.tableWriterEventPubSeq.then(this.tableWriterEventSubSeq).then(this.tableWriterEventPubSeq);
 
+        //noinspection unchecked
         pageFrameQueue = new RingQueue[pageFrameQueueSharedCount];
         pageFramePubSeq = new MPSequence[pageFrameQueueSharedCount];
         pageFrameWorkerSubSeq = new MCSequence[pageFrameQueueSharedCount];
@@ -158,11 +161,15 @@ public class MessageBusImpl implements MessageBus {
         pageFrameConsumerFanOut = new FanOut[pageFrameQueueSharedCount];
 
         for (int i = 0; i < pageFrameQueueSharedCount; i++) {
-            RingQueue<PageFrameTask> queue = new RingQueue<>(PageFrameTask::new, 8);
-            MPSequence pubSeq = new MPSequence(queue.getCycle());
-            MCSequence subSeq = new MCSequence(queue.getCycle());
-            FanOut consumerFanOut = new FanOut();
-            FanOut recycleFanOut = new FanOut();
+            final RingQueue<PageFrameTask> queue = new RingQueue<>(
+                    PageFrameTask::new,
+                    configuration.getPageFrameQueueCapacity()
+            );
+
+            final MPSequence pubSeq = new MPSequence(queue.getCycle());
+            final MCSequence subSeq = new MCSequence(queue.getCycle());
+            final FanOut consumerFanOut = new FanOut();
+            final FanOut recycleFanOut = new FanOut();
             pubSeq.then(subSeq).then(consumerFanOut).then(recycleFanOut).then(pubSeq);
 
             pageFrameQueue[i] = queue;
@@ -171,11 +178,33 @@ public class MessageBusImpl implements MessageBus {
             pageFrameRecycleFanOut[i] = recycleFanOut;
             pageFrameConsumerFanOut[i] = consumerFanOut;
         }
+        filterDispatchQueue = new RingQueue<FilterDispatchTask>(
+                FilterDispatchTask::new,
+                configuration.getFilterQueueCapacity()
+        );
+        filterDispatchPubSeq = new MPSequence(filterDispatchQueue.getCycle());
+        filterDispatchSubSeq = new MCSequence(filterDispatchQueue.getCycle());
+        filterDispatchPubSeq.then(filterDispatchSubSeq).then(filterDispatchPubSeq);
     }
 
     @Override
     public CairoConfiguration getConfiguration() {
         return configuration;
+    }
+
+    @Override
+    public MPSequence getFilterDispatchPubSeq() {
+        return filterDispatchPubSeq;
+    }
+
+    @Override
+    public RingQueue<FilterDispatchTask> getFilterDispatchQueue() {
+        return filterDispatchQueue;
+    }
+
+    @Override
+    public MCSequence getFilterDispatchSubSeq() {
+        return filterDispatchSubSeq;
     }
 
     @Override
@@ -299,6 +328,41 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
+    public FanOut getPageFrameConsumerFanOut(int shard) {
+        return pageFrameConsumerFanOut[shard];
+    }
+
+    @Override
+    public MPSequence getPageFramePubSeq(int shard) {
+        return pageFramePubSeq[shard];
+    }
+
+    @Override
+    public RingQueue<PageFrameTask> getPageFrameQueue(int shard) {
+        return pageFrameQueue[shard];
+    }
+
+    @Override
+    public int getPageFrameQueueShardCount() {
+        return pageFrameQueueSharedCount;
+    }
+
+    @Override
+    public FanOut getPageFrameRecycleFanOut(int shard) {
+        return pageFrameRecycleFanOut[shard];
+    }
+
+    @Override
+    public MCSequence getPageFrameWorkerSubSeq(int shard) {
+        return pageFrameWorkerSubSeq[shard];
+    }
+
+    @Override
+    public FanOut getTableWriterCommandFanOut() {
+        return tableWriterCommandSubSeq;
+    }
+
+    @Override
     public MPSequence getTableWriterCommandPubSeq() {
         return tableWriterCommandPubSeq;
     }
@@ -309,8 +373,8 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public FanOut getTableWriterCommandFanOut() {
-        return tableWriterCommandSubSeq;
+    public FanOut getTableWriterEventFanOut() {
+        return tableWriterEventSubSeq;
     }
 
     @Override
@@ -321,11 +385,6 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public RingQueue<TableWriterTask> getTableWriterEventQueue() {
         return tableWriterEventQueue;
-    }
-
-    @Override
-    public FanOut getTableWriterEventFanOut() {
-        return tableWriterEventSubSeq;
     }
 
     @Override
@@ -341,30 +400,5 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public Sequence getVectorAggregateSubSeq() {
         return vectorAggregateSubSeq;
-    }
-
-    @Override
-    public RingQueue<PageFrameTask> getPageFrameQueue(int shard) {
-        return pageFrameQueue[shard];
-    }
-
-    @Override
-    public MCSequence getPageFrameWorkerSubSeq(int shard) {
-        return pageFrameWorkerSubSeq[shard];
-    }
-
-    @Override
-    public MPSequence getPageFramePubSeq(int shard) {
-        return pageFramePubSeq[shard];
-    }
-
-    @Override
-    public FanOut getPageFrameRecycleFanOut(int shard) {
-        return pageFrameRecycleFanOut[shard];
-    }
-
-    @Override
-    public int getPageFrameQueueShardCount() {
-        return pageFrameQueueSharedCount;
     }
 }

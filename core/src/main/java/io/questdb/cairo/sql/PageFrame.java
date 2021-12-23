@@ -25,8 +25,11 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.std.LongList;
 
 public interface PageFrame {
+
+    void copyColumnAddressesTo(LongList destColumnAddresses);
 
     BitmapIndexReader getBitmapIndexReader(int columnIndex, int dirForward);
 
