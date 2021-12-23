@@ -37,6 +37,7 @@ public class CeilFloatFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Override
-    protected FunctionFactory getFunctionFactory() { return new CeilFloatFunctionFactory();
+    protected FunctionFactory getFunctionFactory() {
+        return new CeilFloatFunctionFactory();
     }
 }

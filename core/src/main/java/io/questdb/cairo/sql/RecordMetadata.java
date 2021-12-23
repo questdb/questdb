@@ -96,7 +96,6 @@ public interface RecordMetadata extends ColumnTypes {
      */
     String getColumnName(int columnIndex);
 
-
     /**
      * Retrieves column hash. Hash augments the name to ensure when column is removed and
      * then added with the same name the clients do not perceive this event as no-change.

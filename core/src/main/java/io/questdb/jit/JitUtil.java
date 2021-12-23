@@ -22,21 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.math;
+package io.questdb.jit;
 
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
-import org.junit.Test;
+import io.questdb.std.Os;
 
-public class AddByteFunctionFactoryTest extends AbstractFunctionFactoryTest {
-    @Test
-    public void testSimple() throws SqlException {
-        call(2, 5).andAssert((byte) 7);
+public final class JitUtil {
+
+    private JitUtil() {
     }
 
-    @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new AddByteFunctionFactory();
+    public static boolean isJitSupported() {
+        // TODO what about FREEBSD_ARM64?
+        return Os.type != Os.LINUX_ARM64 && Os.type != Os.OSX_ARM64;
     }
 }

@@ -15,7 +15,7 @@
     "ci:lint": "eslint 'src/**/*.ts[x]' --max-warnings=0 --config .eslintrc.js",
     "type-check": "tsc --noEmit",
     "type-check:watch": "npm run type-check -- --watch",
-    "build": "cross-env NODE_ENV=production webpack && node utils/deploy.js",
+    "build": "cross-env NODE_ENV=production webpack",
     "start": "webpack-dev-server --progress",
     "start:prod": "cross-env NODE_ENV=production webpack-dev-server --progress",
     "analyze-bundle": "cross-env ANALYZE=true NODE_ENV=production webpack-cli --display-reasons",

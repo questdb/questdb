@@ -98,6 +98,11 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return ptr;
     }
 
+    @Override
+    public int capacity() {
+        return capacity;
+    }
+
     /**
      * Removes trailing zero from path to allow reuse of path as parent.
      *
@@ -141,6 +146,19 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
             len++;
         }
 
+        return this;
+    }
+
+    public Path seekZ() {
+        int count = 0;
+        while (count < capacity+1) {
+            if (Unsafe.getUnsafe().getByte(ptr + count) == 0) {
+                len = count;
+                wptr = ptr + len;
+                break;
+            }
+            count++;
+        }
         return this;
     }
 
