@@ -39,10 +39,11 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Iterator;
+import java.util.concurrent.locks.LockSupport;
 
 /**
  * This class maintains cache of open writers to avoid OS overhead of
- * opening and closing files. While doing so it abides by the the same
+ * opening and closing files. While doing so it abides by the same
  * rule as non-pooled writers: there can only be one TableWriter instance
  * for any given name.
  * <p>
@@ -61,12 +62,12 @@ import java.util.Iterator;
  * closed.
  */
 public class WriterPool extends AbstractPool {
-    private static final Log LOG = LogFactory.getLog(WriterPool.class);
-    static final String OWNERSHIP_REASON_MISSING = "missing or owned by other process";
     public static final String OWNERSHIP_REASON_NONE = null;
     public static final String OWNERSHIP_REASON_UNKNOWN = "unknown";
     public static final String OWNERSHIP_REASON_RELEASED = "released";
+    static final String OWNERSHIP_REASON_MISSING = "missing or owned by other process";
     static final String OWNERSHIP_REASON_WRITER_ERROR = "writer error";
+    private static final Log LOG = LogFactory.getLog(WriterPool.class);
     private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
     private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
     private final CairoConfiguration configuration;
@@ -91,6 +92,11 @@ public class WriterPool extends AbstractPool {
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
     }
 
+    public boolean exists(CharSequence tableName) {
+        checkClosed();
+        return entries.contains(tableName);
+    }
+
     /**
      * <p>
      * Creates or retrieves existing TableWriter from pool. Because of TableWriter compliance with <b>single
@@ -111,50 +117,68 @@ public class WriterPool extends AbstractPool {
 
         long thread = Thread.currentThread().getId();
 
-        Entry e = entries.get(tableName);
-        if (e == null) {
-            // We are racing to create new writer!
-            e = new Entry(clock.getTicks());
-            Entry other = entries.putIfAbsent(tableName, e);
-            if (other == null) {
-                // race won
-                return createWriter(tableName, e, thread, lockReason);
+        while (true) {
+            Entry e = entries.get(tableName);
+            if (e == null) {
+                // We are racing to create new writer!
+                e = new Entry(clock.getTicks());
+                Entry other = entries.putIfAbsent(tableName, e);
+                if (other == null) {
+                    // race won
+                    return createWriter(tableName, e, thread, lockReason);
+                } else {
+                    e = other;
+                }
+            }
+
+            long owner = e.owner;
+            // try to change owner
+            if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
+                // in an extreme race condition it is possible that e.writer will be null
+                // in this case behaviour should be identical to entry missing entirely
+                if (e.writer == null) {
+                    return createWriter(tableName, e, thread, lockReason);
+                }
+                return checkClosedAndGetWriter(tableName, e, lockReason);
             } else {
-                e = other;
-            }
-        }
-
-        long owner = e.owner;
-        // try to change owner
-        if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
-            // in an extreme race condition it is possible that e.writer will be null
-            // in this case behaviour should be identical to entry missing entirely
-            if (e.writer == null) {
-                return createWriter(tableName, e, thread, lockReason);
-            }
-            return checkClosedAndGetWriter(tableName, e, lockReason);
-        } else {
-            if (e.owner == thread) {
-                if (e.lockFd != -1L) {
-                    throw EntryLockedException.instance(reinterpretOwnershipReason(e.ownershipReason));
+                if (owner < 0) {
+                    // writer is about to be released from the pool by release method.
+                    // try again, it should become available soon.
+                    LockSupport.parkNanos(1);
+                    continue;
                 }
+                if (owner == thread) {
+                    if (e.lockFd != -1L) {
+                        throw EntryLockedException.instance(reinterpretOwnershipReason(e.ownershipReason));
+                    }
 
-                if (e.ex != null) {
-                    notifyListener(thread, tableName, PoolListener.EV_EX_RESEND);
-                    // this writer failed to allocate by this very thread
-                    // ensure consistent response
-                    entries.remove(tableName);
-                    throw e.ex;
+                    if (e.ex != null) {
+                        notifyListener(thread, tableName, PoolListener.EV_EX_RESEND);
+                        // this writer failed to allocate by this very thread
+                        // ensure consistent response
+                        entries.remove(tableName);
+                        throw e.ex;
+                    }
                 }
+                LOG.info().$("busy [table=`").utf8(tableName).$("`, owner=").$(owner).$(", thread=").$(thread).I$();
+                throw EntryUnavailableException.instance(reinterpretOwnershipReason(e.ownershipReason));
             }
-            LOG.info().$("busy [table=`").utf8(tableName).$("`, owner=").$(owner).$(']').$();
-            throw EntryUnavailableException.instance(reinterpretOwnershipReason(e.ownershipReason));
         }
     }
 
-    public boolean exists(CharSequence tableName) {
-        checkClosed();
-        return entries.contains(tableName);
+    /**
+     * Counts busy writers in pool.
+     *
+     * @return number of busy writer instances.
+     */
+    public int getBusyCount() {
+        int count = 0;
+        for (Entry e : entries.values()) {
+            if (e.owner != UNALLOCATED) {
+                count++;
+            }
+        }
+        return count;
     }
 
     /**
@@ -207,42 +231,6 @@ public class WriterPool extends AbstractPool {
         LOG.error().$("could not lock, busy [table=`").utf8(tableName).$("`, owner=").$(e.owner).$(", thread=").$(thread).$(']').$();
         notifyListener(thread, tableName, PoolListener.EV_LOCK_BUSY);
         return reinterpretOwnershipReason(e.ownershipReason);
-    }
-
-    private CharSequence reinterpretOwnershipReason(CharSequence providedReason) {
-        // we cannot always guarantee that ownership reason is set
-        // allocating writer and setting "reason" are non-atomic
-        // therefore we could be in a situation where we can be confident writer is locked
-        // but reason has not yet caught up. In this case we do not really know the reason
-        // but not to confuse the caller, we have to provide a non-null value
-        return providedReason == OWNERSHIP_REASON_NONE ? OWNERSHIP_REASON_UNKNOWN : providedReason;
-    }
-
-    /**
-     * Counts busy writers in pool.
-     *
-     * @return number of busy writer instances.
-     */
-    public int getBusyCount() {
-        int count = 0;
-        for (Entry e : entries.values()) {
-            if (e.owner != UNALLOCATED) {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    private TableWriter checkClosedAndGetWriter(CharSequence tableName, Entry e, CharSequence lockReason) {
-        assertLockReason(lockReason);
-        if (isClosed()) {
-            // pool closed, but we somehow managed to lock writer
-            // make sure that interceptor cleared to allow calling thread close writer normally
-            LOG.info().$('\'').utf8(tableName).$("' born free").$();
-            return e.goodbye();
-        }
-        e.ownershipReason = lockReason;
-        return logAndReturn(e, PoolListener.EV_GET);
     }
 
     public int size() {
@@ -304,10 +292,16 @@ public class WriterPool extends AbstractPool {
                 Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
             }
             notifyListener(thread, name, PoolListener.EV_UNLOCKED);
-            LOG.debug().$("unlocked [table=`").utf8(name).$("`]").$();
+            LOG.debug().$("unlocked [table=`").utf8(name).$("`, thread=").$(thread).I$();
         } else {
             notifyListener(thread, name, PoolListener.EV_NOT_LOCK_OWNER);
             throw CairoException.instance(0).put("Not lock owner of ").put(name);
+        }
+    }
+
+    private void assertLockReason(CharSequence lockReason) {
+        if (lockReason == OWNERSHIP_REASON_NONE) {
+            throw new NullPointerException();
         }
     }
 
@@ -316,6 +310,18 @@ public class WriterPool extends AbstractPool {
             LOG.info().$("is closed").$();
             throw PoolClosedException.INSTANCE;
         }
+    }
+
+    private TableWriter checkClosedAndGetWriter(CharSequence tableName, Entry e, CharSequence lockReason) {
+        assertLockReason(lockReason);
+        if (isClosed()) {
+            // pool closed, but we somehow managed to lock writer
+            // make sure that interceptor cleared to allow calling thread close writer normally
+            LOG.info().$('\'').utf8(tableName).$("' born free").$();
+            return e.goodbye();
+        }
+        e.ownershipReason = lockReason;
+        return logAndReturn(e, PoolListener.EV_GET);
     }
 
     /**
@@ -350,15 +356,19 @@ public class WriterPool extends AbstractPool {
             // lastReleaseTime is volatile, which makes
             // order of conditions important
             if ((deadline > e.lastReleaseTime && e.owner == UNALLOCATED)) {
-                // looks like this one can be released
-                // try to lock it
-                if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
+                // looks like this writer is unallocated and can be released
+                // Lock with negative 2-based owner thread id to indicate it's that next
+                // allocating thread can wait until the entry is released.
+                // Avoid negative thread id clashing with UNALLOCATED value
+                if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, -thread - 2)) {
                     // lock successful
                     closeWriter(thread, e, PoolListener.EV_EXPIRE, reason);
                     iterator.remove();
                     removed = true;
                 }
-            } else if (e.lockFd != -1L) {
+            } else if (e.lockFd != -1L && deadline == Long.MAX_VALUE) {
+                // do not release locks unless pool is shutting down, which is
+                // indicated via deadline to be Long.MAX_VALUE
                 if (ff.close(e.lockFd)) {
                     e.lockFd = -1L;
                     iterator.remove();
@@ -389,13 +399,13 @@ public class WriterPool extends AbstractPool {
     int countFreeWriters() {
         int count = 0;
         for (Entry e : entries.values()) {
-            if (e.owner == UNALLOCATED) {
+            final long owner = e.owner;
+            if (owner == UNALLOCATED) {
                 count++;
             } else {
-                LOG.info().$("'").utf8(e.writer.getTableName()).$("' is still busy [owner=").$(e.owner).$(']').$();
+                LOG.info().$("'").utf8(e.writer.getTableName()).$("' is still busy [owner=").$(owner).$(']').$();
             }
         }
-
         return count;
     }
 
@@ -437,16 +447,19 @@ public class WriterPool extends AbstractPool {
         return true;
     }
 
-    private void assertLockReason(CharSequence lockReason) {
-        if (lockReason == OWNERSHIP_REASON_NONE) {
-            throw new NullPointerException();
-        }
-    }
-
     private TableWriter logAndReturn(Entry e, short event) {
         LOG.info().$(">> [table=`").utf8(e.writer.getTableName()).$("`, thread=").$(e.owner).$(']').$();
         notifyListener(e.owner, e.writer.getTableName(), event);
         return e.writer;
+    }
+
+    private CharSequence reinterpretOwnershipReason(CharSequence providedReason) {
+        // we cannot always guarantee that ownership reason is set
+        // allocating writer and setting "reason" are non-atomic
+        // therefore we could be in a situation where we can be confident writer is locked
+        // but reason has not yet caught up. In this case we do not really know the reason
+        // but not to confuse the caller, we have to provide a non-null value
+        return providedReason == OWNERSHIP_REASON_NONE ? OWNERSHIP_REASON_UNKNOWN : providedReason;
     }
 
     private boolean returnToPool(Entry e) {
@@ -458,7 +471,7 @@ public class WriterPool extends AbstractPool {
             e.writer.tick(true);
         } catch (Throwable ex) {
             // We are here because of a systemic issues of some kind
-            // one of the known issues is "disk is full" so we could not rollback properly.
+            // one of the known issues is "disk is full" so we could not roll back properly.
             // In this case we just close TableWriter
             entries.remove(name);
             closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_DISTRESSED);
@@ -471,14 +484,19 @@ public class WriterPool extends AbstractPool {
             e.ownershipReason = OWNERSHIP_REASON_NONE;
             e.lastReleaseTime = configuration.getMicrosecondClock().getTicks();
             Unsafe.getUnsafe().storeFence();
+            Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
 
             if (isClosed()) {
-                e.writer = null;
-                notifyListener(thread, name, PoolListener.EV_OUT_OF_POOL_CLOSE);
-                return false;
+                // when pool is closed it could be busy releasing writer
+                // to avoid race condition try to grab the writer before declaring it a
+                // free agent
+                if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
+                    e.writer = null;
+                    notifyListener(thread, name, PoolListener.EV_OUT_OF_POOL_CLOSE);
+                    return false;
+                }
             }
 
-            Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
             notifyListener(thread, name, PoolListener.EV_RETURN);
         } else {
             LOG.error().$("orphaned [table=`").utf8(name).$("`]").$();

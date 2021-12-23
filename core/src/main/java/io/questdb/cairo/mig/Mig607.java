@@ -199,7 +199,6 @@ final class Mig607 {
                             path.trimTo(plen2),
                             columnName,
                             plen2,
-                            mem,
                             false
                     );
                     final long columnRowCount = rowCount - columnTop;

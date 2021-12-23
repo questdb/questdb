@@ -8,8 +8,8 @@ pr: none
 variables:
   MVN_VERSION: "3.6.3"
   MVN: "apache-maven-$(MVN_VERSION)"
-  NODE_VERSION: "12"
-  NVM_VERSION: "0.37.2"
+  NODE_VERSION: "16"
+  NVM_VERSION: "0.39.0"
 
 stages:
   - stage: BuildSnapshotMaster

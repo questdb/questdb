@@ -32,7 +32,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <outputPath>target</outputPath>
         <nodejs.npm.cmd>npm</nodejs.npm.cmd>
-        <nodejs.version>v12.22.7</nodejs.version>
+        <nodejs.version>v16.13.1</nodejs.version>
         <runtime.assembly>none</runtime.assembly>
         <javac.target>11</javac.target>
         <argLine>-Dfile.encoding=UTF-8</argLine>
@@ -221,6 +221,9 @@
                                 <argument>--no-fund</argument>
                                 <argument>--scripts-prepend-node-path=auto</argument>
                             </arguments>
+                            <environmentVariables>
+                                <PATH>${project.basedir}/node/:${env.PATH}</PATH>
+                            </environmentVariables>
                             <workingDirectory>../ui</workingDirectory>
                         </configuration>
                     </execution>
@@ -236,6 +239,9 @@
                                 <argument>build</argument>
                                 <argument>--scripts-prepend-node-path=auto</argument>
                             </arguments>
+                            <environmentVariables>
+                                <PATH>${project.basedir}/node/:${env.PATH}</PATH>
+                            </environmentVariables>
                             <workingDirectory>../ui</workingDirectory>
                         </configuration>
                     </execution>
@@ -364,6 +370,28 @@
                             <execution>
                                 <id>npm-run-build</id>
                                 <phase>generate-sources</phase>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-assembly-plugin</artifactId>
+                        <version>3.0.0</version>
+                        <executions>
+                            <execution>
+                                <id>package-web-console</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>single</goal>
+                                </goals>
+                                <configuration>
+                                    <descriptors>
+                                        <descriptor>src/main/assembly/web-console.xml</descriptor>
+                                    </descriptors>
+                                    <finalName>public</finalName>
+                                    <appendAssemblyId>false</appendAssemblyId>
+                                    <outputDirectory>src/main/resources/io/questdb/site</outputDirectory>
+                                </configuration>
                             </execution>
                         </executions>
                     </plugin>

@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 
 public class UnionAllRecordCursorFactory implements RecordCursorFactory {
     private final RecordMetadata metadata;
@@ -64,5 +65,11 @@ public class UnionAllRecordCursorFactory implements RecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    public void close() {
+        Misc.free(masterFactory);
+        Misc.free(slaveFactory);
     }
 }

@@ -154,4 +154,9 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
         }
         return result;
     }
+
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
 }

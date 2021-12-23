@@ -97,6 +97,10 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
         return false;
     }
 
+    default boolean usesCompiledFilter() {
+        return false;
+    }
+
     default void toSink(CharSink sink) {
         throw new UnsupportedOperationException();
     }

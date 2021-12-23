@@ -41,6 +41,8 @@ import java.io.Closeable;
 
 public interface SqlExecutionContext extends Closeable {
 
+    QueryFutureUpdateListener getQueryFutureUpdateListener();
+
     BindVariableService getBindVariableService();
 
     CairoSecurityContext getCairoSecurityContext();
@@ -82,6 +84,10 @@ public interface SqlExecutionContext extends Closeable {
     void initNow();
 
     long getNow();
+
+    int getJitMode();
+
+    void setJitMode(int jitMode);
 
     @Override
     default void close(){

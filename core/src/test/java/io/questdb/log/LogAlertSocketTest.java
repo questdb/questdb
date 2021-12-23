@@ -25,13 +25,15 @@
 package io.questdb.log;
 
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
@@ -42,13 +44,6 @@ import static io.questdb.log.HttpLogRecordSink.CRLF;
 public class LogAlertSocketTest {
 
     private static final Log LOG = LogFactory.getLog(LogAlertSocketTest.class);
-
-    private StringSink sink;
-
-    @Before
-    public void setUp() {
-        sink = new StringSink();
-    }
 
     @Test
     public void testParseAlertTargetsEmpty() throws Exception {
@@ -122,7 +117,7 @@ public class LogAlertSocketTest {
     @Test
     public void testFailOver() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (LogAlertSocket alertSkt = new LogAlertSocket("localhost:1234,localhost:1242", LOG)) {
+            try (LogAlertSocket alertSkt = new LogAlertSocket(NetworkFacadeImpl.INSTANCE, "localhost:1234,localhost:1242", LOG)) {
                 final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
                         .putHeader("localhost")
                         .setMark();
@@ -171,7 +166,7 @@ public class LogAlertSocketTest {
         TestUtils.assertMemoryLeak(() -> {
             final String host = "127.0.0.1";
             final int port = 1241;
-            try (LogAlertSocket alertSkt = new LogAlertSocket(host + ":" + port, LOG)) {
+            try (LogAlertSocket alertSkt = new LogAlertSocket(NetworkFacadeImpl.INSTANCE, host + ":" + port, LOG)) {
                 final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
                         .putHeader(host)
                         .setMark();
@@ -195,10 +190,10 @@ public class LogAlertSocketTest {
                                 .$()));
 
                 // wait for haltness
-                Assert.assertTrue(haltLatch.await(20_000_000_000L));
+                haltLatch.await();
                 Assert.assertFalse(server.isRunning());
 
-                // send and fail after a reconnect delay
+                // send and fail after a re-connect delay
                 final long start = System.nanoTime();
                 Assert.assertFalse(alertSkt.send(builder.length()));
                 Assert.assertTrue(System.nanoTime() - start >= 2 * LogAlertSocket.RECONNECT_DELAY_NANO);
@@ -209,7 +204,13 @@ public class LogAlertSocketTest {
     @Test
     public void testFailOverNoServers() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (LogAlertSocket alertSkt = new LogAlertSocket("localhost:1234,localhost:1243", LOG)) {
+            final NetworkFacade nf = new NetworkFacadeImpl() {
+                @Override
+                public long connect(long fd, long sockaddr) {
+                    return -1;
+                }
+            };
+            try (LogAlertSocket alertSkt = new LogAlertSocket(nf, "localhost:1234,localhost:1243", LOG)) {
                 final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
                         .putHeader("localhost")
                         .setMark();
@@ -373,8 +374,14 @@ public class LogAlertSocketTest {
 
     private void testParseStatusResponse(CharSequence httpMessage, CharSequence expected) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
+            NetworkFacade nf = new NetworkFacadeImpl() {
+                @Override
+                public long connect(long fd, long sockaddr) {
+                    return -1;
+                }
+            };
             MockLog log = new MockLog();
-            try (LogAlertSocket alertSkt = new LogAlertSocket("", log)) {
+            try (LogAlertSocket alertSkt = new LogAlertSocket(nf, "", log)) {
                 LogRecordSink logRecord = new LogRecordSink(alertSkt.getInBufferPtr(), alertSkt.getInBufferSize());
                 logRecord.put(httpMessage);
                 alertSkt.logResponse(logRecord.length());
@@ -385,7 +392,13 @@ public class LogAlertSocketTest {
 
     private void assertLogError(String socketAddress, String expected) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (LogAlertSocket ignored = new LogAlertSocket(socketAddress, LOG)) {
+            NetworkFacade nf = new NetworkFacadeImpl() {
+                @Override
+                public long connect(long fd, long sockaddr) {
+                    return -1;
+                }
+            };
+            try (LogAlertSocket ignored = new LogAlertSocket(nf, socketAddress, LOG)) {
                 Assert.fail();
             } catch (LogError logError) {
                 Assert.assertEquals(expected, logError.getMessage());
@@ -399,7 +412,14 @@ public class LogAlertSocketTest {
             int[] expectedPorts
     ) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (LogAlertSocket socket = new LogAlertSocket(alertTargets, LOG)) {
+            NetworkFacade nf = new NetworkFacadeImpl() {
+                @Override
+                public long connect(long fd, long sockaddr) {
+                    return -1;
+                }
+            };
+
+            try (LogAlertSocket socket = new LogAlertSocket(nf, alertTargets, LOG)) {
                 Assert.assertEquals(expectedHosts.length, socket.getAlertHostsCount());
                 Assert.assertEquals(expectedPorts.length, socket.getAlertHostsCount());
                 for (int i = 0; i < expectedHosts.length; i++) {
@@ -539,6 +559,12 @@ public class LogAlertSocketTest {
         @Override
         public LogRecord $(char c) {
             sink.put(c);
+            return this;
+        }
+
+        @Override
+        public LogRecord $hex(long value) {
+            Numbers.appendHex(sink, value, false);
             return this;
         }
 

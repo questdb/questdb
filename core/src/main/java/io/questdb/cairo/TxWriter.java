@@ -128,7 +128,7 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
     }
 
     @Override
-    void unsafeLoadAll() {
+    public void unsafeLoadAll() {
         super.unsafeLoadAll();
         this.prevTransientRowCount = this.transientRowCount;
         this.prevMaxTimestamp = maxTimestamp;

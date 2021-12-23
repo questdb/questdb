@@ -261,19 +261,15 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testByteToShortCast() throws SqlException {
-        functions.add(new AddShortFunctionFactory());
+        functions.add(new NegShortFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", 1, ColumnType.BYTE));
-        metadata.add(new TableColumnMetadata("b", 2, ColumnType.BYTE));
         FunctionParser functionParser = createFunctionParser();
-        Function function = parseFunction("a+b", metadata, functionParser);
+        Function function = parseFunction("-a", metadata, functionParser);
         Assert.assertEquals(ColumnType.SHORT, function.getType());
-        Assert.assertEquals(131, function.getShort(new Record() {
+        Assert.assertEquals(-90, function.getShort(new Record() {
             @Override
             public byte getByte(int col) {
-                if (col == 0) {
-                    return 41;
-                }
                 return 90;
             }
         }));

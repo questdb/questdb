@@ -95,6 +95,11 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
         return base.recordCursorSupportsRandomAccess();
     }
 
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
+
     private static class DistinctRecordCursor implements RecordCursor {
         private RecordCursor baseCursor;
         private Map dataMap;
@@ -108,6 +113,7 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
         @Override
         public void close() {
             Misc.free(baseCursor);
+            dataMap.restoreInitialCapacity();
         }
 
         @Override

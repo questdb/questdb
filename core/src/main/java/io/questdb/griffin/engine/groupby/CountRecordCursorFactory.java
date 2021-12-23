@@ -70,6 +70,11 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
         return false;
     }
 
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
+
     private static class CountRecordCursor implements NoRandomAccessRecordCursor {
         private final CountRecord countRecord = new CountRecord();
         private boolean hasNext = true;
