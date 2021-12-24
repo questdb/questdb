@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.*;
@@ -44,6 +45,7 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
     private TableReaderPageFrameCursor pageFrameCursor;
 
     public DeferredSingleSymbolFilterDataFrameRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
             int tableSymColIndex,
             CharSequence symbolValue,
             RowCursorFactory rowCursorFactory,
@@ -54,6 +56,7 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
             @Nullable IntList columnSizes
     ) {
         super(
+                configuration,
                 metadata,
                 dataFrameCursorFactory,
                 rowCursorFactory,
@@ -107,7 +110,7 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
         assert this.convertedToFrame;
         DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext);
         if (pageFrameCursor == null) {
-            pageFrameCursor = new TableReaderPageFrameCursor(columnIndexes, columnSizes);
+            pageFrameCursor = new TableReaderPageFrameCursor(columnIndexes, columnSizes, pageFrameMaxSize);
         }
 
         pageFrameCursor.of(dataFrameCursor);

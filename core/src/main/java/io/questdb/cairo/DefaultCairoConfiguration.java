@@ -606,12 +606,17 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlPageFrameMaxSize() {
+        return 8 * Numbers.SIZE_1MB;
+    }
+
+    @Override
     public int getSqlJitMode() {
         return SqlJitMode.JIT_MODE_DISABLED;
     }
 
     @Override
-    public long getSqlJitIRMemoryPageSize() {
+    public int getSqlJitIRMemoryPageSize() {
         return 8192;
     }
 
@@ -621,7 +626,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getSqlJitBindVarsMemoryPageSize() {
+    public int getSqlJitBindVarsMemoryPageSize() {
         return 4096;
     }
 
@@ -631,12 +636,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getSqlJitRowsThreshold() {
+    public int getSqlJitRowsThreshold() {
         return Numbers.SIZE_1MB;
     }
 
     @Override
-    public long getSqlJitPageAddressCacheThreshold() {
+    public int getSqlJitPageAddressCacheThreshold() {
         return Numbers.SIZE_1MB;
     }
 

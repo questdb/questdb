@@ -202,6 +202,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(-1, configuration.getLineUdpReceiverConfiguration().ownThreadAffinity());
         Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().ownThread());
 
+        Assert.assertEquals(8 * 1024 * 1024, configuration.getCairoConfiguration().getSqlPageFrameMaxSize());
+
         Assert.assertEquals(SqlJitMode.JIT_MODE_DISABLED, configuration.getCairoConfiguration().getSqlJitMode());
         Assert.assertEquals(8192, configuration.getCairoConfiguration().getSqlJitIRMemoryPageSize());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getSqlJitIRMemoryMaxPages());
@@ -575,6 +577,8 @@ public class PropServerConfigurationTest {
             Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().isEnabled());
             Assert.assertEquals(2, configuration.getLineUdpReceiverConfiguration().ownThreadAffinity());
             Assert.assertTrue(configuration.getLineUdpReceiverConfiguration().ownThread());
+
+            Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlPageFrameMaxSize());
 
             Assert.assertEquals(SqlJitMode.JIT_MODE_FORCE_SCALAR, configuration.getCairoConfiguration().getSqlJitMode());
             Assert.assertEquals(2048, configuration.getCairoConfiguration().getSqlJitIRMemoryPageSize());
