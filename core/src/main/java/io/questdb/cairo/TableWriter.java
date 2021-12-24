@@ -3132,7 +3132,7 @@ public class TableWriter implements Closeable {
                 srcFixOffset = (committedTransientRowCount - columnTop) << shl;
             } else {
                 // Var size
-                int indexShl = ColumnType.pow2SizeOf(ColumnType.LONG);
+                final int indexShl = 3; // ColumnType.pow2SizeOf(ColumnType.LONG);
                 final MemoryMAR srcFixMem = getSecondaryColumn(colIndex);
                 long sourceOffset = (committedTransientRowCount - columnTop) << indexShl;
 
@@ -3156,7 +3156,7 @@ public class TableWriter implements Closeable {
                     srcAddress = mapRO(ff, srcFixMem.getFd(), sourceLen + alignedExtraLen, alignedOffset, MemoryTag.MMAP_TABLE_WRITER);
                 }
 
-                long srcVarOffset = Unsafe.getUnsafe().getLong(srcAddress);
+                long srcVarOffset = Unsafe.getUnsafe().getLong(srcAddress + alignedExtraLen);
                 O3Utils.shiftCopyFixedSizeColumnData(
                         srcVarOffset - dstVarOffset,
                         srcAddress + alignedExtraLen + Long.BYTES,
