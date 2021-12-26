@@ -53,7 +53,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
     // JIT compiled filter; used for dense page frames (no column tops)
     private CompiledFilter compiledFilter;
 
-    private final long rowsCapacityThreshold;
+    private final int rowsCapacityThreshold;
     private DirectLongList rows;
     private DirectLongList columns;
     private MemoryCARW bindVarMemory;
@@ -683,7 +683,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
     private static class PageAddressCache implements Mutable {
 
-        private final long cacheSizeThreshold;
+        private final int cacheSizeThreshold;
         private int columnCount;
         private int varLenColumnCount;
 

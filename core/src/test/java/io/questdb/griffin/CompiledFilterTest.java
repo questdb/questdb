@@ -120,6 +120,26 @@ public class CompiledFilterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testPageFrameMaxSize() throws Exception {
+        pageFrameMaxSize = 128;
+        final long N = 8 * pageFrameMaxSize + 1;
+        assertMemoryLeak(() -> {
+            compiler.compile("create table t1 as (select " +
+                    " x," +
+                    " timestamp_sequence(to_timestamp('1970-01-01', 'yyyy-MM-dd'), 100000L) ts " +
+                    "from long_sequence(" + N + ")) timestamp(ts) partition by day", sqlExecutionContext);
+
+            final String query = "select * from t1 where x < 3";
+            final String expected = "x\tts\n" +
+                    "1\t1970-01-01T00:00:00.000000Z\n" +
+                    "2\t1970-01-01T00:00:00.100000Z\n";
+
+            assertSql(query, expected);
+            assertSqlRunWithJit(query);
+        });
+    }
+
+    @Test
     public void testSingleBindVariableScalar() throws Exception {
         testSingleBindVariable(SqlJitMode.JIT_MODE_FORCE_SCALAR);
     }
