@@ -90,26 +90,29 @@ public class AssociativeCache<V> implements Closeable, Mutable {
 
     public CharSequence put(CharSequence key, V value) {
         final int lo = lo(key);
-        final CharSequence outgoingKey = keys[lo + bmask];
-        if (outgoingKey != null) {
-            free(lo + bmask);
-        }
 
         if (Chars.equalsNc(key, keys[lo])) {
             if (values[lo] != value) {
                 Misc.free(values[lo]);
                 values[lo] = value;
             }
-        } else {
-            System.arraycopy(keys, lo, keys, lo + 1, bmask);
-            System.arraycopy(values, lo, values, lo + 1, bmask);
-            if (value == null) {
-                keys[lo] = null;
-            } else {
-                keys[lo] = Chars.toString(key);
-            }
-            values[lo] = value;
+            return null;
         }
+
+        final CharSequence outgoingKey = keys[lo + bmask];
+        if (outgoingKey != null) {
+            free(lo + bmask);
+        }
+
+        System.arraycopy(keys, lo, keys, lo + 1, bmask);
+        System.arraycopy(values, lo, values, lo + 1, bmask);
+        if (value == null) {
+            keys[lo] = null;
+        } else {
+            keys[lo] = Chars.toString(key);
+        }
+        values[lo] = value;
+
         return outgoingKey;
     }
 
