@@ -44,7 +44,10 @@ public final class QueryCache implements Closeable {
     }
 
     public static void configure(HttpServerConfiguration configuration) {
-        TL_QUERY_CACHE = new ThreadLocal<>(() -> new QueryCache(configuration.getQueryCacheBlockCount(), configuration.getQueryCacheRowCount()));
+        final boolean enableQueryCache = configuration.isQueryCacheEnabled();
+        final int blockCount = enableQueryCache ? configuration.getQueryCacheBlockCount() : 1;
+        final int rowCount = enableQueryCache ? configuration.getQueryCacheRowCount() : 1;
+        TL_QUERY_CACHE = new ThreadLocal<>(() -> new QueryCache(blockCount, rowCount));
     }
 
     public static QueryCache getInstance() {

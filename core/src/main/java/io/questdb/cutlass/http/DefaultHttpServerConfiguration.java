@@ -151,6 +151,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
+    public boolean isQueryCacheEnabled() {
+        return true;
+    }
+
+    @Override
     public int getQueryCacheBlockCount() {
         return 4;
     }

@@ -87,8 +87,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int parallelIndexThreshold;
     private final int readerPoolMaxSegments;
     private final long spinLockTimeoutUs;
-    private final int httpSqlCacheRowCount;
+    private final boolean httpSqlCacheEnabled;
     private final int httpSqlCacheBlockCount;
+    private final int httpSqlCacheRowCount;
     private final int sqlCharacterStoreCapacity;
     private final int sqlCharacterStoreSequencePoolCapacity;
     private final int sqlColumnPoolCapacity;
@@ -294,8 +295,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgConnectionPoolInitialCapacity;
     private String pgPassword;
     private String pgUsername;
-    private int pgSelectCacheBlockCount;
-    private int pgSelectCacheRowCount;
     private int pgIdleRecvCountBeforeGivingUp;
     private int pgIdleSendCountBeforeGivingUp;
     private int pgMaxBlobSizeOnQuery;
@@ -308,6 +307,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgWorkerYieldThreshold;
     private long pgWorkerSleepThreshold;
     private boolean pgDaemonPool;
+    private boolean pgSelectCacheEnabled;
+    private int pgSelectCacheBlockCount;
+    private int pgSelectCacheRowCount;
+    private boolean pgInsertCacheEnabled;
     private int pgInsertCacheBlockCount;
     private int pgInsertCacheRowCount;
     private int pgInsertPoolCapacity;
@@ -567,8 +570,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgWorkerYieldThreshold = getLong(properties, env, "pg.worker.yield.threshold", 10);
                 this.pgWorkerSleepThreshold = getLong(properties, env, "pg.worker.sleep.threshold", 10000);
                 this.pgDaemonPool = getBoolean(properties, env, "pg.daemon.pool", true);
+                this.pgSelectCacheEnabled = getBoolean(properties, env, "pg.select.cache.enabled", true);
                 this.pgSelectCacheBlockCount = getInt(properties, env, "pg.select.cache.block.count", 16);
                 this.pgSelectCacheRowCount = getInt(properties, env, "pg.select.cache.row.count", 16);
+                this.pgInsertCacheEnabled = getBoolean(properties, env, "pg.insert.cache.enabled", true);
                 this.pgInsertCacheBlockCount = getInt(properties, env, "pg.insert.cache.block.count", 8);
                 this.pgInsertCacheRowCount = getInt(properties, env, "pg.insert.cache.row.count", 8);
                 this.pgInsertPoolCapacity = getInt(properties, env, "pg.insert.pool.capacity", 64);
@@ -591,6 +596,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.parallelIndexThreshold = getInt(properties, env, "cairo.parallel.index.threshold", 100000);
             this.readerPoolMaxSegments = getInt(properties, env, "cairo.reader.pool.max.segments", 5);
             this.spinLockTimeoutUs = getLong(properties, env, "cairo.spin.lock.timeout", 1_000_000);
+            this.httpSqlCacheEnabled = getBoolean(properties, env, "http.query.cache.enabled", true);
             this.httpSqlCacheBlockCount = getInt(properties, env, "http.query.cache.block.count", 4);
             this.httpSqlCacheRowCount = getInt(properties, env, "http.query.cache.row.count", 16);
             this.sqlCharacterStoreCapacity = getInt(properties, env, "cairo.character.store.capacity", 1024);
@@ -1482,6 +1488,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
             return jsonQueryProcessorConfiguration;
+        }
+
+        @Override
+        public boolean isQueryCacheEnabled() {
+            return httpSqlCacheEnabled;
         }
 
         @Override
@@ -2697,6 +2708,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isSelectCacheEnabled() {
+            return pgSelectCacheEnabled;
+        }
+
+        @Override
         public int getSelectCacheBlockCount() {
             return pgSelectCacheBlockCount;
         }
@@ -2714,6 +2730,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getIdleSendCountBeforeGivingUp() {
             return pgIdleSendCountBeforeGivingUp;
+        }
+
+        @Override
+        public boolean isInsertCacheEnabled() {
+            return pgInsertCacheEnabled;
         }
 
         @Override

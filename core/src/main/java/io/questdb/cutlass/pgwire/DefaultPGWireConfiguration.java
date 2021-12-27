@@ -87,6 +87,11 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
+    public boolean isSelectCacheEnabled() {
+        return true;
+    }
+
+    @Override
     public int getSelectCacheBlockCount() {
         return 16;
     }
@@ -104,6 +109,11 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     @Override
     public int getIdleSendCountBeforeGivingUp() {
         return 10_000;
+    }
+
+    @Override
+    public boolean isInsertCacheEnabled() {
+        return true;
     }
 
     @Override
