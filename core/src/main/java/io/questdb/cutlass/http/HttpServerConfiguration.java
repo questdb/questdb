@@ -35,9 +35,9 @@ public interface HttpServerConfiguration extends WorkerPoolAwareConfiguration, H
 
     JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
 
-    int getQueryCacheBlocks();
+    int getQueryCacheBlockCount();
 
-    int getQueryCacheRows();
+    int getQueryCacheRowCount();
 
     WaitProcessorConfiguration getWaitProcessorConfiguration();
 

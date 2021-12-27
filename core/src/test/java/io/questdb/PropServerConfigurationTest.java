@@ -88,8 +88,8 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getHttpServerConfiguration().isEnabled());
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getDumpNetworkTraffic());
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().allowDeflateBeforeSend());
-        Assert.assertEquals(16, configuration.getHttpServerConfiguration().getQueryCacheRows());
-        Assert.assertEquals(4, configuration.getHttpServerConfiguration().getQueryCacheBlocks());
+        Assert.assertEquals(16, configuration.getHttpServerConfiguration().getQueryCacheRowCount());
+        Assert.assertEquals(4, configuration.getHttpServerConfiguration().getQueryCacheBlockCount());
 
         // this is going to need interesting validation logic
         // configuration path is expected to be relative and we need to check if absolute path is good
@@ -286,6 +286,13 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(16777216, configuration.getCairoConfiguration().getDataIndexValueAppendPageSize());
         Assert.assertEquals(Files.PAGE_SIZE, configuration.getCairoConfiguration().getMiscAppendPageSize());
         Assert.assertEquals(2.0, configuration.getHttpServerConfiguration().getWaitProcessorConfiguration().getExponentialWaitMultiplier(), 0.00001);
+
+        // Pg wire
+        Assert.assertEquals(2, configuration.getPGWireConfiguration().getBinParamCountCapacity());
+        Assert.assertEquals(16, configuration.getPGWireConfiguration().getSelectCacheBlockCount());
+        Assert.assertEquals(16, configuration.getPGWireConfiguration().getSelectCacheRowCount());
+        Assert.assertEquals(8, configuration.getPGWireConfiguration().getInsertCacheBlockCount());
+        Assert.assertEquals(8, configuration.getPGWireConfiguration().getInsertCacheRowCount());
     }
 
     @Test
@@ -456,8 +463,8 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getHttpServerConfiguration().haltOnError());
             Assert.assertEquals(128, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getSendBufferSize());
             Assert.assertEquals("index2.html", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getIndexFileName());
-            Assert.assertEquals(32, configuration.getHttpServerConfiguration().getQueryCacheRows());
-            Assert.assertEquals(16, configuration.getHttpServerConfiguration().getQueryCacheBlocks());
+            Assert.assertEquals(32, configuration.getHttpServerConfiguration().getQueryCacheBlockCount());
+            Assert.assertEquals(16, configuration.getHttpServerConfiguration().getQueryCacheRowCount());
 
             Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext());
             Assert.assertEquals(50000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
@@ -638,6 +645,10 @@ public class PropServerConfigurationTest {
 
             // Pg wire
             Assert.assertEquals(9, configuration.getPGWireConfiguration().getBinParamCountCapacity());
+            Assert.assertEquals(1, configuration.getPGWireConfiguration().getSelectCacheBlockCount());
+            Assert.assertEquals(2, configuration.getPGWireConfiguration().getSelectCacheRowCount());
+            Assert.assertEquals(128, configuration.getPGWireConfiguration().getInsertCacheBlockCount());
+            Assert.assertEquals(256, configuration.getPGWireConfiguration().getInsertCacheRowCount());
         }
     }
 

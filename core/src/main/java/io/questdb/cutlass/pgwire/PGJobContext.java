@@ -45,12 +45,12 @@ public class PGJobContext implements Closeable {
     public PGJobContext(PGWireConfiguration configuration, CairoEngine engine, FunctionFactoryCache functionFactoryCache) {
         this.compiler = new SqlCompiler(engine, functionFactoryCache);
         this.selectAndTypesCache = new AssociativeCache<>(
-                configuration.getFactoryCacheColumnCount(),
-                configuration.getFactoryCacheRowCount()
+                configuration.getSelectCacheBlockCount(),
+                configuration.getSelectCacheRowCount()
         );
         this.selectAndTypesPool = new WeakAutoClosableObjectPool<>(
                 TypesAndSelect::new,
-                configuration.getFactoryCacheColumnCount() * configuration.getFactoryCacheRowCount()
+                configuration.getSelectCacheBlockCount() * configuration.getSelectCacheRowCount()
         );
     }
 

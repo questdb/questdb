@@ -87,12 +87,12 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
-    public int getFactoryCacheColumnCount() {
+    public int getSelectCacheBlockCount() {
         return 16;
     }
 
     @Override
-    public int getFactoryCacheRowCount() {
+    public int getSelectCacheRowCount() {
         return 16;
     }
 
