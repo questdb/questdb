@@ -28,9 +28,9 @@ import java.io.Closeable;
 
 public class AssociativeCache<V> implements Closeable, Mutable {
 
-    private static final int MIN_BLOCKS = 2;
     private static final int NOT_FOUND = -1;
-    private static final int MINROWS = 16;
+    private static final int MIN_BLOCKS = 1;
+    private static final int MIN_ROWS = 1;
     private final CharSequence[] keys;
     private final V[] values;
     private final int rmask;
@@ -41,7 +41,7 @@ public class AssociativeCache<V> implements Closeable, Mutable {
     @SuppressWarnings("unchecked")
     public AssociativeCache(int blocks, int rows) {
         this.blocks = Math.max(MIN_BLOCKS, Numbers.ceilPow2(blocks));
-        rows = Math.max(MINROWS, Numbers.ceilPow2(rows));
+        rows = Math.max(MIN_ROWS, Numbers.ceilPow2(rows));
 
         int size = rows * this.blocks;
         if (size < 0) {
