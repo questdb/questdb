@@ -27,7 +27,7 @@ package io.questdb.cairo.sql;
 import java.io.Closeable;
 
 /**
- * A cursor for managing position of operations over multiple records
+ * A cursor for managing position of operations over multiple records.
  *
  * Interfaces which extend Closeable are not optionally-closeable.
  * close() method must be called after other calls are complete.
@@ -77,7 +77,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
     void toTop();
 
     /**
-     * Not every record cursor has a size, may return -1, in this case, keep going until next()
+     * Not every record cursor has a size, may return -1, in this case, keep going until hasNext()
      * indicated there are no more records to access.
      *
      * @return size of records available to the cursor

@@ -1921,14 +1921,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableWithGeoHashWrongSize1() throws Exception {
         assertSyntaxError(
                 "create table x (gh GEOHASH(0b), t TIMESTAMP) timestamp(t) partition by DAY",
-                26, "invalid GEOHASH type precision range, mast be [1, 60] bits, provided=0");
+                26, "invalid GEOHASH type precision range, must be [1, 60] bits, provided=0");
     }
 
     @Test
     public void testCreateTableWithGeoHashWrongSize2() throws Exception {
         assertSyntaxError(
                 "create table x (gh GEOHASH(61b), t TIMESTAMP) timestamp(t) partition by DAY",
-                26, "invalid GEOHASH type precision range, mast be [1, 60] bits, provided=61");
+                26, "invalid GEOHASH type precision range, must be [1, 60] bits, provided=61");
     }
 
     @Test

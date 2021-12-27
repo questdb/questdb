@@ -57,7 +57,9 @@ stages:
             inputs:
               mavenPomFile: "core/pom.xml"
               mavenOptions: "-Xmx3072m"
-              options: "--batch-mode --quiet -DquestdbLog=$(Build.SourcesDirectory)/ci/qlog.conf"
+              options:
+                "--batch-mode --quiet
+                -DquestdbLog=$(Build.SourcesDirectory)/ci/qlog.conf"
               jdkVersionOption: $(jdk)
           - task: ArchiveFiles@2
             displayName: "Tests failed -- Compress logs"

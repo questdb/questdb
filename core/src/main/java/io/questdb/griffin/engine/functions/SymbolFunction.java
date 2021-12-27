@@ -38,7 +38,6 @@ import org.jetbrains.annotations.Nullable;
  * populated by function dynamically, in that values that have not yet been returned via
  * getInt() are not cached.*
  */
-
 public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
 
     @Override
@@ -135,7 +134,6 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     public final long getTimestamp(Record rec) {
         throw new UnsupportedOperationException();
     }
-
 
     @Override
     public byte getGeoByte(Record rec) {

@@ -151,6 +151,15 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlGroupByMapCapacity;
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlBindVariablePoolSize;
+    private final int sqlPageFrameMaxSize;
+    private final int sqlJitMode;
+    private final int sqlJitIRMemoryPageSize;
+    private final int sqlJitIRMemoryMaxPages;
+    private final int sqlJitBindVarsMemoryPageSize;
+    private final int sqlJitBindVarsMemoryMaxPages;
+    private final int sqlJitRowsThreshold;
+    private final int sqlJitPageAddressCacheThreshold;
+    private final boolean sqlJitDebugEnabled;
     private final DateLocale locale;
     private final String backupRoot;
     private final DateFormat backupDirTimestampFormat;
@@ -641,6 +650,16 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
             this.sqlDistinctTimestampKeyCapacity = getInt(properties, env, "cairo.sql.distinct.timestamp.key.capacity", 512);
             this.sqlDistinctTimestampLoadFactor = getDouble(properties, env, "cairo.sql.distinct.timestamp.load.factor", 0.5);
+            this.sqlPageFrameMaxSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.page.frame.max.size", 8 * 1024 * 1024));
+
+            this.sqlJitMode = getSqlJitMode(properties, env);
+            this.sqlJitIRMemoryPageSize = getIntSize(properties, env, "cairo.sql.jit.ir.memory.page.size", 8 * 1024);
+            this.sqlJitIRMemoryMaxPages = getInt(properties, env, "cairo.sql.jit.ir.memory.max.pages", 8);
+            this.sqlJitBindVarsMemoryPageSize = getIntSize(properties, env, "cairo.sql.jit.bind.vars.memory.page.size", 4 * 1024);
+            this.sqlJitBindVarsMemoryMaxPages = getInt(properties, env, "cairo.sql.jit.bind.vars.memory.max.pages", 8);
+            this.sqlJitRowsThreshold = getIntSize(properties, env, "cairo.sql.jit.rows.threshold", 1024 * 1024);
+            this.sqlJitPageAddressCacheThreshold = getIntSize(properties, env, "cairo.sql.jit.page.address.cache.threshold", 1024 * 1024);
+            this.sqlJitDebugEnabled = getBoolean(properties, env, "cairo.sql.jit.debug.enabled", false);
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
                     new DateFormatFactory(),
@@ -892,6 +911,29 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         return CommitMode.NOSYNC;
+    }
+
+    private int getSqlJitMode(Properties properties, @Nullable Map<String, String> env) {
+        final String key = "cairo.sql.jit.mode";
+        final String jitMode = overrideWithEnv(properties, env, key);
+
+        if (jitMode == null) {
+            return SqlJitMode.JIT_MODE_DISABLED;
+        }
+
+        if (Chars.equalsLowerCaseAscii(jitMode, "on")) {
+            return SqlJitMode.JIT_MODE_ENABLED;
+        }
+
+        if (Chars.equalsLowerCaseAscii(jitMode, "off")) {
+            return SqlJitMode.JIT_MODE_DISABLED;
+        }
+
+        if (Chars.equalsLowerCaseAscii(jitMode, "scalar")) {
+            return SqlJitMode.JIT_MODE_FORCE_SCALAR;
+        }
+
+        return SqlJitMode.JIT_MODE_DISABLED;
     }
 
     private double getDouble(Properties properties, @Nullable Map<String, String> env, String key, double defaultValue) throws ServerConfigurationException {
@@ -1991,10 +2033,56 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlPageFrameMaxSize() {
+            return sqlPageFrameMaxSize;
+        }
+
+        @Override
+        public int getSqlJitMode() {
+            return sqlJitMode;
+        }
+
+        @Override
+        public int getSqlJitIRMemoryPageSize() {
+            return sqlJitIRMemoryPageSize;
+        }
+
+        @Override
+        public int getSqlJitIRMemoryMaxPages() {
+            return sqlJitIRMemoryMaxPages;
+        }
+
+        @Override
+        public int getSqlJitBindVarsMemoryPageSize() {
+            return sqlJitBindVarsMemoryPageSize;
+        }
+
+        @Override
+        public int getSqlJitBindVarsMemoryMaxPages() {
+            return sqlJitBindVarsMemoryMaxPages;
+        }
+
+        @Override
+        public int getSqlJitRowsThreshold() {
+            return sqlJitRowsThreshold;
+        }
+
+        @Override
+        public int getSqlJitPageAddressCacheThreshold() {
+            return sqlJitPageAddressCacheThreshold;
+        }
+
+        @Override
+        public boolean isSqlJitDebugEnabled() {
+            return sqlJitDebugEnabled;
+        }
+
+        @Override
         public int getRenameTableModelPoolCapacity() {
             return sqlRenameTableModelPoolCapacity;
         }
 
+        @Override
         public int getTableBlockWriterQueueCapacity() {
             return tableBlockWriterQueueCapacity;
         }
