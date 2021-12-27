@@ -106,7 +106,7 @@ public class LongTreeChain extends AbstractRedBlackTree {
         } else {
             setRight(parent, p);
         }
-        fix(p);
+        fixInsert(p);
     }
 
     @Override

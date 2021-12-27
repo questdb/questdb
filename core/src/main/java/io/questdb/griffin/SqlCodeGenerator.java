@@ -45,6 +45,7 @@ import io.questdb.griffin.engine.groupby.*;
 import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.*;
 import io.questdb.griffin.engine.join.*;
+import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
@@ -1202,22 +1203,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ExpressionNode limitLo = model.getLimitLo();
         ExpressionNode limitHi = model.getLimitHi();
 
-        if (limitLo == null && limitHi == null) {
+        if ((limitLo == null && limitHi == null) || factory.implementsLimit()) {
             return factory;
         }
 
-        final Function loFunc;
-        final Function hiFunc;
+        final Function loFunc = getLoFunction(executionContext, limitLo);
+        final Function hiFunc = getHiFunction(executionContext, limitHi);
 
-        if (limitLo == null) {
-            loFunc = LongConstant.ZERO;
-        } else {
-            loFunc = functionParser.parseFunction(limitLo, EmptyRecordMetadata.INSTANCE, executionContext);
-            final int type = loFunc.getType();
-            if (limitTypes.excludes(type)) {
-                throw SqlException.$(limitLo.position, "invalid type: ").put(ColumnType.nameOf(type));
-            }
-        }
+        return new LimitRecordCursorFactory(factory, loFunc, hiFunc);
+    }
+
+    @Nullable
+    private Function getHiFunction(SqlExecutionContext executionContext, ExpressionNode limitHi) throws SqlException {
+        final Function hiFunc;
 
         if (limitHi != null) {
             hiFunc = functionParser.parseFunction(limitHi, EmptyRecordMetadata.INSTANCE, executionContext);
@@ -1228,7 +1226,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } else {
             hiFunc = null;
         }
-        return new LimitRecordCursorFactory(factory, loFunc, hiFunc);
+        return hiFunc;
+    }
+
+    @NotNull
+    private Function getLoFunction(SqlExecutionContext executionContext, ExpressionNode limitLo) throws SqlException {
+        final Function loFunc;
+
+        if (limitLo == null) {
+            loFunc = LongConstant.ZERO;
+        } else {
+            loFunc = functionParser.parseFunction(limitLo, EmptyRecordMetadata.INSTANCE, executionContext);
+            final int type = loFunc.getType();
+            if (limitTypes.excludes(type)) {
+                throw SqlException.$(limitLo.position, "invalid type: ").put(ColumnType.nameOf(type));
+            }
+        }
+        return loFunc;
     }
 
     private RecordCursorFactory generateNoSelect(
@@ -1246,7 +1260,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return generateSubQuery(model, executionContext);
     }
 
-    private RecordCursorFactory generateOrderBy(RecordCursorFactory recordCursorFactory, QueryModel model) throws SqlException {
+    private RecordCursorFactory generateOrderBy(RecordCursorFactory recordCursorFactory, QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         if (recordCursorFactory.followedOrderByAdvice()) {
             return recordCursorFactory;
         }
@@ -1310,20 +1324,36 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
 
+                ExpressionNode limitLo = model.getLimitLo();
+                ExpressionNode limitHi = model.getLimitHi();
+
+                final Function loFunc = getLoFunction(executionContext, limitLo);
+                final Function hiFunc = getHiFunction(executionContext, limitHi);
+
+                //TODO: we've to check if lo, hi is set and lo >=0 while hi < 0 because such case can't really be optimized by topN/bottomN
                 if (recordCursorFactory.recordCursorSupportsRandomAccess()) {
-                    return new SortedLightRecordCursorFactory(
-                            configuration,
-                            orderedMetadata,
-                            recordCursorFactory,
-                            recordComparatorCompiler.compile(metadata, listColumnFilterA)
-                    );
+                    if (limitLo == null && limitHi == null) {
+                        return new SortedLightRecordCursorFactory(
+                                configuration,
+                                orderedMetadata,
+                                recordCursorFactory,
+                                recordComparatorCompiler.compile(metadata, listColumnFilterA)
+                        );
+                    } else {
+                        return new LimitedSizeSortedLightRecordCursorFactory(
+                                configuration,
+                                orderedMetadata,
+                                recordCursorFactory,
+                                recordComparatorCompiler.compile(metadata, listColumnFilterA),
+                                loFunc, hiFunc);
+                    }
                 }
 
                 // when base record cursor does not support random access
                 // we have to copy entire record into ordered structure
 
                 entityColumnFilter.of(orderedMetadata.getColumnCount());
-
+                //TODO: use LimitedSizeSortedRecordCursorFactory
                 return new SortedRecordCursorFactory(
                         configuration,
                         orderedMetadata,
@@ -1356,7 +1386,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private RecordCursorFactory generateQuery0(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
         return generateLimit(
-                generateOrderBy(
+                generateOrderBy(  
                         generateFilter(
                                 generateSelect(
                                         model,
@@ -1366,7 +1396,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 model,
                                 executionContext
                         ),
-                        model
+                        model,
+                        executionContext
                 ),
                 model,
                 executionContext
