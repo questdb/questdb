@@ -63,7 +63,7 @@ public class MemoryLeakTest extends AbstractGriffinTest {
                     StringSink sink = new StringSink();
                     sink.clear();
                     sink.put("users");
-                    sink.put(" latest by id where sequence > :low and sequence < :high");
+                    sink.put(" where sequence > :low and sequence < :high latest on timestamp partition by id");
                     try (RecordCursorFactory rcf = compiler.compile(sink, executionContext).getRecordCursorFactory()) {
                         bindVariableService.setLong("low", 0);
                         bindVariableService.setLong("high", N + 1);
