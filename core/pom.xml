@@ -380,7 +380,7 @@
                         <executions>
                             <execution>
                                 <id>package-web-console</id>
-                                <phase>package</phase>
+                                <phase>generate-resources</phase>
                                 <goals>
                                     <goal>single</goal>
                                 </goals>
