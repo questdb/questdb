@@ -68,6 +68,7 @@ public class AbstractCairoTest {
     protected static int sampleByIndexSearchPageSize;
     protected static int binaryEncodingMaxLength = -1;
     protected static CharSequence defaultMapType;
+    protected static int pageFrameMaxSize = -1;
 
     @Rule
     public TestName testName = new TestName();
@@ -122,6 +123,7 @@ public class AbstractCairoTest {
                 return super.getMaxUncommittedRows();
             }
 
+            @Override
             public int getSampleByIndexSearchPageSize() {
                 return sampleByIndexSearchPageSize > 0 ? sampleByIndexSearchPageSize : super.getSampleByIndexSearchPageSize();
             }
@@ -139,10 +141,12 @@ public class AbstractCairoTest {
                 return defaultMapType;
             }
 
+            @Override
             public long getWriterAsyncCommandBusyWaitTimeout() {
                 return writerAsyncCommandBusyWaitTimeout < 0 ? super.getWriterAsyncCommandBusyWaitTimeout() : writerAsyncCommandBusyWaitTimeout;
             }
 
+            @Override
             public long getWriterAsyncCommandMaxTimeout() {
                 return writerAsyncCommandMaxTimeout < 0 ? super.getWriterAsyncCommandMaxTimeout() : writerAsyncCommandMaxTimeout;
             }
@@ -150,6 +154,18 @@ public class AbstractCairoTest {
             @Override
             public boolean enableDevelopmentUpdates() {
                 return true;
+            }
+
+            @Override
+            public int getSqlJitMode() {
+                // JIT compiler is a beta feature and thus is disabled by default,
+                // but we want to have it enabled in tests.
+                return SqlJitMode.JIT_MODE_ENABLED;
+            }
+
+            @Override
+            public int getSqlPageFrameMaxSize() {
+                return pageFrameMaxSize < 0 ? super.getSqlPageFrameMaxSize() : pageFrameMaxSize;
             }
         };
         engine = new CairoEngine(configuration);
@@ -184,6 +200,7 @@ public class AbstractCairoTest {
         defaultMapType = null;
         writerAsyncCommandBusyWaitTimeout = -1;
         writerAsyncCommandMaxTimeout = -1;
+        pageFrameMaxSize = -1;
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {

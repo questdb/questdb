@@ -65,6 +65,11 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
+
+    @Override
     public boolean supportTableRowId(CharSequence tableName) {
         return base.supportTableRowId(tableName);
     }

@@ -215,13 +215,13 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
         if (result == -1) {
             // F_ALLOCATEALL - try to allocate non-continuous space.
             flags.fst_flags = F_ALLOCATEALL;
-            result = fcntl(fd, F_PREALLOCATE, &flags);
+            result = fcntl((int)fd, F_PREALLOCATE, &flags);
             if (result == -1) {
                 return JNI_FALSE;
             }
         }
     }
-    return ftruncate(fd, len) == 0;
+    return ftruncate((int)fd, len) == 0;
 }
 
 #else

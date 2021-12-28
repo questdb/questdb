@@ -28,8 +28,8 @@ import io.questdb.MessageBus;
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterPool;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.Atomicity;
@@ -887,6 +887,7 @@ public class SqlCompiler implements Closeable {
     @Override
     public void close() {
         backupAgent.close();
+        codeGenerator.close();
         Misc.free(path);
         Misc.free(renamePath);
         Misc.free(textLoader);
@@ -1227,7 +1228,7 @@ public class SqlCompiler implements Closeable {
 
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && tok.charAt(0) != ')') {
-                    int geosizeBits = SqlParser.parseGeoHashBits(lexer.lastTokenPosition(), 0, tok);
+                    int geosizeBits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, tok);
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok == null || tok.charAt(0) != ')') {
                         if (tok != null) {
@@ -2646,6 +2647,11 @@ public class SqlCompiler implements Closeable {
         if (PartitionBy.isPartitioned(model.getPartitionBy()) && model.getTimestampIndex() == -1 && metadata.getTimestampIndex() == -1) {
             throw SqlException.position(0).put("timestamp is not defined");
         }
+    }
+
+    // used in tests
+    void setEnableJitNullChecks(boolean value) {
+        codeGenerator.setEnableJitNullChecks(value);
     }
 
     @FunctionalInterface

@@ -149,7 +149,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstFixAddr + dstFixOffset,
                         dstVarAddr,
                         dstVarOffset,
-                        dstVarAdjust
+                        dstVarAdjust,
+                        dstVarSize
                 );
                 break;
             case O3_BLOCK_DATA:
@@ -162,7 +163,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstFixAddr + dstFixOffset,
                         dstVarAddr,
                         dstVarOffset,
-                        dstVarAdjust
+                        dstVarAdjust,
+                        dstVarSize
                 );
                 break;
             default:
@@ -764,7 +766,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstFixAddr,
             long dstVarAddr,
             long dstVarOffset,
-            long dstVarAdjust
+            long dstVarAdjust,
+            long dstVarSize
     ) {
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.STRING:
@@ -777,7 +780,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstFixAddr,
                         dstVarAddr,
                         dstVarOffset,
-                        dstVarAdjust
+                        dstVarAdjust,
+                        dstVarSize
                 );
                 break;
             default:
@@ -805,7 +809,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstFixAddr,
             long dstVarAddr,
             long dstVarOffset,
-            long dstVarAdjust
+            long dstVarAdjust,
+            long dstVarSize
     ) {
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.STRING:
@@ -821,7 +826,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstFixAddr,
                         dstVarAddr,
                         dstVarOffset,
-                        dstVarAdjust
+                        dstVarAdjust,
+                        dstVarSize
                 );
                 break;
             case ColumnType.BOOLEAN:
@@ -871,14 +877,18 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstFixAddr,
             long dstVarAddr,
             long dstVarOffset,
-            long dstVarAdjust
+            long dstVarAdjust,
+            long dstVarSize
 
     ) {
         final long lo = O3Utils.findVarOffset(srcFixAddr, srcLo);
+        assert lo >= 0;
         final long hi = O3Utils.findVarOffset(srcFixAddr, srcHi + 1);
+        assert hi >= lo;
         // copy this before it changes
         final long dest = dstVarAddr + dstVarOffset;
         final long len = hi - lo;
+        assert len <= Math.abs(dstVarSize) - dstVarOffset;
         Vect.memcpy(dest, srcVarAddr + lo, len);
         final long offset = dstVarOffset + dstVarAdjust;
         if (lo == offset) {

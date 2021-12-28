@@ -37,6 +37,7 @@ public class FloorFloatFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Override
-    protected FunctionFactory getFunctionFactory() { return new FloorFloatFunctionFactory();
+    protected FunctionFactory getFunctionFactory() {
+        return new FloorFloatFunctionFactory();
     }
 }

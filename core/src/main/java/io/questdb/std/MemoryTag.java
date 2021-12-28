@@ -45,8 +45,10 @@ public final class MemoryTag {
     public static final int NATIVE_REPL = 17;
     public static final int NATIVE_SAMPLE_BY_LONG_LIST = 18;
     public static final int NATIVE_LATEST_BY_LONG_LIST = 19;
-    public static final int NATIVE_LONG_LIST = 20;
-    public static final int SIZE = NATIVE_LONG_LIST + 1;
+    public static final int NATIVE_JIT_LONG_LIST = 20;
+    public static final int NATIVE_LONG_LIST = 21;
+    public static final int NATIVE_JIT = 22;
+    public static final int SIZE = NATIVE_JIT + 1;
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
     public static String nameOf(int tag) {
@@ -74,6 +76,8 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_REPL, "NATIVE_REPL");
         tagNameMap.extendAndSet(NATIVE_SAMPLE_BY_LONG_LIST, "NATIVE_SAMPLE_BY_LONG_LIST");
         tagNameMap.extendAndSet(NATIVE_LATEST_BY_LONG_LIST, "NATIVE_LATEST_BY_LONG_LIST");
+        tagNameMap.extendAndSet(NATIVE_JIT_LONG_LIST, "NATIVE_JIT_LONG_LIST");
         tagNameMap.extendAndSet(NATIVE_LONG_LIST, "NATIVE_LONG_LIST");
+        tagNameMap.extendAndSet(NATIVE_JIT, "NATIVE_JIT");
     }
 }

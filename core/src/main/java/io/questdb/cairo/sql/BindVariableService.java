@@ -130,12 +130,24 @@ public interface BindVariableService extends Mutable {
     void setByte(int index, byte value) throws SqlException;
 
     /**
-     * Set type of bind variable by index as byte
+     * Set type of bind variable by index as geo hash
+     *
+     * @param name  of the bind variable
+     * @param value value as geo hash
+     * @param type geo hash type
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with geo hash
+     */
+    void setGeoHash(CharSequence name, long value, int type) throws SqlException;
+
+    /**
+     * Set type of bind variable by index as geo hash
      *
      * @param index numeric index of the bind variable
-     * @param  value value as byte
+     * @param value value as geo hash
+     * @param type geo hash type
      * @throws SqlException is throw when variable has already been defined with type
-     *                      that is not compatible with Byte
+     *                      that is not compatible with geo hash
      */
     void setGeoHash(int index, long value, int type) throws SqlException;
 

@@ -76,4 +76,9 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
     public boolean supportTableRowId(CharSequence tableName) {
         return base.supportTableRowId(tableName);
     }
+
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
 }

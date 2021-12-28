@@ -3057,11 +3057,12 @@ public class TableWriter implements Closeable {
                 sourceOffset = o3IndexMem.getLong(o3RowCount * 8);
                 size = o3DataMem.getAppendOffset() - sourceOffset;
                 // move count + 1 rows, to make sure index column remains n+1
+                // the data is copied back to start of the buffer, no need to set size first
                 O3Utils.shiftCopyFixedSizeColumnData(
                         sourceOffset,
                         o3IndexMem.addressOf(o3RowCount * 8),
                         0,
-                        o3LagRowCount + 1,
+                        o3LagRowCount, // No need to do +1 here, hi is inclusive
                         o3IndexMem.addressOf(0)
                 );
                 // adjust append position of the index column to
@@ -3069,8 +3070,9 @@ public class TableWriter implements Closeable {
                 o3IndexMem.jumpTo(o3LagRowCount * 8 + 8);
             }
 
-            o3DataMem.jumpTo(size);
             Vect.memmove(o3DataMem.addressOf(0), o3DataMem.addressOf(sourceOffset), size);
+            // the data is copied back to start of the buffer, no need to set size first
+            o3DataMem.jumpTo(size);
         } else {
             // Special case, designated timestamp column
             // Move values and set index to  0..o3LagRowCount
@@ -3133,7 +3135,7 @@ public class TableWriter implements Closeable {
                 srcFixOffset = (committedTransientRowCount - columnTop) << shl;
             } else {
                 // Var size
-                int indexShl = ColumnType.pow2SizeOf(ColumnType.LONG);
+                final int indexShl = 3; // ColumnType.pow2SizeOf(ColumnType.LONG);
                 final MemoryMAR srcFixMem = getSecondaryColumn(colIndex);
                 long sourceOffset = (committedTransientRowCount - columnTop) << indexShl;
 
@@ -3157,7 +3159,7 @@ public class TableWriter implements Closeable {
                     srcAddress = mapRO(ff, srcFixMem.getFd(), sourceLen + alignedExtraLen, alignedOffset, MemoryTag.MMAP_TABLE_WRITER);
                 }
 
-                long srcVarOffset = Unsafe.getUnsafe().getLong(srcAddress);
+                long srcVarOffset = Unsafe.getUnsafe().getLong(srcAddress + alignedExtraLen);
                 O3Utils.shiftCopyFixedSizeColumnData(
                         srcVarOffset - dstVarOffset,
                         srcAddress + alignedExtraLen + Long.BYTES,
@@ -4615,8 +4617,11 @@ public class TableWriter implements Closeable {
                     if (doubleAllocate) {
                         mem2.allocate(pos * Long.BYTES + Long.BYTES);
                     }
-                    mem2.jumpTo(pos * Long.BYTES + Long.BYTES);
-                    m1pos = Unsafe.getUnsafe().getLong(mem2.getAppendAddress() - 8);
+                    // Jump to the number of records written to read length of var column correctly
+                    mem2.jumpTo(pos * Long.BYTES);
+                    m1pos = Unsafe.getUnsafe().getLong(mem2.getAppendAddress());
+                    // Jump to the end of file to correctly trim the file
+                    mem2.jumpTo((pos + 1) * Long.BYTES);
                     break;
                 default:
                     m1pos = pos << ColumnType.pow2SizeOf(type);

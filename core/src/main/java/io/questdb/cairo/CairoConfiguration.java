@@ -262,6 +262,24 @@ public interface CairoConfiguration {
 
     int getSqlSortValuePageSize();
 
+    int getSqlPageFrameMaxSize();
+
+    int getSqlJitMode();
+
+    int getSqlJitIRMemoryPageSize();
+
+    int getSqlJitIRMemoryMaxPages();
+
+    int getSqlJitBindVarsMemoryPageSize();
+
+    int getSqlJitBindVarsMemoryMaxPages();
+
+    int getSqlJitRowsThreshold();
+
+    int getSqlJitPageAddressCacheThreshold();
+
+    boolean isSqlJitDebugEnabled();
+
     int getTableBlockWriterQueueCapacity();
 
     TelemetryConfiguration getTelemetryConfiguration();
