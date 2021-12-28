@@ -1,13 +1,11 @@
 package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.std.str.StdoutSink;
 
 /**
  * SortedLightRecordCursor implementing LIMIT clause .
