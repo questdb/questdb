@@ -607,8 +607,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     table + ",location=us-midwest temperature=82 1465839830100400200\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
                             table + ",location=us-eastcoast temperature=81,timestamp=1465839830101600200t\n" +
-                            table + ",location=us-midwest temperature=85,Timestamp=1465839830102300200t\n" +
-                            table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
+                            table + ",location=us-midwest temperature=85,timestamp=1465839830102300200t,Timestamp=1465839830102800200t\n" +
+                            table + ",location=us-eastcoast temperature=89,Timestamp=1465839830102400200t\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
             do {
@@ -1104,7 +1104,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         String table = "duplicateTimestamp";
         runInContext(() -> {
             recvBuffer =
-                    table + ",location=us-midwest temperature=82,timestamp=1465839830100400200t,TimeStamp=1465839830100400200t 1465839830100700200\n" +
+                    table + ",location=us-midwest temperature=82,timestamp=1465839830100400200t,TimeStamp=1465839830100450200t 1465839830100700200\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
                             table + ",location=us-eastcoast temperature=81 1465839830101600200\n" +
                             table + ",location=us-midwest temperature=85 1465839830102300200\n" +

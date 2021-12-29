@@ -30,10 +30,7 @@ import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StringSink;
 
 final class LineTcpUtils {
-    private final static StringSink tempSink = new StringSink();
-    private final static MangledUtf8Sink mangledUtf8Sink = new MangledUtf8Sink(tempSink);
-
-    static CharSequence utf8ToUtf16(DirectByteCharSequence utf8CharSeq, boolean hasNonAsciiChars) {
+    static CharSequence utf8ToUtf16(DirectByteCharSequence utf8CharSeq, StringSink tempSink, boolean hasNonAsciiChars) {
         if (hasNonAsciiChars) {
             tempSink.clear();
             if (!Chars.utf8Decode(utf8CharSeq.getLo(), utf8CharSeq.getHi(), tempSink)) {
@@ -44,13 +41,11 @@ final class LineTcpUtils {
         return utf8CharSeq;
     }
 
-    static CharSequence toMangledUtf8String(String str, boolean hasNonAsciiChars) {
-        if (hasNonAsciiChars) {
-            CharSequence mangledUtf8Representation = mangledUtf8Sink.encodeMangledUtf8(str);
-            // it is still worth checking if mangled utf8 length is different from original
-            // if they are the same it means original string is ASCII, we can just return it
-            return mangledUtf8Representation.length() != str.length() ? tempSink.toString() : str;
+    static CharSequence utf8BytesToString(DirectByteCharSequence utf8CharSeq, StringSink tempSink) {
+        tempSink.clear();
+        for (int i = 0, n = utf8CharSeq.length(); i < n; i++) {
+            tempSink.put(utf8CharSeq.charAt(i));
         }
-        return str;
+        return tempSink.toString();
     }
 }

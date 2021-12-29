@@ -33,11 +33,12 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
 import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
-import static io.questdb.cutlass.line.tcp.LineTcpUtils.toMangledUtf8String;
+import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8BytesToString;
 
 public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
@@ -253,6 +254,9 @@ public class TableUpdateDetails implements Closeable {
     }
 
     public class ThreadLocalDetails implements Closeable {
+        static final int COLUMN_NOT_FOUND = -1;
+        static final int DUPLICATED_COLUMN = -2;
+
         private final Path path = new Path();
         // maps column names to their indexes
         // keys are mangled strings created from the utf-8 encoded byte representations of the column names
@@ -261,10 +265,15 @@ public class TableUpdateDetails implements Closeable {
         private final ObjList<SymbolCache> unusedSymbolCaches;
         // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)
         private final IntList columnTypeMeta = new IntList();
+        private final StringSink tempSink = new StringSink();
+        // tracking of processed columns by their index, duplicates will be ignored
         private final BoolList processedCols = new BoolList();
+        // tracking of processed columns by their name, duplicates will be ignored
+        // columns end up in this set only if their index cannot be resolved, i.e. new columns
         private final LowerCaseCharSequenceHashSet addedColsUtf16 = new LowerCaseCharSequenceHashSet();
         private final LineTcpReceiverConfiguration configuration;
         private int columnCount;
+        private String colName;
 
         ThreadLocalDetails(LineTcpReceiverConfiguration configuration, ObjList<SymbolCache> unusedSymbolCaches, int columnCount) {
             this.configuration = configuration;
@@ -314,39 +323,42 @@ public class TableUpdateDetails implements Closeable {
             columnTypeMeta.add(0);
         }
 
-        LowerCaseCharSequenceHashSet resetAddedCols() {
-            addedColsUtf16.clear();
-            return addedColsUtf16;
-        }
-
+        // returns the column index for column name passed in colNameUtf8,
+        // or COLUMN_NOT_FOUND if column index cannot be resolved (i.e. new column),
+        // or DUPLICATED_COLUMN if the column has already been processed on the current event
         int getColumnIndex(DirectByteCharSequence colNameUtf8, boolean hasNonAsciiChars) {
             int colIndex = columnIndexByNameUtf8.get(colNameUtf8);
-
-            // if the lookup in the cache is successful we can just return with the index
-            // if lookup was unsuccessful we have to check whether the column can be passed by name to the writer
             if (colIndex < 0) {
-                final CharSequence colNameUtf16 = utf8ToUtf16(colNameUtf8, hasNonAsciiChars);
+                // lookup was unsuccessful we have to check whether the column can be passed by name to the writer
+                final CharSequence colNameUtf16 = utf8ToUtf16(colNameUtf8, tempSink, hasNonAsciiChars);
                 final int index = addedColsUtf16.keyIndex(colNameUtf16);
-
-                // non-negative index means this column is not in the set, meaning it has not been sent
-                // to the writer by name on this line before
-                // we can try to resolve column index using table reader
-                // if the column is in the set already (index is negative) the field has to be passed by name
                 if (index > -1) {
-                    colIndex = getColumnIndexFromReader(colNameUtf16.toString());
-
-                    // if we cannot not resolve column index even from the reader then this field
-                    // has not been created by the writer yet, it will be passed by name to the writer
-                    // if we resolve the index from the reader we will cache it
+                    // column has not been sent to the writer by name on this line before
+                    // we can try to resolve column index using table reader
+                    colIndex = getColumnIndexFromReader(colNameUtf16);
                     if (colIndex > -1) {
                         // keys of this map will be checked against DirectByteCharSequence when get() is called
                         // DirectByteCharSequence.equals() compares chars created from each byte, basically it
                         // assumes that each char is encoded on a single byte (ASCII)
-                        // we have to make sure that keys containing non-ASCII chars are converted into their
-                        // mangled utf8 representation before used as key (see more details in MangledUtf8Sink)
-                        columnIndexByNameUtf8.put(toMangledUtf8String(colNameUtf8.toString(), hasNonAsciiChars), colIndex);
+                        // utf8BytesToString() is used here instead of a simple toString() call to make sure
+                        // column names with non-ASCII chars are handled properly
+                        columnIndexByNameUtf8.put(utf8BytesToString(colNameUtf8, tempSink), colIndex);
+                    } else {
+                        // cannot not resolve column index even from the reader
+                        // column will be passed to the writer by name
+                        colName = colNameUtf16.toString();
+                        addedColsUtf16.addAt(index, colName);
+                        return COLUMN_NOT_FOUND;
                     }
+                } else {
+                    // column has been passed by name earlier on this event, duplicate should be skipped
+                    return DUPLICATED_COLUMN;
                 }
+            }
+
+            if (processedCols.extendAndReplace(colIndex, true)) {
+                // column has been passed by index earlier on this event, duplicate should be skipped
+                return DUPLICATED_COLUMN;
             }
             return colIndex;
         }
@@ -375,9 +387,14 @@ public class TableUpdateDetails implements Closeable {
             return columnTypeMeta.getQuick(colIndex + 1); // first val accounts for new cols, index -1
         }
 
-        BoolList resetProcessedCols() {
+        void resetProcessedColumnsTracking() {
             processedCols.setAll(columnCount, false);
-            return processedCols;
+            addedColsUtf16.clear();
+        }
+
+        String getColName() {
+            assert colName != null;
+            return colName;
         }
 
         int getSymbolIndex(int colIndex, CharSequence symValue) {

@@ -36,7 +36,7 @@ import io.questdb.std.str.FloatingDirectCharSink;
 import java.io.Closeable;
 
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
-import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
+import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.COLUMN_NOT_FOUND;
 
 class LineTcpMeasurementEvent implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementEvent.class);
@@ -430,11 +430,7 @@ class LineTcpMeasurementEvent implements Closeable {
     ) {
         writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_INCOMPLETE_EVENT;
         final TableUpdateDetails.ThreadLocalDetails localDetails = tableUpdateDetails.getThreadLocalDetails(workerId);
-        // tracking of processed columns by their index, duplicates will be ignored
-        final BoolList processedCols = localDetails.resetProcessedCols();
-        // tracking of processed columns by their name, duplicates will be ignored
-        // columns end up in this set only if their index cannot be resolved, i.e. new columns
-        final LowerCaseCharSequenceHashSet addedColsUtf16 = localDetails.resetAddedCols();
+        localDetails.resetProcessedColumnsTracking();
         this.tableUpdateDetails = tableUpdateDetails;
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
@@ -452,18 +448,19 @@ class LineTcpMeasurementEvent implements Closeable {
             if (bufPos + Long.BYTES < bufMax) {
                 LineTcpParser.ProtoEntity entity = parser.getEntity(nEntity);
                 int colIndex = localDetails.getColumnIndex(entity.getName(), parser.hasNonAsciiChars());
-                if (colIndex < 0) {
-                    // column index not found, processing column by name
-                    CharSequence colNameUtf16 = utf8ToUtf16(entity.getName(), parser.hasNonAsciiChars());
-                    int index = addedColsUtf16.keyIndex(colNameUtf16);
-                    if (index < 0) {
-                        // column has been processed earlier on this event, duplicate should be skipped
+                if (colIndex > -1) {
+                    // column index found, processing column by index
+                    if (colIndex == tableUpdateDetails.getTimestampIndex()) {
+                        timestamp = timestampAdapter.getMicros(entity.getLongValue());
                         continue;
                     }
 
-                    colNameUtf16 = colNameUtf16.toString();
-                    addedColsUtf16.addAt(index, colNameUtf16);
-                    int colNameLen = colNameUtf16.length();
+                    Unsafe.getUnsafe().putInt(bufPos, colIndex);
+                    bufPos += Integer.BYTES;
+                } else if (colIndex == COLUMN_NOT_FOUND) {
+                    // send column by name
+                    String colName = localDetails.getColName();
+                    int colNameLen = colName.length();
 
                     // Negative length indicates to the writer thread that column is passed by
                     // name rather than by index. When value is positive (on the else branch)
@@ -471,24 +468,15 @@ class LineTcpMeasurementEvent implements Closeable {
                     Unsafe.getUnsafe().putInt(bufPos, -1 * colNameLen);
                     bufPos += Integer.BYTES;
                     if (bufPos + 2L * colNameLen < bufMax) {
-                        Chars.copyStrChars(colNameUtf16, 0, colNameLen, bufPos);
+                        Chars.copyStrChars(colName, 0, colNameLen, bufPos);
                     } else {
                         throw CairoException.instance(0).put("queue buffer overflow");
                     }
                     bufPos += 2L * colNameLen;
                 } else {
-                    // column index found, processing column by index
-                    if (colIndex == tableUpdateDetails.getTimestampIndex()) {
-                        timestamp = timestampAdapter.getMicros(entity.getLongValue());
-                        continue;
-                    }
-                    if (processedCols.extendAndReplace(colIndex, true)) {
-                        // column has been processed earlier on this event, duplicate should be skipped
-                        continue;
-                    }
-
-                    Unsafe.getUnsafe().putInt(bufPos, colIndex);
-                    bufPos += Integer.BYTES;
+                    // duplicate column, skip
+                    // we could set a boolean in the config if we want to throw exception instead
+                    continue;
                 }
                 entitiesWritten++;
                 switch (entity.getType()) {
