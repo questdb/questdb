@@ -132,7 +132,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         }
     }
 
-    public Function createBindVariable(int position, CharSequence name) throws SqlException {
+    public Function createBindVariable(SqlExecutionContext sqlExecutionContext, int position, CharSequence name) throws SqlException {
+        this.sqlExecutionContext = sqlExecutionContext;
         if (name != null && name.length() > 0) {
             switch (name.charAt(0)) {
                 case ':':
