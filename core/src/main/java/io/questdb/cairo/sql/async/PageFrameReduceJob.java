@@ -22,29 +22,29 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.table;
+package io.questdb.cairo.sql.async;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageAddressCacheRecord;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.Job;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Rnd;
-import io.questdb.tasks.PageFrameTask;
 
-public class RecordFilterJob implements Job {
+import java.util.concurrent.atomic.AtomicInteger;
+
+public class PageFrameReduceJob implements Job {
 
     private final PageAddressCacheRecord[] records;
     private final int[] shards;
     private final int shardCount;
     private final MessageBus messageBus;
 
-    public RecordFilterJob(SqlExecutionContext executionContext) {
-        this.messageBus = executionContext.getMessageBus();
-        this.shardCount = messageBus.getPageFrameQueueShardCount();
+    public PageFrameReduceJob(MessageBus bus, Rnd rnd, int workerCount) {
+        this.messageBus = bus;
+        this.shardCount = messageBus.getPageFrameReduceShardCount();
         this.shards = new int[shardCount];
         // fill shards[] with shard indexes
         for (int i = 0; i < shardCount; i++) {
@@ -53,7 +53,6 @@ public class RecordFilterJob implements Job {
 
         // shuffle shard indexes such that each job has its own
         // pass order over the shared queues
-        final Rnd rnd = executionContext.getRandom();
         int currentIndex = shardCount;
         int randomIndex;
         while (currentIndex != 0) {
@@ -65,19 +64,39 @@ public class RecordFilterJob implements Job {
             shards[randomIndex] = tmp;
         }
 
-        final int n = executionContext.getWorkerCount();
-        this.records = new PageAddressCacheRecord[n];
-        for (int i = 0; i < n; i++) {
+        this.records = new PageAddressCacheRecord[workerCount];
+        for (int i = 0; i < workerCount; i++) {
             records[i] = new PageAddressCacheRecord();
         }
     }
 
     public static void filter(long frameRowCount, Function filter, PageAddressCacheRecord record, DirectLongList rows) {
+        rows.clear();
         for (long r = 0; r < frameRowCount; r++) {
             record.setRowIndex(r);
             if (filter.getBool(record)) {
                 rows.add(r);
             }
+        }
+    }
+
+    public static void handleTask(PageAddressCacheRecord record, PageFrameReduceTask task) {
+        final AtomicInteger framesReducedCounter = task.getFramesReducedCounter();
+        try {
+            // do not release task until filtering is done
+            record.of(task.getSymbolTableSource(), task.getPageAddressCache());
+            record.setFrameIndex(task.getFrameIndex());
+            filter(
+                    task.getFrameRowCount(),
+                    task.getFilter(),
+                    record,
+                    task.getRows()
+            );
+        } catch (Throwable e) {
+            task.setFailed(true);
+            throw e;
+        } finally {
+            framesReducedCounter.incrementAndGet();
         }
     }
 
@@ -87,32 +106,23 @@ public class RecordFilterJob implements Job {
         boolean useful = false;
         for (int i = 0; i < shardCount; i++) {
             final int shard = shards[i];
-            MCSequence subSeq = messageBus.getPageFrameWorkerSubSeq(shard);
-            RingQueue<PageFrameTask> queue = messageBus.getPageFrameQueue(shard);
+            MCSequence subSeq = messageBus.getPageFrameReduceSubSeq(shard);
+            RingQueue<PageFrameReduceTask> queue = messageBus.getPageFrameReduceQueue(shard);
             useful = consumeQueue(queue, subSeq, record) || useful;
         }
         return useful;
     }
 
-    private boolean consumeQueue(RingQueue<PageFrameTask> queue, MCSequence subSeq, PageAddressCacheRecord record) {
+    private boolean consumeQueue(
+            RingQueue<PageFrameReduceTask> queue,
+            MCSequence subSeq,
+            PageAddressCacheRecord record
+    ) {
         long cursor = subSeq.next();
         if (cursor > -1) {
-            final PageFrameTask task = queue.get(cursor);
-            // do not release task until filtering is done
+            final PageFrameReduceTask task = queue.get(cursor);
             try {
-                final DirectLongList rows = task.getRows();
-                rows.clear();
-                record.of(task.getSymbolTableSource(), task.getPageAddressCache());
-                record.setFrameIndex(task.getFrameIndex());
-                filter(
-                        task.getFrameRowCount(),
-                        task.getFilter(),
-                        record,
-                        rows
-                );
-            } catch (Throwable e) {
-                task.setFailed(true);
-                throw e;
+                handleTask(record, task);
             } finally {
                 subSeq.done(cursor);
             }

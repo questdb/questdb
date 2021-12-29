@@ -26,10 +26,10 @@ package io.questdb.cairo.sql;
 
 import io.questdb.mp.RingQueue;
 import io.questdb.std.Mutable;
-import io.questdb.tasks.PageFrameTask;
+import io.questdb.cairo.sql.async.PageFrameReduceTask;
 
 public class ExecutionToken implements Mutable {
-    private RingQueue<PageFrameTask> queue;
+    private RingQueue<PageFrameReduceTask> queue;
     private long producerId;
 
     @Override
@@ -42,11 +42,11 @@ public class ExecutionToken implements Mutable {
         return producerId;
     }
 
-    public RingQueue<PageFrameTask> getQueue() {
+    public RingQueue<PageFrameReduceTask> getQueue() {
         return queue;
     }
 
-    public void of(RingQueue<PageFrameTask> queue, long producerId) {
+    public void of(RingQueue<PageFrameReduceTask> queue, long producerId) {
         this.queue = queue;
         this.producerId = producerId;
     }

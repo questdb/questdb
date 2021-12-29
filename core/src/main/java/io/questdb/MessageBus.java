@@ -25,6 +25,8 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.async.PageFrameDispatchTask;
+import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.mp.*;
 import io.questdb.std.Misc;
 import io.questdb.tasks.*;
@@ -37,15 +39,18 @@ public interface MessageBus extends Closeable {
         Misc.free(getO3PartitionQueue());
         Misc.free(getTableWriterCommandQueue());
         Misc.free(getTableWriterEventQueue());
+        for (int i = 0, n = getPageFrameReduceShardCount(); i < n; i++) {
+            Misc.free(getPageFrameReduceQueue(i));
+        }
     }
 
     CairoConfiguration getConfiguration();
 
-    MPSequence getFilterDispatchPubSeq();
+    MPSequence getPageFrameDispatchPubSeq();
 
-    RingQueue<FilterDispatchTask> getFilterDispatchQueue();
+    RingQueue<PageFrameDispatchTask> getPageFrameDispatchQueue();
 
-    MCSequence getFilterDispatchSubSeq();
+    MCSequence getPageFrameDispatchSubSeq();
 
     Sequence getIndexerPubSequence();
 
@@ -95,17 +100,17 @@ public interface MessageBus extends Closeable {
 
     MCSequence getO3PurgeSubSeq();
 
-    FanOut getPageFrameConsumerFanOut(int shard);
+    FanOut getPageFrameCollectFanOut(int shard);
 
-    MPSequence getPageFramePubSeq(int shard);
+    MPSequence getPageFrameReducePubSeq(int shard);
 
-    RingQueue<PageFrameTask> getPageFrameQueue(int shard);
+    RingQueue<PageFrameReduceTask> getPageFrameReduceQueue(int shard);
 
-    int getPageFrameQueueShardCount();
+    int getPageFrameReduceShardCount();
 
-    FanOut getPageFrameRecycleFanOut(int shard);
+    MCSequence getPageFrameReduceSubSeq(int shard);
 
-    MCSequence getPageFrameWorkerSubSeq(int shard);
+    MCSequence getPageFrameCleanupSubSeq(int shard);
 
     FanOut getTableWriterCommandFanOut();
 

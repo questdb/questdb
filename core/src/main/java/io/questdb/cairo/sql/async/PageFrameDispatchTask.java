@@ -22,23 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.tasks;
+package io.questdb.cairo.sql.async;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageAddressCache;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.std.DirectLongList;
+import io.questdb.mp.SCSequence;
+import io.questdb.std.LongList;
 
-public class PageFrameTask {
-    private DirectLongList rows;
-    private Function filter;
-    private long producerId;
-    private PageAddressCache pageAddressCache;
-    private int frameIndex;
-    private int frameCount;
-    private long frameRowCount;
+public class PageFrameDispatchTask {
+    private int shard;
+    private SCSequence collectSubSeq;
     private SymbolTableSource symbolTableSource;
-    private boolean failed;
+    private PageAddressCache pageAddressCache;
+    private int frameCount;
+    private long producerId;
+    private LongList frameRowCounts;
+    private Function filter;
+
+    public SCSequence getCollectSubSeq() {
+        return collectSubSeq;
+    }
 
     public Function getFilter() {
         return filter;
@@ -48,12 +52,8 @@ public class PageFrameTask {
         return frameCount;
     }
 
-    public int getFrameIndex() {
-        return frameIndex;
-    }
-
-    public long getFrameRowCount() {
-        return frameRowCount;
+    public LongList getFrameRowCounts() {
+        return frameRowCounts;
     }
 
     public PageAddressCache getPageAddressCache() {
@@ -64,46 +64,31 @@ public class PageFrameTask {
         return producerId;
     }
 
-    public DirectLongList getRows() {
-        return rows;
+    public int getShard() {
+        return shard;
     }
 
     public SymbolTableSource getSymbolTableSource() {
         return symbolTableSource;
     }
 
-    public boolean isFailed() {
-        return failed;
-    }
-
-    public void setFailed(boolean failed) {
-        this.failed = failed;
-    }
-
     public void of(
-            long producerId,
-            PageAddressCache cache,
-            int frameIndex,
+            PageAddressCache pageAddressCache,
             int frameCount,
-            long rowCount,
+            int shard,
+            long producerId,
+            SCSequence consumerSubSeq,
             SymbolTableSource symbolTableSource,
-            Function filter,
-            DirectLongList rows
+            LongList frameRowCounts,
+            Function filter
     ) {
-        this.producerId = producerId;
-        this.pageAddressCache = cache;
-        this.frameIndex = frameIndex;
-        this.frameCount = frameCount;
-        this.frameRowCount = rowCount;
+        this.shard = shard;
+        this.collectSubSeq = consumerSubSeq;
         this.symbolTableSource = symbolTableSource;
+        this.pageAddressCache = pageAddressCache;
+        this.frameCount = frameCount;
+        this.producerId = producerId;
+        this.frameRowCounts = frameRowCounts;
         this.filter = filter;
-        this.rows = rows;
-        this.failed = false;
-    }
-
-    public DirectLongList takeRows() {
-        DirectLongList dll = rows;
-        rows = null;
-        return dll;
     }
 }

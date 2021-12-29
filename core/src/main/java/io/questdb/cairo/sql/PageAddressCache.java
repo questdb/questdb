@@ -90,6 +90,9 @@ public class PageAddressCache implements Mutable {
     }
 
     public long getPageAddress(int frameIndex, int columnIndex) {
+        if (pageAddresses.size() < columnCount * (frameIndex + 1)) {
+            System.out.println("ok");
+        }
         assert pageAddresses.size() >= columnCount * (frameIndex + 1);
         return pageAddresses.getQuick(columnCount * frameIndex + columnIndex);
     }

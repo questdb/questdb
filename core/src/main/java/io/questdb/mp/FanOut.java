@@ -97,7 +97,7 @@ public class FanOut implements Barrier {
     // loop is in flight
     @Override
     public long availableIndex(final long lo) {
-        long l = Long.MAX_VALUE;
+        long l = barrier.availableIndex(lo);
         ObjList<Barrier> barriers = holder.barriers;
         for (int i = 0, n = barriers.size(); i < n; i++) {
             l = Math.min(l, barriers.getQuick(i).availableIndex(lo));

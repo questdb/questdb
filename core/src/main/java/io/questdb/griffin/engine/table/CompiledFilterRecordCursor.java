@@ -116,7 +116,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
     public void close() {
         if (rows.getCapacity() > rowsCapacityThreshold) {
             // This call will shrink down the underlying array
-            rows.extend(rowsCapacityThreshold);
+            rows.setCapacity(rowsCapacityThreshold);
         }
         bindVarMemory.truncate();
         pageAddressCache.clear();
@@ -237,14 +237,14 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
             // Use compiled filter in case of a dense page frame.
 
-            columns.extend(columnCount);
+            columns.setCapacity(columnCount);
             columns.clear();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 columns.add(pageAddressCache.getPageAddress(pageFrameIndex, columnIndex));
             }
             // TODO: page frames may be quite large; we may want to break them into smaller sub-frames
             if (rows.getCapacity() < rowCount) {
-                rows.extend(rowCount);
+                rows.setCapacity(rowCount);
             }
 
             current = 0;

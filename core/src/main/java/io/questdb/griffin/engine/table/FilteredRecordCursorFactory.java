@@ -31,23 +31,17 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.DirectLongList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
-import io.questdb.tasks.FilterDispatchTask;
-
-import java.util.ArrayDeque;
-import java.util.Deque;
+import io.questdb.cairo.sql.async.PageFrameDispatchTask;
 
 public class FilteredRecordCursorFactory implements RecordCursorFactory {
     private final RecordCursorFactory base;
     private final FilteredRecordCursor cursor;
     private final Function filter;
-    private final SCSequence recycleSubSeq = new SCSequence();
     private final PageAddressCache pageAddressCache;
     private final LongList frameRowCounts = new LongList();
-    private final Deque<DirectLongList> listDeque = new ArrayDeque<>();
     private final ExecutionToken executionToken = new ExecutionToken();
 
     public FilteredRecordCursorFactory(CairoConfiguration configuration, RecordCursorFactory base, Function filter) {
@@ -87,9 +81,9 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
         final MessageBus bus = executionContext.getMessageBus();
         // before thread begins we will need to pick a shard
         // of queues that we will interact with
-        final int shard = rnd.nextInt(bus.getPageFrameQueueShardCount());
+        final int shard = rnd.nextInt(bus.getPageFrameReduceShardCount());
         final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext);
-        final MPSequence dispatchPubSeq = bus.getFilterDispatchPubSeq();
+        final MPSequence dispatchPubSeq = bus.getPageFrameDispatchPubSeq();
         long dispatchCursor = dispatchPubSeq.next();
 
         // pass one to cache page addresses
@@ -116,25 +110,23 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
         // We need to subscribe publisher sequence before we return
         // control to the caller of this method. However, this sequence
         // will be unsubscribed asynchronously.
-        bus.getPageFrameConsumerFanOut(shard).and(consumerSubSeq);
+        bus.getPageFrameCollectFanOut(shard).and(consumerSubSeq);
 
-        FilterDispatchTask dispatchTask = bus.getFilterDispatchQueue().get(dispatchCursor);
+        PageFrameDispatchTask dispatchTask = bus.getPageFrameDispatchQueue().get(dispatchCursor);
         dispatchTask.of(
                 pageAddressCache,
                 frameCount,
                 shard,
                 producerId,
-                recycleSubSeq,
                 consumerSubSeq,
                 pageFrameCursor,
-                listDeque,
                 frameRowCounts,
                 filter
         );
         dispatchPubSeq.done(dispatchCursor);
 
         executionToken.of(
-                bus.getPageFrameQueue(shard),
+                bus.getPageFrameReduceQueue(shard),
                 producerId
         );
 

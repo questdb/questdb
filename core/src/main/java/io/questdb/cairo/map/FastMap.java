@@ -219,7 +219,7 @@ public class FastMap implements Map {
         this.keyCapacity = this.keyCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(this.keyCapacity);
         this.mask = this.keyCapacity - 1;
         this.free = (int) (this.keyCapacity * loadFactor);
-        this.offsets.extend(this.keyCapacity);
+        this.offsets.setCapacity(this.keyCapacity);
         this.offsets.setPos(this.keyCapacity);
         this.offsets.zero(-1);
         this.nResizes = 0;

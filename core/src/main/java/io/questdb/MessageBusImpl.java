@@ -25,6 +25,8 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.async.PageFrameDispatchTask;
+import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.mp.*;
 import io.questdb.std.MemoryTag;
 import io.questdb.tasks.*;
@@ -75,15 +77,15 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence tableWriterEventPubSeq;
     private final FanOut tableWriterEventSubSeq;
     private final CairoConfiguration configuration;
-    private final int pageFrameQueueSharedCount = 4;
-    private final FanOut[] pageFrameRecycleFanOut;
-    private final MPSequence[] pageFramePubSeq;
-    private final MCSequence[] pageFrameWorkerSubSeq;
-    private final RingQueue<PageFrameTask>[] pageFrameQueue;
-    private final FanOut[] pageFrameConsumerFanOut;
-    private final MPSequence filterDispatchPubSeq;
-    private final MCSequence filterDispatchSubSeq;
-    private final RingQueue<FilterDispatchTask> filterDispatchQueue;
+    private final int pageFrameReduceShardCount = 4;
+    private final MPSequence[] pageFrameReducePubSeq;
+    private final MCSequence[] pageFrameReduceSubSeq;
+    private final RingQueue<PageFrameReduceTask>[] pageFrameReduceQueue;
+    private final MCSequence[] pageFrameCleanupSubSeq;
+    private final FanOut[] pageFrameCollectFanOut;
+    private final MPSequence pageFrameDispatchPubSeq;
+    private final MCSequence pageFrameDispatchSubSeq;
+    private final RingQueue<PageFrameDispatchTask> pageFrameDispatchQueue;
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -154,37 +156,38 @@ public class MessageBusImpl implements MessageBus {
         this.tableWriterEventPubSeq.then(this.tableWriterEventSubSeq).then(this.tableWriterEventPubSeq);
 
         //noinspection unchecked
-        pageFrameQueue = new RingQueue[pageFrameQueueSharedCount];
-        pageFramePubSeq = new MPSequence[pageFrameQueueSharedCount];
-        pageFrameWorkerSubSeq = new MCSequence[pageFrameQueueSharedCount];
-        pageFrameRecycleFanOut = new FanOut[pageFrameQueueSharedCount];
-        pageFrameConsumerFanOut = new FanOut[pageFrameQueueSharedCount];
+        pageFrameReduceQueue = new RingQueue[pageFrameReduceShardCount];
+        pageFrameReducePubSeq = new MPSequence[pageFrameReduceShardCount];
+        pageFrameReduceSubSeq = new MCSequence[pageFrameReduceShardCount];
+        pageFrameCollectFanOut = new FanOut[pageFrameReduceShardCount];
+        pageFrameCleanupSubSeq = new MCSequence[pageFrameReduceShardCount];
 
-        for (int i = 0; i < pageFrameQueueSharedCount; i++) {
-            final RingQueue<PageFrameTask> queue = new RingQueue<>(
-                    PageFrameTask::new,
+        for (int i = 0; i < pageFrameReduceShardCount; i++) {
+            final RingQueue<PageFrameReduceTask> queue = new RingQueue<PageFrameReduceTask>(
+                    () -> new PageFrameReduceTask(configuration),
                     configuration.getPageFrameQueueCapacity()
             );
 
-            final MPSequence pubSeq = new MPSequence(queue.getCycle());
-            final MCSequence subSeq = new MCSequence(queue.getCycle());
-            final FanOut consumerFanOut = new FanOut();
-            final FanOut recycleFanOut = new FanOut();
-            pubSeq.then(subSeq).then(consumerFanOut).then(recycleFanOut).then(pubSeq);
+            final MPSequence reducePubSeq = new MPSequence(queue.getCycle());
+            final MCSequence reduceSubSeq = new MCSequence(queue.getCycle());
+            final MCSequence cleanupSubSeq = new MCSequence(queue.getCycle());
+            final FanOut collectFanOut = new FanOut();
+            reducePubSeq.then(reduceSubSeq).then(collectFanOut).then(cleanupSubSeq).then(reducePubSeq);
 
-            pageFrameQueue[i] = queue;
-            pageFramePubSeq[i] = pubSeq;
-            pageFrameWorkerSubSeq[i] = subSeq;
-            pageFrameRecycleFanOut[i] = recycleFanOut;
-            pageFrameConsumerFanOut[i] = consumerFanOut;
+            pageFrameReduceQueue[i] = queue;
+            pageFrameReducePubSeq[i] = reducePubSeq;
+            pageFrameReduceSubSeq[i] = reduceSubSeq;
+            pageFrameCollectFanOut[i] = collectFanOut;
+            pageFrameCleanupSubSeq[i] = cleanupSubSeq;
+
         }
-        filterDispatchQueue = new RingQueue<FilterDispatchTask>(
-                FilterDispatchTask::new,
+        pageFrameDispatchQueue = new RingQueue<PageFrameDispatchTask>(
+                PageFrameDispatchTask::new,
                 configuration.getFilterQueueCapacity()
         );
-        filterDispatchPubSeq = new MPSequence(filterDispatchQueue.getCycle());
-        filterDispatchSubSeq = new MCSequence(filterDispatchQueue.getCycle());
-        filterDispatchPubSeq.then(filterDispatchSubSeq).then(filterDispatchPubSeq);
+        pageFrameDispatchPubSeq = new MPSequence(pageFrameDispatchQueue.getCycle());
+        pageFrameDispatchSubSeq = new MCSequence(pageFrameDispatchQueue.getCycle());
+        pageFrameDispatchPubSeq.then(pageFrameDispatchSubSeq).then(pageFrameDispatchPubSeq);
     }
 
     @Override
@@ -193,18 +196,18 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public MPSequence getFilterDispatchPubSeq() {
-        return filterDispatchPubSeq;
+    public MPSequence getPageFrameDispatchPubSeq() {
+        return pageFrameDispatchPubSeq;
     }
 
     @Override
-    public RingQueue<FilterDispatchTask> getFilterDispatchQueue() {
-        return filterDispatchQueue;
+    public RingQueue<PageFrameDispatchTask> getPageFrameDispatchQueue() {
+        return pageFrameDispatchQueue;
     }
 
     @Override
-    public MCSequence getFilterDispatchSubSeq() {
-        return filterDispatchSubSeq;
+    public MCSequence getPageFrameDispatchSubSeq() {
+        return pageFrameDispatchSubSeq;
     }
 
     @Override
@@ -328,33 +331,33 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public FanOut getPageFrameConsumerFanOut(int shard) {
-        return pageFrameConsumerFanOut[shard];
+    public FanOut getPageFrameCollectFanOut(int shard) {
+        return pageFrameCollectFanOut[shard];
     }
 
     @Override
-    public MPSequence getPageFramePubSeq(int shard) {
-        return pageFramePubSeq[shard];
+    public MPSequence getPageFrameReducePubSeq(int shard) {
+        return pageFrameReducePubSeq[shard];
     }
 
     @Override
-    public RingQueue<PageFrameTask> getPageFrameQueue(int shard) {
-        return pageFrameQueue[shard];
+    public RingQueue<PageFrameReduceTask> getPageFrameReduceQueue(int shard) {
+        return pageFrameReduceQueue[shard];
     }
 
     @Override
-    public int getPageFrameQueueShardCount() {
-        return pageFrameQueueSharedCount;
+    public int getPageFrameReduceShardCount() {
+        return pageFrameReduceShardCount;
     }
 
     @Override
-    public FanOut getPageFrameRecycleFanOut(int shard) {
-        return pageFrameRecycleFanOut[shard];
+    public MCSequence getPageFrameReduceSubSeq(int shard) {
+        return pageFrameReduceSubSeq[shard];
     }
 
     @Override
-    public MCSequence getPageFrameWorkerSubSeq(int shard) {
-        return pageFrameWorkerSubSeq[shard];
+    public MCSequence getPageFrameCleanupSubSeq(int shard) {
+        return pageFrameCleanupSubSeq[shard];
     }
 
     @Override
