@@ -409,7 +409,7 @@ public class TruncateTest extends AbstractGriffinTest {
 
     @Test
     public void testDropTableWithCachedPlanLatestBy() throws Exception {
-        testDropTableWithCachedPlan("select * from y latest by symbol1");
+        testDropTableWithCachedPlan("select * from y latest on timestamp partition by symbol1");
     }
 
     private void testDropTableWithCachedPlan(String query) throws Exception {
