@@ -34,7 +34,7 @@ public class GeoHashNativeTest {
     public void testIota() {
         final long N = 511;
         final long K = 42;
-        try (DirectLongList list = new DirectLongList(N)) {
+        try (DirectLongList list = new DirectLongList(N, MemoryTag.NATIVE_LONG_LIST)) {
             list.setPos(list.getCapacity());
             for (int i = 1; i < N; i++) {
                 GeoHashNative.iota(list.getAddress(), i, K);
@@ -49,7 +49,7 @@ public class GeoHashNativeTest {
     public void testSlideFoundBlocks() {
         int keyCount = 20;
 
-        DirectLongList rows = new DirectLongList(keyCount);
+        DirectLongList rows = new DirectLongList(keyCount, MemoryTag.NATIVE_LONG_LIST);
         rows.extend(keyCount);
 
         GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);

@@ -35,7 +35,7 @@ public final class MemoryTag {
     public static final int MMAP_TABLE_READER = 7;
     public static final int NATIVE_COMPACT_MAP = 8;
     public static final int NATIVE_FAST_MAP = 9;
-    public static final int NATIVE_LONG_LIST = 10;
+    public static final int NATIVE_FAST_MAP_LONG_LIST = 10;
     public static final int NATIVE_HTTP_CONN = 11;
     public static final int NATIVE_PGW_CONN = 12;
     public static final int MMAP_INDEX_READER = 13;
@@ -43,7 +43,12 @@ public final class MemoryTag {
     public static final int MMAP_INDEX_SLIDER = 15;
     public static final int MMAP_BLOCK_WRITER = 16;
     public static final int NATIVE_REPL = 17;
-    public static final int SIZE = NATIVE_REPL + 1;
+    public static final int NATIVE_SAMPLE_BY_LONG_LIST = 18;
+    public static final int NATIVE_LATEST_BY_LONG_LIST = 19;
+    public static final int NATIVE_JIT_LONG_LIST = 20;
+    public static final int NATIVE_LONG_LIST = 21;
+    public static final int NATIVE_JIT = 22;
+    public static final int SIZE = NATIVE_JIT + 1;
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
     public static String nameOf(int tag) {
@@ -61,7 +66,7 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(MMAP_TABLE_READER, "MMAP_TABLE_READER");
         tagNameMap.extendAndSet(NATIVE_COMPACT_MAP, "NATIVE_COMPACT_MAP");
         tagNameMap.extendAndSet(NATIVE_FAST_MAP, "NATIVE_FAST_MAP");
-        tagNameMap.extendAndSet(NATIVE_LONG_LIST, "NATIVE_LONG_LIST");
+        tagNameMap.extendAndSet(NATIVE_FAST_MAP_LONG_LIST, "NATIVE_FAST_MAP_LONG_LIST");
         tagNameMap.extendAndSet(NATIVE_HTTP_CONN, "NATIVE_HTTP_CONN");
         tagNameMap.extendAndSet(NATIVE_PGW_CONN, "NATIVE_PGW_CONN");
         tagNameMap.extendAndSet(MMAP_INDEX_READER, "MMAP_INDEX_READER");
@@ -69,5 +74,10 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(MMAP_INDEX_SLIDER, "MMAP_INDEX_SLIDER");
         tagNameMap.extendAndSet(MMAP_BLOCK_WRITER, "MMAP_BLOCK_WRITER");
         tagNameMap.extendAndSet(NATIVE_REPL, "NATIVE_REPL");
+        tagNameMap.extendAndSet(NATIVE_SAMPLE_BY_LONG_LIST, "NATIVE_SAMPLE_BY_LONG_LIST");
+        tagNameMap.extendAndSet(NATIVE_LATEST_BY_LONG_LIST, "NATIVE_LATEST_BY_LONG_LIST");
+        tagNameMap.extendAndSet(NATIVE_JIT_LONG_LIST, "NATIVE_JIT_LONG_LIST");
+        tagNameMap.extendAndSet(NATIVE_LONG_LIST, "NATIVE_LONG_LIST");
+        tagNameMap.extendAndSet(NATIVE_JIT, "NATIVE_JIT");
     }
 }

@@ -27,16 +27,18 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
+
     @Test
     public void testFactory() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -94,7 +96,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                     columnIndexes.add(i);
                 }
-                DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(metadata, dataFrameFactory, symbolIndexRowCursorFactory, false, null, false, columnIndexes, null);
+                DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(configuration, metadata, dataFrameFactory, symbolIndexRowCursorFactory, false, null, false, columnIndexes, null);
                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Record record = cursor.getRecord();
@@ -102,6 +104,113 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                         TestUtils.assertEquals(value, record.getSym(1));
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testPageFrameCursorNoColTops() throws Exception {
+        // pageFrameMaxSize < rowCount
+        testPageFrameCursor(64, 8, -1);
+        testPageFrameCursor(65, 8, -1);
+        // pageFrameMaxSize == rowCount
+        testPageFrameCursor(64, 64, -1);
+        // pageFrameMaxSize > rowCount
+        testPageFrameCursor(63, 64, -1);
+    }
+
+    @Test
+    public void testPageFrameCursorWithColTops() throws Exception {
+        // pageFrameMaxSize < rowCount
+        testPageFrameCursor(64, 8, 3);
+        testPageFrameCursor(64, 8, 8);
+        testPageFrameCursor(65, 8, 11);
+        // pageFrameMaxSize == rowCount
+        testPageFrameCursor(64, 64, 32);
+        // pageFrameMaxSize > rowCount
+        testPageFrameCursor(63, 64, 61);
+    }
+
+    private void testPageFrameCursor(int rowCount, int maxSize, int startTopAt) throws Exception {
+        pageFrameMaxSize = maxSize;
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
+                    col("i", ColumnType.INT).
+                    timestamp()
+            ) {
+                CairoTestUtils.create(model);
+            }
+
+            final Rnd rnd = new Rnd();
+            final long increment = 1000000 * 60L * 4;
+
+            // prepare the data
+            long timestamp = 0;
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                int iIndex = writer.getColumnIndex("i");
+                int jIndex = -1;
+                int sIndex = -1;
+                for (int i = 0; i < rowCount; i++) {
+                    if (i == startTopAt) {
+                        writer.addColumn("j", ColumnType.LONG);
+                        jIndex = writer.getColumnIndex("j");
+                        writer.addColumn("s", ColumnType.STRING);
+                        sIndex = writer.getColumnIndex("s");
+                    }
+
+                    TableWriter.Row row = writer.newRow(timestamp += increment);
+                    row.putInt(iIndex, rnd.nextInt());
+                    if (startTopAt > 0 && i >= startTopAt) {
+                        row.putLong(jIndex, rnd.nextLong());
+                        row.putStr(sIndex, rnd.nextChars(32));
+                    }
+                    row.append();
+                }
+                writer.commit();
+            }
+
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                RecordMetadata metadata;
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                    metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
+                }
+
+                final IntList columnIndexes = new IntList();
+                final IntList columnSizes = new IntList();
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    columnIndexes.add(i);
+                    int type = metadata.getColumnType(i);
+                    int typeSize = ColumnType.sizeOf(type);
+                    columnSizes.add((Numbers.msb(typeSize)));
+                }
+
+                FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(engine, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION);
+                DataFrameRowCursorFactory rowCursorFactory = new DataFrameRowCursorFactory(); // stub RowCursorFactory
+                DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(configuration, metadata, dataFrameFactory, rowCursorFactory, false, null, true, columnIndexes, columnSizes);
+                SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
+
+                Assert.assertTrue(factory.supportPageFrameCursor());
+
+                int frameCount = 0;
+                try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext)) {
+                    PageFrame frame;
+                    while ((frame = cursor.next()) != null) {
+                        Assert.assertEquals(0, frame.getPartitionIndex());
+                        long len = frame.getPartitionHi() - frame.getPartitionLo();
+                        Assert.assertTrue(len > 0);
+                        Assert.assertTrue(len <= maxSize);
+                        frameCount++;
+                    }
+                }
+                int expectedFrameCount;
+                if (startTopAt > 0) {
+                    expectedFrameCount = (int) Math.ceil((double) startTopAt / maxSize);
+                    expectedFrameCount += (int) Math.ceil((double) (rowCount - startTopAt) / maxSize);
+                } else {
+                    expectedFrameCount = (int) Math.ceil((double) rowCount / maxSize);
+                }
+                Assert.assertEquals(expectedFrameCount, frameCount);
             }
         });
     }

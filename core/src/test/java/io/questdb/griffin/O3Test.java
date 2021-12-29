@@ -984,6 +984,125 @@ public class O3Test extends AbstractO3Test {
         executeWithPool(0, O3Test::testWriterOpensUnmappedPage);
     }
 
+    @Test
+    public void testVarColumnPageBoundariesAppend() throws Exception {
+        dataAppendPageSize = (int) Files.PAGE_SIZE;
+        executeWithPool(0,
+                (CairoEngine engine,
+                 SqlCompiler compiler,
+                 SqlExecutionContext sqlExecutionContext) -> {
+                    int longsPerPage = dataAppendPageSize / 8;
+                    int hi = (longsPerPage + 8) * 2;
+                    int lo = (longsPerPage - 8) * 2;
+                    for (int i = lo; i < hi; i++) {
+                        LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
+                        testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, "12:00:01.000000Z");
+                        compiler.compile("drop table x", sqlExecutionContext);
+                    }
+                });
+    }
+
+    @Test
+    public void testVarColumnPageBoundariesPrepend() throws Exception {
+        dataAppendPageSize = (int) Files.PAGE_SIZE;
+        executeWithPool(0,
+                (CairoEngine engine,
+                 SqlCompiler compiler,
+                 SqlExecutionContext sqlExecutionContext) -> {
+                    int longsPerPage = dataAppendPageSize / 8;
+                    int hi = (longsPerPage + 8) * 2;
+                    int lo = (longsPerPage - 8) * 2;
+                    for (int i = lo; i < hi; i++) {
+                        LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
+                        testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, "00:00:01.000000Z");
+                        compiler.compile("drop table x", sqlExecutionContext);
+                    }
+                });
+    }
+
+    @Test
+    public void testVarColumnPageBoundariesInsertInTheMiddle() throws Exception {
+        dataAppendPageSize = (int) Files.PAGE_SIZE;
+        executeWithPool(0,
+                (CairoEngine engine,
+                 SqlCompiler compiler,
+                 SqlExecutionContext sqlExecutionContext) -> {
+                    int longsPerPage = dataAppendPageSize / 8;
+                    int hi = (longsPerPage + 8) * 2;
+                    int lo = (longsPerPage - 8) * 2;
+                    for (int i = lo; i < hi; i++) {
+                        LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
+                        testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, "11:00:00.002500Z");
+                        compiler.compile("drop table x", sqlExecutionContext);
+                    }
+                });
+    }
+
+    private void testVarColumnPageBoundaryIterationWithColumnTop(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, int i, String o3Timestamp) throws SqlException {
+        // Day 1 '1970-01-01'
+        int initialCount = i / 2;
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " 'aa' as str," +
+                        " timestamp_sequence('1970-01-01T11:00:00',1000L) ts," +
+                        " x " +
+                        " from long_sequence(" + initialCount +  ")" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        // Day 2 '1970-01-02'
+        compiler.compile(
+                "insert into x " +
+                        "select" +
+                        " 'bb' as str," +
+                        " timestamp_sequence('1970-01-02T11:00:00',1000L) ts," +
+                        " x " +
+                        " from long_sequence(" + initialCount + ")",
+                sqlExecutionContext
+        );
+
+        compiler.compile("alter table x add column str2 string", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column y long", sqlExecutionContext).execute(null).await();
+
+        if (i % 2 == 0) {
+            engine.releaseAllWriters();
+        }
+
+        // O3 insert Day 1
+        final String ts1 = "1970-01-01T" + o3Timestamp;
+        final String ts2 = "1970-01-02T" + o3Timestamp;
+        compiler.compile(
+                "insert into x " +
+                        " select" +
+                        " 'cc' as str," +
+                        " timestamp_sequence('" + ts1 + "',0L) ts," +
+                        " 11111 as x," +
+                        " 'dd' as str2," +
+                        " 22222 as y" +
+                        " from long_sequence(1)" +
+                        "union all " +
+                        " select" +
+                        " 'cc' as str," +
+                        " timestamp_sequence('" + ts2 + "',0L) ts," +
+                        " 11111 as x," +
+                        " 'dd' as str2," +
+                        " 22222 as y" +
+                        " from long_sequence(1)",
+                sqlExecutionContext
+        );
+
+        if (i % 2 == 0) {
+            engine.releaseAllWriters();
+        }
+
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'cc'", sink,
+                "str\tts\tx\tstr2\ty\n" +
+                        "cc\t" + ts1 + "\t11111\tdd\t22222\n" +
+                        "cc\t" + ts2 + "\t11111\tdd\t22222\n");
+    }
+
     private static void testWriterOpensCorrectTxnPartitionOnRestart0(
             CairoEngine engine,
             SqlCompiler compiler,
@@ -1183,6 +1302,10 @@ public class O3Test extends AbstractO3Test {
             pool2.halt();
 
             Assert.assertEquals(0, errorCount.get());
+            TestUtils.assertSqlCursors(compiler, executionContext, "z order by ts", "x", LOG);
+            TestUtils.assertSqlCursors(compiler, executionContext, "z order by ts", "x1", LOG);
+
+            engine.releaseAllWriters();
             TestUtils.assertSqlCursors(compiler, executionContext, "z order by ts", "x", LOG);
             TestUtils.assertSqlCursors(compiler, executionContext, "z order by ts", "x1", LOG);
         }

@@ -66,6 +66,8 @@ public interface LogRecord extends CharSinkBase {
 
     LogRecord $256(long a, long b, long c, long d);
 
+    LogRecord $hex(long value);
+
     boolean isEnabled();
 
     LogRecord ts();
