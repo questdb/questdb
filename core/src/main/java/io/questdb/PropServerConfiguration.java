@@ -151,13 +151,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlGroupByMapCapacity;
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlBindVariablePoolSize;
+    private final int sqlPageFrameMaxSize;
     private final int sqlJitMode;
-    private final long sqlJitIRMemoryPageSize;
+    private final int sqlJitIRMemoryPageSize;
     private final int sqlJitIRMemoryMaxPages;
-    private final long sqlJitBindVarsMemoryPageSize;
+    private final int sqlJitBindVarsMemoryPageSize;
     private final int sqlJitBindVarsMemoryMaxPages;
-    private final long sqlJitRowsThreshold;
-    private final long sqlJitPageAddressCacheThreshold;
+    private final int sqlJitRowsThreshold;
+    private final int sqlJitPageAddressCacheThreshold;
     private final boolean sqlJitDebugEnabled;
     private final DateLocale locale;
     private final String backupRoot;
@@ -651,14 +652,15 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
             this.sqlDistinctTimestampKeyCapacity = getInt(properties, env, "cairo.sql.distinct.timestamp.key.capacity", 512);
             this.sqlDistinctTimestampLoadFactor = getDouble(properties, env, "cairo.sql.distinct.timestamp.load.factor", 0.5);
+            this.sqlPageFrameMaxSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.page.frame.max.size", 8 * 1024 * 1024));
 
             this.sqlJitMode = getSqlJitMode(properties, env);
-            this.sqlJitIRMemoryPageSize = getLongSize(properties, env, "cairo.sql.jit.ir.memory.page.size", 8 * 1024);
+            this.sqlJitIRMemoryPageSize = getIntSize(properties, env, "cairo.sql.jit.ir.memory.page.size", 8 * 1024);
             this.sqlJitIRMemoryMaxPages = getInt(properties, env, "cairo.sql.jit.ir.memory.max.pages", 8);
-            this.sqlJitBindVarsMemoryPageSize = getLongSize(properties, env, "cairo.sql.jit.bind.vars.memory.page.size", 4 * 1024);
+            this.sqlJitBindVarsMemoryPageSize = getIntSize(properties, env, "cairo.sql.jit.bind.vars.memory.page.size", 4 * 1024);
             this.sqlJitBindVarsMemoryMaxPages = getInt(properties, env, "cairo.sql.jit.bind.vars.memory.max.pages", 8);
-            this.sqlJitRowsThreshold = getLongSize(properties, env, "cairo.sql.jit.rows.threshold", 1024 * 1024);
-            this.sqlJitPageAddressCacheThreshold = getLongSize(properties, env, "cairo.sql.jit.page.address.cache.threshold", 1024 * 1024);
+            this.sqlJitRowsThreshold = getIntSize(properties, env, "cairo.sql.jit.rows.threshold", 1024 * 1024);
+            this.sqlJitPageAddressCacheThreshold = getIntSize(properties, env, "cairo.sql.jit.page.address.cache.threshold", 1024 * 1024);
             this.sqlJitDebugEnabled = getBoolean(properties, env, "cairo.sql.jit.debug.enabled", false);
 
             this.inputFormatConfiguration = new InputFormatConfiguration(

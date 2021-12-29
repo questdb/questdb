@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.*;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.NullColumn;
 import io.questdb.cairo.TableReader;
@@ -46,9 +47,11 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     private final boolean framingSupported;
     private final IntList columnIndexes;
     private final IntList columnSizes;
+    protected final int pageFrameMaxSize;
     private TableReaderPageFrameCursor pageFrameCursor;
 
     public DataFrameRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
             RecordMetadata metadata,
             DataFrameCursorFactory dataFrameCursorFactory,
             RowCursorFactory rowCursorFactory,
@@ -67,6 +70,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         this.framingSupported = framingSupported;
         this.columnIndexes = columnIndexes;
         this.columnSizes = columnSizes;
+        this.pageFrameMaxSize = configuration.getSqlPageFrameMaxSize();
     }
 
     @Override
@@ -86,7 +90,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         if (pageFrameCursor != null) {
             return pageFrameCursor.of(dataFrameCursor);
         } else if (framingSupported) {
-            pageFrameCursor = new TableReaderPageFrameCursor(columnIndexes, columnSizes);
+            pageFrameCursor = new TableReaderPageFrameCursor(columnIndexes, columnSizes, pageFrameMaxSize);
             return pageFrameCursor.of(dataFrameCursor);
         } else {
             return null;
@@ -133,6 +137,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         private final IntList columnSizes;
         private final LongList pageRowsRemaining = new LongList();
         private final LongList pageSizes = new LongList();
+        private final int pageFrameMaxSize;
         private TableReader reader;
         private int reenterPartitionIndex;
         private DataFrameCursor dataFrameCursor;
@@ -140,10 +145,11 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         private long reenterPartitionHi;
         private boolean reenterDataFrame = false;
 
-        public TableReaderPageFrameCursor(IntList columnIndexes, IntList columnSizes) {
+        public TableReaderPageFrameCursor(IntList columnIndexes, IntList columnSizes, int pageFrameMaxSize) {
             this.columnIndexes = columnIndexes;
             this.columnSizes = columnSizes;
             this.columnCount = columnIndexes.size();
+            this.pageFrameMaxSize = pageFrameMaxSize;
         }
 
         @Override
@@ -153,7 +159,6 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
 
         @Override
         public @Nullable PageFrame next() {
-
             if (this.reenterDataFrame) {
                 return computeFrame(reenterPartitionLo, reenterPartitionHi);
             }
@@ -197,14 +202,14 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         private TableReaderPageFrame computeFrame(final long partitionLo, final long partitionHi) {
             final int base = reader.getColumnBase(reenterPartitionIndex);
 
-            // we may need to split this data frame along "top" lines
-            // to do this, we calculate min top value from given position
-            long minTop = partitionHi;
+            // we may need to split this data frame either along "top" lines, or along
+            // max page frame sizes; to do this, we calculate min top value from given position
+            long adjustedHi = Math.min(partitionHi, partitionLo + pageFrameMaxSize);
             for (int i = 0; i < columnCount; i++) {
                 final int columnIndex = columnIndexes.getQuick(i);
                 long top = reader.getColumnTop(base, columnIndex);
-                if (top > partitionLo && top < minTop) {
-                    minTop = top;
+                if (top > partitionLo && top < adjustedHi) {
+                    adjustedHi = top;
                 }
             }
 
@@ -213,9 +218,9 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                 final int readerColIndex = TableReader.getPrimaryColumnIndex(base, columnIndex);
                 final MemoryR col = reader.getColumn(readerColIndex);
                 // when the entire column is NULL we make it skip the whole of the data frame
-                final long top = col instanceof NullColumn ? minTop : reader.getColumnTop(base, columnIndex);
+                final long top = col instanceof NullColumn ? adjustedHi : reader.getColumnTop(base, columnIndex);
                 final long partitionLoAdjusted = partitionLo - top;
-                final long partitionHiAdjusted = minTop - top;
+                final long partitionHiAdjusted = adjustedHi - top;
                 final int sh = columnSizes.getQuick(i);
 
                 if (partitionHiAdjusted > 0) {
@@ -250,10 +255,10 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                 }
             }
 
-            // it is possible that all columns in data frame are empty, but it doesn't mean the data frame size is 0
-            // sometimes we may want to imply nulls
-            if (minTop < partitionHi) {
-                this.reenterPartitionLo = minTop;
+            // it is possible that all columns in data frame are empty, but it doesn't mean
+            // the data frame size is 0; sometimes we may want to imply nulls
+            if (adjustedHi < partitionHi) {
+                this.reenterPartitionLo = adjustedHi;
                 this.reenterPartitionHi = partitionHi;
                 this.reenterDataFrame = true;
             } else {
@@ -261,7 +266,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             }
 
             frame.partitionLo = partitionLo;
-            frame.partitionHi = minTop;
+            frame.partitionHi = adjustedHi;
             frame.partitionIndex = reenterPartitionIndex;
             return frame;
         }

@@ -1086,6 +1086,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             );
                         }
                         return new DataFrameRecordCursorFactory(
+                                configuration,
                                 metadata,
                                 dataFrameCursorFactory,
                                 rcf,
@@ -2746,6 +2747,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 // This special case factory can later be disassembled to framing and index
                                 // cursors in Sample By processing
                                 return new DeferredSingleSymbolFilterDataFrameRecordCursorFactory(
+                                        configuration,
                                         keyColumnIndex,
                                         symbol,
                                         rcf,
@@ -2757,6 +2759,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 );
                             }
                             return new DataFrameRecordCursorFactory(
+                                    configuration,
                                     myMeta,
                                     dfcFactory,
                                     rcf,
@@ -2866,6 +2869,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 model.setWhereClause(intrinsicModel.filter);
                 return new DataFrameRecordCursorFactory(
+                        configuration,
                         myMeta,
                         dfcFactory,
                         new DataFrameRowCursorFactory(),
@@ -2884,6 +2888,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // in the interest of isolating problems we will only affect this factory
 
                 return new DataFrameRecordCursorFactory(
+                        configuration,
                         myMeta,
                         new FullFwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()),
                         new DataFrameRowCursorFactory(),
