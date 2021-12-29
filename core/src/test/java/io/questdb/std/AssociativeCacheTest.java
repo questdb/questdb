@@ -29,6 +29,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class AssociativeCacheTest {
+
     @Test
     public void testBasic() {
         AssociativeCache<String> cache = new AssociativeCache<>(8, 64);
@@ -37,6 +38,17 @@ public class AssociativeCacheTest {
         cache.put("Z", "3");
         Assert.assertEquals("1", cache.peek("X"));
         Assert.assertEquals("2", cache.peek("Y"));
+        Assert.assertEquals("3", cache.peek("Z"));
+    }
+
+    @Test
+    public void testMinSize() {
+        AssociativeCache<String> cache = new AssociativeCache<>(1, 1);
+        cache.put("X", "1");
+        cache.put("Y", "2");
+        cache.put("Z", "3");
+        Assert.assertNull(cache.peek("X"));
+        Assert.assertNull(cache.peek("Y"));
         Assert.assertEquals("3", cache.peek("Z"));
     }
 
@@ -104,6 +116,5 @@ public class AssociativeCacheTest {
         cache.put("x", value);
         Assert.assertEquals(value, cache.poll("x"));
         cache.put("x", value);
-
     }
 }
