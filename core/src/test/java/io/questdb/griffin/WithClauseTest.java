@@ -42,12 +42,12 @@ public class WithClauseTest extends AbstractGriffinTest {
 
             // this is deliberately shuffled column in select to check that correct metadata is used on filtering
             // latest by queries
-            String expected = select("select groupId, _id, contactid, timestamp, _id from contact_events2 latest by _id where groupId = 'g1' order by timestamp");
+            String expected = select("select groupId, _id, contactid, timestamp, _id from contact_events2 where groupId = 'g1' latest on timestamp partition by _id order by timestamp");
             Assert.assertTrue(expected.length() > 100);
 
             assertQuery(expected,
                     "with eventlist as (\n" +
-                            "    select * from contact_events2 latest by _id where groupId = 'g1' order by timestamp\n" +
+                            "    select * from contact_events2 where groupId = 'g1' latest on timestamp partition by _id order by timestamp\n" +
                             ")\n" +
                             "select groupId, _id, contactid, timestamp, _id from eventlist where groupId = 'g1' \n",
                     "timestamp", true, false, true);

@@ -3681,8 +3681,8 @@ public class JoinTest extends AbstractGriffinTest {
 
             assertQuery("id\n",
                     "with\n" +
-                            "eventlist as (select * from contact_events latest by _id order by timestamp)\n" +
-                            ",contactlist as (select * from contacts latest by _id order by timestamp)\n" +
+                            "eventlist as (select * from contact_events latest on timestamp partition by _id order by timestamp)\n" +
+                            ",contactlist as (select * from contacts latest on timestamp partition by _id order by timestamp)\n" +
                             ",c as (select distinct contactid from eventlist where groupId = 'ykom80aRN5AwUcuRp4LJ' except select distinct _id as contactId from contactlist where notRealType = 'bot')\n" +
                             "select\n" +
                             "c.contactId as id\n" +
