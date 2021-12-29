@@ -28,8 +28,8 @@ import io.questdb.MessageBus;
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterPool;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.Atomicity;
@@ -852,12 +852,8 @@ public class SqlCompiler implements Closeable {
         final int fromTag = ColumnType.tagOf(from);
         return (toTag == fromTag && (ColumnType.getGeoHashBits(to) <= ColumnType.getGeoHashBits(from)
                 || ColumnType.getGeoHashBits(from) == 0) /* to account for typed NULL assignment */)
-                || fromTag == ColumnType.NULL
-                //widening conversions
-                || (fromTag >= ColumnType.BYTE
-                && toTag >= ColumnType.BYTE
-                && toTag <= ColumnType.DOUBLE
-                && fromTag < toTag)
+                // widening conversions,
+                || builtInFunctionCast(to, from)
                 //narrowing conversions
                 || (fromTag == ColumnType.DOUBLE && (toTag == ColumnType.FLOAT || (toTag >= ColumnType.BYTE && toTag <= ColumnType.LONG)))
                 || (fromTag == ColumnType.FLOAT && toTag >= ColumnType.BYTE && toTag <= ColumnType.LONG)
@@ -882,6 +878,22 @@ public class SqlCompiler implements Closeable {
                 || (fromTag == ColumnType.CHAR && toTag == ColumnType.STRING)
                 || (fromTag == ColumnType.STRING && toTag == ColumnType.TIMESTAMP)
                 || (fromTag == ColumnType.SYMBOL && toTag == ColumnType.TIMESTAMP);
+    }
+
+    public static boolean builtInFunctionCast(int toType, int fromType) {
+        // This method returns true when a cast is not needed from type to type
+        // because of the way typed functions are implemented.
+        // For example IntFunction has getDouble() method implemented and does not need
+        // additional wrap function to CAST to double.
+        // This is usually case for widening conversions.
+        return (fromType >= ColumnType.BYTE
+                && toType >= ColumnType.BYTE
+                && toType <= ColumnType.DOUBLE
+                && fromType < toType)
+                || fromType == ColumnType.NULL
+                // char can be short and short can be char for symmetry
+                || (fromType == ColumnType.CHAR && toType == ColumnType.SHORT)
+                || (fromType == ColumnType.TIMESTAMP && toType == ColumnType.LONG);
     }
 
     @Override

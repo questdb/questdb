@@ -27,8 +27,8 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
@@ -2380,7 +2380,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 int columnType = function.getType();
                 if (targetColumnType != -1 && targetColumnType != columnType) {
                     // This is an update and the target column does not match with column the update is trying to perform
-                    if (builtInFunctionCast(function.getType(), targetColumnType)) {
+                    if (SqlCompiler.builtInFunctionCast(targetColumnType, function.getType())) {
                         // All functions will be able to getLong() if they support getInt(), no need to generate cast here
                         columnType = targetColumnType;
                     } else {
@@ -2456,38 +2456,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             factory.close();
             throw e;
         }
-    }
-
-    private static boolean builtInFunctionCast(int fromColumnType, int toColumnType) {
-        // This method returns true when a cast is not needed from type to type
-        // because of the way typed functions are implemented.
-        // For example IntFunction has getDouble() method implemented and does not need
-        // additional wrap function to CAST to double
-        switch (fromColumnType) {
-            case ColumnType.NULL:
-                return true;
-            case ColumnType.BYTE:
-                if (toColumnType == ColumnType.SHORT) {
-                    return true;
-                }
-            case ColumnType.CHAR:
-            case ColumnType.SHORT:
-                if (toColumnType == ColumnType.INT || toColumnType == ColumnType.CHAR || toColumnType == ColumnType.SHORT) {
-                    return true;
-                }
-            case ColumnType.INT:
-                return toColumnType == ColumnType.LONG || toColumnType == ColumnType.FLOAT || toColumnType == ColumnType.DOUBLE;
-            case ColumnType.LONG:
-                return toColumnType == ColumnType.TIMESTAMP || toColumnType == ColumnType.DOUBLE || toColumnType == ColumnType.FLOAT;
-            case ColumnType.FLOAT:
-                return toColumnType == ColumnType.DOUBLE;
-            case ColumnType.TIMESTAMP:
-                return toColumnType == ColumnType.LONG;
-            case ColumnType.DATE:
-                return toColumnType == ColumnType.TIMESTAMP;
-
-        }
-        return false;
     }
 
     /**

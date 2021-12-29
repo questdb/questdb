@@ -3174,7 +3174,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertAsSelectInconvertibleList3() throws Exception {
-        testInsertAsSelectError("create table x (a SHORT, b INT, n TIMESTAMP)",
+        testInsertAsSelectError("create table x (a BYTE, b INT, n TIMESTAMP)",
                 "insert into x (b,a)" +
                         "select" +
                         " rnd_int()," +
