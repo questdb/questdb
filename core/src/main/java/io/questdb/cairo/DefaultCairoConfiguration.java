@@ -501,7 +501,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getSqlJitRowsThreshold() {
+    public int getSqlJitRowsThreshold() {
         return Numbers.SIZE_1MB;
     }
 
@@ -553,6 +553,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlModelPoolCapacity() {
         return 1024;
+    }
+
+    @Override
+    public int getSqlPageFrameMaxSize() {
+        return 8 * Numbers.SIZE_1MB;
     }
 
     @Override

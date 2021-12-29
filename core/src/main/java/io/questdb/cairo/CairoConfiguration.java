@@ -239,7 +239,7 @@ public interface CairoConfiguration {
 
     long getSqlJitPageAddressCacheThreshold();
 
-    long getSqlJitRowsThreshold();
+    int getSqlJitRowsThreshold();
 
     int getSqlJoinContextPoolCapacity();
 
@@ -265,6 +265,8 @@ public interface CairoConfiguration {
     int getSqlMapPageSize();
 
     int getSqlModelPoolCapacity();
+
+    int getSqlPageFrameMaxSize();
 
     int getSqlSortKeyMaxPages();
 

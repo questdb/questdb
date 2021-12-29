@@ -1540,6 +1540,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropCairoConfiguration implements CairoConfiguration {
+        @Override
+        public int getSqlPageFrameMaxSize() {
+            return sqlPageFrameMaxSize;
+        }
 
         @Override
         public boolean enableTestFactories() {
@@ -1982,7 +1986,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getSqlJitRowsThreshold() {
+        public int getSqlJitRowsThreshold() {
             return sqlJitRowsThreshold;
         }
 
