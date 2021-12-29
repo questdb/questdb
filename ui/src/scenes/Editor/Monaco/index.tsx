@@ -309,7 +309,7 @@ const MonacoEditor = () => {
     if (tables.length > 0) {
       setEditorReady(true)
 
-      if (editorRef?.current && monacoRef?.current) {
+      if (monacoRef?.current) {
         schemaCompletionHandle?.dispose()
         setSchemaCompletionHandle(
           monacoRef.current.languages.registerCompletionItemProvider(
@@ -319,7 +319,7 @@ const MonacoEditor = () => {
         )
       }
     }
-  }, [tables, editorRef, monacoRef])
+  }, [tables, monacoRef])
 
   return (
     <Content>
