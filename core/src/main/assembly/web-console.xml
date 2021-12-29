@@ -32,7 +32,7 @@
         <fileSet>
             <directory>../ui/dist</directory>
             <includes>
-                <include>*</include>
+                <include>**/*</include>
             </includes>
             <outputDirectory>.</outputDirectory>
             <fileMode>755</fileMode>
