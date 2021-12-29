@@ -8,16 +8,12 @@ export const createSchemaCompletionProvider = (questDBTables: Table[] = []) => {
       "",
     ),
     provideCompletionItems(model, position) {
-      const value = model.getValue()
-
       const textUntilPosition = model.getValueInRange({
         startLineNumber: 1,
         startColumn: 1,
         endLineNumber: position.lineNumber,
         endColumn: position.column,
       })
-
-      const textAfterPosition = value.split(textUntilPosition)[1]
 
       const word = model.getWordUntilPosition(position)
 
@@ -38,14 +34,10 @@ export const createSchemaCompletionProvider = (questDBTables: Table[] = []) => {
             return {
               label: item.name,
               kind: CompletionItemKind.Class,
-              insertText: `${textUntilPosition.substr(-1) === "'" ? "" : "'"}${
-                item.name
-              }${
-                textAfterPosition.substr(0, 1) === "'" ||
-                (word.word === "" && textAfterPosition !== "")
-                  ? ""
-                  : "'"
-              }`,
+              insertText:
+                textUntilPosition.substr(-1) === "'"
+                  ? item.name
+                  : `'${item.name}'`,
               range,
             }
           }),
