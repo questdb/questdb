@@ -28,9 +28,9 @@ public class IntLongAssociativeCache {
 
     public static final long NO_VALUE = -1L;
     public static final int UNUSED_KEY = 0;
-    private static final int MIN_BLOCKS = 2;
     private static final int NOT_FOUND = -1;
-    private static final int MINROWS = 16;
+    private static final int MIN_BLOCKS = 1;
+    private static final int MIN_ROWS = 1;
     private final int[] keys;
     private final long[] values;
     private final int rmask;
@@ -40,7 +40,7 @@ public class IntLongAssociativeCache {
 
     public IntLongAssociativeCache(int blocks, int rows) {
         this.blocks = Math.max(MIN_BLOCKS, Numbers.ceilPow2(blocks));
-        rows = Math.max(MINROWS, Numbers.ceilPow2(rows));
+        rows = Math.max(MIN_ROWS, Numbers.ceilPow2(rows));
 
         int size = rows * this.blocks;
         if (size < 0) {
