@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.griffin.engine.functions.NegatingFunctionFactory;
 import io.questdb.griffin.engine.functions.SwappingArgsFunctionFactory;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -101,15 +102,15 @@ public class FunctionFactoryCache {
     }
 
     public boolean isCursor(CharSequence name) {
-        return cursorFunctionNames.contains(name);
+        return name != null && cursorFunctionNames.contains(name);
     }
 
     public boolean isGroupBy(CharSequence name) {
-        return groupByFunctionNames.contains(name);
+        return name != null && groupByFunctionNames.contains(name);
     }
 
     public boolean isRuntimeConstant(CharSequence name) {
-        return runtimeConstantFunctionNames.contains(name);
+        return name != null && runtimeConstantFunctionNames.contains(name);
     }
 
     private void addFactoryToList(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactory factory) throws SqlException {
@@ -131,5 +132,21 @@ public class FunctionFactoryCache {
 
     int getFunctionCount() {
         return factories.size();
+    }
+
+    public boolean isValidNoArgFunction(ExpressionNode node) {
+        final ObjList<FunctionFactoryDescriptor> overload = getOverloadList(node.token);
+        if (overload == null) {
+            return false;
+        }
+
+        for (int i = 0, n = overload.size(); i < n; i++) {
+            FunctionFactoryDescriptor ffd = overload.getQuick(i);
+            if (ffd.getSigArgCount() == 0) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
