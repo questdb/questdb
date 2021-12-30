@@ -996,7 +996,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         currentCursor = Misc.free(currentCursor);
         // do not free factory, it will be cached
         currentFactory = null;
-        // we we resumed the cursor send the typeAndSelect will be null
+        // we resumed the cursor send the typeAndSelect will be null
         // we do not want to overwrite cache entries and potentially
         // leak memory
         if (typesAndSelect != null) {
@@ -1532,7 +1532,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             bindVariableService.clear();
             currentCursor = Misc.free(currentCursor);
             typesAndInsert = null;
-            typesAndSelect = null;
+            clearCursorAndFactory();
             rowCount = 0;
             queryTag = TAG_OK;
             queryText = null;
@@ -2190,7 +2190,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         while (currentCursor.hasNext()) {
             // create checkpoint to which we can undo the buffer in case
-            // current DataRow will does not fit fully.
+            // current DataRow will not fit fully.
             responseAsciiSink.bookmark();
             try {
                 try {
@@ -2210,7 +2210,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         completed = maxRows <= 0 || rowCount < maxRows;
         if (completed) {
             clearCursorAndFactory();
-            // at this point buffer can contain unsent data
+            // at this point buffer can contain unsent data,
             // and it may not have enough space for the command
             if (sendBufferLimit - sendBufferPtr < PROTOCOL_TAIL_COMMAND_LENGTH) {
                 resumeProcessor = commandCompleteResumeProcessor;
