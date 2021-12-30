@@ -1,7 +1,7 @@
 import React, { useContext, useEffect, useState } from "react"
 import Editor, { Monaco, loader } from "@monaco-editor/react"
 import dracula from "./dracula"
-import { editor } from "monaco-editor"
+import { editor, IDisposable } from "monaco-editor"
 import { theme } from "../../../theme"
 import { QuestContext, useEditor } from "../../../providers"
 import { usePreferences } from "./usePreferences"
@@ -28,7 +28,8 @@ import styled from "styled-components"
 import {
   conf as QuestDBLanguageConf,
   language as QuestDBLanguage,
-  completionProvider as QuestDBCompletionProvider,
+  createQuestDBCompletionProvider,
+  createSchemaCompletionProvider,
 } from "./questdb-sql"
 import { color } from "../../../utils"
 
@@ -57,27 +58,31 @@ enum Command {
 
 const MonacoEditor = () => {
   const { editorRef, monacoRef, insertTextAtCursor } = useEditor()
+  const [editorReady, setEditorReady] = useState(false)
   const { loadPreferences, savePreferences } = usePreferences()
   const { quest } = useContext(QuestContext)
   const [request, setRequest] = useState<Request | undefined>()
   const [lastExecutedQuery, setLastExecutedQuery] = useState("")
   const dispatch = useDispatch()
   const running = useSelector(selectors.query.getRunning)
+  const tables = useSelector(selectors.query.getTables)
+  const [
+    schemaCompletionHandle,
+    setSchemaCompletionHandle,
+  ] = useState<IDisposable>()
 
   const toggleRunning = (isRefresh: boolean = false) => {
     dispatch(actions.query.toggleRunning(isRefresh))
   }
 
-  const handleEditorDidMount = (
-    editor: IStandaloneCodeEditor,
-    monaco: Monaco,
-  ) => {
+  const handleEditorBeforeMount = (monaco: Monaco) => {
     monaco.languages.register({ id: QuestDBLanguageName })
 
     monaco.languages.setMonarchTokensProvider(
       QuestDBLanguageName,
       QuestDBLanguage,
     )
+
     monaco.languages.setLanguageConfiguration(
       QuestDBLanguageName,
       QuestDBLanguageConf,
@@ -85,8 +90,24 @@ const MonacoEditor = () => {
 
     monaco.languages.registerCompletionItemProvider(
       QuestDBLanguageName,
-      QuestDBCompletionProvider,
+      createQuestDBCompletionProvider(),
     )
+
+    setSchemaCompletionHandle(
+      monaco.languages.registerCompletionItemProvider(
+        QuestDBLanguageName,
+        createSchemaCompletionProvider(tables),
+      ),
+    )
+
+    monaco.editor.defineTheme("dracula", dracula)
+  }
+
+  const handleEditorDidMount = (
+    editor: IStandaloneCodeEditor,
+    monaco: Monaco,
+  ) => {
+    monaco.editor.setTheme("dracula")
 
     if (monacoRef) {
       monacoRef.current = monaco
@@ -166,8 +187,6 @@ const MonacoEditor = () => {
         },
       })
     }
-    monaco.editor.defineTheme("dracula", dracula)
-    monaco.editor.setTheme("dracula")
 
     loadPreferences(editor)
   }
@@ -286,24 +305,43 @@ const MonacoEditor = () => {
     }
   }, [running, savePreferences])
 
+  useEffect(() => {
+    if (tables.length > 0) {
+      setEditorReady(true)
+
+      if (monacoRef?.current) {
+        schemaCompletionHandle?.dispose()
+        setSchemaCompletionHandle(
+          monacoRef.current.languages.registerCompletionItemProvider(
+            QuestDBLanguageName,
+            createSchemaCompletionProvider(tables),
+          ),
+        )
+      }
+    }
+  }, [tables, monacoRef])
+
   return (
     <Content>
-      <Editor
-        defaultLanguage={QuestDBLanguageName}
-        onMount={handleEditorDidMount}
-        options={{
-          fixedOverflowWidgets: true,
-          fontSize: 14,
-          fontFamily: theme.fontMonospace,
-          renderLineHighlight: "gutter",
-          minimap: {
-            enabled: false,
-          },
-          scrollBeyondLastLine: false,
-        }}
-        theme="vs-dark"
-      />
-      <Loader show={!!request} />
+      {editorReady && (
+        <Editor
+          beforeMount={handleEditorBeforeMount}
+          defaultLanguage={QuestDBLanguageName}
+          onMount={handleEditorDidMount}
+          options={{
+            fixedOverflowWidgets: true,
+            fontSize: 14,
+            fontFamily: theme.fontMonospace,
+            renderLineHighlight: "gutter",
+            minimap: {
+              enabled: false,
+            },
+            scrollBeyondLastLine: false,
+          }}
+          theme="vs-dark"
+        />
+      )}
+      <Loader show={!!request || !tables} />
     </Content>
   )
 }
