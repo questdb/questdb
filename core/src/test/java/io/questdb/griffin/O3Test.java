@@ -1415,10 +1415,11 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all append)",
-                "y",
+                "y order by ts",
                 "insert into x select * from append",
                 "x",
-                "order by ts"
+                "y",
+                "x"
         );
 
         assertIndexConsistency(
@@ -1552,10 +1553,11 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all append)",
-                "y",
+                "y order by ts",
                 "insert into x select * from append",
                 "x",
-                "order by ts"
+                "y",
+                "x"
         );
 
         assertMaxTimestamp(
@@ -1565,16 +1567,16 @@ public class O3Test extends AbstractO3Test {
                 "select max(ts) from y"
         );
 
-        final String orderBySQL = "order by i, sym, amt";
         assertO3DataCursors(
                 engine,
                 compiler,
                 sqlExecutionContext,
                 "create table z as (x union all append2)",
-                "z",
+                "z order by i,sym,amt",
                 "insert into x select * from append2",
-                "x",
-                orderBySQL
+                "x order by i,sym,amt",
+                "z",
+                "x"
         );
 
         assertMaxTimestamp(
@@ -1589,10 +1591,11 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table w as (x union all append3)",
-                "w",
+                "w order by i,sym,amt",
                 "insert into x select * from append3",
-                "x",
-                orderBySQL
+                "x order by i,sym,amt",
+                "w",
+                "x"
         );
 
         assertMaxTimestamp(
@@ -1668,10 +1671,11 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (select * from x union all select * from top)",
-                "y",
+                "y order by ts",
                 "insert into x select * from top",
                 "x",
-                "order by ts"
+                "y",
+                "x"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
@@ -1852,10 +1856,11 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (select * from x union all select * from top union all select * from bottom)",
-                "y",
+                "y order by ts",
                 "insert into x select * from (top union all bottom)",
                 "x",
-                "order by ts"
+                "y",
+                "x"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
@@ -1960,10 +1965,11 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all top)",
-                "y",
+                "y order by ts",
                 o3InsertSql,
                 "x",
-                "order by ts"
+                "y",
+                "x"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
@@ -2057,10 +2063,11 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all top)",
-                "y",
+                "y order by ts",
                 "insert batch 2000000 commitLag 180s into x select * from top",
                 "x",
-                "order by ts"
+                "y",
+                "x"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
@@ -2657,10 +2664,11 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (select * from x union all select * from 1am union all select * from prev)",
-                "y",
+                "y order by ts",
                 "insert into x select * from (1am union all prev)",
                 "x",
-                "order by ts"
+                "y",
+                "x"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
@@ -2962,10 +2970,11 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all middle)",
-                "y",
+                "y order by ts",
                 "insert into x select * from middle",
                 "x",
-                "order by ts"
+                "y",
+                "x"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
@@ -3503,10 +3512,11 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all middle)",
-                "y",
+                "y order by ts, i desc",
                 "insert into x select * from middle",
                 "x",
-                "order by ts, i desc"
+                "y",
+                "x"
         );
 
         // check that reader can process out of order partition layout after fresh open
@@ -3740,10 +3750,11 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all append)",
-                "y",
+                "y order by ts",
                 "insert into x select * from append",
                 "x",
-                "order by ts"
+                "y",
+                "x"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
@@ -3819,10 +3830,11 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all append)",
-                "y where sym = 'googl'",
+                "y where sym = 'googl' order by ts",
                 "insert into x select * from append",
                 "x where sym = 'googl'",
-                "order by ts"
+                "y where sym = 'googl'",
+                "x where sym = 'googl'"
         );
 
         assertMaxTimestamp(
@@ -5474,10 +5486,11 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 executionContext,
                 "create table y as (x union all append)",
-                "y",
+                "y order by ts",
                 "insert into x select * from append",
                 "x",
-                "order by ts"
+                "y",
+                "x"
         );
 
         assertIndexConsistency(compiler, executionContext, engine);
@@ -5516,10 +5529,11 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 executionContext,
                 "create table y2 as (y union all append2)",
-                "y2",
+                "y2 order by ts",
                 "insert into x select * from append2",
                 "x",
-                "order by ts"
+                "y2",
+                "x"
         );
 
         TestUtils.printSql(
@@ -5627,10 +5641,11 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 executionContext,
                 "create table y as (x union all append)",
-                "y",
+                "y order by ts",
                 "insert into x select * from append",
                 "x",
-                "order by ts"
+                "y",
+                "x"
         );
 
         assertIndexConsistency(compiler, executionContext, engine);
@@ -5727,10 +5742,11 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 executionContext,
                 "create table y as (x union all append)",
-                "y",
+                "y order by ts",
                 "insert into x select * from append",
                 "x",
-                "order by ts"
+                "y",
+                "x"
         );
 
         assertIndexConsistency(compiler, executionContext, engine);
@@ -6386,10 +6402,11 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 executionContext,
                 "create table y as (x union all append)",
-                "y",
+                "y order by ts",
                 "insert into x select * from append",
                 "x",
-                "order by ts"
+                "y",
+                "x"
         );
 
         assertIndexConsistency(compiler, executionContext, engine);
@@ -6445,10 +6462,11 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 executionContext,
                 "create table y as (x union all append)",
-                "y",
+                "y order by ts",
                 "insert into x select * from append",
                 "x",
-                "order by ts"
+                "y",
+                "x"
         );
         assertXCountY(compiler, executionContext);
     }
@@ -6569,10 +6587,11 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all append)",
-                "y",
+                "y order by ts",
                 "insert into x select * from append",
                 "x",
-                "order by ts"
+                "y",
+                "x"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
@@ -6782,10 +6801,11 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all append)",
-                "y",
+                "y order by ts, i desc",
                 "insert into x select * from append",
                 "x",
-                "order by ts, i desc"
+                "y",
+                "x"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
@@ -6862,10 +6882,11 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all append)",
-                "y",
+                "y order by ts, i desc",
                 "insert into x select * from append",
                 "x",
-                "order by ts, i desc"
+                "y",
+                "x"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
@@ -7211,10 +7232,11 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table z as (select * from x union all append2)",
-                "z",
+                "z order by ts",
                 "insert into x select * from append2",
                 "x",
-                "order by ts"
+                "z",
+                "x"
         );
 
         assertIndexConsistency(
@@ -7337,10 +7359,11 @@ public class O3Test extends AbstractO3Test {
                 compiler,
                 sqlExecutionContext,
                 "create table y as (x union all append)",
-                "y",
+                "y order by ts",
                 "insert into x select * from append",
                 "x",
-                "order by ts"
+                "y",
+                "x"
         );
         assertXCountY(compiler, sqlExecutionContext);
     }

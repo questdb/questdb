@@ -146,25 +146,23 @@ public class AbstractO3Test {
             String referenceSQL,
             String o3InsertSQL,
             String assertSQL,
-            String orderBySQL
+            String countReferenceSQL,
+            String countAssertSQL
     ) throws SqlException {
         // create third table, which will contain both X and 1AM
         if (referenceTableDDL != null) {
             compiler.compile(referenceTableDDL, sqlExecutionContext);
         }
         compiler.compile(o3InsertSQL, sqlExecutionContext);
-
-        final String expected = referenceSQL + " " + orderBySQL;
-        final String actual = assertSQL + " " + orderBySQL;
-        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expected, actual, LOG);
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL, LOG);
         engine.releaseAllReaders();
-        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expected, actual, LOG);
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL, LOG);
 
         TestUtils.assertSqlCursors(
                 compiler,
                 sqlExecutionContext,
-                "select count() from " + referenceSQL,
-                "select count() from " + assertSQL,
+                "select count() from " + countReferenceSQL,
+                "select count() from " + countAssertSQL,
                 LOG
         );
     }
