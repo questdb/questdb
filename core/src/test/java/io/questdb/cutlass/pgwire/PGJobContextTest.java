@@ -360,6 +360,26 @@ public class PGJobContextTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBindVariablesInFilterBinaryTransfer() throws Exception {
+        testBindVariablesInFilter(true);
+    }
+
+    @Test
+    public void testBindVariablesInFilterOnSymbolBinaryTransfer() throws Exception {
+        testBindVariablesInFilterOnSymbol(true);
+    }
+
+    @Test
+    public void testBindVariablesInFilterOnSymbolStringTransfer() throws Exception {
+        testBindVariablesInFilterOnSymbol(false);
+    }
+
+    @Test
+    public void testBindVariablesInFilterStringTransfer() throws Exception {
+        testBindVariablesInFilter(false);
+    }
+
+    @Test
     public void testBlobOverLimit() throws Exception {
         PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
             @Override
@@ -3505,49 +3525,6 @@ nodejs code:
     }
 
     @Test
-    public void testBindVariablesInFilterBinaryTransfer() throws Exception {
-        testBindVariablesInFilter(true);
-    }
-
-    @Test
-    public void testBindVariablesInFilterStringTransfer() throws Exception {
-        testBindVariablesInFilter(false);
-    }
-
-    private void testBindVariablesInFilter(boolean binary) throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, binary)
-            ) {
-                connection.setAutoCommit(false);
-                connection.prepareStatement("create table x (l long, ts timestamp) timestamp(ts)").execute();
-                connection.prepareStatement("insert into x values (100, 0)").execute();
-                connection.prepareStatement("insert into x values (101, 1)").execute();
-                connection.prepareStatement("insert into x values (102, 2)").execute();
-                connection.prepareStatement("insert into x values (103, 3)").execute();
-                connection.commit();
-
-                sink.clear();
-                try (PreparedStatement ps = connection.prepareStatement("select * from x where l != ?")) {
-                    ps.setLong(1, 0);
-                    try (ResultSet rs = ps.executeQuery()) {
-                        assertResultSet(
-                                "l[BIGINT],ts[TIMESTAMP]\n" +
-                                        "100,1970-01-01 00:00:00.0\n" +
-                                        "101,1970-01-01 00:00:00.000001\n" +
-                                        "102,1970-01-01 00:00:00.000002\n" +
-                                        "103,1970-01-01 00:00:00.000003\n",
-                                sink,
-                                rs
-                        );
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
     public void testSimpleSyntaxErrorReporting() throws Exception {
         testSyntaxErrorReporting(true);
     }
@@ -4201,6 +4178,31 @@ nodejs code:
         });
     }
 
+    private PGWireServer.PGConnectionContextFactory createPGConnectionContextFactory(PGWireConfiguration conf, int workerCount, SOCountDownLatch queryStartedCount) {
+        return new PGWireServer.PGConnectionContextFactory(engine, conf, workerCount) {
+            @Override
+            protected SqlExecutionContextImpl getSqlExecutionContext(CairoEngine engine, int workerCount) {
+                return new SqlExecutionContextImpl(engine, workerCount) {
+                    @Override
+                    public QueryFutureUpdateListener getQueryFutureUpdateListener() {
+                        return new QueryFutureUpdateListener() {
+                            @Override
+                            public void reportProgress(long commandId, int status) {
+                                if (status == QueryFuture.QUERY_STARTED) {
+                                    queryStartedCount.countDown();
+                                }
+                            }
+
+                            @Override
+                            public void reportStart(CharSequence tableName, long commandId) {
+                            }
+                        };
+                    }
+                };
+            }
+        };
+    }
+
     private PGWireServer createPGServer(PGWireConfiguration configuration) {
         return PGWireServer.create(
                 configuration,
@@ -4334,10 +4336,6 @@ nodejs code:
         };
     }
 
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
-
     private void insertAllGeoHashTypes(boolean binary) throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table xyz (" +
@@ -4402,6 +4400,10 @@ nodejs code:
             }
         });
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     private void queryTimestampsInRange(Connection connection) throws SQLException, IOException {
         try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts <= dateadd('d', -1, ?) and ts >= dateadd('d', -2, ?)")) {
@@ -4524,31 +4526,6 @@ nodejs code:
                 // When alterRequestReturnSuccess if false and errors are 0, repeat
             } while (!alterRequestReturnSuccess && errors.get() == 0);
         }
-    }
-
-    private PGWireServer.PGConnectionContextFactory createPGConnectionContextFactory(PGWireConfiguration conf, int workerCount, SOCountDownLatch queryStartedCount) {
-        return new PGWireServer.PGConnectionContextFactory(engine,  conf, workerCount) {
-            @Override
-            protected SqlExecutionContextImpl getSqlExecutionContext(CairoEngine engine, int workerCount) {
-                return new SqlExecutionContextImpl(engine, workerCount) {
-                    @Override
-                    public QueryFutureUpdateListener getQueryFutureUpdateListener() {
-                        return new QueryFutureUpdateListener () {
-                            @Override
-                            public void reportProgress(long commandId, int status) {
-                                if (status == QueryFuture.QUERY_STARTED) {
-                                    queryStartedCount.countDown();
-                                }
-                            }
-
-                            @Override
-                            public void reportStart(CharSequence tableName, long commandId) {
-                            }
-                        };
-                    }
-                };
-            }
-        };
     }
 
     private void testAllTypesSelect(boolean simple) throws Exception {
@@ -4698,6 +4675,70 @@ nodejs code:
 
                             Assert.assertEquals(totalCount, count);
                         }
+                    }
+                }
+            }
+        });
+    }
+
+    private void testBindVariablesInFilter(boolean binary) throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, binary)
+            ) {
+                connection.setAutoCommit(false);
+                connection.prepareStatement("create table x (l long, ts timestamp) timestamp(ts)").execute();
+                connection.prepareStatement("insert into x values (100, 0)").execute();
+                connection.prepareStatement("insert into x values (101, 1)").execute();
+                connection.prepareStatement("insert into x values (102, 2)").execute();
+                connection.prepareStatement("insert into x values (103, 3)").execute();
+                connection.commit();
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("select * from x where l != ?")) {
+                    ps.setLong(1, 0);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "l[BIGINT],ts[TIMESTAMP]\n" +
+                                        "100,1970-01-01 00:00:00.0\n" +
+                                        "101,1970-01-01 00:00:00.000001\n" +
+                                        "102,1970-01-01 00:00:00.000002\n" +
+                                        "103,1970-01-01 00:00:00.000003\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    private void testBindVariablesInFilterOnSymbol(boolean binary) throws Exception {
+        assertMemoryLeak(() -> {
+            // create and initialize table outside of PG wire
+            // to ensure we do not collaterally initialize execution context on function parser
+            compiler.compile("CREATE TABLE x (\n" +
+                    "    ticker symbol index,\n" +
+                    "    sample_time timestamp,\n" +
+                    "    value int\n" +
+                    ") timestamp (sample_time)", sqlExecutionContext);
+            executeInsert("INSERT INTO x VALUES ('ABC',0,0)");
+
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, binary)
+            ) {
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("select * from x where ticker=?")) {
+                    ps.setString(1, "ABC");
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "ticker[VARCHAR],sample_time[TIMESTAMP],value[INTEGER]\n" +
+                                        "ABC,1970-01-01 00:00:00.0,0\n",
+                                sink,
+                                rs
+                        );
                     }
                 }
             }

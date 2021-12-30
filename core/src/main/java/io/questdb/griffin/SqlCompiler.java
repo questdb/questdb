@@ -1597,6 +1597,7 @@ public class SqlCompiler implements Closeable {
         backupAgent.clear();
         alterQueryBuilder.clear();
         backupAgent.clear();
+        functionParser.clear();
     }
 
     private ExecutionModel compileExecutionModel(SqlExecutionContext executionContext) throws SqlException {
@@ -2587,6 +2588,7 @@ public class SqlCompiler implements Closeable {
         }
 
         //used by copier
+        @SuppressWarnings("unused")
         static void checkDoubleBounds(double value, double min, double max, int fromType, int toType, int toColumnIndex) throws SqlException {
             if (value < min || value > max) {
                 throw SqlException.inconvertibleValue(toColumnIndex, value, fromType, toType);
@@ -2594,6 +2596,7 @@ public class SqlCompiler implements Closeable {
         }
 
         //used by copier
+        @SuppressWarnings("unused")
         static void checkLongBounds(long value, long min, long max, int fromType, int toType, int toColumnIndex) throws SqlException {
             if (value < min || value > max) {
                 throw SqlException.inconvertibleValue(toColumnIndex, value, fromType, toType);

@@ -2721,14 +2721,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                                 if (f == null) {
                                     rcf = new DeferredSymbolIndexRowCursorFactory(keyColumnIndex,
-                                            functionParser.createBindVariable(intrinsicModel.keyValuePositions.getQuick(0), symbol),
+                                            functionParser.createBindVariable(executionContext, intrinsicModel.keyValuePositions.getQuick(0), symbol),
                                             true,
                                             indexDirection
                                     );
                                 } else {
                                     rcf = new DeferredSymbolIndexFilteredRowCursorFactory(
                                             keyColumnIndex,
-                                            functionParser.createBindVariable(intrinsicModel.keyValuePositions.getQuick(0), symbol),
+                                            functionParser.createBindVariable(executionContext, intrinsicModel.keyValuePositions.getQuick(0), symbol),
                                             f,
                                             true,
                                             indexDirection,
@@ -2774,7 +2774,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         symbolValueList.clear();
 
                         for (int i = 0, n = intrinsicModel.keyValues.size(); i < n; i++) {
-                            symbolValueList.add(functionParser.createBindVariable(intrinsicModel.keyValuePositions.getQuick(i), intrinsicModel.keyValues.get(i)));
+                            symbolValueList.add(functionParser.createBindVariable(
+                                    executionContext,
+                                    intrinsicModel.keyValuePositions.getQuick(i),
+                                    intrinsicModel.keyValues.get(i))
+                            );
                         }
 
                         if (orderByKeyColumn) {
@@ -2801,7 +2805,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     ) {
                         symbolValueList.clear();
                         for (int i = 0, n = intrinsicModel.keyExcludedValues.size(); i < n; i++) {
-                            symbolValueList.add(functionParser.createBindVariable(intrinsicModel.keyExcludedValuePositions.getQuick(i), intrinsicModel.keyExcludedValues.get(i)));
+                            symbolValueList.add(functionParser.createBindVariable(
+                                    executionContext,
+                                    intrinsicModel.keyExcludedValuePositions.getQuick(i),
+                                    intrinsicModel.keyExcludedValues.get(i))
+                            );
                         }
                         Function f = compileFilter(intrinsicModel, myMeta, executionContext);
                         if (f != null && f.isConstant()) {
