@@ -28,10 +28,6 @@
 #include <asmjit/asmjit.h>
 #include <cstdint>
 #include <stack>
-#include <iostream>
-#include <cassert>
-#include <utility>
-#include <variant>
 
 enum class data_type_t : uint8_t {
     i8,

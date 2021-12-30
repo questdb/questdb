@@ -22,6 +22,7 @@
  *
  ******************************************************************************/
 
+#include <string>
 #include "compiler.h"
 #include "x86.h"
 #include "avx2.h"
