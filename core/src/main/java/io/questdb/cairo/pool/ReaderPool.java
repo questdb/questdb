@@ -97,7 +97,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 
                     if (isClosed()) {
                         e.readers[i] = null;
-                        r.goodby();
+                        r.goodbye();
                         LOG.info().$('\'').utf8(name).$("' born free").$();
                         return r;
                     }
@@ -243,7 +243,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                         } else {
                             casFailures++;
                             if (deadline == Long.MAX_VALUE) {
-                                r.goodby();
+                                r.goodbye();
                                 LOG.info().$("shutting down. '").$(r.getTableName()).$("' is left behind").$();
                             }
                         }
@@ -266,7 +266,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
     private void closeReader(long thread, Entry entry, int index, short ev, int reason) {
         R r = entry.readers[index];
         if (r != null) {
-            r.goodby();
+            r.goodbye();
             r.close();
             LOG.info().$("closed '").utf8(r.getTableName())
                     .$("' [at=").$(entry.index).$(':').$(index)
@@ -360,11 +360,14 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                 if (pool != null && entry != null && pool.returnToPool(this)) {
                     return;
                 }
-                super.close();
+                final Entry e = this.entry;
+                if (e == null || Unsafe.cas(e.allocations, index, UNALLOCATED, Thread.currentThread().getId())) {
+                    super.close();
+                }
             }
         }
 
-        private void goodby() {
+        private void goodbye() {
             entry = null;
             pool = null;
         }
