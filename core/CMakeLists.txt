@@ -276,7 +276,12 @@ else ()
 endif (AARCH64)
 
 if (WIN32)
-    target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi)
+    set(STATIC_LINK_RT_OPTIONS "")
+    if (MINGW)
+        # do not create any external dependencies for windows dll
+        set(STATIC_LINK_RT_OPTIONS "-static -static-libgcc -static-libstdc++")
+    endif(MINGW)
+    target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi ${STATIC_LINK_RT_OPTIONS})
 elseif (APPLE)
     target_link_libraries(questdb)
 else ()
