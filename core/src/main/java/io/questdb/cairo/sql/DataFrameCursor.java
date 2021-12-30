@@ -69,4 +69,18 @@ public interface DataFrameCursor extends Closeable, SymbolTableSource  {
     long size();
 
     StaticSymbolTable getSymbolTable(int columnIndex);
+
+    /**
+     * Returns true if cursor supports random record access (without having to iterate through all results).
+     */
+    default boolean supportsRandomAccess() {
+        return false;
+    }
+
+    /**
+     * Returns data frame associated with partition number N.
+     */
+    default @Nullable DataFrame toPartition(int n) {
+        throw new UnsupportedOperationException();//TODO: implement later (where possible)
+    }
 }

@@ -201,9 +201,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             return count;
         }
 
-        private void skipTo(long count) {
-            //noinspection StatementWithEmptyBody
-            while (count-- > 0 && base.hasNext()) ;
+        public void skipTo(long count) {
+            base.skipTo(count);
         }
     }
 }

@@ -110,4 +110,43 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
         }
         return false;
     }
+
+    @Override
+    public void skipTo(long rowNumber) {
+        if (!dataFrameCursor.supportsRandomAccess() || filter != null) {
+            super.skipTo(rowNumber);
+            return;
+        }
+
+        int partitions = dataFrameCursor.getTableReader().getPartitionCount();
+        long position = rowNumber;
+        int partition = 0;
+        for (; partition < partitions; partition++) {
+            long partitionRowCount = dataFrameCursor.getTableReader().openPartition(partition);
+            if (partitionRowCount < 0) {
+                continue;
+            }
+            if (partitionRowCount > position) {
+                break;
+            }
+            if (partition == partitions - 1) {
+                position = partitionRowCount;
+                break;
+            } else {
+                position -= partitionRowCount;
+            }
+        }
+
+        if (position > 0) {
+            position--;//we've to place cursor before the row first
+        }
+
+        DataFrame dataFrame = dataFrameCursor.toPartition(partition);
+        if (dataFrame != null) {
+            rowCursor = rowCursorFactory.getCursor(dataFrame);
+            rowCursor.jumpTo(position);
+            recordA.jumpTo(dataFrame.getPartitionIndex(), rowCursor.next());
+            next = nextRow;
+        }
+    }
 }

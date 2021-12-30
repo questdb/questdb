@@ -754,7 +754,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         return columnBase >>> columnCountBits;
     }
 
-    long getPartitionRowCount(int partitionIndex) {
+    public long getPartitionRowCount(int partitionIndex) {
         return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
     }
 
