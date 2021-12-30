@@ -4659,7 +4659,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testOrderByWithSampleBy2() throws SqlException {
         assertQuery(
                 "select-group-by a, sum(b) sum from (select-group-by [a, sum(b) b] a, sum(b) b from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t) sample by 10m) order by a",
-                "select a, sum(b) from (select a,sum(b) b from (tab order by t) timestamp(t) sample by 10m order by t) order by a",
+                "select a, sum(b) from (select a,sum(b) b from (tab order by t) timestamp(t) sample by 10m order by b) order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
@@ -4671,7 +4671,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testOrderByWithSampleBy3() throws SqlException {
         assertQuery(
                 "select-group-by a, sum(b) sum from (select-group-by [a, sum(b) b] a, sum(b) b from (select-choose [a, b, t] a, b, t from (select [a, b, t] from tab timestamp (t)) order by t) sample by 10m) order by a",
-                "select a, sum(b) from (select a,sum(b) b from (tab order by t) sample by 10m order by t) order by a",
+                "select a, sum(b) from (select a,sum(b) b from (tab order by t) sample by 10m order by b) order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
