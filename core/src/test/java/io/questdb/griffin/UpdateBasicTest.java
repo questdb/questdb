@@ -130,7 +130,7 @@ public class UpdateBasicTest extends AbstractGriffinTest {
             executeUpdateFails("UPDATE up SET xbyte = xlong", 22, "inconvertible types: LONG -> BYTE [from=, to=xbyte]");
             executeUpdateFails("UPDATE up SET xlong = xl256", 22, "inconvertible types: LONG256 -> LONG [from=, to=xlong]");
             executeUpdateFails("UPDATE up SET xl256 = xlong", 22, "inconvertible types: LONG -> LONG256 [from=, to=xl256]");
-            executeUpdateFails("UPDATE up SET xchar = xlong", 22, "inconvertible types: LONG -> LONG256 [from=, to=xl256]");
+            executeUpdateFails("UPDATE up SET xchar = xlong", 22, "inconvertible types: LONG -> CHAR [from=, to=xchar]");
 
             String expected = "ts\txint\txlong\txdouble\txshort\txbyte\txchar\txdate\txfloat\txts\txbool\txl256\n" +
                     "1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1\t1\t\u0001\t1970-01-01T00:00:00.001Z\t1.0000\t1970-01-01T00:00:00.000001Z\ttrue\t0x01\n" +
