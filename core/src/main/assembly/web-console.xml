@@ -32,11 +32,23 @@
         <fileSet>
             <directory>../ui/dist</directory>
             <includes>
-                <include>*</include>
+                <include>**/*</include>
             </includes>
+            <excludes>
+                <exclude>**/*.woff</exclude>
+            </excludes>
             <outputDirectory>.</outputDirectory>
             <fileMode>755</fileMode>
             <lineEnding>unix</lineEnding>
+        </fileSet>
+        <!-- font files are included separately to avoid corrupting them due to lineEnding -->
+        <fileSet>
+            <directory>../ui/dist</directory>
+            <includes>
+                <include>**/*.woff</include>
+            </includes>
+            <outputDirectory>.</outputDirectory>
+            <fileMode>755</fileMode>
         </fileSet>
     </fileSets>
 </assembly>
