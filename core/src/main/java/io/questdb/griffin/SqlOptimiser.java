@@ -624,14 +624,14 @@ class SqlOptimiser {
         sqlNodeStack.clear();
         while (node != null) {
             if (node.rhs != null) {
-                if (functionParser.isGroupBy(node.rhs.token)) {
+                if (functionParser.getFunctionFactoryCache().isGroupBy(node.rhs.token)) {
                     return true;
                 }
                 this.sqlNodeStack.push(node.rhs);
             }
 
             if (node.lhs != null) {
-                if (functionParser.isGroupBy(node.lhs.token)) {
+                if (functionParser.getFunctionFactoryCache().isGroupBy(node.lhs.token)) {
                     return true;
                 }
                 node = node.lhs;
@@ -1444,7 +1444,7 @@ class SqlOptimiser {
                         node = null;
                         continue;
                     case ExpressionNode.FUNCTION:
-                        if (functionParser.isGroupBy(node.token)) {
+                        if (functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
                             return true;
                         }
                         break;
@@ -1491,7 +1491,7 @@ class SqlOptimiser {
                 node = node.lhs;
             }
 
-            if (!(node.type == ExpressionNode.CONSTANT || (node.type == ExpressionNode.FUNCTION && functionParser.isRuntimeConstant(node.token)))) {
+            if (!(node.type == ExpressionNode.CONSTANT || (node.type == ExpressionNode.FUNCTION && functionParser.getFunctionFactoryCache().isRuntimeConstant(node.token)))) {
                 return false;
             }
 
@@ -2261,7 +2261,7 @@ class SqlOptimiser {
             final ObjList<QueryColumn> bottomUpColumns = model.getBottomUpColumns();
             for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
                 QueryColumn qc = bottomUpColumns.getQuick(i);
-                if (qc.getAst().type != FUNCTION || !functionParser.isGroupBy(qc.getAst().token)) {
+                if (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
                     model.addTopDownColumn(qc, qc.getAlias());
                 }
             }
@@ -2357,7 +2357,7 @@ class SqlOptimiser {
     }
 
     private ExpressionNode replaceIfAggregate(@Transient ExpressionNode node, QueryModel model) {
-        if (node != null && functionParser.isGroupBy(node.token)) {
+        if (node != null && functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
             QueryColumn c = model.findBottomUpColumnByAst(node);
             if (c == null) {
                 c = queryColumnPool.next().of(createColumnAlias(node, model), node);
@@ -2376,7 +2376,7 @@ class SqlOptimiser {
             QueryModel baseModel,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        if (node != null && functionParser.isCursor(node.token)) {
+        if (node != null && functionParser.getFunctionFactoryCache().isCursor(node.token)) {
             return nextLiteral(
                     addCursorFunctionAsCrossJoin(
                             node,
@@ -2471,7 +2471,7 @@ class SqlOptimiser {
                             continue;
                         }
 
-                        if (functionParser.isValidNoArgFunction(node)) {
+                        if (functionParser.getFunctionFactoryCache().isValidNoArgFunction(node)) {
                             node.type = FUNCTION;
                         }
                     } else {
@@ -2833,10 +2833,10 @@ class SqlOptimiser {
                     if (analytic) {
                         useAnalyticModel = true;
                         continue;
-                    } else if (functionParser.isGroupBy(qc.getAst().token)) {
+                    } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
                         useGroupByModel = true;
                         continue;
-                    } else if (functionParser.isCursor(qc.getAst().token)) {
+                    } else if (functionParser.getFunctionFactoryCache().isCursor(qc.getAst().token)) {
                         continue;
                     }
                 }
@@ -2920,7 +2920,7 @@ class SqlOptimiser {
                         replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getPartitionBy());
                         replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getOrderBy());
                         continue;
-                    } else if (functionParser.isGroupBy(qc.getAst().token)) {
+                    } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
                         qc = ensureAliasUniqueness(groupByModel, qc);
                         groupByModel.addBottomUpColumn(qc);
                         // group-by column references might be needed when we have
@@ -2932,7 +2932,7 @@ class SqlOptimiser {
                         // pull out literals
                         emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, false);
                         continue;
-                    } else if (functionParser.isCursor(qc.getAst().token)) {
+                    } else if (functionParser.getFunctionFactoryCache().isCursor(qc.getAst().token)) {
                         addCursorFunctionAsCrossJoin(
                                 qc.getAst(),
                                 qc.getAlias(),
