@@ -28,9 +28,9 @@ import java.io.Closeable;
 
 public class AssociativeCache<V> implements Closeable, Mutable {
 
-    private static final int MIN_BLOCKS = 2;
     private static final int NOT_FOUND = -1;
-    private static final int MINROWS = 16;
+    private static final int MIN_BLOCKS = 1;
+    private static final int MIN_ROWS = 1;
     private final CharSequence[] keys;
     private final V[] values;
     private final int rmask;
@@ -41,7 +41,7 @@ public class AssociativeCache<V> implements Closeable, Mutable {
     @SuppressWarnings("unchecked")
     public AssociativeCache(int blocks, int rows) {
         this.blocks = Math.max(MIN_BLOCKS, Numbers.ceilPow2(blocks));
-        rows = Math.max(MINROWS, Numbers.ceilPow2(rows));
+        rows = Math.max(MIN_ROWS, Numbers.ceilPow2(rows));
 
         int size = rows * this.blocks;
         if (size < 0) {
@@ -90,26 +90,29 @@ public class AssociativeCache<V> implements Closeable, Mutable {
 
     public CharSequence put(CharSequence key, V value) {
         final int lo = lo(key);
-        final CharSequence outgoingKey = keys[lo + bmask];
-        if (outgoingKey != null) {
-            free(lo + bmask);
-        }
 
         if (Chars.equalsNc(key, keys[lo])) {
             if (values[lo] != value) {
                 Misc.free(values[lo]);
                 values[lo] = value;
             }
-        } else {
-            System.arraycopy(keys, lo, keys, lo + 1, bmask);
-            System.arraycopy(values, lo, values, lo + 1, bmask);
-            if (value == null) {
-                keys[lo] = null;
-            } else {
-                keys[lo] = Chars.toString(key);
-            }
-            values[lo] = value;
+            return null;
         }
+
+        final CharSequence outgoingKey = keys[lo + bmask];
+        if (outgoingKey != null) {
+            free(lo + bmask);
+        }
+
+        System.arraycopy(keys, lo, keys, lo + 1, bmask);
+        System.arraycopy(values, lo, values, lo + 1, bmask);
+        if (value == null) {
+            keys[lo] = null;
+        } else {
+            keys[lo] = Chars.toString(key);
+        }
+        values[lo] = value;
+
         return outgoingKey;
     }
 

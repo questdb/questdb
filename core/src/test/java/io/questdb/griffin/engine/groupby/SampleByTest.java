@@ -427,11 +427,11 @@ public class SampleByTest extends AbstractGriffinTest {
                         "XY\t1\n" +
                         "ZP\t1\n" +
                         "\t1\n",
-                "select c, count() from (x latest by c)",
+                "select c, count() from (x latest on ts partition by c)",
                 "create table x as " +
                         "(" +
                         "select" +
-                        " x," +
+                        " cast(x as timestamp) ts," +
                         " rnd_symbol('XY','ZP', null, 'UU') c" +
                         " from" +
                         " long_sequence(20)" +
@@ -439,7 +439,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 null,
                 "insert into x select * from (" +
                         "select" +
-                        " x," +
+                        " cast(x+20 as timestamp) ts," +
                         " rnd_symbol('KK', 'PL') c" +
                         " from" +
                         " long_sequence(5)" +
@@ -3030,7 +3030,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "PEHN\tNaN\t1970-01-03T08:24:00.000000Z\n" +
                         "HYRX\tNaN\t1970-01-03T08:24:00.000000Z\n",
 
-                "select b, count(), k from (x latest by b) sample by 3h fill(linear)",
+                "select b, count(), k from (x latest on k partition by b) sample by 3h fill(linear)",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -8051,8 +8051,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "VTJW\t20.56\t1970-01-03T17:00:00.000000Z\n" +
                         "PEHN\t20.56\t1970-01-03T17:00:00.000000Z\n" +
                         "\t40.455469747939254\t1970-01-03T17:00:00.000000Z\n",
-                "select b, sum(a), k from (x latest by b) sample by 3h fill(20.56)",
-//                "(x latest by b)",
+                "select b, sum(a), k from (x latest on k partition by b) sample by 3h fill(20.56)",
                 "create table x as " +
                         "(" +
                         "select" +

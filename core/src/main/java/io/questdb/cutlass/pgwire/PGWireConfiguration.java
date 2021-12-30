@@ -50,13 +50,17 @@ public interface PGWireConfiguration extends WorkerPoolAwareConfiguration {
         return false;
     }
 
-    int getFactoryCacheColumnCount();
-
-    int getFactoryCacheRowCount();
-
     int getIdleRecvCountBeforeGivingUp();
 
     int getIdleSendCountBeforeGivingUp();
+
+    boolean isSelectCacheEnabled();
+
+    int getSelectCacheBlockCount();
+
+    int getSelectCacheRowCount();
+
+    boolean isInsertCacheEnabled();
 
     int getInsertCacheBlockCount();
 

@@ -239,10 +239,6 @@ public class FunctionFactoryDescriptor {
         return (int) (mask >>> (32 - (index % 2) * 32));
     }
 
-    public long[] getArgTypes() {
-        return argTypes;
-    }
-
     public FunctionFactory getFactory() {
         return factory;
     }
