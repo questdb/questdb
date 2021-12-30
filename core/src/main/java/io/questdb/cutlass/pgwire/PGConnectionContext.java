@@ -1408,6 +1408,13 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 prepareForNewQuery();
                 // fall thru
             case 'H': // flush
+                // some clients (asyncpg) chose not to send 'S' (sync) message
+                // but instead fire 'H'. Can't wrap my head around as to why
+                // query execution is so ambiguous
+                if (syncActions.size() > 0) {
+                    processSyncActions();
+                    prepareForNewQuery();
+                }
                 sendAndReset();
                 break;
             case 'D': // describe
