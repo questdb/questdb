@@ -145,7 +145,9 @@ public class AbstractO3Test {
             @Nullable String referenceTableDDL,
             String referenceSQL,
             String o3InsertSQL,
-            String assertSQL
+            String assertSQL,
+            String countReferenceSQL,
+            String countAssertSQL
     ) throws SqlException {
         // create third table, which will contain both X and 1AM
         if (referenceTableDDL != null) {
@@ -159,8 +161,8 @@ public class AbstractO3Test {
         TestUtils.assertSqlCursors(
                 compiler,
                 sqlExecutionContext,
-                "select count() from " + referenceSQL,
-                "select count() from " + assertSQL,
+                "select count() from " + countReferenceSQL,
+                "select count() from " + countAssertSQL,
                 LOG
         );
     }
