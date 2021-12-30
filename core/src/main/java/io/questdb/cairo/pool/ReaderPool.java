@@ -242,7 +242,6 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                         } else {
                             casFailures++;
-
                             if (deadline == Long.MAX_VALUE) {
                                 r.goodby();
                                 LOG.info().$("shutting down. '").$(r.getTableName()).$("' is left behind").$();
@@ -256,7 +255,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         }
 
         // when we are timing out entries the result is "true" if there was any work done
-        // when we closing pool, the result is true when pool is empty
+        // when we're closing pool, the result is true when pool is empty
         if (closeReason == PoolConstants.CR_IDLE) {
             return removed;
         } else {
@@ -317,12 +316,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 
             e.releaseTimes[index] = clock.getTicks();
             Unsafe.arrayPutOrdered(e.allocations, index, UNALLOCATED);
-
-            // todo: there is a race condition between this method and
-            //   releaseAll() when the latter shuts down the pool. I thought of adding a version counter
-            //   that each method will attempt to increment thus recognising race condition and
-            //   taking action
-            return true;
+            return !isClosed();
         }
 
         LOG.error().$('\'').$(name).$("' is available [at=").$(e.index).$(':').$(index).$(']').$();
