@@ -1829,6 +1829,23 @@ nodejs code:
     }
 
     @Test
+    public void testLoginBadUsernameHex() throws Exception {
+        // this test specifically assert that we do not send
+        // "ready for next query" message back to client when they fail to log in
+        String script = ">0000000804d2162f\n" +
+                "<4e\n" +
+                ">0000003c00030000636c69656e745f656e636f64696e6700277574662d382700757365720078797a00646174616261736500706f7374677265730000\n" +
+                "<520000000800000003\n" +
+                ">70000000076f6800\n" +
+                "<450000002e433030303030004d696e76616c696420757365726e616d652f70617373776f726400534552524f520000\n";
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
+                script,
+                new DefaultPGWireConfiguration()
+        );
+    }
+
+    @Test
     public void testMalformedInitPropertyName() throws Exception {
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,

@@ -127,6 +127,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private final CairoEngine engine;
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
+    private final SCSequence tempSequence = new SCSequence();
     private IntList activeSelectColumnTypes;
     private int parsePhaseBindVariableCount;
     private long sendBufferPtr;
@@ -167,7 +168,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private long maxRows;
     private final PGResumeProcessor resumeCursorExecuteRef = this::resumeCursorExecute;
     private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
-    private final SCSequence tempSequence = new SCSequence();
 
     public PGConnectionContext(CairoEngine engine, PGWireConfiguration configuration, SqlExecutionContextImpl sqlExecutionContext) {
         this.engine = engine;
@@ -391,6 +391,10 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             reportError(e.getPosition(), e.getFlyweightMessage(), 0);
         } catch (CairoException e) {
             reportError(-1, e.getFlyweightMessage(), e.getErrno());
+        } catch (AuthenticationException e) {
+            prepareError(-1, e.getMessage(), 0);
+            sendAndReset();
+            clearRecvBuffer();
         }
     }
 
@@ -1069,9 +1073,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     configureContextForSet();
                     break;
                 case CompiledQuery.ALTER:
-                   try(QueryFuture cf = cc.execute(tempSequence)) {
-                       cf.await();
-                   }
+                    try (QueryFuture cf = cc.execute(tempSequence)) {
+                        cf.await();
+                    }
                 default:
                     // DDL SQL
                     queryTag = TAG_OK;
@@ -1156,7 +1160,13 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
-    private void doAuthentication(long msgLo, long msgLimit) throws BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+    private void doAuthentication(long msgLo, long msgLimit)
+            throws
+            BadProtocolException,
+            PeerDisconnectedException,
+            PeerIsSlowToReadException,
+            AuthenticationException,
+            SqlException {
         final CairoSecurityContext cairoSecurityContext = authenticator.authenticate(username, msgLo, msgLimit);
         if (cairoSecurityContext != null) {
             sqlExecutionContext.with(cairoSecurityContext, bindVariableService, rnd, this.fd, circuitBreaker.of(this.fd));
@@ -1332,7 +1342,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
      * any additional bytes received
      */
     private void parse(long address, int len, @Transient SqlCompiler compiler)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException, SqlException {
+            throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException, SqlException, AuthenticationException {
 
         if (requireInitialMessage) {
             processInitialMessage(address, len);
