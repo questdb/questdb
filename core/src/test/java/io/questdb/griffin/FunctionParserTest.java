@@ -490,7 +490,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
         });
         FunctionParser parser = createFunctionParser();
-        Assert.assertEquals(0, parser.getFunctionCount());
+        Assert.assertEquals(0, parser.getFunctionFactoryCache().getFunctionCount());
     }
 
     @Test
@@ -1571,7 +1571,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         metadata.add(new TableColumnMetadata("b", 2, ColumnType.BOOLEAN));
         FunctionParser functionParser = createFunctionParser();
         Assert.assertNotNull(parseFunction("a or not b", metadata, functionParser));
-        Assert.assertEquals(2, functionParser.getFunctionCount());
+        Assert.assertEquals(2, functionParser.getFunctionFactoryCache().getFunctionCount());
     }
 
     @NotNull

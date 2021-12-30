@@ -2935,34 +2935,34 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError("select c.customerId, orderIdx, o.productId from " +
                         "customers c " +
                         "join (" +
-                        "orders latest by customerId where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`)" +
+                        "orders where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`) latest on ts partition by customerId" +
                         ") o on c.customerId = o.customerId", 21, "Invalid column",
                 modelOf("customers").col("customerName", ColumnType.STRING).col("customerId", ColumnType.INT),
-                modelOf("orders").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
+                modelOf("orders").timestamp("ts").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
         );
 
         assertSyntaxError("select c.customerId, orderId, o.productId2 from " +
                         "customers c " +
                         "join (" +
-                        "orders latest by customerId where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`)" +
+                        "orders where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`) latest on ts partition by customerId" +
                         ") o on c.customerId = o.customerId", 30, "Invalid column",
                 modelOf("customers").col("customerName", ColumnType.STRING).col("customerId", ColumnType.INT),
-                modelOf("orders").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
+                modelOf("orders").timestamp("ts").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
         );
 
         assertSyntaxError("select c.customerId, orderId, o2.productId from " +
                         "customers c " +
                         "join (" +
-                        "orders latest by customerId where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`)" +
+                        "orders where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`) latest on ts partition by customerId" +
                         ") o on c.customerId = o.customerId", 30, "Invalid table name",
                 modelOf("customers").col("customerName", ColumnType.STRING).col("customerId", ColumnType.INT),
-                modelOf("orders").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
+                modelOf("orders").timestamp("ts").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
         );
     }
 
     @Test
     public void testInvalidSubQuery() throws Exception {
-        assertSyntaxError("select x,y from (tab where x = 100) latest by x", 36, "latest");
+        assertSyntaxError("select x,y from (tab where x = 100 latest by x)", 42, "'on' expected");
     }
 
     @Test
@@ -2974,16 +2974,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoin1() throws Exception {
         assertQuery(
-                "select-choose t1.x x, y from (select [x] from (select-choose [x] x from (select [x] from tab t2 latest by x where x > 100) t2) t1 join select [x] from tab2 xx2 on xx2.x = t1.x join select [y, x] from (select-choose [y, x] x, y from (select [y, x, z, b, a] from tab4 latest by z where a > b) where y > 0) x4 on x4.x = t1.x cross join select [b] from tab3 post-join-where xx2.x > tab3.b) t1",
-                "select t1.x, y from (select x from tab t2 LATEST BY x where x > 100) t1 " +
+                "select-choose t1.x x, y from (select [x] from (select-choose [x] x from (select [x] from tab t2 where x > 100 latest on ts partition by x) t2) t1 join select [x] from tab2 xx2 on xx2.x = t1.x join select [y, x] from (select-choose [y, x] x, y from (select [y, x, z, b, a] from tab4 where a > b latest on ts partition by z) where y > 0) x4 on x4.x = t1.x cross join select [b] from tab3 post-join-where xx2.x > tab3.b) t1",
+                "select t1.x, y from (select x from tab t2 where x > 100 latest on ts partition by x) t1 " +
                         "join tab2 xx2 on xx2.x = t1.x " +
                         "join tab3 on xx2.x > tab3.b " +
-                        "join (select x,y from tab4 latest by z where a > b) x4 on x4.x = t1.x " +
+                        "join (select x,y from tab4 where a > b latest on ts partition by z) x4 on x4.x = t1.x " +
                         "where y > 0",
-                modelOf("tab").col("x", ColumnType.INT),
+                modelOf("tab").timestamp("ts").col("x", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT),
                 modelOf("tab3").col("b", ColumnType.INT),
-                modelOf("tab4").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT));
+                modelOf("tab4").timestamp("ts").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT));
     }
 
     @Test
@@ -3484,7 +3484,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " where orderId = customerName",
                 modelOf("orders").col("orderId", ColumnType.INT),
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING)
-
         );
     }
 
@@ -3676,36 +3675,44 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testLatestByKeepWhereOutside() throws SqlException {
+    public void testLatestByWhereInside() throws SqlException {
         assertQuery(
-                "select-choose a, b from (select [a, b] from x latest by b where b = 'PEHN' and a < 22 and test_match())",
-                "select * from x latest by b where b = 'PEHN' and a < 22 and test_match()",
-                modelOf("x").col("a", ColumnType.INT).col("b", ColumnType.STRING));
+                "select-choose ts, a, b from (select [ts, a, b] from x where b = 'PEHN' and a < 22 and test_match() latest on ts partition by b)",
+                "select * from x where b = 'PEHN' and a < 22 and test_match() latest on ts partition by b",
+                modelOf("x").timestamp("ts").col("a", ColumnType.INT).col("b", ColumnType.STRING));
+    }
+
+    @Test
+    public void testLatestByNoWhere() throws SqlException {
+        assertQuery(
+                "select-choose ts, a from (select [ts, a] from x latest on ts partition by a)",
+                "select * from x latest on ts partition by a",
+                modelOf("x").timestamp("ts").col("a", ColumnType.STRING));
     }
 
     @Test
     public void testLatestByMultipleColumns() throws SqlException {
         assertQuery(
-                "select-group-by ts, market_type, avg(bid_price) avg from (select [ts, market_type, bid_price] from market_updates timestamp (ts) latest by ts,market_type) sample by 1s",
-                "select ts, market_type, avg(bid_price) FROM market_updates LATEST BY ts, market_type SAMPLE BY 1s",
-                modelOf("market_updates").timestamp("ts").col("market_type", ColumnType.SYMBOL).col("bid_price", ColumnType.DOUBLE)
+                "select-group-by ts, market_type, avg(bid_price) avg from (select [ts, market_type, bid_price, country] from market_updates latest on ts partition by market_type,country) sample by 1s",
+                "select ts, market_type, avg(bid_price) FROM market_updates latest on ts partition by market_type, country sample by 1s",
+                modelOf("market_updates").timestamp("ts").col("market_type", ColumnType.SYMBOL).col("country", ColumnType.SYMBOL).col("bid_price", ColumnType.DOUBLE)
         );
     }
 
     @Test
     public void testLatestByNonSelectedColumn() throws Exception {
         assertQuery(
-                "select-choose x, y from (select-choose [x, y] x, y from (select [y, x, z] from tab t2 latest by z where x > 100) t2 where y > 0) t1",
-                "select x, y from (select x, y from tab t2 latest by z where x > 100) t1 where y > 0",
-                modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.STRING)
+                "select-choose x, y from (select-choose [x, y] x, y from (select [y, x, z] from tab t2 where x > 100 latest on ts partition by z) t2 where y > 0) t1",
+                "select x, y from (select x, y from tab t2 where x > 100 latest on ts partition by z) t1 where y > 0",
+                modelOf("tab").timestamp("ts").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.STRING)
         );
     }
 
     @Test
     public void testLatestByWithOuterFilter() throws SqlException {
         assertQuery(
-                "select-choose time, uuid from (select-choose [time, uuid] time, uuid from (select [uuid, time] from positions timestamp (time) latest by uuid where time < '2021-05-11T14:00') where uuid = '006cb7c6-e0d5-3fea-87f2-83cf4a75bc28')",
-                "(positions latest by uuid where time < '2021-05-11T14:00') where uuid = '006cb7c6-e0d5-3fea-87f2-83cf4a75bc28'",
+                "select-choose time, uuid from (select-choose [time, uuid] time, uuid from (select [uuid, time] from positions where time < '2021-05-11T14:00' latest on time partition by uuid) where uuid = '006cb7c6-e0d5-3fea-87f2-83cf4a75bc28')",
+                "(positions where time < '2021-05-11T14:00' latest on time partition by uuid) where uuid = '006cb7c6-e0d5-3fea-87f2-83cf4a75bc28'",
                 modelOf("positions").timestamp("time").col("uuid", ColumnType.SYMBOL)
 
         );
@@ -3715,13 +3722,121 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testLatestBySyntax() throws Exception {
         assertSyntaxError(
                 "select * from tab latest",
-                24,
+                18,
                 "'by' expected"
         );
     }
 
     @Test
     public void testLatestBySyntax2() throws Exception {
+        assertSyntaxError(
+                "select * from tab latest on ts, ",
+                30,
+                "'partition' expected"
+        );
+    }
+
+    @Test
+    public void testLatestBySyntax3() throws Exception {
+        assertSyntaxError(
+                "select * from tab latest on",
+                27,
+                "literal expected"
+        );
+    }
+
+    @Test
+    public void testLatestBySyntax4() throws Exception {
+        assertSyntaxError(
+                "select * from tab latest on ts+1",
+                30,
+                "'partition' expected"
+        );
+    }
+
+    @Test
+    public void testLatestBySyntax5() throws Exception {
+        assertSyntaxError(
+                "select * from tab latest on ts partition",
+                40,
+                "'by' expected"
+        );
+    }
+
+    @Test
+    public void testLatestBySyntax6() throws Exception {
+        assertSyntaxError(
+                "select * from tab latest on ts partition by",
+                43,
+                "literal expected"
+        );
+    }
+
+    @Test
+    public void testLatestBySyntax7() throws Exception {
+        assertSyntaxError(
+                "select * from tab latest on ts partition by x,",
+                46,
+                "literal expected"
+        );
+    }
+
+    @Test
+    public void testLatestBySyntax8() throws Exception {
+        assertSyntaxError(
+                "select * from tab latest on ts partition by x+1",
+                45,
+                "unexpected token: +"
+        );
+    }
+
+    @Test
+    public void testLatestBySyntax9() throws Exception {
+        assertSyntaxError(
+                "select * from tab latest on ts partition by x where y > 0",
+                46,
+                "unexpected where clause after 'latest on'"
+        );
+    }
+
+    @Test
+    public void testLatestByDeprecatedKeepWhereOutside() throws SqlException {
+        assertQuery(
+                "select-choose a, b from (select [a, b] from x latest by b where b = 'PEHN' and a < 22 and test_match())",
+                "select * from x latest by b where b = 'PEHN' and a < 22 and test_match()",
+                modelOf("x").col("a", ColumnType.INT).col("b", ColumnType.STRING));
+    }
+
+    @Test
+    public void testLatestByDeprecatedMultipleColumns() throws SqlException {
+        assertQuery(
+                "select-group-by ts, market_type, avg(bid_price) avg from (select [ts, market_type, bid_price] from market_updates timestamp (ts) latest by ts,market_type) sample by 1s",
+                "select ts, market_type, avg(bid_price) FROM market_updates LATEST BY ts, market_type SAMPLE BY 1s",
+                modelOf("market_updates").timestamp("ts").col("market_type", ColumnType.SYMBOL).col("bid_price", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
+    public void testLatestByDeprecatedNonSelectedColumn() throws Exception {
+        assertQuery(
+                "select-choose x, y from (select-choose [x, y] x, y from (select [y, x, z] from tab t2 latest by z where x > 100) t2 where y > 0) t1",
+                "select x, y from (select x, y from tab t2 latest by z where x > 100) t1 where y > 0",
+                modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testLatestByDeprecatedWithOuterFilter() throws SqlException {
+        assertQuery(
+                "select-choose time, uuid from (select-choose [time, uuid] time, uuid from (select [uuid, time] from positions timestamp (time) latest by uuid where time < '2021-05-11T14:00') where uuid = '006cb7c6-e0d5-3fea-87f2-83cf4a75bc28')",
+                "(positions latest by uuid where time < '2021-05-11T14:00') where uuid = '006cb7c6-e0d5-3fea-87f2-83cf4a75bc28'",
+                modelOf("positions").timestamp("time").col("uuid", ColumnType.SYMBOL)
+
+        );
+    }
+
+    @Test
+    public void testLatestByDeprecatedSyntax() throws Exception {
         assertSyntaxError(
                 "select * from tab latest by x, ",
                 30,
@@ -3730,7 +3845,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testLatestBySyntax3() throws Exception {
+    public void testLatestByDeprecatedSyntax2() throws Exception {
         assertSyntaxError(
                 "select * from tab latest by",
                 27,
@@ -3739,7 +3854,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testLatestBySyntax4() throws Exception {
+    public void testLatestByDeprecatedSyntax3() throws Exception {
         assertSyntaxError(
                 "select * from tab latest by x+1",
                 29,
@@ -3849,17 +3964,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testMixedFieldsSubQuery() throws Exception {
         assertQuery(
-                "select-choose x, y from (select-virtual [x, z + x y] x, z + x y from (select [x, z] from tab t2 latest by x where x > 100) t2 where y > 0) t1",
-                "select x, y from (select x,z + x y from tab t2 latest by x where x > 100) t1 where y > 0",
-                modelOf("tab").col("x", ColumnType.INT).col("z", ColumnType.INT));
+                "select-choose x, y from (select-virtual [x, z + x y] x, z + x y from (select [x, z] from tab t2 where x > 100 latest on ts partition by x) t2 where y > 0) t1",
+                "select x, y from (select x,z + x y from tab t2 where x > 100 latest on ts partition by x) t1 where y > 0",
+                modelOf("tab").timestamp("ts").col("x", ColumnType.INT).col("z", ColumnType.INT));
     }
 
     @Test
     public void testMostRecentWhereClause() throws Exception {
         assertQuery(
-                "select-virtual x, sum + 25 ohoh from (select-group-by [x, sum(z) sum] x, sum(z) sum from (select-virtual [a + b * c x, z] a + b * c x, z from (select [a, c, b, z, x, y] from zyzy latest by x where a in (x,y) and b = 10)))",
-                "select a+b*c x, sum(z)+25 ohoh from zyzy latest by x where a in (x,y) and b = 10",
+                "select-virtual x, sum + 25 ohoh from (select-group-by [x, sum(z) sum] x, sum(z) sum from (select-virtual [a + b * c x, z] a + b * c x, z from (select [a, c, b, z, x, y] from zyzy where a in (x,y) and b = 10 latest on ts partition by x)))",
+                "select a+b*c x, sum(z)+25 ohoh from zyzy where a in (x,y) and b = 10 latest on ts partition by x",
                 modelOf("zyzy")
+                        .timestamp("ts")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
                         .col("c", ColumnType.INT)
@@ -4160,9 +4276,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testOptionalSelect() throws Exception {
         assertQuery(
-                "select-choose x from (select [x] from tab t2 latest by x where x > 100) t2",
-                "tab t2 latest by x where x > 100",
-                modelOf("tab").col("x", ColumnType.INT));
+                "select-choose ts, x from (select [ts, x] from tab t2 where x > 100 latest on ts partition by x) t2",
+                "tab t2 where x > 100 latest on ts partition by x",
+                modelOf("tab").timestamp("ts").col("x", ColumnType.INT));
     }
 
     @Test
@@ -4449,10 +4565,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testOrderByPropagation() throws SqlException {
         assertQuery(
-                "select-choose id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType from (select-choose [C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp] C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp from (select [contactId] from (select-distinct [contactId] contactId from (select-choose [contactId] contactId from (select-choose [contactId, groupId] contactId, groupId, timestamp from (select [groupId, contactId] from contact_events timestamp (timestamp) latest by _id) where groupId = 'qIqlX6qESMtTQXikQA46') eventlist) except select-choose [_id contactId] _id contactId from (select-choose [_id, notRealType] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [notRealType, _id] from contacts timestamp (timestamp) latest by _id) where notRealType = 'bot') contactlist) C join select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from (select-choose [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from contacts timestamp (timestamp) latest by _id)) contactlist on contactlist._id = C.contactId) C order by timestamp desc)",
+                "select-choose id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType from (select-choose [C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp] C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp from (select [contactId] from (select-distinct [contactId] contactId from (select-choose [contactId] contactId from (select-choose [contactId, groupId] contactId, groupId, timestamp from (select [groupId, contactId] from contact_events latest on timestamp partition by _id) where groupId = 'qIqlX6qESMtTQXikQA46') eventlist) except select-choose [_id contactId] _id contactId from (select-choose [_id, notRealType] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [notRealType, _id] from contacts latest on timestamp partition by _id) where notRealType = 'bot') contactlist) C join select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from (select-choose [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from contacts latest on timestamp partition by _id)) contactlist on contactlist._id = C.contactId) C order by timestamp desc)",
                 "WITH \n" +
-                        "contactlist AS (SELECT * FROM contacts LATEST BY _id ORDER BY timestamp),\n" +
-                        "eventlist AS (SELECT * FROM contact_events LATEST BY _id ORDER BY timestamp),\n" +
+                        "contactlist AS (SELECT * FROM contacts LATEST ON timestamp PARTITION BY _id ORDER BY timestamp),\n" +
+                        "eventlist AS (SELECT * FROM contact_events LATEST ON timestamp PARTITION BY _id ORDER BY timestamp),\n" +
                         "C AS (\n" +
                         "    SELECT DISTINCT contactId FROM eventlist WHERE groupId = 'qIqlX6qESMtTQXikQA46'\n" +
                         "    EXCEPT\n" +
@@ -4499,6 +4615,21 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testOrderByWithLatestBy() throws Exception {
+        assertQuery(
+                "select-choose id, vendor, pickup_datetime from (select [id, vendor, pickup_datetime] from trips where pickup_datetime < '2009-01-01T00:02:19.000000Z' latest on pickup_datetime partition by vendor_id) order by pickup_datetime",
+                "SELECT * FROM trips\n" +
+                        "WHERE pickup_datetime < '2009-01-01T00:02:19.000000Z'\n" +
+                        "latest on pickup_datetime partition by vendor_id\n" +
+                        "ORDER BY pickup_datetime",
+                modelOf("trips")
+                        .col("id", ColumnType.INT)
+                        .col("vendor", ColumnType.SYMBOL)
+                        .timestamp("pickup_datetime")
+        );
+    }
+
+    @Test
+    public void testOrderByWithLatestByDeprecated() throws Exception {
         assertQuery(
                 "select-choose id, vendor, pickup_datetime from (select [id, vendor, pickup_datetime] from trips timestamp (pickup_datetime) latest by vendor_id where pickup_datetime < '2009-01-01T00:02:19.000000Z') order by pickup_datetime",
                 "SELECT * FROM trips\n" +
@@ -5255,6 +5386,22 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectLatestByUnion() throws SqlException {
+        assertQuery(
+                "select-choose b from (select-choose [b] a, b from (select [b, c] from trips latest on ts partition by c) union all select-choose [d b] c, d b from (select [d, a] from trips latest on ts partition by a))",
+                "select b from (select a, b b from trips latest on ts partition by c union all select c, d b from trips latest on ts partition by a)",
+                modelOf("trips")
+                        .timestamp("ts")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.INT)
+                        .col("tip_amount", ColumnType.DOUBLE)
+                        .col("e", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectLatestByDeprecatedUnion() throws SqlException {
         assertQuery("select-choose b from (select-choose [b] a, b from (select [b, c] from trips latest by c) union all select-choose [d b] c, d b from (select [d, a] from trips latest by a))",
                 "select b from (select a, b b from trips latest by c union all select c, d b from trips latest by a)",
                 modelOf("trips")
@@ -5636,9 +5783,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSubQuery() throws Exception {
         assertQuery(
-                "select-choose x, y from (select-choose [x, y] x, y from (select [y, x] from tab t2 latest by x where x > 100) t2 where y > 0) t1",
-                "select x, y from (select x, y from tab t2 latest by x where x > 100) t1 where y > 0",
-                modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT)
+                "select-choose x, y from (select-choose [x, y] x, y from (select [y, x] from tab t2 where x > 100 latest on ts partition by x) t2 where y > 0) t1",
+                "select x, y from (select x, y from tab t2 where x > 100 latest on ts partition by x) t1 where y > 0",
+                modelOf("tab").timestamp("ts").col("x", ColumnType.INT).col("y", ColumnType.INT)
         );
     }
 
