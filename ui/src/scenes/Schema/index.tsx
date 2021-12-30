@@ -31,7 +31,7 @@ import React, {
   useEffect,
   useState,
 } from "react"
-import { useSelector } from "react-redux"
+import { useDispatch, useSelector } from "react-redux"
 import { from, combineLatest, of } from "rxjs"
 import { delay, startWith } from "rxjs/operators"
 import styled, { css } from "styled-components"
@@ -50,7 +50,7 @@ import {
   Tooltip,
   VirtualList,
 } from "components"
-import { selectors } from "store"
+import { actions, selectors } from "store"
 import { color, ErrorResult } from "utils"
 import * as QuestDB from "utils/questdb"
 
@@ -127,6 +127,7 @@ const Schema = ({
   const [isScrolling, setIsScrolling] = useState(false)
   const { readOnly } = useSelector(selectors.console.getConfig)
   const { updateSettings } = useLocalStorage()
+  const dispatch = useDispatch()
 
   const handleChange = useCallback((name: string) => {
     setOpened(name)
@@ -172,6 +173,7 @@ const Schema = ({
           setLoadingError(null)
           errorRef.current = null
           setTables(response.data)
+          dispatch(actions.query.setTables(response.data))
           setRefresh(Date.now())
         } else {
           setLoading(false)
