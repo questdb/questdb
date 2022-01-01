@@ -26,7 +26,6 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -49,7 +48,7 @@ public class PGBasicAuthenticator implements PGAuthenticator {
             CharSequence username,
             long msg,
             long msgLimit
-    ) throws BadProtocolException, SqlException {
+    ) throws BadProtocolException, AuthenticationException {
         if (Chars.equals(this.username, username)) {
             // check 'p' message
             // +1 is 'type' byte that message length does not account for
@@ -65,6 +64,6 @@ public class PGBasicAuthenticator implements PGAuthenticator {
             LOG.error().$("invalid user [").$(username).$(']').$();
         }
         // -1 position here means we will not send it to postgresql
-        throw SqlException.$(-1, "invalid username/password");
+        throw AuthenticationException.INSTANCE;
     }
 }

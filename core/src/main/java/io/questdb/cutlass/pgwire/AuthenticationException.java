@@ -22,23 +22,13 @@
  *
  ******************************************************************************/
 
-import { NotificationShape, RunningShape, StoreShape } from "types"
-import type { QueryRawResult, Table } from "utils/questdb"
+package io.questdb.cutlass.pgwire;
 
-const getNotifications: (store: StoreShape) => NotificationShape[] = (store) =>
-  store.query.notifications
+public class AuthenticationException extends Exception {
 
-const getResult: (store: StoreShape) => undefined | QueryRawResult = (store) =>
-  store.query.result
+    public static final AuthenticationException INSTANCE = new AuthenticationException("invalid username/password");
 
-const getRunning: (store: StoreShape) => RunningShape = (store) =>
-  store.query.running
-
-const getTables: (store: StoreShape) => Table[] = (store) => store.query.tables
-
-export default {
-  getNotifications,
-  getResult,
-  getRunning,
-  getTables,
+    public AuthenticationException(String message) {
+        super(message);
+    }
 }
