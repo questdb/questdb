@@ -137,15 +137,11 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
             }
         }
 
-        if (position > 0) {
-            position--;//we've to place cursor before the row first
-        }
-
         DataFrame dataFrame = dataFrameCursor.toPartition(partition);
         if (dataFrame != null) {
             rowCursor = rowCursorFactory.getCursor(dataFrame);
             rowCursor.jumpTo(position);
-            recordA.jumpTo(dataFrame.getPartitionIndex(), rowCursor.next());
+            recordA.jumpTo(dataFrame.getPartitionIndex(), position);
             next = nextRow;
         }
     }
