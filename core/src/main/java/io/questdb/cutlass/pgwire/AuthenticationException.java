@@ -24,10 +24,11 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.griffin.SqlException;
+public class AuthenticationException extends Exception {
 
-@FunctionalInterface
-public interface PGAuthenticator {
-    CairoSecurityContext authenticate(CharSequence username, long msg, long msgLimit) throws BadProtocolException, SqlException, AuthenticationException;
+    public static final AuthenticationException INSTANCE = new AuthenticationException("invalid username/password");
+
+    public AuthenticationException(String message) {
+        super(message);
+    }
 }
