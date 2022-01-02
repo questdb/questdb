@@ -28,16 +28,26 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageAddressCache;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.mp.SCSequence;
+import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.LongList;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class PageFrameDispatchTask {
     private int shard;
+
+    private long frameSequenceId;
+    private int frameSequenceFrameCount;
+    private AtomicBoolean frameSequenceValid;
+    private PageFrameReducer frameSequenceReducer;
+    private LongList frameSequenceFrameRowCounts;
+    private AtomicInteger frameSequenceReduceCounter;
+    private SOUnboundedCountDownLatch frameSequenceDoneLatch;
+
     private SCSequence collectSubSeq;
     private SymbolTableSource symbolTableSource;
     private PageAddressCache pageAddressCache;
-    private int frameCount;
-    private long producerId;
-    private LongList frameRowCounts;
     private Function filter;
 
     public SCSequence getCollectSubSeq() {
@@ -48,20 +58,36 @@ public class PageFrameDispatchTask {
         return filter;
     }
 
-    public int getFrameCount() {
-        return frameCount;
+    public SOUnboundedCountDownLatch getFrameSequenceDoneLatch() {
+        return frameSequenceDoneLatch;
     }
 
-    public LongList getFrameRowCounts() {
-        return frameRowCounts;
+    public int getFrameSequenceFrameCount() {
+        return frameSequenceFrameCount;
+    }
+
+    public LongList getFrameSequenceFrameRowCounts() {
+        return frameSequenceFrameRowCounts;
+    }
+
+    public long getFrameSequenceId() {
+        return frameSequenceId;
+    }
+
+    public AtomicInteger getFrameSequenceReduceCounter() {
+        return frameSequenceReduceCounter;
+    }
+
+    public AtomicBoolean getFrameSequenceValid() {
+        return frameSequenceValid;
     }
 
     public PageAddressCache getPageAddressCache() {
         return pageAddressCache;
     }
 
-    public long getProducerId() {
-        return producerId;
+    public PageFrameReducer getReducer() {
+        return frameSequenceReducer;
     }
 
     public int getShard() {
@@ -73,22 +99,32 @@ public class PageFrameDispatchTask {
     }
 
     public void of(
-            PageAddressCache pageAddressCache,
-            int frameCount,
-            int shard,
-            long producerId,
-            SCSequence consumerSubSeq,
+            long frameSequenceId,
+            int frameSequenceFrameCount,
+            AtomicBoolean frameSequenceValid,
+            PageFrameReducer frameSequenceReducer,
+            LongList frameSequenceFrameRowCounts,
+            AtomicInteger frameSequenceReduceCounter,
+            SOUnboundedCountDownLatch frameSequenceDoneLatch,
+            SCSequence collectSubSeq,
             SymbolTableSource symbolTableSource,
-            LongList frameRowCounts,
-            Function filter
+            PageAddressCache pageAddressCache,
+            Function filter,
+            int shard
     ) {
-        this.shard = shard;
-        this.collectSubSeq = consumerSubSeq;
+        this.frameSequenceId = frameSequenceId;
+        this.frameSequenceFrameCount = frameSequenceFrameCount;
+        this.frameSequenceValid = frameSequenceValid;
+        this.frameSequenceReducer = frameSequenceReducer;
+        this.frameSequenceFrameRowCounts = frameSequenceFrameRowCounts;
+        this.frameSequenceReduceCounter = frameSequenceReduceCounter;
+        this.frameSequenceDoneLatch = frameSequenceDoneLatch;
+
+        this.collectSubSeq = collectSubSeq;
         this.symbolTableSource = symbolTableSource;
         this.pageAddressCache = pageAddressCache;
-        this.frameCount = frameCount;
-        this.producerId = producerId;
-        this.frameRowCounts = frameRowCounts;
         this.filter = filter;
+
+        this.shard = shard;
     }
 }

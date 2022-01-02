@@ -32,7 +32,9 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.mp.*;
 import io.questdb.std.LongList;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.LockSupport;
 
 public class PageFrameDispatchJob implements Job {
 
@@ -60,90 +62,100 @@ public class PageFrameDispatchJob implements Job {
             final PageFrameDispatchTask tsk = dispatchQueue.get(dispatchCursor);
             final int shard = tsk.getShard();
             final PageAddressCache pageAddressCache = tsk.getPageAddressCache();
-            final int frameCount = tsk.getFrameCount();
+            final int frameCount = tsk.getFrameSequenceFrameCount();
             final SymbolTableSource symbolTableSource = tsk.getSymbolTableSource();
-            final long producerId = tsk.getProducerId();
-            final LongList frameRowCounts = tsk.getFrameRowCounts();
+            final long frameSequenceId = tsk.getFrameSequenceId();
+            final LongList frameRowCounts = tsk.getFrameSequenceFrameRowCounts();
             final Function filter = tsk.getFilter();
             final SCSequence collectSubSeq = tsk.getCollectSubSeq();
+            final SOUnboundedCountDownLatch doneLatch = tsk.getFrameSequenceDoneLatch();
+
+            final PageFrameReducer pageFrameReducer = tsk.getReducer();
             final RingQueue<PageFrameReduceTask> queue = messageBus.getPageFrameReduceQueue(shard);
             // publisher sequence to pass work to worker jobs
-            final MPSequence pubSeq = messageBus.getPageFrameReducePubSeq(shard);
+            final MPSequence reducePubSeq = messageBus.getPageFrameReducePubSeq(shard);
             // the sequence used to steal worker jobs
-            final MCSequence subSeq = messageBus.getPageFrameReduceSubSeq(shard);
-            final PageAddressCacheRecord record = records[workerId];
+            final MCSequence reduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
             final MCSequence cleanupSubSeq = messageBus.getPageFrameCleanupSubSeq(shard);
+            final PageAddressCacheRecord record = records[workerId];
 
             // todo: reuse
-            final AtomicInteger framesCollectedCounter = new AtomicInteger();
-            final AtomicInteger framesReducedCounter = new AtomicInteger();
+            // Reduce counter is here to provide safe backoff point
+            // for job stealing code. It is needed because queue is shared
+            // and there is possibility of never ending stealing if we don't
+            // specifically count only our items
+            final AtomicInteger framesReducedCounter = tsk.getFrameSequenceReduceCounter();
 
-            long cursor;
-            for (int i = 0; i < frameCount; i++) {
-                // We cannot process work on this thread. If we do the consumer will
-                // never get the executions results. Consumer only picks ready to go
-                // tasks from the queue.
-                while (true) {
-                    cursor = pubSeq.next();
-                    if (cursor > -1) {
-                        queue.get(cursor).of(
-                                producerId,
-                                pageAddressCache,
-                                i,
-                                frameCount,
-                                frameRowCounts,
-                                symbolTableSource,
-                                filter,
-                                framesCollectedCounter,
-                                framesReducedCounter,
-                                collectSubSeq
-                        );
-                        pubSeq.done(cursor);
-                        break;
-                    } else {
-                        // start stealing work to unload the queue
-                        cursor = subSeq.next();
+            // Failure indicator to ensure parallel jobs can safely stop
+            // processing pieces of work when one of those pieces fail. Additionally,
+            // failure indicator is used to provide to user
+            final AtomicBoolean frameSequenceValid = tsk.getFrameSequenceValid();
+
+            final int pageFrameQueueCapacity = queue.getCycle();
+
+            try {
+                long cursor;
+                for (int i = 0; i < frameCount; i++) {
+                    // We cannot process work on this thread. If we do the consumer will
+                    // never get the executions results. Consumer only picks ready to go
+                    // tasks from the queue.
+                    while (true) {
+                        cursor = reducePubSeq.next();
                         if (cursor > -1) {
-                            try {
-                                PageFrameReduceJob.handleTask(
-                                        record,
-                                        queue.get(cursor)
-                                );
-                            } finally {
-                                subSeq.done(cursor);
-                            }
+                            queue.get(cursor).of(
+                                    pageFrameReducer,
+                                    frameSequenceId,
+                                    pageAddressCache,
+                                    i,
+                                    frameCount,
+                                    frameRowCounts,
+                                    symbolTableSource,
+                                    filter,
+                                    framesReducedCounter,
+                                    collectSubSeq,
+                                    doneLatch,
+                                    frameSequenceValid
+                            );
+                            reducePubSeq.done(cursor);
+                            break;
                         } else {
-                            cursor = cleanupSubSeq.next();
-                            if (cursor > -1) {
-                                PageFrameCleanupJob.handleTask(
-                                        messageBus,
-                                        shard,
-                                        queue.get(cursor)
-                                );
-                                cleanupSubSeq.done(cursor);
-                            }
+                            // start stealing work to unload the queue
+                            stealQueueWork(shard, queue, reduceSubSeq, cleanupSubSeq, record, pageFrameQueueCapacity);
                         }
                     }
                 }
-            }
 
-            // join the gang to consume published tasks
-            while (framesReducedCounter.get() < frameCount) {
-                cursor = subSeq.next();
-                if (cursor > -1) {
-                    try {
-                        PageFrameReduceJob.handleTask(
-                                record,
-                                queue.get(cursor)
-                        );
-                    } finally {
-                        subSeq.done(cursor);
-                    }
+                // join the gang to consume published tasks
+                while (framesReducedCounter.get() < frameCount) {
+                    stealQueueWork(shard, queue, reduceSubSeq, cleanupSubSeq, record, pageFrameQueueCapacity);
                 }
+            } finally {
+                dispatchSubSeq.done(dispatchCursor);
             }
-            dispatchSubSeq.done(dispatchCursor);
             return true;
         }
         return false;
+    }
+
+    private void stealQueueWork(
+            int shard,
+            RingQueue<PageFrameReduceTask> queue,
+            MCSequence reduceSubSeq,
+            MCSequence cleanupSubSeq,
+            PageAddressCacheRecord record,
+            int pageFrameQueueCapacity
+    ) {
+        if (
+                PageFrameReduceJob.consumeQueue(queue, reduceSubSeq, record) &&
+                        PageFrameCleanupJob.consumeQueue(
+                                queue,
+                                cleanupSubSeq,
+                                messageBus,
+                                shard,
+                                pageFrameQueueCapacity
+                        )
+        ) {
+            LockSupport.parkNanos(1);
+        }
     }
 }

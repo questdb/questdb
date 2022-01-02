@@ -22,32 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.cairo.sql.async;
 
-import io.questdb.mp.RingQueue;
-import io.questdb.std.Mutable;
-import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cairo.sql.PageAddressCacheRecord;
 
-public class ExecutionToken implements Mutable {
-    private RingQueue<PageFrameReduceTask> queue;
-    private long producerId;
-
-    @Override
-    public void clear() {
-        this.queue = null;
-        this.producerId = -1;
-    }
-
-    public long getProducerId() {
-        return producerId;
-    }
-
-    public RingQueue<PageFrameReduceTask> getQueue() {
-        return queue;
-    }
-
-    public void of(RingQueue<PageFrameReduceTask> queue, long producerId) {
-        this.queue = queue;
-        this.producerId = producerId;
-    }
+@FunctionalInterface
+public interface PageFrameReducer {
+    void reduce(PageAddressCacheRecord record, PageFrameReduceTask task);
 }

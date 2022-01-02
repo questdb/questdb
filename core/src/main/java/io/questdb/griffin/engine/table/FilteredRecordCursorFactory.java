@@ -27,29 +27,31 @@ package io.questdb.griffin.engine.table;
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.async.PageFrameDispatchTask;
+import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cairo.sql.async.PageFrameReducer;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
-import io.questdb.cairo.sql.async.PageFrameDispatchTask;
 
 public class FilteredRecordCursorFactory implements RecordCursorFactory {
+    private static final PageFrameReducer REDUCER = FilteredRecordCursorFactory::filter;
     private final RecordCursorFactory base;
     private final FilteredRecordCursor cursor;
     private final Function filter;
-    private final PageAddressCache pageAddressCache;
-    private final LongList frameRowCounts = new LongList();
-    private final ExecutionToken executionToken = new ExecutionToken();
+    private final FrameSequence frameSequence;
 
     public FilteredRecordCursorFactory(CairoConfiguration configuration, RecordCursorFactory base, Function filter) {
         assert !(base instanceof FilteredRecordCursorFactory);
         this.base = base;
         this.cursor = new FilteredRecordCursor(filter);
         this.filter = filter;
-        pageAddressCache = new PageAddressCache(configuration);
+        this.frameSequence = new FrameSequence(configuration, REDUCER);
     }
 
     @Override
@@ -76,7 +78,9 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public ExecutionToken execute(SqlExecutionContext executionContext, SCSequence consumerSubSeq) throws SqlException {
+    public FrameSequence execute(SqlExecutionContext executionContext, SCSequence consumerSubSeq) throws SqlException {
+        final LongList frameSequenceFrameRowCounts = frameSequence.getFrameRowCounts();
+        final PageAddressCache pageAddressCache = frameSequence.getPageAddressCache();
         final Rnd rnd = executionContext.getRandom();
         final MessageBus bus = executionContext.getMessageBus();
         // before thread begins we will need to pick a shard
@@ -95,13 +99,10 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
         int frameIndex = 0;
         while ((frame = pageFrameCursor.next()) != null) {
             pageAddressCache.add(frameIndex++, frame);
-            frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
+            frameSequenceFrameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
         }
 
-        final int frameCount = frameIndex;
-
-        // this is the identifier of events we are producing
-        final long producerId = rnd.nextLong();
+        frameSequence.of(shard, rnd.nextLong(), frameIndex, consumerSubSeq, pageFrameCursor);
 
         if (dispatchCursor < 0) {
             dispatchCursor = dispatchPubSeq.nextBully();
@@ -114,23 +115,23 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
 
         PageFrameDispatchTask dispatchTask = bus.getPageFrameDispatchQueue().get(dispatchCursor);
         dispatchTask.of(
-                pageAddressCache,
-                frameCount,
-                shard,
-                producerId,
-                consumerSubSeq,
-                pageFrameCursor,
-                frameRowCounts,
-                filter
+                frameSequence.getId(),
+                frameSequence.getFrameCount(),
+                frameSequence.getValid(),
+                frameSequence.getReducer(),
+                frameSequence.getFrameRowCounts(),
+                frameSequence.getReduceCounter(),
+                frameSequence.getDoneLatch(),
+                frameSequence.getConsumerSubSeq(),
+                frameSequence.getSymbolTableSource(),
+                frameSequence.getPageAddressCache(),
+                filter,
+                frameSequence.getShard()
         );
+
         dispatchPubSeq.done(dispatchCursor);
 
-        executionToken.of(
-                bus.getPageFrameReduceQueue(shard),
-                producerId
-        );
-
-        return executionToken;
+        return frameSequence;
     }
 
     @Override
@@ -141,5 +142,19 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
     @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
+    }
+
+    private static void filter(PageAddressCacheRecord record, PageFrameReduceTask task) {
+        final DirectLongList rows = task.getRows();
+        final long frameRowCount = task.getFrameRowCount();
+        final Function filter = task.getFilter();
+
+        rows.clear();
+        for (long r = 0; r < frameRowCount; r++) {
+            record.setRowIndex(r);
+            if (filter.getBool(record)) {
+                rows.add(r);
+            }
+        }
     }
 }

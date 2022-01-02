@@ -25,12 +25,10 @@
 package io.questdb.cairo.sql.async;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageAddressCacheRecord;
 import io.questdb.mp.Job;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
-import io.questdb.std.DirectLongList;
 import io.questdb.std.Rnd;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -70,34 +68,53 @@ public class PageFrameReduceJob implements Job {
         }
     }
 
-    public static void filter(long frameRowCount, Function filter, PageAddressCacheRecord record, DirectLongList rows) {
-        rows.clear();
-        for (long r = 0; r < frameRowCount; r++) {
-            record.setRowIndex(r);
-            if (filter.getBool(record)) {
-                rows.add(r);
+    /**
+     * Reduces single queue item when item is available. Return value is inverted as in
+     * true when queue item is not available, false otherwise. Item is reduced using the
+     * reducer method provided with each queue item.
+     *
+     * @param queue  page frame queue instance
+     * @param subSeq subscriber sequence
+     * @param record instance of record that can be positioned on the frame and each row in that frame
+     * @return inverted value of queue processing status; true if nothing was processed.
+     */
+    public static boolean consumeQueue(
+            RingQueue<PageFrameReduceTask> queue,
+            MCSequence subSeq,
+            PageAddressCacheRecord record
+    ) {
+        // loop is required to deal with CAS errors, cursor == -2
+        do {
+            final long cursor = subSeq.next();
+            if (cursor > -1) {
+                final PageFrameReduceTask task = queue.get(cursor);
+                try {
+                    final AtomicInteger framesReducedCounter = task.getFrameSequenceReduceCounter();
+                    try {
+                        if (task.isFrameSequenceValid()) {
+                            // we deliberately hold the queue item because
+                            // processing is daisy-chained. If we were to release item before
+                            // finishing reduction, next step (job) will be processing an incomplete task
+                            record.of(task.getSymbolTableSource(), task.getPageAddressCache());
+                            record.setFrameIndex(task.getFrameSequenceFrameIndex());
+                            task.getReducer().reduce(record, task);
+                        }
+                    } catch (Throwable e) {
+                        task.setFrameSequenceValid(false);
+                        throw e;
+                    } finally {
+                        framesReducedCounter.incrementAndGet();
+                    }
+                } finally {
+                    subSeq.done(cursor);
+                }
+                return false;
+            } else if (cursor == -1) {
+                // queue is full, we should yield or help
+                break;
             }
-        }
-    }
-
-    public static void handleTask(PageAddressCacheRecord record, PageFrameReduceTask task) {
-        final AtomicInteger framesReducedCounter = task.getFramesReducedCounter();
-        try {
-            // do not release task until filtering is done
-            record.of(task.getSymbolTableSource(), task.getPageAddressCache());
-            record.setFrameIndex(task.getFrameIndex());
-            filter(
-                    task.getFrameRowCount(),
-                    task.getFilter(),
-                    record,
-                    task.getRows()
-            );
-        } catch (Throwable e) {
-            task.setFailed(true);
-            throw e;
-        } finally {
-            framesReducedCounter.incrementAndGet();
-        }
+        } while (true);
+        return true;
     }
 
     @Override
@@ -106,28 +123,12 @@ public class PageFrameReduceJob implements Job {
         boolean useful = false;
         for (int i = 0; i < shardCount; i++) {
             final int shard = shards[i];
-            MCSequence subSeq = messageBus.getPageFrameReduceSubSeq(shard);
-            RingQueue<PageFrameReduceTask> queue = messageBus.getPageFrameReduceQueue(shard);
-            useful = consumeQueue(queue, subSeq, record) || useful;
+            useful = !consumeQueue(
+                    messageBus.getPageFrameReduceQueue(shard),
+                    messageBus.getPageFrameReduceSubSeq(shard),
+                    record
+            ) || useful;
         }
         return useful;
-    }
-
-    private boolean consumeQueue(
-            RingQueue<PageFrameReduceTask> queue,
-            MCSequence subSeq,
-            PageAddressCacheRecord record
-    ) {
-        long cursor = subSeq.next();
-        if (cursor > -1) {
-            final PageFrameReduceTask task = queue.get(cursor);
-            try {
-                handleTask(record, task);
-            } finally {
-                subSeq.done(cursor);
-            }
-            return true;
-        }
-        return false;
     }
 }

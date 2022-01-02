@@ -659,4 +659,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public boolean isSqlJitDebugEnabled() {
         return false;
     }
+
+    @Override
+    public int getPageFrameRowsCapacity() {
+        return 32;
+    }
 }

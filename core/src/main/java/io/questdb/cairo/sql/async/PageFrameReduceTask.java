@@ -29,30 +29,36 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageAddressCache;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.mp.SCSequence;
+import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class PageFrameReduceTask implements Closeable {
     private final DirectLongList rows;
-    private Function filter;
-    private long producerId;
-    private PageAddressCache pageAddressCache;
-    private int frameIndex;
-    private int frameCount;
-    private LongList frameRowCounts;
-    private SymbolTableSource symbolTableSource;
-    private boolean failed;
+
+    private long frameSequenceId;
+    private int frameSequenceFrameCount;
+    private AtomicBoolean frameSequenceValid;
+    private PageFrameReducer frameSequenceReducer;
+    private LongList frameSequenceFrameRowCounts;
+    private AtomicInteger frameSequenceReduceCounter;
+    private SOUnboundedCountDownLatch frameSequenceDoneLatch;
+
     private SCSequence collectSubSeq;
-    private AtomicInteger framesCollectedCounter;
-    private AtomicInteger framesReducedCounter;
+    private SymbolTableSource symbolTableSource;
+    private PageAddressCache pageAddressCache;
+    private Function filter;
+
+    private int frameSequenceFrameIndex;
 
     public PageFrameReduceTask(CairoConfiguration configuration) {
-        this.rows = new DirectLongList(32, MemoryTag.NATIVE_LONG_LIST);
+        this.rows = new DirectLongList(configuration.getPageFrameRowsCapacity(), MemoryTag.NATIVE_LONG_LIST);
     }
 
     @Override
@@ -64,40 +70,44 @@ public class PageFrameReduceTask implements Closeable {
         return collectSubSeq;
     }
 
+    public SOUnboundedCountDownLatch getFrameSequenceDoneLatch() {
+        return frameSequenceDoneLatch;
+    }
+
     public Function getFilter() {
         return filter;
     }
 
-    public int getFrameCount() {
-        return frameCount;
+    public int getFrameSequenceFrameCount() {
+        return frameSequenceFrameCount;
     }
 
-    public int getFrameIndex() {
-        return frameIndex;
+    public int getFrameSequenceFrameIndex() {
+        return frameSequenceFrameIndex;
     }
 
     public long getFrameRowCount() {
-        return frameRowCounts.getQuick(frameIndex);
+        return frameSequenceFrameRowCounts.getQuick(frameSequenceFrameIndex);
     }
 
-    public LongList getFrameRowCounts() {
-        return frameRowCounts;
+    public LongList getFrameSequenceFrameRowCounts() {
+        return frameSequenceFrameRowCounts;
     }
 
-    public AtomicInteger getFramesCollectedCounter() {
-        return framesCollectedCounter;
-    }
-
-    public AtomicInteger getFramesReducedCounter() {
-        return framesReducedCounter;
+    public AtomicInteger getFrameSequenceReduceCounter() {
+        return frameSequenceReduceCounter;
     }
 
     public PageAddressCache getPageAddressCache() {
         return pageAddressCache;
     }
 
-    public long getProducerId() {
-        return producerId;
+    public long getFrameSequenceId() {
+        return frameSequenceId;
+    }
+
+    public PageFrameReducer getReducer() {
+        return frameSequenceReducer;
     }
 
     public DirectLongList getRows() {
@@ -108,36 +118,39 @@ public class PageFrameReduceTask implements Closeable {
         return symbolTableSource;
     }
 
-    public boolean isFailed() {
-        return failed;
+    public boolean isFrameSequenceValid() {
+        return frameSequenceValid.get();
     }
 
-    public void setFailed(boolean failed) {
-        this.failed = failed;
+    public void setFrameSequenceValid(boolean frameSequenceValid) {
+        this.frameSequenceValid.compareAndSet(false, frameSequenceValid);
     }
 
     public void of(
-            long producerId,
+            PageFrameReducer frameSequenceReducer,
+            long frameSequenceId,
             PageAddressCache cache,
-            int frameIndex,
-            int frameCount,
+            int frameSequenceFrameIndex,
+            int frameSequenceFrameCount,
             LongList frameRowCounts,
             SymbolTableSource symbolTableSource,
             Function filter,
-            AtomicInteger framesCollectedCounter,
-            AtomicInteger framesReducedCounter,
-            SCSequence collectSubSeq
+            AtomicInteger frameSequenceReduceCounter,
+            SCSequence collectSubSeq,
+            SOUnboundedCountDownLatch frameSequenceDoneLatch,
+            AtomicBoolean frameSequenceValid
     ) {
-        this.producerId = producerId;
+        this.frameSequenceReducer = frameSequenceReducer;
+        this.frameSequenceId = frameSequenceId;
         this.pageAddressCache = cache;
-        this.frameIndex = frameIndex;
-        this.frameCount = frameCount;
-        this.frameRowCounts = frameRowCounts;
+        this.frameSequenceFrameIndex = frameSequenceFrameIndex;
+        this.frameSequenceFrameCount = frameSequenceFrameCount;
+        this.frameSequenceFrameRowCounts = frameRowCounts;
         this.symbolTableSource = symbolTableSource;
         this.filter = filter;
-        this.failed = false;
-        this.framesCollectedCounter = framesCollectedCounter;
-        this.framesReducedCounter = framesReducedCounter;
+        this.frameSequenceReduceCounter = frameSequenceReduceCounter;
         this.collectSubSeq = collectSubSeq;
+        this.frameSequenceDoneLatch = frameSequenceDoneLatch;
+        this.frameSequenceValid = frameSequenceValid;
     }
 }

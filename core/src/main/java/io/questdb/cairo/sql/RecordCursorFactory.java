@@ -88,7 +88,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
         return null;
     }
 
-    default ExecutionToken execute(SqlExecutionContext executionContext, SCSequence consumerSubSeq) throws SqlException {
+    default FrameSequence execute(SqlExecutionContext executionContext, SCSequence consumerSubSeq) throws SqlException {
         return null;
     }
 

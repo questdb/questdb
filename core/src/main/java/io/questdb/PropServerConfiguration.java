@@ -233,6 +233,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoFilterQueueCapacity;
     private final int cairoPageFrameQueueCapacity;
     private final int cairoWriterCommandQueueSlotSize;
+    private final int cairoPageFrameRowsCapacity;
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int[] httpMinWorkerAffinity;
@@ -709,9 +710,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.telemetryEnabled = getBoolean(properties, env, "telemetry.enabled", true);
             this.telemetryDisableCompletely = getBoolean(properties, env, "telemetry.disable.completely", false);
             this.telemetryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "telemetry.queue.capacity", 512));
-            this.cairoFilterQueueCapacity = Numbers.ceilPow2(getIntSize(properties, env, "cairo.filter.queue.capacity", 64));
-            this.cairoPageFrameQueueCapacity = Numbers.ceilPow2(getIntSize(properties, env, "cairo.page.frame.queue.capacity", 64));
+            this.cairoFilterQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.filter.queue.capacity", 64));
+            this.cairoPageFrameQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.page.frame.queue.capacity", 64));
             this.cairoWriterCommandQueueSlotSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.writer.command.queue.slot.size", 2048));
+            this.cairoPageFrameRowsCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.page.frame.rows.capacity", 32));
 
             parseBindTo(properties, env, "line.udp.bind.to", "0.0.0.0:9009", (a, p) -> {
                 this.lineUdpBindIPV4Address = a;
@@ -1552,11 +1554,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private class PropCairoConfiguration implements CairoConfiguration {
         @Override
-        public int getSqlPageFrameMaxSize() {
-            return sqlPageFrameMaxSize;
-        }
-
-        @Override
         public boolean enableTestFactories() {
             return false;
         }
@@ -2052,6 +2049,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlPageFrameMaxSize() {
+            return sqlPageFrameMaxSize;
+        }
+
+        @Override
         public int getSqlSortKeyMaxPages() {
             return sqlSortKeyMaxPages;
         }
@@ -2149,6 +2151,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlJitDebugEnabled() {
             return sqlJitDebugEnabled;
+        }
+
+        @Override
+        public int getPageFrameRowsCapacity() {
+            return cairoPageFrameRowsCapacity;
         }
     }
 
@@ -2721,6 +2728,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getIdleRecvCountBeforeGivingUp() {
+            return pgIdleRecvCountBeforeGivingUp;
+        }
+
+        @Override
+        public int getIdleSendCountBeforeGivingUp() {
+            return pgIdleSendCountBeforeGivingUp;
+        }
+
+        @Override
         public boolean isSelectCacheEnabled() {
             return pgSelectCacheEnabled;
         }
@@ -2733,16 +2750,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSelectCacheRowCount() {
             return pgSelectCacheRowCount;
-        }
-
-        @Override
-        public int getIdleRecvCountBeforeGivingUp() {
-            return pgIdleRecvCountBeforeGivingUp;
-        }
-
-        @Override
-        public int getIdleSendCountBeforeGivingUp() {
-            return pgIdleSendCountBeforeGivingUp;
         }
 
         @Override
