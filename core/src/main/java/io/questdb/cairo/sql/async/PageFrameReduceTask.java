@@ -25,37 +25,16 @@
 package io.questdb.cairo.sql.async;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.PageAddressCache;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.mp.SCSequence;
-import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 
 import java.io.Closeable;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class PageFrameReduceTask implements Closeable {
     private final DirectLongList rows;
-
-    private long frameSequenceId;
-    private int frameSequenceFrameCount;
-    private AtomicBoolean frameSequenceValid;
-    private PageFrameReducer frameSequenceReducer;
-    private LongList frameSequenceFrameRowCounts;
-    private AtomicInteger frameSequenceReduceCounter;
-    private SOUnboundedCountDownLatch frameSequenceDoneLatch;
-
-    private SCSequence collectSubSeq;
-    private SymbolTableSource symbolTableSource;
-    private PageAddressCache pageAddressCache;
-    private Function filter;
-
     private int frameSequenceFrameIndex;
+    private PageFrameSequence<?> frameSequence;
 
     public PageFrameReduceTask(CairoConfiguration configuration) {
         this.rows = new DirectLongList(configuration.getPageFrameRowsCapacity(), MemoryTag.NATIVE_LONG_LIST);
@@ -66,91 +45,29 @@ public class PageFrameReduceTask implements Closeable {
         Misc.free(rows);
     }
 
-    public SCSequence getCollectSubSeq() {
-        return collectSubSeq;
+    public long getFrameRowCount() {
+        return this.frameSequence.getFrameRowCount(frameSequenceFrameIndex);
     }
 
-    public SOUnboundedCountDownLatch getFrameSequenceDoneLatch() {
-        return frameSequenceDoneLatch;
+    public PageFrameSequence<?> getFrameSequence() {
+        return frameSequence;
     }
 
-    public Function getFilter() {
-        return filter;
-    }
-
-    public int getFrameSequenceFrameCount() {
-        return frameSequenceFrameCount;
+    @SuppressWarnings({"unchecked", "unused"})
+    public <T> PageFrameSequence<T> getFrameSequence(Class<T> unused) {
+        return (PageFrameSequence<T>) frameSequence;
     }
 
     public int getFrameSequenceFrameIndex() {
         return frameSequenceFrameIndex;
     }
 
-    public long getFrameRowCount() {
-        return frameSequenceFrameRowCounts.getQuick(frameSequenceFrameIndex);
-    }
-
-    public LongList getFrameSequenceFrameRowCounts() {
-        return frameSequenceFrameRowCounts;
-    }
-
-    public AtomicInteger getFrameSequenceReduceCounter() {
-        return frameSequenceReduceCounter;
-    }
-
-    public PageAddressCache getPageAddressCache() {
-        return pageAddressCache;
-    }
-
-    public long getFrameSequenceId() {
-        return frameSequenceId;
-    }
-
-    public PageFrameReducer getReducer() {
-        return frameSequenceReducer;
-    }
-
     public DirectLongList getRows() {
         return rows;
     }
 
-    public SymbolTableSource getSymbolTableSource() {
-        return symbolTableSource;
-    }
-
-    public boolean isFrameSequenceValid() {
-        return frameSequenceValid.get();
-    }
-
-    public void setFrameSequenceValid(boolean frameSequenceValid) {
-        this.frameSequenceValid.compareAndSet(false, frameSequenceValid);
-    }
-
-    public void of(
-            PageFrameReducer frameSequenceReducer,
-            long frameSequenceId,
-            PageAddressCache cache,
-            int frameSequenceFrameIndex,
-            int frameSequenceFrameCount,
-            LongList frameRowCounts,
-            SymbolTableSource symbolTableSource,
-            Function filter,
-            AtomicInteger frameSequenceReduceCounter,
-            SCSequence collectSubSeq,
-            SOUnboundedCountDownLatch frameSequenceDoneLatch,
-            AtomicBoolean frameSequenceValid
-    ) {
-        this.frameSequenceReducer = frameSequenceReducer;
-        this.frameSequenceId = frameSequenceId;
-        this.pageAddressCache = cache;
+    public void of(PageFrameSequence<?> frameSequence, int frameSequenceFrameIndex) {
+        this.frameSequence = frameSequence;
         this.frameSequenceFrameIndex = frameSequenceFrameIndex;
-        this.frameSequenceFrameCount = frameSequenceFrameCount;
-        this.frameSequenceFrameRowCounts = frameRowCounts;
-        this.symbolTableSource = symbolTableSource;
-        this.filter = filter;
-        this.frameSequenceReduceCounter = frameSequenceReduceCounter;
-        this.collectSubSeq = collectSubSeq;
-        this.frameSequenceDoneLatch = frameSequenceDoneLatch;
-        this.frameSequenceValid = frameSequenceValid;
     }
 }

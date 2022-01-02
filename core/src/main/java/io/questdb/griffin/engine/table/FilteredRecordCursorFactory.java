@@ -24,34 +24,30 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.sql.async.PageFrameDispatchTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReducer;
+import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.mp.MPSequence;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.LongList;
 import io.questdb.std.Misc;
-import io.questdb.std.Rnd;
 
 public class FilteredRecordCursorFactory implements RecordCursorFactory {
     private static final PageFrameReducer REDUCER = FilteredRecordCursorFactory::filter;
     private final RecordCursorFactory base;
     private final FilteredRecordCursor cursor;
     private final Function filter;
-    private final FrameSequence frameSequence;
+    private final PageFrameSequence<Function> frameSequence;
 
     public FilteredRecordCursorFactory(CairoConfiguration configuration, RecordCursorFactory base, Function filter) {
         assert !(base instanceof FilteredRecordCursorFactory);
         this.base = base;
         this.cursor = new FilteredRecordCursor(filter);
         this.filter = filter;
-        this.frameSequence = new FrameSequence(configuration, REDUCER);
+        this.frameSequence = new PageFrameSequence<>(configuration, REDUCER);
     }
 
     @Override
@@ -78,60 +74,11 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public FrameSequence execute(SqlExecutionContext executionContext, SCSequence consumerSubSeq) throws SqlException {
-        final LongList frameSequenceFrameRowCounts = frameSequence.getFrameRowCounts();
-        final PageAddressCache pageAddressCache = frameSequence.getPageAddressCache();
-        final Rnd rnd = executionContext.getRandom();
-        final MessageBus bus = executionContext.getMessageBus();
-        // before thread begins we will need to pick a shard
-        // of queues that we will interact with
-        final int shard = rnd.nextInt(bus.getPageFrameReduceShardCount());
-        final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext);
-        final MPSequence dispatchPubSeq = bus.getPageFrameDispatchPubSeq();
-        long dispatchCursor = dispatchPubSeq.next();
-
-        // pass one to cache page addresses
-        // this has to be separate pass to ensure there no cache reads
-        // while cache might be resizing
-        pageAddressCache.of(base.getMetadata());
-
-        PageFrame frame;
-        int frameIndex = 0;
-        while ((frame = pageFrameCursor.next()) != null) {
-            pageAddressCache.add(frameIndex++, frame);
-            frameSequenceFrameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
-        }
-
-        frameSequence.of(shard, rnd.nextLong(), frameIndex, consumerSubSeq, pageFrameCursor);
-
-        if (dispatchCursor < 0) {
-            dispatchCursor = dispatchPubSeq.nextBully();
-        }
-
-        // We need to subscribe publisher sequence before we return
-        // control to the caller of this method. However, this sequence
-        // will be unsubscribed asynchronously.
-        bus.getPageFrameCollectFanOut(shard).and(consumerSubSeq);
-
-        PageFrameDispatchTask dispatchTask = bus.getPageFrameDispatchQueue().get(dispatchCursor);
-        dispatchTask.of(
-                frameSequence.getId(),
-                frameSequence.getFrameCount(),
-                frameSequence.getValid(),
-                frameSequence.getReducer(),
-                frameSequence.getFrameRowCounts(),
-                frameSequence.getReduceCounter(),
-                frameSequence.getDoneLatch(),
-                frameSequence.getConsumerSubSeq(),
-                frameSequence.getSymbolTableSource(),
-                frameSequence.getPageAddressCache(),
-                filter,
-                frameSequence.getShard()
-        );
-
-        dispatchPubSeq.done(dispatchCursor);
-
-        return frameSequence;
+    public PageFrameSequence<Function> execute(
+            SqlExecutionContext executionContext,
+            SCSequence collectSubSeq
+    ) throws SqlException {
+        return frameSequence.dispatch(base, executionContext, collectSubSeq, filter);
     }
 
     @Override
@@ -147,7 +94,7 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
     private static void filter(PageAddressCacheRecord record, PageFrameReduceTask task) {
         final DirectLongList rows = task.getRows();
         final long frameRowCount = task.getFrameRowCount();
-        final Function filter = task.getFilter();
+        final Function filter = task.getFrameSequence(Function.class).getAtom();
 
         rows.clear();
         for (long r = 0; r < frameRowCount; r++) {

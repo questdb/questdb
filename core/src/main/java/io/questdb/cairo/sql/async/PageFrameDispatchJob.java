@@ -25,14 +25,12 @@
 package io.questdb.cairo.sql.async;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.PageAddressCache;
 import io.questdb.cairo.sql.PageAddressCacheRecord;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.mp.*;
-import io.questdb.std.LongList;
+import io.questdb.mp.Job;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
 
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
@@ -60,17 +58,9 @@ public class PageFrameDispatchJob implements Job {
         final long dispatchCursor = dispatchSubSeq.next();
         if (dispatchCursor > -1) {
             final PageFrameDispatchTask tsk = dispatchQueue.get(dispatchCursor);
-            final int shard = tsk.getShard();
-            final PageAddressCache pageAddressCache = tsk.getPageAddressCache();
-            final int frameCount = tsk.getFrameSequenceFrameCount();
-            final SymbolTableSource symbolTableSource = tsk.getSymbolTableSource();
-            final long frameSequenceId = tsk.getFrameSequenceId();
-            final LongList frameRowCounts = tsk.getFrameSequenceFrameRowCounts();
-            final Function filter = tsk.getFilter();
-            final SCSequence collectSubSeq = tsk.getCollectSubSeq();
-            final SOUnboundedCountDownLatch doneLatch = tsk.getFrameSequenceDoneLatch();
+            final int shard = tsk.getFrameSequence().getShard();
+            final int frameCount = tsk.getFrameSequence().getFrameCount();
 
-            final PageFrameReducer pageFrameReducer = tsk.getReducer();
             final RingQueue<PageFrameReduceTask> queue = messageBus.getPageFrameReduceQueue(shard);
             // publisher sequence to pass work to worker jobs
             final MPSequence reducePubSeq = messageBus.getPageFrameReducePubSeq(shard);
@@ -79,17 +69,11 @@ public class PageFrameDispatchJob implements Job {
             final MCSequence cleanupSubSeq = messageBus.getPageFrameCleanupSubSeq(shard);
             final PageAddressCacheRecord record = records[workerId];
 
-            // todo: reuse
             // Reduce counter is here to provide safe backoff point
             // for job stealing code. It is needed because queue is shared
             // and there is possibility of never ending stealing if we don't
             // specifically count only our items
-            final AtomicInteger framesReducedCounter = tsk.getFrameSequenceReduceCounter();
-
-            // Failure indicator to ensure parallel jobs can safely stop
-            // processing pieces of work when one of those pieces fail. Additionally,
-            // failure indicator is used to provide to user
-            final AtomicBoolean frameSequenceValid = tsk.getFrameSequenceValid();
+            final AtomicInteger framesReducedCounter = tsk.getFrameSequence().getReduceCounter();
 
             final int pageFrameQueueCapacity = queue.getCycle();
 
@@ -102,20 +86,7 @@ public class PageFrameDispatchJob implements Job {
                     while (true) {
                         cursor = reducePubSeq.next();
                         if (cursor > -1) {
-                            queue.get(cursor).of(
-                                    pageFrameReducer,
-                                    frameSequenceId,
-                                    pageAddressCache,
-                                    i,
-                                    frameCount,
-                                    frameRowCounts,
-                                    symbolTableSource,
-                                    filter,
-                                    framesReducedCounter,
-                                    collectSubSeq,
-                                    doneLatch,
-                                    frameSequenceValid
-                            );
+                            queue.get(cursor).of(tsk.getFrameSequence(), i);
                             reducePubSeq.done(cursor);
                             break;
                         } else {

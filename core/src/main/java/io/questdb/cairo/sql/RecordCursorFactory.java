@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
@@ -88,7 +89,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
         return null;
     }
 
-    default FrameSequence execute(SqlExecutionContext executionContext, SCSequence consumerSubSeq) throws SqlException {
+    default PageFrameSequence<?> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq) throws SqlException {
         return null;
     }
 

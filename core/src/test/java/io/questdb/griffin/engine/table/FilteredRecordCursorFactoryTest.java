@@ -24,12 +24,8 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.FrameSequence;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.async.PageFrameCleanupJob;
-import io.questdb.cairo.sql.async.PageFrameDispatchJob;
-import io.questdb.cairo.sql.async.PageFrameReduceJob;
-import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cairo.sql.async.*;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -74,27 +70,29 @@ public class FilteredRecordCursorFactoryTest extends AbstractGriffinTest {
             try {
                 compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(20000000)) timestamp(t) partition by hour", sqlExecutionContext);
                 try (RecordCursorFactory f = compiler.compile("x where a > 0.34", sqlExecutionContext).getRecordCursorFactory()) {
-                    SCSequence subSeq = new SCSequence();
-                    FrameSequence executionToken = f.execute(sqlExecutionContext, subSeq);
 
-                    final long producerId = executionToken.getId();
-                    final int shard = executionToken.getShard();
+                    LOG.info().$("class name:").$(f.getClass().getName()).$();
+                    SCSequence subSeq = new SCSequence();
+                    PageFrameSequence<?> frameSequence = f.execute(sqlExecutionContext, subSeq);
+
+                    final long frameSequenceId = frameSequence.getId();
+                    final int shard = frameSequence.getShard();
                     final RingQueue<PageFrameReduceTask> queue = messageBus.getPageFrameReduceQueue(shard);
                     int frameCount = 0;
 
                     while (true) {
                         long cursor = subSeq.nextBully();
                         PageFrameReduceTask task = queue.get(cursor);
-                        if (task.getFrameSequenceId() == producerId) {
+                        if (task.getFrameSequence().getId() == frameSequenceId) {
                             frameCount++;
-                            if (frameCount == task.getFrameSequenceFrameCount()) {
+                            if (frameCount == task.getFrameSequence().getFrameCount()) {
                                 subSeq.done(cursor);
                                 break;
                             }
                         }
                         subSeq.done(cursor);
                     }
-                    executionToken.await();
+                    frameSequence.await();
                 }
             } catch (Throwable e){
                 e.printStackTrace();

@@ -25,17 +25,12 @@
 package io.questdb.cairo.sql.async;
 
 import io.questdb.MessageBus;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
-import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 
 public class PageFrameCleanupJob implements Job {
-    private final static Log LOG = LogFactory.getLog(PageFrameReduceJob.class);
-
     private final MessageBus messageBus;
     private final int shardCount;
     private final int[] shards;
@@ -79,8 +74,9 @@ public class PageFrameCleanupJob implements Job {
                 final PageFrameReduceTask task = queue.get(cursor);
                 try {
                     // frame index adjusted to 1-base
+                    final PageFrameSequence<?> frameSequence = task.getFrameSequence();
                     final int frameIndex = task.getFrameSequenceFrameIndex() + 1;
-                    final int frameCount = task.getFrameSequenceFrameCount();
+                    final int frameCount = frameSequence.getFrameCount();
 
                     // We have to reset capacity only on max all queue items
                     // What we are avoiding here is resetting capacity on 1000 frames given our queue size
@@ -93,17 +89,8 @@ public class PageFrameCleanupJob implements Job {
                     // we assume that frame indexes are published in ascending order
                     // and when we see the last index, we would free up the remaining resources
                     if (frameIndex == frameCount) {
-                        task.getPageAddressCache().clear();
-                        task.getFrameSequenceFrameRowCounts().clear();
-                        Misc.free(task.getSymbolTableSource());
-                        messageBus.getPageFrameCollectFanOut(shard).remove(task.getCollectSubSeq());
-                        LOG.info()
-                                .$("released [producerId=").$(task.getFrameSequenceId())
-                                .$(", shard=").$(shard)
-                                .$(", pageFrameRowsCapacity=").$(pageFrameQueueCapacity)
-                                .$(", frameCount=").$(frameCount)
-                                .I$();
-                        task.getFrameSequenceDoneLatch().countDown();
+                        messageBus.getPageFrameCollectFanOut(shard).remove(frameSequence.getCollectSubSeq());
+                        frameSequence.clear();
                     }
                 } finally {
                     cleanupSubSeq.done(cursor);

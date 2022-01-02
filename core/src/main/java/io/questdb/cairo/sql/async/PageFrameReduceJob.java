@@ -88,19 +88,20 @@ public class PageFrameReduceJob implements Job {
             final long cursor = subSeq.next();
             if (cursor > -1) {
                 final PageFrameReduceTask task = queue.get(cursor);
+                final PageFrameSequence<?> frameSequence = task.getFrameSequence();
                 try {
-                    final AtomicInteger framesReducedCounter = task.getFrameSequenceReduceCounter();
+                    final AtomicInteger framesReducedCounter = frameSequence.getReduceCounter();
                     try {
-                        if (task.isFrameSequenceValid()) {
+                        if (frameSequence.isValid()) {
                             // we deliberately hold the queue item because
                             // processing is daisy-chained. If we were to release item before
                             // finishing reduction, next step (job) will be processing an incomplete task
-                            record.of(task.getSymbolTableSource(), task.getPageAddressCache());
+                            record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
                             record.setFrameIndex(task.getFrameSequenceFrameIndex());
-                            task.getReducer().reduce(record, task);
+                            frameSequence.getReducer().reduce(record, task);
                         }
                     } catch (Throwable e) {
-                        task.setFrameSequenceValid(false);
+                        frameSequence.setValid(false);
                         throw e;
                     } finally {
                         framesReducedCounter.incrementAndGet();
