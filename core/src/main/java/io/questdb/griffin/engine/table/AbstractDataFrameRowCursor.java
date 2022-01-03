@@ -22,36 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.DataFrameCursor;
-import io.questdb.cairo.sql.DataFrameCursorFactory;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.RowCursor;
 
-public class FullFwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {
-    private final FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
+//added to make it possible to switch between data frame and dataFrameBwd row cursor in DataFrameRowCursorFactory
+public abstract class AbstractDataFrameRowCursor implements RowCursor {
 
-    public FullFwdDataFrameCursorFactory(CairoEngine engine, String tableName, int tableId, long tableVersion) {
-        super(engine, tableName, tableId, tableVersion);
-    }
-
-    @Override
-    public DataFrameCursor getCursor(SqlExecutionContext executionContext) {
-        return cursor.of(getReader(executionContext.getCairoSecurityContext()));
-    }
-
-    @Override
-    public boolean supportsOrderReversal() {
-        return true;
-    }
-
-    @Override
-    public DataFrameCursorFactory reverseOrder() {
-        return new FullBwdDataFrameCursorFactory(engine, tableName, tableId, tableVersion);
-    }
-
-    @Override
-    public int getOrder() {
-        return ORDER_ASC;
-    }
+    abstract void of(DataFrame frame);
 }

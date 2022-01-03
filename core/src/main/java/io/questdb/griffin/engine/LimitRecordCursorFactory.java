@@ -137,12 +137,17 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                     skipTo(count + lo);
                 }
                 // set limit to return remaining rows
-                limit = -lo;
-                size = -lo;
+                limit = Math.min(count, -lo);
+                size = limit;
             } else if (lo > -1 && hiFunction == null) {
                 // first N rows
-                limit = lo;
-                size = lo;
+                long baseRowCount = base.size();
+                if (baseRowCount > -1L) {//don't want to cause a pass-through whole data set
+                    limit = Math.min(baseRowCount, lo);
+                } else {
+                    limit = lo;
+                }
+                size = limit;
             } else {
                 // at this stage we have 'hi'
                 long hi = hiFunction.getLong(null);
@@ -173,12 +178,18 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                     }
                 } else {
                     if (hi < 0) {
-                        limit = countRows() - lo + hi;
+                        limit = Math.max(countRows() - lo + hi, 0);
                         size = limit;
                         base.toTop();
                     } else {
-                        limit = Math.max(0, hi - lo);
-                        size = limit;
+                        long baseRowCount = base.size();
+                        if (baseRowCount > -1L) {//don't want to cause a pass-through whole data set
+                            limit = Math.max(0, Math.min(baseRowCount, hi) - lo);
+                            size = limit;
+                        } else {
+                            limit = Math.max(0, hi - lo);//doesn't handle hi exceeding number of rows
+                            size = limit;
+                        }
                     }
 
                     if (lo > 0 && limit > 0) {

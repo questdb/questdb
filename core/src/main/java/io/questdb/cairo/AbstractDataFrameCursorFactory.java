@@ -28,10 +28,10 @@ import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.std.str.CharSink;
 
 public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorFactory {
-    private final CairoEngine engine;
-    private final String tableName;
-    private final int tableId;
-    private final long tableVersion;
+    protected final CairoEngine engine;
+    protected final String tableName;
+    protected final int tableId;
+    protected final long tableVersion;
 
     public AbstractDataFrameCursorFactory(CairoEngine engine, String tableName, int tableId, long tableVersion) {
         this.engine = engine;

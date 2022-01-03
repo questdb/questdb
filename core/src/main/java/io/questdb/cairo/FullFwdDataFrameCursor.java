@@ -38,6 +38,7 @@ public class FullFwdDataFrameCursor extends AbstractFullDataFrameCursor {
                 partitionIndex++;
             } else {
                 frame.partitionIndex = partitionIndex;
+                frame.rowLo = 0;
                 frame.rowHi = hi;
                 partitionIndex++;
                 return frame;
@@ -47,9 +48,48 @@ public class FullFwdDataFrameCursor extends AbstractFullDataFrameCursor {
         return null;
     }
 
-
     @Override
     public void toTop() {
         this.partitionIndex = 0;
+    }
+
+    @Override
+    public @Nullable DataFrame skipTo(long rowNumber) {
+        int partitions = getTableReader().getPartitionCount();
+
+        if (partitions < 1) {
+            return null;
+        }
+
+        long position = rowNumber;
+        long partitionRows = 0;
+        int partition = 0;
+
+        for (; partition < partitions; partition++) {
+            partitionRows = getTableReader().openPartition(partition);
+            if (partitionRows < 0) {
+                continue;
+            }
+            if (partitionRows > position) {
+                break;
+            }
+            if (partition == partitions - 1) {
+                position = partitionRows;
+                break;
+            } else {
+                position -= partitionRows;
+            }
+        }
+
+        frame.partitionIndex = partition;
+        frame.rowHi = partitionRows;
+        frame.rowLo = position;
+        partitionIndex = partition + 1;
+
+        return frame;
+    }
+
+    public boolean supportsRandomAccess() {
+        return true;
     }
 }

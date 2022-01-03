@@ -33,7 +33,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
 abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursorFactory {
-    protected final DataFrameCursorFactory dataFrameCursorFactory;
+    protected DataFrameCursorFactory dataFrameCursorFactory;
 
     public AbstractDataFrameRecordCursorFactory(RecordMetadata metadata, DataFrameCursorFactory dataFrameCursorFactory) {
         super(metadata);

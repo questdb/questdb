@@ -78,9 +78,9 @@ public interface DataFrameCursor extends Closeable, SymbolTableSource  {
     }
 
     /**
-     * Returns data frame associated with partition number N.
+     * Returns data frame and position (lo) of given rowNumber (according to cursor order) .
      */
-    default @Nullable DataFrame toPartition(int n) {
-        throw new UnsupportedOperationException();//TODO: implement later (where possible)
+    default @Nullable DataFrame skipTo(long rowNumber) {
+        throw new UnsupportedOperationException();//TODO: implement where possible
     }
 }

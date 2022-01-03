@@ -54,6 +54,11 @@ public class IntervalBwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
     }
 
     @Override
+    public int getOrder() {
+        return ORDER_DESC;
+    }
+
+    @Override
     public void close() {
         Misc.free(intervals);
     }

@@ -22,36 +22,35 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.DataFrameCursor;
-import io.questdb.cairo.sql.DataFrameCursorFactory;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.RowCursor;
 
-public class FullFwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {
-    private final FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
+/**
+ * Row cursor that goes through data frame backwards / from end to start / hi to lo .
+ */
+public class DataFrameBwdRowCursor extends AbstractDataFrameRowCursor implements RowCursor {
+    private long lo;
+    private long current;
 
-    public FullFwdDataFrameCursorFactory(CairoEngine engine, String tableName, int tableId, long tableVersion) {
-        super(engine, tableName, tableId, tableVersion);
+    @Override
+    public boolean hasNext() {
+        return current >= lo;
     }
 
     @Override
-    public DataFrameCursor getCursor(SqlExecutionContext executionContext) {
-        return cursor.of(getReader(executionContext.getCairoSecurityContext()));
+    public long next() {
+        return current--;
+    }
+
+    void of(DataFrame frame) {
+        this.current = frame.getRowHi() - 1;
+        this.lo = frame.getRowLo();
     }
 
     @Override
-    public boolean supportsOrderReversal() {
-        return true;
-    }
-
-    @Override
-    public DataFrameCursorFactory reverseOrder() {
-        return new FullBwdDataFrameCursorFactory(engine, tableName, tableId, tableVersion);
-    }
-
-    @Override
-    public int getOrder() {
-        return ORDER_ASC;
+    public void jumpTo(long position) {
+        this.current = position;
     }
 }

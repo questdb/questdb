@@ -61,7 +61,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     ) {
         super(metadata, dataFrameCursorFactory);
 
-        this.cursor = new DataFrameRecordCursor(rowCursorFactory, rowCursorFactory.isEntity(), filter, columnIndexes);
+        this.cursor = new DataFrameRecordCursor(rowCursorFactory, rowCursorFactory.isEntity(), filter, columnIndexes);//hERE!
         this.followsOrderByAdvice = followsOrderByAdvice;
         this.filter = filter;
         this.framingSupported = framingSupported;
@@ -74,6 +74,21 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     public void close() {
         Misc.free(filter);
         Misc.free(dataFrameCursorFactory);
+    }
+
+    @Override
+    public boolean supportsOrderReversal() {
+        return dataFrameCursorFactory.supportsOrderReversal() && cursor.supportsOrderReversal();
+    }
+
+    public boolean hasAscendingOrder() {
+        return dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_DESC;
+    }
+
+    @Override
+    public void reverseOrder() {
+        dataFrameCursorFactory = dataFrameCursorFactory.reverseOrder();
+        cursor.reverseOrder();
     }
 
     @Override

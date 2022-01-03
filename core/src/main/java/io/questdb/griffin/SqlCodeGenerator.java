@@ -1295,7 +1295,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // if first column index is the same as timestamp of underling record cursor factory
                 // we could have two possibilities:
                 // 1. if we only have one column to order by - the cursor would already be ordered
-                //    by timestamp; we have nothing to do
+                //    by timestamp (either ASC or DESC); we have nothing to do
                 // 2. metadata of the new cursor will have timestamp
 
                 RecordMetadata orderedMetadata;
@@ -1303,8 +1303,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     CharSequence column = columnNames.getQuick(0);
                     int index = metadata.getColumnIndexQuiet(column);
                     if (index == metadata.getTimestampIndex()) {
-                        if (size == 1 && orderBy.get(column) == QueryModel.ORDER_DIRECTION_ASCENDING) {
-                            return recordCursorFactory;
+                        if (size == 1) {
+                            if (orderBy.get(column) == QueryModel.ORDER_DIRECTION_ASCENDING) {
+                                return recordCursorFactory;//DataFrameRecordCursorFactory
+                            } else if (orderBy.get(column) == ORDER_DIRECTION_DESCENDING &&
+                                    recordCursorFactory.supportsOrderReversal() &&
+                                    recordCursorFactory.hasAscendingOrder()) {
+                                recordCursorFactory.reverseOrder();//switch from default Fwd to Bwd cursor and skip sorting
+                                return recordCursorFactory;
+                            }
                         }
                     }
                 }

@@ -71,26 +71,8 @@ public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
         return this;
     }
 
-    public DataFrame toPartition(int n) {
-        long rowHi = getTableReader().openPartition(n);
-        if (rowHi < 1) {
-            // this partition is missing, skip
-            partitionIndex = n + 1;
-            return null;
-        }
-
-        frame.partitionIndex = n;
-        frame.rowHi = rowHi;
-        partitionIndex = n + 1;
-        return frame;
-    }
-
-    public boolean supportsRandomAccess() {
-        return true;
-    }
-
     protected class FullTableDataFrame implements DataFrame {
-        final static private long rowLo = 0;
+        protected long rowLo = 0;
         protected long rowHi;
         protected int partitionIndex;
 

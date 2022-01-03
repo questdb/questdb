@@ -118,31 +118,19 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
             return;
         }
 
-        int partitions = dataFrameCursor.getTableReader().getPartitionCount();
-        long position = rowNumber;
-        int partition = 0;
-        for (; partition < partitions; partition++) {
-            long partitionRowCount = dataFrameCursor.getTableReader().openPartition(partition);
-            if (partitionRowCount < 0) {
-                continue;
-            }
-            if (partitionRowCount > position) {
-                break;
-            }
-            if (partition == partitions - 1) {
-                position = partitionRowCount;
-                break;
-            } else {
-                position -= partitionRowCount;
-            }
-        }
-
-        DataFrame dataFrame = dataFrameCursor.toPartition(partition);
+        DataFrame dataFrame = dataFrameCursor.skipTo(rowNumber);
         if (dataFrame != null) {
             rowCursor = rowCursorFactory.getCursor(dataFrame);
-            rowCursor.jumpTo(position);
-            recordA.jumpTo(dataFrame.getPartitionIndex(), position);
+            recordA.jumpTo(dataFrame.getPartitionIndex(), dataFrame.getRowLo()); //move to partition, rowlo doesn't matter
             next = nextRow;
-        }
+        }//what about size ?
+    }
+
+    public boolean supportsOrderReversal() {
+        return rowCursorFactory.supportsOrderReversal();
+    }
+
+    public void reverseOrder() {
+        this.rowCursorFactory.reverseOrder();
     }
 }

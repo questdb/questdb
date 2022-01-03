@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.RowCursor;
 
-class DataFrameRowCursor implements RowCursor {
+class DataFrameRowCursor extends AbstractDataFrameRowCursor implements RowCursor {
     private long hi;
     private long current;
 
