@@ -52,6 +52,8 @@ public class AbstractCairoTest {
     protected final static Log LOG = LogFactory.getLog(AbstractCairoTest.class);
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
+    public static long writerAsyncCommandBusyWaitTimeout = -1;
+    public static long writerAsyncCommandMaxTimeout = -1;
     protected static CharSequence root;
     protected static CairoConfiguration configuration;
     protected static MessageBus messageBus;
@@ -69,11 +71,10 @@ public class AbstractCairoTest {
     protected static int binaryEncodingMaxLength = -1;
     protected static CharSequence defaultMapType;
     protected static int pageFrameMaxSize = -1;
+    protected static int jitMode = SqlJitMode.JIT_MODE_ENABLED;
 
     @Rule
     public TestName testName = new TestName();
-    public static long writerAsyncCommandBusyWaitTimeout = -1;
-    public static long writerAsyncCommandMaxTimeout = -1;
 
     @BeforeClass
     public static void setUpStatic() {
@@ -89,26 +90,8 @@ public class AbstractCairoTest {
         }
         configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public FilesFacade getFilesFacade() {
-                if (ff != null) {
-                    return ff;
-                }
-                return super.getFilesFacade();
-            }
-
-            @Override
-            public int getCopyPoolCapacity() {
-                return capacity == -1 ? super.getCopyPoolCapacity() : capacity;
-            }
-
-            @Override
-            public MicrosecondClock getMicrosecondClock() {
-                return testMicrosClock;
-            }
-
-            @Override
-            public CharSequence getInputRoot() {
-                return inputRoot;
+            public int getBinaryEncodingMaxLength() {
+                return binaryEncodingMaxLength > 0 ? binaryEncodingMaxLength : super.getBinaryEncodingMaxLength();
             }
 
             @Override
@@ -118,19 +101,8 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public int getMaxUncommittedRows() {
-                if (configOverrideMaxUncommittedRows >= 0) return configOverrideMaxUncommittedRows;
-                return super.getMaxUncommittedRows();
-            }
-
-            @Override
-            public int getSampleByIndexSearchPageSize() {
-                return sampleByIndexSearchPageSize > 0 ? sampleByIndexSearchPageSize : super.getSampleByIndexSearchPageSize();
-            }
-
-            @Override
-            public int getBinaryEncodingMaxLength() {
-                return binaryEncodingMaxLength > 0 ? binaryEncodingMaxLength : super.getBinaryEncodingMaxLength();
+            public int getCopyPoolCapacity() {
+                return capacity == -1 ? super.getCopyPoolCapacity() : capacity;
             }
 
             @Override
@@ -142,6 +114,47 @@ public class AbstractCairoTest {
             }
 
             @Override
+            public FilesFacade getFilesFacade() {
+                if (ff != null) {
+                    return ff;
+                }
+                return super.getFilesFacade();
+            }
+
+            @Override
+            public CharSequence getInputRoot() {
+                return inputRoot;
+            }
+
+            @Override
+            public int getMaxUncommittedRows() {
+                if (configOverrideMaxUncommittedRows >= 0) return configOverrideMaxUncommittedRows;
+                return super.getMaxUncommittedRows();
+            }
+
+            @Override
+            public MicrosecondClock getMicrosecondClock() {
+                return testMicrosClock;
+            }
+
+            @Override
+            public int getSampleByIndexSearchPageSize() {
+                return sampleByIndexSearchPageSize > 0 ? sampleByIndexSearchPageSize : super.getSampleByIndexSearchPageSize();
+            }
+
+            @Override
+            public int getSqlJitMode() {
+                // JIT compiler is a beta feature and thus is disabled by default,
+                // but we want to have it enabled in tests.
+                return jitMode;
+            }
+
+            @Override
+            public int getSqlPageFrameMaxSize() {
+                return pageFrameMaxSize < 0 ? super.getSqlPageFrameMaxSize() : pageFrameMaxSize;
+            }
+
+            @Override
             public long getWriterAsyncCommandBusyWaitTimeout() {
                 return writerAsyncCommandBusyWaitTimeout < 0 ? super.getWriterAsyncCommandBusyWaitTimeout() : writerAsyncCommandBusyWaitTimeout;
             }
@@ -149,18 +162,6 @@ public class AbstractCairoTest {
             @Override
             public long getWriterAsyncCommandMaxTimeout() {
                 return writerAsyncCommandMaxTimeout < 0 ? super.getWriterAsyncCommandMaxTimeout() : writerAsyncCommandMaxTimeout;
-            }
-
-            @Override
-            public int getSqlJitMode() {
-                // JIT compiler is a beta feature and thus is disabled by default,
-                // but we want to have it enabled in tests.
-                return SqlJitMode.JIT_MODE_ENABLED;
-            }
-
-            @Override
-            public int getSqlPageFrameMaxSize() {
-                return pageFrameMaxSize < 0 ? super.getSqlPageFrameMaxSize() : pageFrameMaxSize;
             }
         };
         engine = new CairoEngine(configuration);

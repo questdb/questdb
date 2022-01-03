@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.async.*;
 import io.questdb.griffin.AbstractGriffinTest;
@@ -31,9 +33,16 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 public class FilteredRecordCursorFactoryTest extends AbstractGriffinTest {
+
+    @BeforeClass
+    public static void setUpStatic() {
+        jitMode = SqlJitMode.JIT_MODE_DISABLED;
+        AbstractGriffinTest.setUpStatic();
+    }
 
     @Test
     public void testSimple() throws Exception {
