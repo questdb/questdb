@@ -3203,8 +3203,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore
-    // TODO: fix, where is applied after latest by, the optimized I suspect
     @Test
     public void testLatestByIsApplicableToSubQueriesNoDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
@@ -3215,13 +3213,13 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     "    other_ts timestamp, " +
                     "    ts timestamp" +
                     ")", sqlExecutionContext);
-            executeInsert("insert into tab values ('d1', 'c1', 101.1, '2021-10-15T11:31:35.878Z', '2021-10-05T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-15T11:31:35.878Z', '2021-10-05T11:31:35.878Z')");
             executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-16T17:31:35.878Z', '2021-10-06T15:31:35.878Z')");
             assertSql(
                     "tab where name in (select distinct name from tab where name != 'c2') latest on other_ts partition by id",
                     "id\tname\tvalue\tother_ts\tts\n" +
-                            "d1\tc1\t101.4\t2021-10-15 14:31:35.878\t2021-10-05 14:31:35.878\n" +
-                            "d2\tc1\t111.7\t2021-10-16 17:31:35.878\t2021-10-06 15:31:35.878\n");
+                            "d1\tc1\t101.2\t2021-10-15T11:31:35.878000Z\t2021-10-05T11:31:35.878000Z\n" +
+                            "d2\tc1\t111.7\t2021-10-16T17:31:35.878000Z\t2021-10-06T15:31:35.878000Z\n");
         });
     }
 
