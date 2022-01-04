@@ -99,7 +99,6 @@ public class LineTcpReceiverLoadTest extends AbstractLineTcpReceiverTest {
                         }
                     }).start();
                 }
-                LOG.info().$("sds").$();
                 threadPushFinished.await();
 
                 for (int i = 0; i < numOfTables; i++) {
