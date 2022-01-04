@@ -360,7 +360,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             intHashSet.add(listColumnFilterA.getColumnIndexFactored(i));
         }
 
-
         // map doesn't support variable length types in map value, which is ok
         // when we join tables on strings - technically string is the key
         // and we do not need to store it in value, but we will still reject
@@ -2527,48 +2526,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            listColumnFilterA.clear();
-            final int latestByColumnCount = latestBy.size();
-
-            if (latestByColumnCount > 0) {
-                // validate the latest by against current reader
-                // first check if column is valid
-                for (int i = 0; i < latestByColumnCount; i++) {
-                    final ExpressionNode latestByNode = latestBy.getQuick(i);
-                    final int index = myMeta.getColumnIndexQuiet(latestByNode.token);
-                    if (index == -1) {
-                        throw SqlException.invalidColumn(latestByNode.position, latestByNode.token);
-                    }
-
-                    // check the type of the column, not all are supported
-                    int columnType = myMeta.getColumnType(index);
-                    switch (ColumnType.tagOf(columnType)) {
-                        case ColumnType.BOOLEAN:
-                        case ColumnType.CHAR:
-                        case ColumnType.SHORT:
-                        case ColumnType.INT:
-                        case ColumnType.LONG:
-                        case ColumnType.LONG256:
-                        case ColumnType.STRING:
-                        case ColumnType.SYMBOL:
-                            // we are reusing collections which leads to confusing naming for this method
-                            // keyTypes are types of columns we collect 'latest by' for
-                            keyTypes.add(columnType);
-                            // columnFilterA are indexes of columns we collect 'latest by' for
-                            listColumnFilterA.add(index + 1);
-                            break;
-
-                        default:
-                            throw SqlException
-                                    .position(latestByNode.position)
-                                    .put(latestByNode.token)
-                                    .put(" (")
-                                    .put(ColumnType.nameOf(columnType))
-                                    .put("): invalid type, only [BOOLEAN, SHORT, INT, LONG, LONG256, CHAR, STRING, SYMBOL] are supported in LATEST BY");
-                    }
-                }
-            }
-
+            final int latestByColumnCount = prepareLatestByColumnIndexes(latestBy, myMeta);
             final String tableName = reader.getTableName();
 
             final ExpressionNode withinExtracted = whereClauseParser.extractWithin(
@@ -2593,7 +2551,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         preferredKeyColumn = latestBy.getQuick(0).token;
                     }
                 }
-
 
                 final IntrinsicModel intrinsicModel = whereClauseParser.extract(
                         model,
@@ -2626,6 +2583,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (f != null && f.isConstant() && !f.getBool(null)) {
                         return new EmptyTableRecordCursorFactory(myMeta);
                     }
+
+                    // a subquery present in the filter may have used the latest by
+                    // column index lists, so we need to regenerate them
+                    prepareLatestByColumnIndexes(latestBy, myMeta);
 
                     return generateLatestByQuery(
                             model,
@@ -2931,6 +2892,52 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     columnIndexes
             );
         }
+    }
+
+    private int prepareLatestByColumnIndexes(ObjList<ExpressionNode> latestBy, GenericRecordMetadata myMeta) throws SqlException {
+        keyTypes.clear();
+        listColumnFilterA.clear();
+
+        final int latestByColumnCount = latestBy.size();
+        if (latestByColumnCount > 0) {
+            // validate the latest by against the current reader
+            // first check if column is valid
+            for (int i = 0; i < latestByColumnCount; i++) {
+                final ExpressionNode latestByNode = latestBy.getQuick(i);
+                final int index = myMeta.getColumnIndexQuiet(latestByNode.token);
+                if (index == -1) {
+                    throw SqlException.invalidColumn(latestByNode.position, latestByNode.token);
+                }
+
+                // check the type of the column, not all are supported
+                int columnType = myMeta.getColumnType(index);
+                switch (ColumnType.tagOf(columnType)) {
+                    case ColumnType.BOOLEAN:
+                    case ColumnType.CHAR:
+                    case ColumnType.SHORT:
+                    case ColumnType.INT:
+                    case ColumnType.LONG:
+                    case ColumnType.LONG256:
+                    case ColumnType.STRING:
+                    case ColumnType.SYMBOL:
+                        // we are reusing collections which leads to confusing naming for this method
+                        // keyTypes are types of columns we collect 'latest by' for
+                        keyTypes.add(columnType);
+                        // listColumnFilterA are indexes of columns we collect 'latest by' for
+                        listColumnFilterA.add(index + 1);
+                        break;
+
+                    default:
+                        throw SqlException
+                                .position(latestByNode.position)
+                                .put(latestByNode.token)
+                                .put(" (")
+                                .put(ColumnType.nameOf(columnType))
+                                .put("): invalid type, only [BOOLEAN, SHORT, INT, LONG, LONG256, CHAR, STRING, SYMBOL] are supported in LATEST BY");
+                }
+            }
+        }
+        return latestByColumnCount;
     }
 
     private RecordCursorFactory generateUnionAllFactory(

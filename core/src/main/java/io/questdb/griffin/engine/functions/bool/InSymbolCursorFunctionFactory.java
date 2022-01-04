@@ -148,7 +148,6 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
             valueSet.clear();
 
-
             RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 final Record record = cursor.getRecord();
