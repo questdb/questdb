@@ -82,7 +82,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     }
 
     public boolean hasAscendingOrder() {
-        return dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_DESC;
+        return dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_ASC;
     }
 
     @Override
