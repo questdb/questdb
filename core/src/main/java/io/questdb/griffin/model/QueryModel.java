@@ -56,6 +56,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SET_OPERATION_UNION = 1;
     public static final int SET_OPERATION_EXCEPT = 2;
     public static final int SET_OPERATION_INTERSECT = 3;
+    public static final int LATEST_BY_NONE = 0;
+    public static final int LATEST_BY_DEPRECATED = 1;
+    public static final int LATEST_BY_NEW = 2;
     private static final ObjList<String> modelTypeName = new ObjList<>();
     private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
     private final LowerCaseCharSequenceHashSet topDownNameSet = new LowerCaseCharSequenceHashSet();
@@ -87,6 +90,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<ExpressionNode> sampleByFill = new ObjList<>();
     private ExpressionNode sampleByTimezoneName = null;
     private ExpressionNode sampleByOffset = null;
+    private int latestByType = LATEST_BY_NONE;
     private final ObjList<ExpressionNode> latestBy = new ObjList<>();
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntList orderByDirectionAdvice = new IntList();
@@ -209,6 +213,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         nestedModel = null;
         tableName = null;
         alias = null;
+        latestByType = LATEST_BY_NONE;
         latestBy.clear();
         joinCriteria = null;
         joinType = JOIN_INNER;
@@ -427,6 +432,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setJoinType(int joinType) {
         this.joinType = joinType;
+    }
+
+    public int getLatestByType() {
+        return latestByType;
+    }
+
+    public void setLatestByType(int latestByType) {
+        this.latestByType = latestByType;
     }
 
     public ObjList<ExpressionNode> getLatestBy() {
@@ -845,13 +858,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             aliasToSink(alias.token, sink);
         }
 
-        if (timestamp != null) {
+        if (getLatestByType() != LATEST_BY_NEW && timestamp != null) {
             sink.put(" timestamp (");
             timestamp.toSink(sink);
             sink.put(')');
         }
 
-        if (getLatestBy().size() > 0) {
+        if (getLatestByType() == LATEST_BY_DEPRECATED && getLatestBy().size() > 0) {
             sink.put(" latest by ");
             for (int i = 0, n = getLatestBy().size(); i < n; i++) {
                 if (i > 0) {
@@ -934,6 +947,18 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         if (!joinSlave && postJoinWhereClause != null) {
             sink.put(" post-join-where ");
             postJoinWhereClause.toSink(sink);
+        }
+
+        if (getLatestByType() == LATEST_BY_NEW && getLatestBy().size() > 0) {
+            sink.put(" latest on ");
+            timestamp.toSink(sink);
+            sink.put(" partition by ");
+            for (int i = 0, n = getLatestBy().size(); i < n; i++) {
+                if (i > 0) {
+                    sink.put(',');
+                }
+                getLatestBy().getQuick(i).toSink(sink);
+            }
         }
 
         if (sampleBy != null) {

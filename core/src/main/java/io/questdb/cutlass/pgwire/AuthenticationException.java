@@ -21,32 +21,14 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-const fs = require("fs")
-const path = require("path")
-const archiver = require("archiver")
-const rimraf = require("rimraf")
 
-const source = path.join(process.cwd(), "/dist/")
-const destination = path.join(
-  process.cwd(),
-  "..",
-  "core/src/main/resources/io/questdb/site/public.zip",
-)
+package io.questdb.cutlass.pgwire;
 
-const start = async () => {
-  const archive = archiver("zip", { zlib: { level: 9 } })
+public class AuthenticationException extends Exception {
 
-  rimraf.sync(destination)
-  const stream = fs.createWriteStream(destination)
+    public static final AuthenticationException INSTANCE = new AuthenticationException("invalid username/password");
 
-  archive
-    .on("error", (err) => {
-      throw err
-    })
-    .directory(source, false)
-    .pipe(stream)
-
-  await archive.finalize()
+    public AuthenticationException(String message) {
+        super(message);
+    }
 }
-
-start()
