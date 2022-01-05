@@ -43,10 +43,10 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree {
     private final MemoryARW valueChain;
 
     //firstN - keep <first->N> set , otherwise keep <last-N->last> set
-    private boolean isfirstN;
+    private final boolean isFirstN;
 
     //maximum number of values tree can store (including repeating values)
-    private long maxValues = -1;
+    private final long maxValues; //-1 means 'almost' unlimited
 
     //number of all values stored in tree (including repeating ones)
     private long currentValues = 0;
@@ -63,18 +63,12 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree {
     //LIFO list of free blocks to reuse, allocated on the value chain 
     private final LongList chainFreeList;
 
-    public LimitedSizeLongTreeChain(long keyPageSize, int keyMaxPages, long valuePageSize, int valueMaxPages) {
+    public LimitedSizeLongTreeChain(long keyPageSize, int keyMaxPages, long valuePageSize, int valueMaxPages, boolean isfirstN, long maxValues) {
         super(keyPageSize, keyMaxPages);
         this.valueChain = Vm.getARWInstance(valuePageSize, valueMaxPages, MemoryTag.NATIVE_TREE_CHAIN);
         this.freeList = new LongList();
         this.chainFreeList = new LongList();
-    }
-
-    public void setIsfirstN(boolean isfirstN) {
-        this.isfirstN = isfirstN;
-    }
-
-    public void setMaxValues(long maxValues) {
+        this.isFirstN = isfirstN;
         this.maxValues = maxValues;
     }
 
@@ -152,16 +146,16 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree {
             sourceCursor.recordAt(rightRecord, minMaxRowId);
             int cmp = comparator.compare(rightRecord);
 
-            if (isfirstN && cmp >= 0) {//bigger than max for firstN/bottomN 
+            if (isFirstN && cmp >= 0) {//bigger than max for firstN/bottomN
                 return;
-            } else if (!isfirstN && cmp <= 0) { //smaller than min for lastN/topN
+            } else if (!isFirstN && cmp <= 0) { //smaller than min for lastN/topN
                 return;
             } else { //record has to be inserted so we've to remove current minMax 
                 removeAndCache(minMaxNode);
             }
         }
 
-        if (root == -1) {
+        if (root == EMPTY) {
             putParent(leftRecord.getRowId());
             minMaxNode = root;
             minMaxRowId = leftRecord.getRowId();
@@ -218,12 +212,13 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree {
             long newNode = super.allocateBlock();
             setParent(newNode, parent);
 
-            long chainOffset = -1;
+            long chainOffset;
 
             if (chainFreeList.size() > 0) {
                 chainOffset = chainFreeList.get(chainFreeList.size() - 1);
                 chainFreeList.removeIndex(chainFreeList.size() - 1);
-                valueChain.putLong128(recordRowId, CHAIN_END);
+                valueChain.putLong(chainOffset, recordRowId);
+                valueChain.putLong(chainOffset + 8, CHAIN_END);
             } else {
                 chainOffset = appendValue(recordRowId, CHAIN_END);
             }
@@ -237,7 +232,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree {
     private void refreshMinMaxNode() {
         long p;
 
-        if (isfirstN) {
+        if (isFirstN) {
             p = findMaxNode();
         } else {//lastN/topN
             p = findMinNode();
@@ -278,13 +273,18 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree {
         long ref = refOf(node);
         long previousOffset = valueChain.getLong(ref + 8);
         setRef(node, previousOffset);
+
+        //clear both rowid slot and rext value offset
+        valueChain.putLong(ref, -1L);
+        valueChain.putLong(ref + 8, -1L);
+
         chainFreeList.add(ref);
     }
 
     private boolean hasMoreThanOneValue(long position) {
         long ref = refOf(position);
-        long previousValue = valueChain.getLong(ref + 8);
-        return previousValue != CHAIN_END;
+        long previousOffset = valueChain.getLong(ref + 8);
+        return previousOffset != CHAIN_END;
     }
 
     @Override
@@ -332,12 +332,11 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree {
         }
     }
 
-    //TODO: it might be better to skip records in cursor because memory won't be reclaimed
     public void skipFirst(long count) {
         assert count > 0;
 
         long current = findMinNode();
-        long next = -1L;
+        long next;
 
         for (int i = 0; i < count; i++) {
             if (current == EMPTY) {
@@ -381,7 +380,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree {
     public interface ValuePrinter {
         String toString(long rowid);
 
-        public static String toRowId(long rowid) {
+        static String toRowId(long rowid) {
             return String.valueOf(rowid);
         }
     }

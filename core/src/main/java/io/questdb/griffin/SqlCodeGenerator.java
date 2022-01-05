@@ -1323,28 +1323,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
 
-                ExpressionNode limitLo = model.getLimitLo();
-                ExpressionNode limitHi = model.getLimitHi();
+                final Function loFunc = getLoFunction(executionContext, model.getLimitLo());
+                final Function hiFunc = getHiFunction(executionContext, model.getLimitHi());
 
-                final Function loFunc = getLoFunction(executionContext, limitLo);
-                final Function hiFunc = getHiFunction(executionContext, limitHi);
-
-                //TODO: we've to check if lo, hi is set and lo >=0 while hi < 0 because such case can't really be optimized by topN/bottomN
                 if (recordCursorFactory.recordCursorSupportsRandomAccess()) {
-                    if (limitLo == null && limitHi == null) {
-                        return new SortedLightRecordCursorFactory(
-                                configuration,
-                                orderedMetadata,
-                                recordCursorFactory,
-                                recordComparatorCompiler.compile(metadata, listColumnFilterA)
-                        );
-                    } else {
+                    if (canBeOptimized(model, executionContext, loFunc, hiFunc)) {
                         return new LimitedSizeSortedLightRecordCursorFactory(
                                 configuration,
                                 orderedMetadata,
                                 recordCursorFactory,
                                 recordComparatorCompiler.compile(metadata, listColumnFilterA),
                                 loFunc, hiFunc);
+                    } else {
+                        return new SortedLightRecordCursorFactory(
+                                configuration,
+                                orderedMetadata,
+                                recordCursorFactory,
+                                recordComparatorCompiler.compile(metadata, listColumnFilterA)
+                        );
                     }
                 }
 
@@ -1352,7 +1348,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // we have to copy entire record into ordered structure
 
                 entityColumnFilter.of(orderedMetadata.getColumnCount());
-                //TODO: use LimitedSizeSortedRecordCursorFactory
                 return new SortedRecordCursorFactory(
                         configuration,
                         orderedMetadata,
@@ -1373,6 +1368,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             recordCursorFactory.close();
             throw e;
         }
+    }
+
+    // Check if lo, hi is set and lo >=0 while hi < 0 (meaning - return whole result set except some rows at start and some at the end)
+    // because such case can't really be optimized by topN/bottomN
+    private boolean canBeOptimized(QueryModel model, SqlExecutionContext context, Function loFunc, Function hiFunc) {
+        if (model.getLimitLo() == null && model.getLimitHi() == null) {
+            return false;
+        }
+
+        if (loFunc != null && loFunc.isConstant() &&
+                hiFunc != null && hiFunc.isConstant()) {
+            try {
+                loFunc.init(null, context);
+                hiFunc.init(null, context);
+
+                return !(loFunc.getLong(null) >= 0 && hiFunc.getLong(null) < 0);
+            } catch (SqlException ex) {
+                LOG.error().$("Failed to initialize lo or hi functions [").$("error=").$(ex.getMessage()).I$();
+            }
+        }
+
+        return true;
     }
 
     private RecordCursorFactory generateQuery(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {

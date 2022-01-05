@@ -128,10 +128,10 @@ public class LimitedSizeLongTreeChainTest extends AbstractGriffinTest {
                 configuration.getSqlSortKeyPageSize(),
                 configuration.getSqlSortKeyMaxPages(),
                 configuration.getSqlSortLightValuePageSize(),
-                configuration.getSqlSortLightValueMaxPages());
-
-        chain.setMaxValues(20);
-        chain.setIsfirstN(true);
+                configuration.getSqlSortLightValueMaxPages(),
+                true,
+                20
+        );
     }
 
     @After
