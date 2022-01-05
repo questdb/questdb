@@ -5,6 +5,10 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+set(CMAKE_C_VISIBILITY_PRESET hidden)
+#set(CMAKE_VERBOSE_MAKEFILE ON)
+
 # deal with windows slashes in JAVA_HOME
 if ($ENV{JAVA_HOME})
     FILE(TO_CMAKE_PATH $ENV{JAVA_HOME} JAVA_HOME)
@@ -47,6 +51,8 @@ set(
         src/main/c/share/geohash.cpp
         src/main/c/share/jit/compiler.h
         src/main/c/share/jit/compiler.cpp
+        src/main/c/share/cpprt_overrides.h
+        src/main/c/share/cpprt_overrides.cpp
 )
 
 # JNI includes
@@ -150,6 +156,7 @@ if(NOT asmjit_POPULATED)
 endif()
 include("${asmjit_SOURCE_DIR}/CMakeLists.txt")
 include_directories(${asmjit_SOURCE_DIR}/src SYSTEM)
+add_compile_definitions(ASMJIT_NO_STDCXX)
 
 if (NOT DEFINED JIT_TEST)
     set(JIT_TEST FALSE)
@@ -169,7 +176,7 @@ include(${ZLIB_SOURCE_DIR}/CMakeLists.txt)
 # ZLIB_SRCS is defined in Zlib Cmake config
 add_library(questdb SHARED ${SOURCE_FILES} ${ZLIB_SRCS} ${ASMJIT_SRC})
 
-set(COMMON_OPTIONS "-Wno-gnu-anonymous-struct;-Wno-nested-anon-types;-Wno-unused-parameter")
+set(COMMON_OPTIONS "-Wno-gnu-anonymous-struct;-Wno-nested-anon-types;-Wno-unused-parameter;-fPIC;-fno-rtti;-fno-exceptions")
 
 set(DEBUG_OPTIONS "-Wall;-pedantic;-Wextra;-g;-O2")
 set(RELEASE_OPTIONS "-O3")
@@ -276,9 +283,11 @@ else ()
 endif (AARCH64)
 
 if (WIN32)
-    target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi)
+    target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi -s -static-libgcc -static-libstdc++)
+    target_compile_options(questdb PRIVATE -fno-threadsafe-statics)
 elseif (APPLE)
-    target_link_libraries(questdb)
+    target_link_libraries(questdb -nostdlib++ -dead_strip)
 else ()
-    target_link_libraries(questdb rt)
+    target_compile_options(questdb PRIVATE -fno-threadsafe-statics -ffunction-sections -fdata-sections)
+    target_link_libraries(questdb rt -Wl,--gc-sections -Wl,--exclude-libs=ALL -static-libgcc -static-libstdc++)
 endif (WIN32)
