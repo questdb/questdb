@@ -55,7 +55,11 @@ public class O3PurgeJob extends AbstractQueueConsumerJob<O3PurgeTask> {
         final long readerTxn = txnScoreboard.getMin();
         final long readerTxnCount = txnScoreboard.getActiveReaderCount(readerTxn);
         int errno = -1;
-        if (txnScoreboard.isTxnAvailable(minTxnToExpect)) {
+        long minLocked = txnScoreboard.getMin();
+        if (minLocked > minTxnToExpect || readerTxnCount == 0) {
+            TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
+            TableUtils.txnPartitionConditionally(path, nameTxnToRemove);
+            path.slash$();
             LOG.info().
                     $("purging [path=").$(path)
                     .$(", readerTxn=").$(readerTxn)
@@ -63,9 +67,6 @@ public class O3PurgeJob extends AbstractQueueConsumerJob<O3PurgeTask> {
                     .$(", minTxnToExpect=").$(minTxnToExpect)
                     .$(", nameTxnToRemove=").$(nameTxnToRemove)
                     .I$();
-            TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
-            TableUtils.txnPartitionConditionally(path, nameTxnToRemove);
-            path.slash$();
             if ((errno = ff.rmdir(path)) == 0) {
                 LOG.info().
                         $("purged [path=").$(path)
@@ -97,12 +98,14 @@ public class O3PurgeJob extends AbstractQueueConsumerJob<O3PurgeTask> {
         if (errno == 0) {
             return true;
         } else {
-            LOG.info()
-                    .$("could not purge, re-queue? [table=").$(task.getTableName())
-                    .$(", ts=").$ts(task.getTimestamp())
-                    .$(", txn=").$(task.getNameTxnToRemove())
-                    .$(", errno=").$(errno)
-                    .$(']').$();
+            if (errno > -1) {
+                LOG.error()
+                        .$("could not purge, re-queue? [table=").$(task.getTableName())
+                        .$(", ts=").$ts(task.getTimestamp())
+                        .$(", txn=").$(task.getNameTxnToRemove())
+                        .$(", errno=").$(errno)
+                        .$(']').$();
+            }
             return false;
         }
     }
