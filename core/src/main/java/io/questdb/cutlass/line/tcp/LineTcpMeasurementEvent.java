@@ -34,7 +34,6 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.FloatingDirectCharSink;
 
 import java.io.Closeable;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.COLUMN_NOT_FOUND;
@@ -51,9 +50,6 @@ class LineTcpMeasurementEvent implements Closeable {
     private int reshuffleTargetWorkerId;
     private volatile boolean reshuffleComplete;
     private boolean commitOnWriterClose;
-
-    private static final AtomicInteger readCount = new AtomicInteger();
-    private static final AtomicInteger writeCount = new AtomicInteger();
 
     LineTcpMeasurementEvent(
             long bufLo,
@@ -103,7 +99,6 @@ class LineTcpMeasurementEvent implements Closeable {
     }
 
     void append(FloatingDirectCharSink floatingCharSink) {
-        LOG.info().$(writeCount.incrementAndGet()).$();
         TableWriter.Row row = null;
         try {
             TableWriter writer = tableUpdateDetails.getWriter();
@@ -433,7 +428,6 @@ class LineTcpMeasurementEvent implements Closeable {
             FloatingDirectCharSink floatingCharSink,
             int workerId
     ) {
-        //LOG.info().$("read: ").$(readCount.incrementAndGet()).$();
         writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_INCOMPLETE_EVENT;
         final TableUpdateDetails.ThreadLocalDetails localDetails = tableUpdateDetails.getThreadLocalDetails(workerId);
         localDetails.resetProcessedColumnsTracking();
