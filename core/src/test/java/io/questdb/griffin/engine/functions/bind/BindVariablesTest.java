@@ -34,7 +34,9 @@ import io.questdb.griffin.engine.TestBinarySequence;
 import io.questdb.griffin.engine.functions.bool.NotFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.eq.EqByteFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqLong256FunctionFactory;
+import io.questdb.griffin.engine.functions.eq.EqShortFunctionFactory;
 import io.questdb.griffin.engine.functions.math.*;
 import io.questdb.griffin.engine.functions.str.*;
 import io.questdb.std.*;
@@ -212,32 +214,32 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     @Test
     public void testByte() throws SqlException {
         bindVariableService.setByte("xyz", (byte) 8);
-        Function func = expr("b + :xyz")
-                .withFunction(new AddByteFunctionFactory())
+        Function func = expr("b = :xyz")
+                .withFunction(new EqByteFunctionFactory())
                 .withColumn("b", ColumnType.BYTE, (byte) 22)
                 .$();
 
         func.init(null, sqlExecutionContext);
-        Assert.assertEquals(30, func.getByte(builder.getRecord()));
+        Assert.assertFalse(func.getBool(builder.getRecord()));
 
-        bindVariableService.setByte("xyz", (byte) 10);
-        Assert.assertEquals(32, func.getByte(builder.getRecord()));
+        bindVariableService.setByte("xyz", (byte) 22);
+        Assert.assertTrue(func.getBool(builder.getRecord()));
     }
 
     @Test
     public void testByteIndexed() throws SqlException {
         bindVariableService.setByte(1, (byte) -1);
         bindVariableService.setByte(0, (byte) 8);
-        Function func = expr("b + $1")
-                .withFunction(new AddByteFunctionFactory())
+        Function func = expr("b = $1")
+                .withFunction(new EqByteFunctionFactory())
                 .withColumn("b", ColumnType.BYTE, (byte) 22)
                 .$();
 
         func.init(null, sqlExecutionContext);
-        Assert.assertEquals(30, func.getByte(builder.getRecord()));
+        Assert.assertFalse(func.getBool(builder.getRecord()));
 
-        bindVariableService.setByte(0, (byte) 10);
-        Assert.assertEquals(32, func.getByte(builder.getRecord()));
+        bindVariableService.setByte(0, (byte) 22);
+        Assert.assertTrue(func.getBool(builder.getRecord()));
     }
 
     @Test
@@ -638,32 +640,32 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     @Test
     public void testShort() throws SqlException {
         bindVariableService.setShort("xyz", (short) 8);
-        Function func = expr("b + :xyz")
-                .withFunction(new AddShortFunctionFactory())
+        Function func = expr("b = :xyz")
+                .withFunction(new EqShortFunctionFactory())
                 .withColumn("b", ColumnType.SHORT, (short) 22)
                 .$();
 
         func.init(null, sqlExecutionContext);
-        Assert.assertEquals(30, func.getShort(builder.getRecord()));
+        Assert.assertFalse(func.getBool(builder.getRecord()));
 
-        bindVariableService.setShort("xyz", (short) 33);
-        Assert.assertEquals(55, func.getShort(builder.getRecord()));
+        bindVariableService.setShort("xyz", (short) 22);
+        Assert.assertTrue(func.getBool(builder.getRecord()));
     }
 
     @Test
     public void testShortIndexed() throws SqlException {
         bindVariableService.setShort(1, (short) 2);
         bindVariableService.setShort(0, (short) 8);
-        Function func = expr("b + $1")
-                .withFunction(new AddShortFunctionFactory())
+        Function func = expr("b = $1")
+                .withFunction(new EqShortFunctionFactory())
                 .withColumn("b", ColumnType.SHORT, (short) 22)
                 .$();
 
         func.init(null, sqlExecutionContext);
-        Assert.assertEquals(30, func.getShort(builder.getRecord()));
+        Assert.assertFalse(func.getBool(builder.getRecord()));
 
-        bindVariableService.setShort(0, (short) 33);
-        Assert.assertEquals(55, func.getShort(builder.getRecord()));
+        bindVariableService.setShort(0, (short) 22);
+        Assert.assertTrue(func.getBool(builder.getRecord()));
     }
 
     @Test

@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.*;
@@ -87,8 +88,9 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getHttpServerConfiguration().isEnabled());
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getDumpNetworkTraffic());
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().allowDeflateBeforeSend());
-        Assert.assertEquals(16, configuration.getHttpServerConfiguration().getQueryCacheRows());
-        Assert.assertEquals(4, configuration.getHttpServerConfiguration().getQueryCacheBlocks());
+        Assert.assertTrue(configuration.getHttpServerConfiguration().isQueryCacheEnabled());
+        Assert.assertEquals(4, configuration.getHttpServerConfiguration().getQueryCacheBlockCount());
+        Assert.assertEquals(16, configuration.getHttpServerConfiguration().getQueryCacheRowCount());
 
         // this is going to need interesting validation logic
         // configuration path is expected to be relative and we need to check if absolute path is good
@@ -201,6 +203,17 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(-1, configuration.getLineUdpReceiverConfiguration().ownThreadAffinity());
         Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().ownThread());
 
+        Assert.assertEquals(8 * 1024 * 1024, configuration.getCairoConfiguration().getSqlPageFrameMaxSize());
+
+        Assert.assertEquals(SqlJitMode.JIT_MODE_DISABLED, configuration.getCairoConfiguration().getSqlJitMode());
+        Assert.assertEquals(8192, configuration.getCairoConfiguration().getSqlJitIRMemoryPageSize());
+        Assert.assertEquals(8, configuration.getCairoConfiguration().getSqlJitIRMemoryMaxPages());
+        Assert.assertEquals(4096, configuration.getCairoConfiguration().getSqlJitBindVarsMemoryPageSize());
+        Assert.assertEquals(8, configuration.getCairoConfiguration().getSqlJitBindVarsMemoryMaxPages());
+        Assert.assertEquals(1024 * 1024, configuration.getCairoConfiguration().getSqlJitRowsThreshold());
+        Assert.assertEquals(1024 * 1024, configuration.getCairoConfiguration().getSqlJitPageAddressCacheThreshold());
+        Assert.assertFalse(configuration.getCairoConfiguration().isSqlJitDebugEnabled());
+
         // statics
         Assert.assertSame(FilesFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getFilesFacade());
         Assert.assertSame(MillisecondClockImpl.INSTANCE, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getClock());
@@ -274,6 +287,15 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(16777216, configuration.getCairoConfiguration().getDataIndexValueAppendPageSize());
         Assert.assertEquals(Files.PAGE_SIZE, configuration.getCairoConfiguration().getMiscAppendPageSize());
         Assert.assertEquals(2.0, configuration.getHttpServerConfiguration().getWaitProcessorConfiguration().getExponentialWaitMultiplier(), 0.00001);
+
+        // Pg wire
+        Assert.assertEquals(2, configuration.getPGWireConfiguration().getBinParamCountCapacity());
+        Assert.assertTrue(configuration.getPGWireConfiguration().isSelectCacheEnabled());
+        Assert.assertEquals(16, configuration.getPGWireConfiguration().getSelectCacheBlockCount());
+        Assert.assertEquals(16, configuration.getPGWireConfiguration().getSelectCacheRowCount());
+        Assert.assertTrue(configuration.getPGWireConfiguration().isInsertCacheEnabled());
+        Assert.assertEquals(8, configuration.getPGWireConfiguration().getInsertCacheBlockCount());
+        Assert.assertEquals(8, configuration.getPGWireConfiguration().getInsertCacheRowCount());
     }
 
     @Test
@@ -444,8 +466,9 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getHttpServerConfiguration().haltOnError());
             Assert.assertEquals(128, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getSendBufferSize());
             Assert.assertEquals("index2.html", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getIndexFileName());
-            Assert.assertEquals(32, configuration.getHttpServerConfiguration().getQueryCacheRows());
-            Assert.assertEquals(16, configuration.getHttpServerConfiguration().getQueryCacheBlocks());
+            Assert.assertFalse(configuration.getHttpServerConfiguration().isQueryCacheEnabled());
+            Assert.assertEquals(32, configuration.getHttpServerConfiguration().getQueryCacheBlockCount());
+            Assert.assertEquals(16, configuration.getHttpServerConfiguration().getQueryCacheRowCount());
 
             Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext());
             Assert.assertEquals(50000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
@@ -566,6 +589,17 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(2, configuration.getLineUdpReceiverConfiguration().ownThreadAffinity());
             Assert.assertTrue(configuration.getLineUdpReceiverConfiguration().ownThread());
 
+            Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlPageFrameMaxSize());
+
+            Assert.assertEquals(SqlJitMode.JIT_MODE_FORCE_SCALAR, configuration.getCairoConfiguration().getSqlJitMode());
+            Assert.assertEquals(2048, configuration.getCairoConfiguration().getSqlJitIRMemoryPageSize());
+            Assert.assertEquals(2, configuration.getCairoConfiguration().getSqlJitIRMemoryMaxPages());
+            Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlJitBindVarsMemoryPageSize());
+            Assert.assertEquals(1, configuration.getCairoConfiguration().getSqlJitBindVarsMemoryMaxPages());
+            Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlJitRowsThreshold());
+            Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlJitPageAddressCacheThreshold());
+            Assert.assertTrue(configuration.getCairoConfiguration().isSqlJitDebugEnabled());
+
             // influxdb line TCP protocol
             Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().isEnabled());
             Assert.assertEquals(11, configuration.getLineTcpReceiverConfiguration().getNetDispatcherConfiguration().getActiveConnectionLimit());
@@ -615,6 +649,12 @@ public class PropServerConfigurationTest {
 
             // Pg wire
             Assert.assertEquals(9, configuration.getPGWireConfiguration().getBinParamCountCapacity());
+            Assert.assertFalse(configuration.getPGWireConfiguration().isSelectCacheEnabled());
+            Assert.assertEquals(1, configuration.getPGWireConfiguration().getSelectCacheBlockCount());
+            Assert.assertEquals(2, configuration.getPGWireConfiguration().getSelectCacheRowCount());
+            Assert.assertFalse(configuration.getPGWireConfiguration().isInsertCacheEnabled());
+            Assert.assertEquals(128, configuration.getPGWireConfiguration().getInsertCacheBlockCount());
+            Assert.assertEquals(256, configuration.getPGWireConfiguration().getInsertCacheRowCount());
         }
     }
 
@@ -637,5 +677,29 @@ public class PropServerConfigurationTest {
             PropServerConfiguration configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
             Assert.assertNull(configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getKeepAliveHeader());
         }
+    }
+
+    @Test
+    public void testSqlJitMode() throws ServerConfigurationException, JsonException {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.jit.mode", "");
+        PropServerConfiguration configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(SqlJitMode.JIT_MODE_DISABLED, configuration.getCairoConfiguration().getSqlJitMode());
+
+        properties.setProperty("cairo.sql.jit.mode", "on");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(SqlJitMode.JIT_MODE_ENABLED, configuration.getCairoConfiguration().getSqlJitMode());
+
+        properties.setProperty("cairo.sql.jit.mode", "scalar");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(SqlJitMode.JIT_MODE_FORCE_SCALAR, configuration.getCairoConfiguration().getSqlJitMode());
+
+        properties.setProperty("cairo.sql.jit.mode", "off");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(SqlJitMode.JIT_MODE_DISABLED, configuration.getCairoConfiguration().getSqlJitMode());
+
+        properties.setProperty("cairo.sql.jit.mode", "foobar");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(SqlJitMode.JIT_MODE_DISABLED, configuration.getCairoConfiguration().getSqlJitMode());
     }
 }

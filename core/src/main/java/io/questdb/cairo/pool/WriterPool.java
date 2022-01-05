@@ -484,14 +484,19 @@ public class WriterPool extends AbstractPool {
             e.ownershipReason = OWNERSHIP_REASON_NONE;
             e.lastReleaseTime = configuration.getMicrosecondClock().getTicks();
             Unsafe.getUnsafe().storeFence();
+            Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
 
             if (isClosed()) {
-                e.writer = null;
-                notifyListener(thread, name, PoolListener.EV_OUT_OF_POOL_CLOSE);
-                return false;
+                // when pool is closed it could be busy releasing writer
+                // to avoid race condition try to grab the writer before declaring it a
+                // free agent
+                if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
+                    e.writer = null;
+                    notifyListener(thread, name, PoolListener.EV_OUT_OF_POOL_CLOSE);
+                    return false;
+                }
             }
 
-            Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
             notifyListener(thread, name, PoolListener.EV_RETURN);
         } else {
             LOG.error().$("orphaned [table=`").utf8(name).$("`]").$();

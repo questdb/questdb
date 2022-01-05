@@ -27,9 +27,12 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.analytic.AnalyticFunction;
@@ -48,16 +51,24 @@ import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
 import io.questdb.griffin.engine.table.*;
 import io.questdb.griffin.engine.union.*;
 import io.questdb.griffin.model.*;
+import io.questdb.jit.CompiledFilter;
+import io.questdb.jit.CompiledFilterIRSerializer;
+import io.questdb.jit.JitUtil;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+
+import java.io.Closeable;
 
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
 import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 import static io.questdb.griffin.model.QueryModel.*;
 
-public class SqlCodeGenerator implements Mutable {
+public class SqlCodeGenerator implements Mutable, Closeable {
+    private static final Log LOG = LogFactory.getLog(SqlCodeGenerator.class);
     public static final int GKK_VANILLA_INT = 0;
     public static final int GKK_HOUR_INT = 1;
     private static final IntHashSet limitTypes = new IntHashSet();
@@ -70,11 +81,15 @@ public class SqlCodeGenerator implements Mutable {
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> avgConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> minConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> maxConstructors = new IntObjHashMap<>();
-    private static final VectorAggregateFunctionConstructor countConstructor = (keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(keyKind);
+    private static final VectorAggregateFunctionConstructor COUNT_CONSTRUCTOR = (keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(keyKind);
     private static final SetRecordCursorFactoryConstructor SET_UNION_CONSTRUCTOR = UnionRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_INTERSECT_CONSTRUCTOR = IntersectRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = ExceptRecordCursorFactory::new;
     private final WhereClauseParser whereClauseParser = new WhereClauseParser();
+    private final CompiledFilterIRSerializer jitIRSerializer = new CompiledFilterIRSerializer();
+    private final MemoryCARW jitIRMem;
+    private boolean enableJitNullChecks = true;
+    private final boolean enableJitDebug;
     private final FunctionParser functionParser;
     private final CairoEngine engine;
     private final BytecodeAssembler asm = new BytecodeAssembler();
@@ -122,11 +137,22 @@ public class SqlCodeGenerator implements Mutable {
         this.configuration = configuration;
         this.functionParser = functionParser;
         this.recordComparatorCompiler = new RecordComparatorCompiler(asm);
+        this.enableJitDebug = configuration.isSqlJitDebugEnabled();
+        this.jitIRMem = Vm.getCARWInstance(configuration.getSqlJitIRMemoryPageSize(),
+                configuration.getSqlJitIRMemoryMaxPages(), MemoryTag.NATIVE_JIT);
+        // Pre-touch JIT IR memory to avoid false positive memleak detections.
+        jitIRMem.putByte((byte) 0);
+        jitIRMem.truncate();
     }
 
     @Override
     public void clear() {
         whereClauseParser.clear();
+    }
+
+    @Override
+    public void close() {
+        jitIRMem.close();
     }
 
     @NotNull
@@ -208,7 +234,7 @@ public class SqlCodeGenerator implements Mutable {
         } else if (ast.type == FUNCTION && ast.paramCount == 0 && SqlKeywords.isCountKeyword(ast.token)) {
             // count() is a no-arg function
             tempVecConstructorArgIndexes.add(-1);
-            return countConstructor;
+            return COUNT_CONSTRUCTOR;
         } else if (isSingleColumnFunction(ast, "ksum")) {
             columnIndex = metadata.getColumnIndex(ast.rhs.token);
             tempVecConstructorArgIndexes.add(columnIndex);
@@ -333,7 +359,6 @@ public class SqlCodeGenerator implements Mutable {
         for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
             intHashSet.add(listColumnFilterA.getColumnIndexFactored(i));
         }
-
 
         // map doesn't support variable length types in map value, which is ok
         // when we join tables on strings - technically string is the key
@@ -688,9 +713,9 @@ public class SqlCodeGenerator implements Mutable {
     @NotNull
     private RecordCursorFactory generateFilter0(RecordCursorFactory factory, QueryModel model, SqlExecutionContext executionContext, ExpressionNode filter) throws SqlException {
         model.setWhereClause(null);
+
         final Function f = compileFilter(filter, factory.getMetadata(), executionContext);
         if (f.isConstant()) {
-            //noinspection TryFinallyCanBeTryWithResources
             try {
                 if (f.getBool(null)) {
                     return factory;
@@ -701,6 +726,39 @@ public class SqlCodeGenerator implements Mutable {
                 f.close();
             }
         }
+
+        boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED;
+        if (useJit) {
+            final boolean optimize = factory.supportPageFrameCursor() && JitUtil.isJitSupported();
+            if (optimize) {
+                try {
+                    int jitOptions;
+                    final ObjList<Function> bindVarFunctions = new ObjList<>();
+                    try (PageFrameCursor cursor = factory.getPageFrameCursor(executionContext)) {
+                        final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
+                        jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), cursor, bindVarFunctions);
+                        jitOptions = jitIRSerializer.serialize(filter, forceScalar, enableJitDebug, enableJitNullChecks);
+                    }
+
+                    final CompiledFilter jitFilter = new CompiledFilter();
+                    jitFilter.compile(jitIRMem, jitOptions);
+
+                    LOG.info()
+                            .$("JIT enabled for (sub)query [tableName=").utf8(model.getName())
+                            .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
+                    return new CompiledFilterRecordCursorFactory(configuration, factory, bindVarFunctions, f, jitFilter);
+                } catch (SqlException | LimitOverflowException ex) {
+                    LOG.debug()
+                            .$("JIT cannot be applied to (sub)query [tableName=").utf8(model.getName())
+                            .$(", ex=").$(ex.getFlyweightMessage())
+                            .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
+                } finally {
+                    jitIRSerializer.clear();
+                    jitIRMem.truncate();
+                }
+            }
+        }
+
         return new FilteredRecordCursorFactory(factory, f);
     }
 
@@ -1027,6 +1085,7 @@ public class SqlCodeGenerator implements Mutable {
                             );
                         }
                         return new DataFrameRecordCursorFactory(
+                                configuration,
                                 metadata,
                                 dataFrameCursorFactory,
                                 rcf,
@@ -2467,48 +2526,7 @@ public class SqlCodeGenerator implements Mutable {
                 }
             }
 
-            listColumnFilterA.clear();
-            final int latestByColumnCount = latestBy.size();
-
-            if (latestByColumnCount > 0) {
-                // validate the latest by against current reader
-                // first check if column is valid
-                for (int i = 0; i < latestByColumnCount; i++) {
-                    final ExpressionNode latestByNode = latestBy.getQuick(i);
-                    final int index = myMeta.getColumnIndexQuiet(latestByNode.token);
-                    if (index == -1) {
-                        throw SqlException.invalidColumn(latestByNode.position, latestByNode.token);
-                    }
-
-                    // check the type of the column, not all are supported
-                    int columnType = myMeta.getColumnType(index);
-                    switch (ColumnType.tagOf(columnType)) {
-                        case ColumnType.BOOLEAN:
-                        case ColumnType.CHAR:
-                        case ColumnType.SHORT:
-                        case ColumnType.INT:
-                        case ColumnType.LONG:
-                        case ColumnType.LONG256:
-                        case ColumnType.STRING:
-                        case ColumnType.SYMBOL:
-                            // we are reusing collections which leads to confusing naming for this method
-                            // keyTypes are types of columns we collect 'latest by' for
-                            keyTypes.add(columnType);
-                            // columnFilterA are indexes of columns we collect 'latest by' for
-                            listColumnFilterA.add(index + 1);
-                            break;
-
-                        default:
-                            throw SqlException
-                                    .position(latestByNode.position)
-                                    .put(latestByNode.token)
-                                    .put(" (")
-                                    .put(ColumnType.nameOf(columnType))
-                                    .put("): invalid type, only [BOOLEAN, SHORT, INT, LONG, LONG256, CHAR, STRING, SYMBOL] are supported in LATEST BY");
-                    }
-                }
-            }
-
+            final int latestByColumnCount = prepareLatestByColumnIndexes(latestBy, myMeta);
             final String tableName = reader.getTableName();
 
             final ExpressionNode withinExtracted = whereClauseParser.extractWithin(
@@ -2533,7 +2551,6 @@ public class SqlCodeGenerator implements Mutable {
                         preferredKeyColumn = latestBy.getQuick(0).token;
                     }
                 }
-
 
                 final IntrinsicModel intrinsicModel = whereClauseParser.extract(
                         model,
@@ -2566,6 +2583,10 @@ public class SqlCodeGenerator implements Mutable {
                     if (f != null && f.isConstant() && !f.getBool(null)) {
                         return new EmptyTableRecordCursorFactory(myMeta);
                     }
+
+                    // a subquery present in the filter may have used the latest by
+                    // column index lists, so we need to regenerate them
+                    prepareLatestByColumnIndexes(latestBy, myMeta);
 
                     return generateLatestByQuery(
                             model,
@@ -2661,14 +2682,14 @@ public class SqlCodeGenerator implements Mutable {
                             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                                 if (f == null) {
                                     rcf = new DeferredSymbolIndexRowCursorFactory(keyColumnIndex,
-                                            functionParser.createBindVariable(intrinsicModel.keyValuePositions.getQuick(0), symbol),
+                                            functionParser.createBindVariable(executionContext, intrinsicModel.keyValuePositions.getQuick(0), symbol),
                                             true,
                                             indexDirection
                                     );
                                 } else {
                                     rcf = new DeferredSymbolIndexFilteredRowCursorFactory(
                                             keyColumnIndex,
-                                            functionParser.createBindVariable(intrinsicModel.keyValuePositions.getQuick(0), symbol),
+                                            functionParser.createBindVariable(executionContext, intrinsicModel.keyValuePositions.getQuick(0), symbol),
                                             f,
                                             true,
                                             indexDirection,
@@ -2687,6 +2708,7 @@ public class SqlCodeGenerator implements Mutable {
                                 // This special case factory can later be disassembled to framing and index
                                 // cursors in Sample By processing
                                 return new DeferredSingleSymbolFilterDataFrameRecordCursorFactory(
+                                        configuration,
                                         keyColumnIndex,
                                         symbol,
                                         rcf,
@@ -2698,6 +2720,7 @@ public class SqlCodeGenerator implements Mutable {
                                 );
                             }
                             return new DataFrameRecordCursorFactory(
+                                    configuration,
                                     myMeta,
                                     dfcFactory,
                                     rcf,
@@ -2712,7 +2735,11 @@ public class SqlCodeGenerator implements Mutable {
                         symbolValueList.clear();
 
                         for (int i = 0, n = intrinsicModel.keyValues.size(); i < n; i++) {
-                            symbolValueList.add(functionParser.createBindVariable(intrinsicModel.keyValuePositions.getQuick(i), intrinsicModel.keyValues.get(i)));
+                            symbolValueList.add(functionParser.createBindVariable(
+                                    executionContext,
+                                    intrinsicModel.keyValuePositions.getQuick(i),
+                                    intrinsicModel.keyValues.get(i))
+                            );
                         }
 
                         if (orderByKeyColumn) {
@@ -2739,7 +2766,11 @@ public class SqlCodeGenerator implements Mutable {
                     ) {
                         symbolValueList.clear();
                         for (int i = 0, n = intrinsicModel.keyExcludedValues.size(); i < n; i++) {
-                            symbolValueList.add(functionParser.createBindVariable(intrinsicModel.keyExcludedValuePositions.getQuick(i), intrinsicModel.keyExcludedValues.get(i)));
+                            symbolValueList.add(functionParser.createBindVariable(
+                                    executionContext,
+                                    intrinsicModel.keyExcludedValuePositions.getQuick(i),
+                                    intrinsicModel.keyExcludedValues.get(i))
+                            );
                         }
                         Function f = compileFilter(intrinsicModel, myMeta, executionContext);
                         if (f != null && f.isConstant()) {
@@ -2807,6 +2838,7 @@ public class SqlCodeGenerator implements Mutable {
 
                 model.setWhereClause(intrinsicModel.filter);
                 return new DataFrameRecordCursorFactory(
+                        configuration,
                         myMeta,
                         dfcFactory,
                         new DataFrameRowCursorFactory(),
@@ -2825,6 +2857,7 @@ public class SqlCodeGenerator implements Mutable {
                 // in the interest of isolating problems we will only affect this factory
 
                 return new DataFrameRecordCursorFactory(
+                        configuration,
                         myMeta,
                         new FullFwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()),
                         new DataFrameRowCursorFactory(),
@@ -2859,6 +2892,52 @@ public class SqlCodeGenerator implements Mutable {
                     columnIndexes
             );
         }
+    }
+
+    private int prepareLatestByColumnIndexes(ObjList<ExpressionNode> latestBy, GenericRecordMetadata myMeta) throws SqlException {
+        keyTypes.clear();
+        listColumnFilterA.clear();
+
+        final int latestByColumnCount = latestBy.size();
+        if (latestByColumnCount > 0) {
+            // validate the latest by against the current reader
+            // first check if column is valid
+            for (int i = 0; i < latestByColumnCount; i++) {
+                final ExpressionNode latestByNode = latestBy.getQuick(i);
+                final int index = myMeta.getColumnIndexQuiet(latestByNode.token);
+                if (index == -1) {
+                    throw SqlException.invalidColumn(latestByNode.position, latestByNode.token);
+                }
+
+                // check the type of the column, not all are supported
+                int columnType = myMeta.getColumnType(index);
+                switch (ColumnType.tagOf(columnType)) {
+                    case ColumnType.BOOLEAN:
+                    case ColumnType.CHAR:
+                    case ColumnType.SHORT:
+                    case ColumnType.INT:
+                    case ColumnType.LONG:
+                    case ColumnType.LONG256:
+                    case ColumnType.STRING:
+                    case ColumnType.SYMBOL:
+                        // we are reusing collections which leads to confusing naming for this method
+                        // keyTypes are types of columns we collect 'latest by' for
+                        keyTypes.add(columnType);
+                        // listColumnFilterA are indexes of columns we collect 'latest by' for
+                        listColumnFilterA.add(index + 1);
+                        break;
+
+                    default:
+                        throw SqlException
+                                .position(latestByNode.position)
+                                .put(latestByNode.token)
+                                .put(" (")
+                                .put(ColumnType.nameOf(columnType))
+                                .put("): invalid type, only [BOOLEAN, SHORT, INT, LONG, LONG256, CHAR, STRING, SYMBOL] are supported in LATEST BY");
+                }
+            }
+        }
+        return latestByColumnCount;
     }
 
     private RecordCursorFactory generateUnionAllFactory(
@@ -3074,6 +3153,11 @@ public class SqlCodeGenerator implements Mutable {
         }
 
         return ColumnType.isString(columnType) ? Record.GET_STR : Record.GET_SYM;
+    }
+
+    // used in tests
+    void setEnableJitNullChecks(boolean value) {
+        enableJitNullChecks = value;
     }
 
     @FunctionalInterface

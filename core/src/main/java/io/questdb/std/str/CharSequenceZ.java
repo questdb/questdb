@@ -47,6 +47,11 @@ public final class CharSequenceZ extends AbstractCharSequence implements Closeab
     }
 
     @Override
+    public int capacity() {
+        return capacity;
+    }
+
+    @Override
     public void close() {
         if (ptr != 0) {
             Unsafe.free(ptr, capacity + 1, MemoryTag.NATIVE_DEFAULT);

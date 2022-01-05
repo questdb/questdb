@@ -162,7 +162,7 @@ public class LatestByParallelTest {
                 " from long_sequence(20)" +
                 "), index(b) timestamp(k) partition by DAY";
 
-        final String query = "select a,k,b from x latest by b where a > 40";
+        final String query = "select a,k,b from x where a > 40 latest on k partition by b";
 
         assertQuery(compiler, sqlExecutionContext, expected, ddl, query);
     }
@@ -190,7 +190,7 @@ public class LatestByParallelTest {
                 " long_sequence(20)" +
                 "), index(b) timestamp(k) partition by DAY";
 
-        final String query = "select * from x latest by b";
+        final String query = "select * from x latest on k partition by b";
 
         assertQuery(compiler, sqlExecutionContext, expected, ddl, query);
     }
@@ -215,7 +215,7 @@ public class LatestByParallelTest {
                 " long_sequence(20)" +
                 "), index(b) timestamp(k) partition by DAY";
 
-        final String query = "select * from x latest by b where k < '1970-01-03'";
+        final String query = "select * from x where k < '1970-01-03' latest on k partition by b";
 
         assertQuery(compiler, sqlExecutionContext, expected, ddl, query);
     }

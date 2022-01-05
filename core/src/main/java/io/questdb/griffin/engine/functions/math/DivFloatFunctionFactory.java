@@ -30,33 +30,33 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.ByteFunction;
+import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class AddByteFunctionFactory implements FunctionFactory {
+public class DivFloatFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "+(BB)";
+        return "/(FF)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
-        return new AddShortVVFunc(args.getQuick(0), args.getQuick(1));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new Func(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class AddShortVVFunc extends ByteFunction implements BinaryFunction {
-        final Function left;
-        final Function right;
+    private static class Func extends FloatFunction implements BinaryFunction {
+        private final Function left;
+        private final Function right;
 
-        public AddShortVVFunc(Function left, Function right) {
+        public Func(Function left, Function right) {
             this.left = left;
             this.right = right;
         }
 
         @Override
-        public byte getByte(Record rec) {
-            return (byte) (left.getByte(rec) + right.getByte(rec));
+        public float getFloat(Record rec) {
+            return left.getFloat(rec) / right.getFloat(rec);
         }
 
         @Override

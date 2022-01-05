@@ -127,39 +127,6 @@ public final class SqlParser {
         }
     }
 
-    static int parseGeoHashBits(int position, int start, CharSequence sizeStr) throws SqlException {
-        assert start >= 0;
-        if (sizeStr.length() - start < 2) {
-            throw SqlException.position(position)
-                    .put("invalid GEOHASH size, must be number followed by 'C' or 'B' character");
-        }
-        int size;
-        try {
-            size = Numbers.parseInt(sizeStr, start, sizeStr.length() - 1);
-        } catch (NumericException e) {
-            throw SqlException.position(position)
-                    .put("invalid GEOHASH size, must be number followed by 'C' or 'B' character");
-        }
-        switch (sizeStr.charAt(sizeStr.length() - 1)) {
-            case 'C':
-            case 'c':
-                size *= 5;
-                break;
-            case 'B':
-            case 'b':
-                break;
-            default:
-                throw SqlException.position(position)
-                        .put("invalid GEOHASH size units, must be 'c', 'C' for chars, or 'b', 'B' for bits");
-        }
-        if (size < 1 || size > ColumnType.GEO_HASH_MAX_BITS_LENGTH) {
-            throw SqlException.position(position)
-                    .put("invalid GEOHASH type precision range, mast be [1, 60] bits, provided=")
-                    .put(size);
-        }
-        return size;
-    }
-
     private void addConcatArgs(ObjList<ExpressionNode> args, ExpressionNode leaf) {
         if (leaf.type != ExpressionNode.FUNCTION || !isConcatFunction(leaf.token)) {
             args.add(leaf);
@@ -909,7 +876,7 @@ public final class SqlParser {
             parseSelectFrom(lexer, model, masterModel);
             tok = setModelAliasAndTimestamp(lexer, model);
 
-            // expect [latest by]
+            // expect [latest by] (deprecated syntax)
             if (tok != null && isLatestKeyword(tok)) {
                 parseLatestBy(lexer, model);
                 tok = optTok(lexer);
@@ -927,6 +894,9 @@ public final class SqlParser {
         // expect [where]
 
         if (tok != null && isWhereKeyword(tok)) {
+            if (model.getLatestByType() == QueryModel.LATEST_BY_NEW) {
+                throw SqlException.$((lexer.lastTokenPosition()), "unexpected where clause after 'latest on'");
+            }
             ExpressionNode expr = expr(lexer, model);
             if (expr != null) {
                 model.setWhereClause(expr);
@@ -934,6 +904,16 @@ public final class SqlParser {
             } else {
                 throw SqlException.$((lexer.lastTokenPosition()), "empty where clause");
             }
+        }
+
+        // expect [latest by] (new syntax)
+        if (tok != null && isLatestKeyword(tok)) {
+            if (model.getLatestByType() == QueryModel.LATEST_BY_DEPRECATED) {
+                throw SqlException.$((lexer.lastTokenPosition()), "mix of new and deprecated 'latest by' syntax");
+            }
+            expectTok(lexer, "on");
+            parseLatestByNew(lexer, model);
+            tok = optTok(lexer);
         }
 
         // expect [sample by]
@@ -1004,7 +984,7 @@ public final class SqlParser {
             }
         }
 
-        //expect [group by]
+        // expect [group by]
 
         if (tok != null && isGroupKeyword(tok)) {
             expectBy(lexer);
@@ -1249,12 +1229,53 @@ public final class SqlParser {
     }
 
     private void parseLatestBy(GenericLexer lexer, QueryModel model) throws SqlException {
-        expectBy(lexer);
+        CharSequence tok = optTok(lexer);
+        if (tok != null) {
+            if (isByKeyword(tok)) {
+                parseLatestByDeprecated(lexer, model);
+                return;
+            }
+            if (isOnKeyword(tok)) {
+                parseLatestByNew(lexer, model);
+                return;
+            }
+        }
+        throw SqlException.$((lexer.lastTokenPosition()), "'on' or 'by' expected");
+    }
+
+    private void parseLatestByDeprecated(GenericLexer lexer, QueryModel model) throws SqlException {
+        // 'latest by' is already parsed at this point
+
         CharSequence tok;
         do {
             model.addLatestBy(expectLiteral(lexer));
             tok = SqlUtil.fetchNext(lexer);
         } while (Chars.equalsNc(tok, ','));
+
+        model.setLatestByType(QueryModel.LATEST_BY_DEPRECATED);
+
+        if (tok != null) {
+            lexer.unparse();
+        }
+    }
+
+    private void parseLatestByNew(GenericLexer lexer, QueryModel model) throws SqlException {
+        // 'latest on' is already parsed at this point
+
+        // <timestamp>
+        final ExpressionNode timestamp = expectLiteral(lexer);
+        model.setTimestamp(timestamp);
+        // 'partition by'
+        expectTok(lexer, "partition");
+        expectTok(lexer, "by");
+        // <columns>
+        CharSequence tok;
+        do {
+            model.addLatestBy(expectLiteral(lexer));
+            tok = SqlUtil.fetchNext(lexer);
+        } while (Chars.equalsNc(tok, ','));
+
+        model.setLatestByType(QueryModel.LATEST_BY_NEW);
 
         if (tok != null) {
             lexer.unparse();
@@ -1716,7 +1737,7 @@ public final class SqlParser {
         }
         if (ColumnType.GEOHASH == type) {
             expectTok(lexer, '(');
-            final int bits = parseGeoHashBits(lexer.lastTokenPosition(), 0, expectLiteral(lexer).token);
+            final int bits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, expectLiteral(lexer).token);
             expectTok(lexer, ')');
             return ColumnType.getGeoHashTypeWithBits(bits);
         }

@@ -30,6 +30,8 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
@@ -39,9 +41,11 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class MemoryLeakTest extends AbstractGriffinTest {
+    private static final Log LOG = LogFactory.getLog(MemoryLeakTest.class);
 
     @Test
     public void testQuestDbForLeaks() throws Exception {
+        LOG.info().$("testQuestDbForLeaks").$();
         assertMemoryLeak(() -> {
             int N = 1_000_000;
             populateUsersTable(engine, N);
@@ -59,7 +63,7 @@ public class MemoryLeakTest extends AbstractGriffinTest {
                     StringSink sink = new StringSink();
                     sink.clear();
                     sink.put("users");
-                    sink.put(" latest by id where sequence > :low and sequence < :high");
+                    sink.put(" where sequence > :low and sequence < :high latest on timestamp partition by id");
                     try (RecordCursorFactory rcf = compiler.compile(sink, executionContext).getRecordCursorFactory()) {
                         bindVariableService.setLong("low", 0);
                         bindVariableService.setLong("high", N + 1);

@@ -25,10 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.IntList;
-import io.questdb.std.Long256;
-import io.questdb.std.Rows;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
@@ -160,9 +157,9 @@ public class TableReaderSelectedColumnRecord implements Record {
                 recordIndex,
                 TableReader.getPrimaryColumnIndex(columnBase, col)
         );
-        return reader.getColumn(absoluteColumnIndex).getStr(
-                reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex)
-        );
+        long offset = reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex);
+        assert recordIndex != 0 || (offset == 0 || offset == Numbers.LONG_NaN);
+        return reader.getColumn(absoluteColumnIndex).getStr(offset);
     }
 
     @Override

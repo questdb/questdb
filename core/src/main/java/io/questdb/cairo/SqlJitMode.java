@@ -22,21 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.math;
+package io.questdb.cairo;
 
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
-import org.junit.Test;
-
-public class AddShortFunctionFactoryTest extends AbstractFunctionFactoryTest {
-    @Test
-    public void testSimple() throws SqlException {
-        call(45, 51).andAssert((short) 96);
-    }
-
-    @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new AddShortFunctionFactory();
-    }
+public final class SqlJitMode {
+    public static final int JIT_MODE_ENABLED = 0;
+    public static final int JIT_MODE_FORCE_SCALAR = 1;
+    public static final int JIT_MODE_DISABLED = 2;
 }

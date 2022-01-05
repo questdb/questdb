@@ -850,6 +850,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long l = O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr);
             dstFixSize = (dstLen + 1) * Long.BYTES;
             if (dstFixMem == null || dstFixMem.getAppendAddressSize() < dstFixSize || dstVarMem.getAppendAddressSize() < l) {
+                assert dstFixMem == null || dstFixMem.getAppendOffset() - Long.BYTES == (srcDataMax - srcDataTop) * Long.BYTES;
+
                 dstFixOffset = (srcDataMax - srcDataTop) * Long.BYTES;
                 dstFixAddr = mapRW(ff, Math.abs(activeFixFd), dstFixSize, MemoryTag.MMAP_O3);
 
@@ -863,6 +865,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstVarAddr = mapRW(ff, Math.abs(activeVarFd), dstVarSize, MemoryTag.MMAP_O3);
                 dstVarAdjust = 0;
             } else {
+                assert dstFixMem.getAppendOffset() >= Long.BYTES;
+                assert dstFixMem.getAppendOffset() - Long.BYTES == (srcDataMax - srcDataTop) * Long.BYTES;
+
                 dstFixAddr = dstFixMem.getAppendAddress() - Long.BYTES;
                 dstVarAddr = dstVarMem.getAppendAddress();
                 dstFixOffset = 0;
@@ -1991,53 +1996,76 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
                     // at bottom of source var column set length of strings to null (-1) for as many strings
                     // as srcDataTop value.
+                    srcDataVarOffset = srcDataVarSize;
+                    long reservedBytesForColTopNulls;
                     if (ColumnType.isString(columnType)) {
-                        srcDataVarOffset = srcDataVarSize;
-                        srcDataVarSize += srcDataTop * Integer.BYTES + srcDataVarSize;
+                        // We need to reserve null values for every column top value
+                        // in the variable len file. Each null value takes 4 bytes for string
+                        reservedBytesForColTopNulls = srcDataTop * Integer.BYTES;
+                        srcDataVarSize += reservedBytesForColTopNulls + srcDataVarSize;
                         srcDataVarAddr = mapRW(ff, srcVarFd, srcDataVarSize, MemoryTag.MMAP_O3);
-                        Vect.setMemoryInt(srcDataVarAddr + srcDataVarOffset, -1, srcDataTop);
+
+                        // Set var column values to null first srcDataTop times
+                        // Next line should be:
+                        // Vect.setMemoryInt(srcDataVarAddr + srcDataVarOffset, -1, srcDataTop);
+                        // But we can replace it with memset setting each byte to -1
+                        // because binary repr of int -1 is 4 bytes of -1
+                        // memset is faster than any SIMD implementation we can come with
+                        Vect.memset(srcDataVarAddr + srcDataVarOffset, (int) reservedBytesForColTopNulls, -1);
+
+                        // Copy var column data
+                        Vect.memcpy(srcDataVarAddr + srcDataVarOffset + reservedBytesForColTopNulls, srcDataVarAddr, srcDataVarOffset);
 
                         // we need to shift copy the original column so that new block points at strings "below" the
                         // nulls we created above
+                        long hiInclusive = srcDataMax - srcDataTop; // STOP. DON'T ADD +1 HERE. srcHi is inclusive, no need to do +1
+                        assert srcDataFixSize >= srcDataMaxBytes + (hiInclusive + 1) * 8; // make sure enough len mapped
                         O3Utils.shiftCopyFixedSizeColumnData(
-                                -srcDataTop * Integer.BYTES,
+                                -reservedBytesForColTopNulls,
                                 srcDataFixAddr,
                                 0,
-                                srcDataMax - srcDataTop + 1,
+                                hiInclusive,
                                 srcDataFixAddr + srcDataMaxBytes
                         );
 
                         // now set the "empty" bit of fixed size column with references to those
                         // null strings we just added
+                        // Call to setVarColumnRefs32Bit must be after shiftCopyFixedSizeColumnData
+                        // because data first have to be shifted before overwritten
                         Vect.setVarColumnRefs32Bit(srcDataFixAddr + srcDataActualBytes, 0, srcDataTop);
-
-                        Vect.memcpy(srcDataVarAddr + srcDataVarOffset + srcDataTop * Integer.BYTES, srcDataVarAddr, srcDataVarOffset);
                     } else {
-                        srcDataVarOffset = srcDataVarSize;
-                        srcDataVarSize += srcDataTop * Long.BYTES + srcDataVarSize;
+                        // We need to reserve null values for every column top value
+                        // in the variable len file. Each null value takes 8 bytes for binary
+                        reservedBytesForColTopNulls = srcDataTop * Long.BYTES;
+                        srcDataVarSize += reservedBytesForColTopNulls + srcDataVarSize;
                         srcDataVarAddr = mapRW(ff, srcVarFd, srcDataVarSize, MemoryTag.MMAP_O3);
 
-                        Vect.setMemoryLong(srcDataVarAddr + srcDataVarOffset, -1, srcDataTop);
+                        // Set var column values to null first srcDataTop times
+                        // Next line should be:
+                        // Vect.setMemoryLong(srcDataVarAddr + srcDataVarOffset, -1, srcDataTop);
+                        // But we can replace it with memset setting each byte to -1
+                        // because binary repr of int -1 is 4 bytes of -1
+                        // memset is faster than any SIMD implementation we can come with
+                        Vect.memset(srcDataVarAddr + srcDataVarOffset, (int) reservedBytesForColTopNulls, -1);
+
+                        // Copy var column data
+                        Vect.memcpy(srcDataVarAddr + srcDataVarOffset + reservedBytesForColTopNulls, srcDataVarAddr, srcDataVarOffset);
 
                         // we need to shift copy the original column so that new block points at strings "below" the
                         // nulls we created above
+                        long hiInclusive = srcDataMax - srcDataTop; // STOP. DON'T ADD +1 HERE. srcHi is inclusive, no need to do +1
+                        assert srcDataFixSize >= srcDataMaxBytes + (hiInclusive + 1) * 8; // make sure enough len mapped
                         O3Utils.shiftCopyFixedSizeColumnData(
-                                -srcDataTop * Long.BYTES,
+                                -reservedBytesForColTopNulls,
                                 srcDataFixAddr,
                                 0,
-                                srcDataMax - srcDataTop + 1,
+                                hiInclusive,
                                 srcDataFixAddr + srcDataMaxBytes
                         );
 
                         // now set the "empty" bit of fixed size column with references to those
                         // null strings we just added
                         Vect.setVarColumnRefs64Bit(srcDataFixAddr + srcDataActualBytes, 0, srcDataTop);
-
-                        Vect.memcpy(
-                                srcDataVarAddr + srcDataVarOffset + srcDataTop * Long.BYTES,
-                                srcDataVarAddr,
-                                srcDataVarOffset
-                        );
                     }
                     srcDataTop = 0;
                     srcDataFixOffset = srcDataActualBytes;

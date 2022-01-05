@@ -120,4 +120,9 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
+
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
 }

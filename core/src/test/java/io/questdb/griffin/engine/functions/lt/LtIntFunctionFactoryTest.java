@@ -21,32 +21,28 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-const fs = require("fs")
-const path = require("path")
-const archiver = require("archiver")
-const rimraf = require("rimraf")
 
-const source = path.join(process.cwd(), "/dist/")
-const destination = path.join(
-  process.cwd(),
-  "..",
-  "core/src/main/resources/io/questdb/site/public.zip",
-)
+package io.questdb.griffin.engine.functions.lt;
 
-const start = async () => {
-  const archive = archiver("zip", { zlib: { level: 9 } })
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.std.Numbers;
+import org.junit.Test;
 
-  rimraf.sync(destination)
-  const stream = fs.createWriteStream(destination)
+public class LtIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
+    @Test
+    public void testAll() throws SqlException {
+        call(1024, 4560).andAssert(true);
+        call(-13, -1).andAssert(true);
+        call(77, 77).andAssert(false);
+        call(Numbers.INT_NaN, 7).andAssert(false);
+        call(42, Numbers.INT_NaN).andAssert(false);
+        call(Numbers.INT_NaN, Numbers.INT_NaN).andAssert(false);
+    }
 
-  archive
-    .on("error", (err) => {
-      throw err
-    })
-    .directory(source, false)
-    .pipe(stream)
-
-  await archive.finalize()
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new LtIntFunctionFactory();
+    }
 }
-
-start()

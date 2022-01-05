@@ -261,19 +261,15 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testByteToShortCast() throws SqlException {
-        functions.add(new AddShortFunctionFactory());
+        functions.add(new NegShortFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", 1, ColumnType.BYTE));
-        metadata.add(new TableColumnMetadata("b", 2, ColumnType.BYTE));
         FunctionParser functionParser = createFunctionParser();
-        Function function = parseFunction("a+b", metadata, functionParser);
+        Function function = parseFunction("-a", metadata, functionParser);
         Assert.assertEquals(ColumnType.SHORT, function.getType());
-        Assert.assertEquals(131, function.getShort(new Record() {
+        Assert.assertEquals(-90, function.getShort(new Record() {
             @Override
             public byte getByte(int col) {
-                if (col == 0) {
-                    return 41;
-                }
                 return 90;
             }
         }));
@@ -494,7 +490,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
         });
         FunctionParser parser = createFunctionParser();
-        Assert.assertEquals(0, parser.getFunctionCount());
+        Assert.assertEquals(0, parser.getFunctionFactoryCache().getFunctionCount());
     }
 
     @Test
@@ -1575,7 +1571,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         metadata.add(new TableColumnMetadata("b", 2, ColumnType.BOOLEAN));
         FunctionParser functionParser = createFunctionParser();
         Assert.assertNotNull(parseFunction("a or not b", metadata, functionParser));
-        Assert.assertEquals(2, functionParser.getFunctionCount());
+        Assert.assertEquals(2, functionParser.getFunctionFactoryCache().getFunctionCount());
     }
 
     @NotNull

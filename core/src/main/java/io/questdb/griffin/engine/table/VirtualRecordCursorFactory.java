@@ -64,8 +64,9 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
         Misc.free(baseFactory);
     }
 
-    public RecordCursorFactory getBaseFactory() {
-        return baseFactory;
+    @Override
+    public boolean usesCompiledFilter() {
+        return baseFactory.usesCompiledFilter();
     }
 
     @Override

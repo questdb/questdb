@@ -28,7 +28,10 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Long256Acceptor;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -56,6 +59,11 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         long result = appendAddress;
         appendAddress += bytes;
         return result;
+    }
+
+    @Override
+    public long getPageSize() {
+        return getExtendSegmentSize();
     }
 
     /**
@@ -93,9 +101,9 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
 
     @Override
     public void truncate() {
-        // our "extend" implementation will reduce size as well as
-        // extend it
-        extend(0);
+        // our internal "extend" implementation will reduce size
+        // as well as extend it
+        extend0(0);
         // reset append offset
         appendAddress = pageAddress;
     }
@@ -122,6 +130,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
             long baseLength = lim - pageAddress;
             Unsafe.free(pageAddress, baseLength, memoryTag);
             handleMemoryReleased();
+            size = 0;
         }
     }
 
@@ -142,6 +151,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         long appendOffset = getAppendOffset();
         this.pageAddress = this.appendAddress = address;
         this.lim = pageAddress + size;
+        this.size = size;
         jumpTo(appendOffset);
     }
 
@@ -189,6 +199,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         pageAddress = 0;
         lim = 0;
         appendAddress = 0;
+        size = 0;
     }
 
     protected long reallocateMemory(long currentBaseAddress, long currentSize, long newSize) {
@@ -199,7 +210,6 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     }
 
     protected final void setPageSize(long size) {
-        this.size = Numbers.ceilPow2(size);
-        this.sizeMsb = Numbers.msb(this.size);
+        this.sizeMsb = Numbers.msb(Numbers.ceilPow2(size));
     }
 }
