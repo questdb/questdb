@@ -46,10 +46,11 @@ public class LineTcpReceiverLoadTest extends AbstractLineTcpReceiverTest {
 
     private final AtomicLong timestampMillis = new AtomicLong(1465839830102300L);
 
-    private final int numOfLines = 10000;
-    private final int numOfIterations = 10;
+    private final int numOfLines = 5000;
+    private final int numOfIterations = 5;
     private final int numOfThreads = 10;
     private final int numOfTables = 10;
+    private final long waitBetweenIterationsMillis = 50;
 
     private final SOCountDownLatch threadPushFinished = new SOCountDownLatch(numOfThreads - 1);
 
@@ -79,21 +80,20 @@ public class LineTcpReceiverLoadTest extends AbstractLineTcpReceiverTest {
             try {
                 for (int i = 0; i < numOfThreads; i++) {
                     new Thread(() -> {
-                        final StringBuilder sb = new StringBuilder();
-                        try {
+                        try (Socket socket = getSocket(false)) {
                             for (int n = 0; n < numOfIterations; n++) {
-                                sb.setLength(0);
                                 for (int j = 0; j < numOfLines; j++) {
                                     final TableData table = pickTable();
                                     final CharSequence tableName = table.getName();
                                     final LineData line = generateLine();
                                     table.addLine(line);
-                                    sb.append(line.toLine(tableName));
+                                    sendToSocket(socket, line.toLine(tableName));
                                 }
-                                send(receiver, sb.toString());
+                                Os.sleep(waitBetweenIterationsMillis);
                             }
                         } catch (Exception e) {
-                            e.printStackTrace();
+                            Assert.fail("Data sending failed [e=" + e + "]");
+                            LOG.error().$(e).$();
                         } finally {
                             threadPushFinished.countDown();
                         }
@@ -148,11 +148,6 @@ public class LineTcpReceiverLoadTest extends AbstractLineTcpReceiverTest {
             line.add(colName, colValue);
         }
         return line;
-    }
-
-    private void send(LineTcpReceiver receiver, String lineData) {
-        LOG.info().$("ilp:\n").$(lineData).$();
-        send(receiver, null, WAIT_NO_WAIT, () -> sendToSocket(lineData, false));
     }
 
     @Override

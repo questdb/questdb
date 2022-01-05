@@ -39,6 +39,7 @@ import io.questdb.network.Net;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
@@ -46,6 +47,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
 
+import java.lang.ThreadLocal;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
@@ -56,6 +58,8 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected static final int WAIT_ENGINE_TABLE_RELEASE = 0x1;
     protected static final int WAIT_ILP_TABLE_RELEASE = 0x2;
     protected static final int WAIT_ALTER_TABLE_RELEASE = 0x4;
+
+    private final ThreadLocal<Socket> tlSocket = new ThreadLocal<>();
 
     protected final WorkerPool sharedWorkerPool = new WorkerPool(getWorkerPoolConfiguration());
     protected WorkerPoolConfiguration getWorkerPoolConfiguration() {
@@ -239,30 +243,66 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
     }
 
-    protected void sendToSocket(String lineData, boolean noLinger) {
+    protected Socket getSocket(boolean noLinger) {
+        Socket socket = tlSocket.get();
+        if (socket != null) {
+            return socket;
+        }
+
         int ipv4address = Net.parseIPv4("127.0.0.1");
         long sockaddr = Net.sockaddr(ipv4address, bindPort);
         long fd = Net.socketTcp(true);
+        socket = new Socket(sockaddr, fd);
+
+        if (TestUtils.connect(fd, sockaddr, noLinger) != 0) {
+            throw new RuntimeException("could not connect, errno=" + Os.errno());
+        }
+
+        tlSocket.set(socket);
+        return socket;
+    }
+
+    protected void sendToSocket(String lineData, boolean noLinger) {
+        try (Socket socket = getSocket(noLinger)) {
+            sendToSocket(socket, lineData);
+        } catch (Exception e) {
+            Assert.fail("Data sending failed [e=" + e + "]");
+            LOG.error().$(e).$();
+        }
+    }
+
+    protected void sendToSocket(Socket socket, String lineData) {
+        byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
+        long bufaddr = Unsafe.malloc(lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
         try {
-            TestUtils.assertConnect(fd, sockaddr, noLinger);
-            byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
-            long bufaddr = Unsafe.malloc(lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
-            try {
-                for (int n = 0; n < lineDataBytes.length; n++) {
-                    Unsafe.getUnsafe().putByte(bufaddr + n, lineDataBytes[n]);
+            for (int n = 0; n < lineDataBytes.length; n++) {
+                Unsafe.getUnsafe().putByte(bufaddr + n, lineDataBytes[n]);
+            }
+            int sent = 0;
+            while (sent != lineDataBytes.length) {
+                int rc = Net.send(socket.fd, bufaddr + sent, lineDataBytes.length - sent);
+                if (rc < 0) {
+                    throw new RuntimeException("Data sending failed [rc=" + rc + "]");
                 }
-                int sent = 0;
-                while (sent != lineDataBytes.length) {
-                    int rc = Net.send(fd, bufaddr + sent, lineDataBytes.length - sent);
-                    if (rc < 0) {
-                        Assert.fail("Data sending failed [rc=" + rc + "]");
-                    }
-                    sent += rc;
-                }
-            } finally {
-                Unsafe.free(bufaddr, lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
+                sent += rc;
             }
         } finally {
+            Unsafe.free(bufaddr, lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    protected class Socket implements AutoCloseable {
+        private final long sockaddr;
+        private final long fd;
+
+        private Socket(long sockaddr, long fd) {
+            this.sockaddr = sockaddr;
+            this.fd = fd;
+        }
+
+        @Override
+        public void close() throws Exception {
+            tlSocket.set(null);
             Net.close(fd);
             Net.freeSockAddr(sockaddr);
         }
