@@ -29,6 +29,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Test;
@@ -75,6 +76,10 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 rdr.openPartition(0);
             }
 
+            if (Os.type == Os.WINDOWS) {
+                engine.releaseInactive();
+            }
+
             runPartitionPurgeJobs();
 
             try (Path path = new Path()) {
@@ -107,6 +112,10 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
 
                 // This should not fail
                 rdr.openPartition(0);
+            }
+
+            if(Os.type == Os.WINDOWS) {
+                engine.releaseInactive();
             }
 
             runPartitionPurgeJobs();
@@ -153,6 +162,9 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 reader.openPartition(0);
                 reader.close();
 
+                if (Os.type == Os.WINDOWS) {
+                    engine.releaseInactive();
+                }
                 runPartitionPurgeJobs();
             }
 
@@ -198,11 +210,22 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 reader.openPartition(0);
                 reader.close();
 
+                // when reader is returned to pool it remains in open state
+                // holding files such that purge fails with access violation
+                if (Os.type == Os.WINDOWS) {
+                    engine.releaseInactive();
+                }
+
                 runPartitionPurgeJobs();
 
                 reader = readers[2 * i + 1];
                 reader.openPartition(0);
                 reader.close();
+                // when reader is returned to pool it remains in open state
+                // holding files such that purge fails with access violation
+                if (Os.type == Os.WINDOWS) {
+                    engine.releaseInactive();
+                }
 
                 runPartitionPurgeJobs();
             }
