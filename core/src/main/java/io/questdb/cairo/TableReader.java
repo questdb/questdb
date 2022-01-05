@@ -1167,11 +1167,16 @@ public class TableReader implements Closeable, SymbolTableSource {
 
         // reload tx file, this will update the versions
         if (this.readTxnSlow()) {
-            reloadStruct(prevStructVersion);
-            // partition reload will apply truncate if necessary
-            // applyTruncate for non-partitioned tables only
-            reconcileOpenPartitions(prevPartitionVersion);
-            return true;
+            try {
+                reloadStruct(prevStructVersion);
+                // partition reload will apply truncate if necessary
+                // applyTruncate for non-partitioned tables only
+                reconcileOpenPartitions(prevPartitionVersion);
+                return true;
+            } catch (Throwable e) {
+                txnScoreboard.releaseTxn(txn);
+                throw e;
+            }
         }
 
         return false;
