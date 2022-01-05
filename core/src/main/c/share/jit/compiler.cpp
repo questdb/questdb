@@ -56,7 +56,9 @@ using CompiledFn = int64_t (*)(int64_t *cols, int64_t cols_count, int64_t *vars,
 
 struct Function {
     explicit Function(x86::Compiler &cc)
-            : c(cc) {};
+            : c(cc), zone(4094 - Zone::kBlockOverhead), allocator(&zone) {
+        values.init(&allocator);
+    };
 
     void compile(const instruction_t *istream, size_t size, uint32_t options) {
         auto features = CpuInfo::host().features().as<x86::Features>();
@@ -224,7 +226,9 @@ struct Function {
 
     x86::Compiler &c;
 
-    ZoneStack<jit_value_t> values{};
+    Zone zone;
+    ZoneAllocator allocator;
+    ZoneStack<jit_value_t> values;
 
     x86::Gp cols_ptr;
     x86::Gp cols_size;
