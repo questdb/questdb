@@ -40,23 +40,48 @@ import org.junit.*;
 
 import java.util.concurrent.atomic.AtomicLong;
 
+import static io.questdb.cairo.ColumnType.*;
+
 public class LineTcpReceiverLoadTest extends AbstractLineTcpReceiverTest {
     private static final Log LOG = LogFactory.getLog(LineTcpReceiverLoadTest.class);
-    private static final Rnd random = new Rnd();
 
-    private final AtomicLong timestampMillis = new AtomicLong(1465839830102300L);
+    final Rnd random = new Rnd();
+    final AtomicLong timestampMillis = new AtomicLong(1465839830102300L);
 
-    private final int numOfLines = 5000;
-    private final int numOfIterations = 5;
-    private final int numOfThreads = 10;
-    private final int numOfTables = 10;
-    private final long waitBetweenIterationsMillis = 50;
+    final short[] colTypes = new short[] {STRING, DOUBLE, DOUBLE, DOUBLE, STRING, DOUBLE};
+    final String[][] colNameBases = new String[][] {
+            {"location", "Location", "LOCATION", "loCATion", "LocATioN"},
+            {"temperature", "TEMPERATURE", "Temperature", "TempeRaTuRe"},
+            {"humidity", "HUMIdity", "HumiditY", "HUmiDIty", "HUMIDITY", "Humidity"},
+            {"hőmérséklet", "HŐMÉRSÉKLET", "HŐmérséKLEt", "hőMÉRséKlET"},
+            {"terület", "TERÜLet", "tERülET", "TERÜLET"},
+            {"ветер", "Ветер", "ВЕТЕР", "вЕТЕр", "ВетЕР"}
+    };
+    final String[] colValueBases = new String[] {"us-midwest", "8", "2", "1", "europe", "6"};
 
-    private final SOCountDownLatch threadPushFinished = new SOCountDownLatch(numOfThreads - 1);
+    private final int numOfLines;
+    private final int numOfIterations;
+    private final int numOfThreads;
+    private final int numOfTables;
+    private final long waitBetweenIterationsMillis;
 
-    private final String[] colNameBases = new String[] {"location", "temperature"};
-    private final String[] colValueBases = new String[] {"us-midwest", "8"};
-    private final CharSequenceObjHashMap<TableData> tables = new CharSequenceObjHashMap<>();
+    private final SOCountDownLatch threadPushFinished;
+    private final CharSequenceObjHashMap<TableData> tables;
+
+    public LineTcpReceiverLoadTest() {
+        this(1000, 10, 10, 10, 50);
+    }
+
+    protected LineTcpReceiverLoadTest(int numOfLines, int numOfIterations, int numOfThreads, int numOfTables, long waitBetweenIterationsMillis) {
+        this.numOfLines = numOfLines;
+        this.numOfIterations = numOfIterations;
+        this.numOfThreads = numOfThreads;
+        this.numOfTables = numOfTables;
+        this.waitBetweenIterationsMillis = waitBetweenIterationsMillis;
+
+        threadPushFinished = new SOCountDownLatch(numOfThreads - 1);
+        tables = new CharSequenceObjHashMap<>();
+    }
 
     @Test
     public void testLoad() throws Exception {
@@ -93,7 +118,7 @@ public class LineTcpReceiverLoadTest extends AbstractLineTcpReceiverTest {
                             }
                         } catch (Exception e) {
                             Assert.fail("Data sending failed [e=" + e + "]");
-                            LOG.error().$(e).$();
+                            throw new RuntimeException(e);
                         } finally {
                             threadPushFinished.countDown();
                         }
@@ -128,7 +153,9 @@ public class LineTcpReceiverLoadTest extends AbstractLineTcpReceiverTest {
     protected void assertTable(TableData table) {
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, table.getName())) {
             final TableReaderMetadata metadata = reader.getMetadata();
-            assertCursorTwoPass(table.generateRows(metadata), reader.getCursor(), metadata);
+            final CharSequence expected = table.generateRows(metadata);
+            LOG.info().$(table.getName()).$(" expected:\n").utf8(expected).$();
+            assertCursorTwoPass(expected, reader.getCursor(), metadata);
         }
     }
 
@@ -140,14 +167,34 @@ public class LineTcpReceiverLoadTest extends AbstractLineTcpReceiverTest {
         return "weather" + tableIndex;
     }
 
-    private LineData generateLine() {
+    LineData generateLine() {
         final LineData line = new LineData(timestampMillis.incrementAndGet());
-        for (int j = 0; j < colNameBases.length; j++) {
-            final CharSequence colName = colNameBases[j];
-            final CharSequence colValue = colValueBases[j] + (j == 1 ? random.nextInt(9) + ".0" : "");
+        for (int i = 0; i < colNameBases.length; i++) {
+            final CharSequence colName = generateName(i);
+            final CharSequence colValue = generateValue(i);
             line.add(colName, colValue);
         }
+        LOG.info().utf8(line.toString()).$();
         return line;
+    }
+
+    private String generateName(int index) {
+        return colNameBases[index][0];
+    }
+
+    private String generateValue(int index) {
+        final String postfix;
+        switch (colTypes[index]) {
+            case DOUBLE:
+                postfix = random.nextInt(9) + ".0";
+                break;
+            case STRING:
+                postfix = "" + random.nextChar();
+                break;
+            default:
+                postfix = "";
+        }
+        return colValueBases[index] + postfix;
     }
 
     @Override

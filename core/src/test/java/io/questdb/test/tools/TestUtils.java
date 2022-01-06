@@ -317,6 +317,14 @@ public final class TestUtils {
             Assert.assertEquals(message, expected, actual);
         }
 
+        String[] expectedLines = expected.toString().split("\n");
+        String[] actualLines = actual.toString().split("\n");
+        for (int i = 0, n = expectedLines.length; i < n; i++) {
+            if (!expectedLines[i].equals(actualLines[i])) {
+                Assert.fail(i + ". line, expected: '" + expectedLines[i] + "', actual: '" + actualLines[i] + "'");
+            }
+        }
+
         for (int i = 0; i < expected.length(); i++) {
             if (expected.charAt(i) != actual.charAt(i)) {
                 Assert.assertEquals(message, expected, actual);

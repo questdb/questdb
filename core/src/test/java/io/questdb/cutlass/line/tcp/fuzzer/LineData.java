@@ -24,17 +24,20 @@
 
 package io.questdb.cutlass.line.tcp.fuzzer;
 
-import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.StringSink;
 
 public class LineData {
-    // colName/value pairs for each line
-    // colName can be different to real colName (dupes, uppercase, etc...)
     private final long timestampNanos;
+
+    // colName/value pairs for each line
+    // colName can be different to real colName (dupes, uppercase...)
     private final ObjList<CharSequence> colNames = new ObjList<>();
-    private final CharSequenceObjHashMap<CharSequence> colValues = new CharSequenceObjHashMap<>();
+    private final ObjList<CharSequence> colValues = new ObjList<>();
+
+    private final LowerCaseCharSequenceIntHashMap colNameToIndex = new LowerCaseCharSequenceIntHashMap();
 
     public LineData(long timestampMicros) {
         timestampNanos = timestampMicros * 1000;
@@ -49,7 +52,8 @@ public class LineData {
 
     public void add(CharSequence colName, CharSequence colValue) {
         colNames.add(colName);
-        colValues.put(colName, colValue);
+        colValues.add(colValue);
+        colNameToIndex.putIfAbsent(colName, colNames.size() -1);
     }
 
     public String toLine(final CharSequence tableName) {
@@ -64,17 +68,17 @@ public class LineData {
             if (colName.equals("timestamp")) {
                 continue;
             }
-            sb.append(colName).append("=").append(colValues.get(colName)).append(i == n - 1 ? "" : ",");
+            sb.append(colName).append("=").append(colValues.get(i)).append(i == n - 1 ? "" : ",");
         }
         return sb.append(" ").append(timestampNanos);
     }
 
-    CharSequence getRow(ObjList<CharSequence> columns) {
-        // work out duplicated/missing/extra columns while building the row
+    CharSequence getRow(ObjList<CharSequence> columns, ObjList<CharSequence> defaults) {
         final StringBuilder sb = new StringBuilder();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final CharSequence colName = columns.get(i);
-            sb.append(colValues.get(colName)).append(i == n - 1 ? "\n" : "\t");
+            final int index = colNameToIndex.get(colName);
+            sb.append(index < 0 ? defaults.get(i) : colValues.get(index)).append(i == n - 1 ? "\n" : "\t");
         }
         return sb.toString();
     }

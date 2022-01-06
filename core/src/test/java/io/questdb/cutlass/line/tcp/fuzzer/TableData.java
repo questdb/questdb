@@ -24,12 +24,15 @@
 
 package io.questdb.cutlass.line.tcp.fuzzer;
 
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.IntLongPriorityQueue;
 import io.questdb.std.ObjList;
 
 import java.util.concurrent.locks.LockSupport;
+
+import static io.questdb.cairo.ColumnType.*;
 
 public class TableData {
     private final CharSequence tableName;
@@ -77,16 +80,28 @@ public class TableData {
     public synchronized CharSequence generateRows(TableReaderMetadata metadata) {
         final StringBuilder sb = new StringBuilder();
         final ObjList<CharSequence> columns = new ObjList<>();
+        final ObjList<CharSequence> defaults = new ObjList<>();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            CharSequence column = metadata.getColumnQuick(i).getName();
+            TableColumnMetadata colMetaData = metadata.getColumnQuick(i);
+            CharSequence column = colMetaData.getName();
             columns.add(column);
+            defaults.add(getDefaultValue((short) colMetaData.getType()));
             sb.append(column).append( i == n-1 ? "\n" : "\t");
         }
         for (int i = 0, n = rows.size(); i < n; i++) {
-            sb.append(rows.get(index.popIndex()).getRow(columns));
+            sb.append(rows.get(index.popIndex()).getRow(columns, defaults));
             index.popValue();
         }
         return sb.toString();
+    }
+
+    private String getDefaultValue(short colType) {
+        switch (colType) {
+            case DOUBLE:
+                return "NaN";
+            default:
+                return "";
+        }
     }
 
     @Override
