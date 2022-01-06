@@ -143,48 +143,41 @@ const Table = ({
       name,
       kind: "table",
       initiallyOpen: expanded,
-      async onOpen({ setChildren }) {
-        onChange(name)
-        const response = (await quest.showColumns(name)) ?? []
+      children: [
+        {
+          name: "Columns",
+          initiallyOpen: true,
+          wrapper: Columns,
+          async onOpen({ setChildren }) {
+            onChange(name)
+            const response = (await quest.showColumns(name)) ?? []
 
-        if (response && response.type === QuestDB.Type.DQL) {
-          setColumns(response.data)
+            if (response && response.type === QuestDB.Type.DQL) {
+              setColumns(response.data)
 
-          const indexes = response.data.filter(({ indexed }) => indexed)
-          const makeIndexes = (): TreeNode => ({
-            name: "Indexes",
-            onOpen({ setChildren }) {
               setChildren(
-                indexes.map((column: QuestDB.Column) => ({
+                response.data.map((column) => ({
                   name: column.column,
                   render: columnRender({ column, designatedTimestamp }),
                 })),
               )
-            },
-            render({ toggleOpen, isOpen, isLoading }) {
-              return (
-                <Row
-                  expanded={isOpen}
-                  kind="folder"
-                  name="Indexes"
-                  onClick={() => toggleOpen()}
-                  suffix={isLoading && <Loader size="18px" />}
-                />
-              )
-            },
-            wrapper: Columns,
-          })
+            }
+          },
 
-          setChildren([
-            ...(indexes.length ? [makeIndexes()] : []),
+          render({ toggleOpen, isOpen, isLoading }) {
+            return (
+              <Row
+                expanded={isOpen && !isLoading}
+                kind="folder"
+                name="Columns"
+                onClick={() => toggleOpen()}
+                suffix={isLoading && <Loader size="18px" />}
+              />
+            )
+          },
+        },
+      ],
 
-            ...response.data.map((column) => ({
-              name: column.column,
-              render: columnRender({ column, designatedTimestamp }),
-            })),
-          ])
-        }
-      },
       render({ toggleOpen, isLoading }) {
         return (
           <ContextMenuTrigger id={name}>
