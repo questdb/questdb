@@ -368,7 +368,11 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
 
         if (!sizeCanBeVariable) {
-            Assert.assertTrue((sizeExpected && cursorSize != -1) || (!sizeExpected && cursorSize <= 0));
+            if (sizeExpected) {
+                Assert.assertTrue("Concrete cursor size expected", cursorSize != -1);
+            } else {
+                Assert.assertTrue("Invalid/undetermined cursor size expected", cursorSize <= 0);
+            }
         }
         if (cursorSize != -1) {
             Assert.assertEquals("Actual cursor records vs cursor.size()", count, cursorSize);

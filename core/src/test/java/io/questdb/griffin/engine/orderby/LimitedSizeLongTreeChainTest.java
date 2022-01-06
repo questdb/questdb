@@ -152,6 +152,42 @@ public class LimitedSizeLongTreeChainTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void test_create_ordered_tree_with_input_in_descending_order() {
+        createTree(5, 4, 3, 2, 1);
+
+        MatcherAssert.assertThat(toString(cursor, placeholder), equalTo(
+                "[Black,4]\n" +
+                        " L-[Black,2]\n" +
+                        "   L-[Red,1]\n" +
+                        "   R-[Red,3]\n" +
+                        " R-[Black,5]\n"));
+    }
+
+    @Test
+    public void test_create_ordered_tree_with_input_in_no_order() {
+        createTree(3, 2, 5, 1, 4);
+
+        MatcherAssert.assertThat(toString(cursor, placeholder), equalTo(
+                "[Black,3]\n" +
+                        " L-[Black,2]\n" +
+                        "   L-[Red,1]\n" +
+                        " R-[Black,5]\n" +
+                        "   L-[Red,4]\n"));
+    }
+
+    @Test
+    public void test_create_ordered_tree_with_duplicates() {
+        createTree(1, 2, 3, 4, 5, 1, 4, 3);
+
+        MatcherAssert.assertThat(toString(cursor, placeholder), equalTo(
+                "[Black,2]\n" +
+                        " L-[Black,1(2)]\n" +
+                        " R-[Black,4(2)]\n" +
+                        "   L-[Red,3(2)]\n" +
+                        "   R-[Red,5]\n"));
+    }
+
+    @Test
     public void test_remove_black_node_with_no_children() {
         createTree(0, 1, 2);
 

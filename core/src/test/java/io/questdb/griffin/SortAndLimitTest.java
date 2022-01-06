@@ -179,6 +179,89 @@ public class SortAndLimitTest extends AbstractGriffinTest {
         assertQuery("i\n2\n3\n4\n5\n6\n7\n8\n9\n", "select i from sorttest order by i limit 1,-1");
     }
 
+    //randomized cases - ascending order
+    @Test
+    public void testInsertAndSelect_Lo_10_on_table_with_random_order() throws Exception {
+        prepare_random_order_table();
+
+        assertQuery("l\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n", "select l from sorttest order by l limit 10");
+    }
+
+    @Test
+    public void testInsertAndSelect_Lo_10_Hi_20_on_table_with_random_order() throws Exception {
+        prepare_random_order_table();
+
+        assertQuery("l\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n", "select l from sorttest order by l limit 10,20");
+    }
+
+    @Test
+    public void testInsertAndSelect_Lo_minus10_on_table_with_random_order() throws Exception {
+        prepare_random_order_table();
+
+        assertQuery("l\n991\n992\n993\n994\n995\n996\n997\n998\n999\n1000\n", "select l from sorttest order by l limit -10");
+    }
+
+    @Test
+    public void testInsertAndSelect_Lo_minus20_Hi_minus10_on_table_with_random_order() throws Exception {
+        prepare_random_order_table();
+
+        assertQuery("l\n981\n982\n983\n984\n985\n986\n987\n988\n989\n990\n", "select l from sorttest order by l limit -20,-10");
+    }
+
+    @Test
+    public void testInsertAndSelect_Lo_990_Hi_minus5_on_table_with_random_order() throws Exception {
+        prepare_random_order_table();
+
+        assertQuery("l\n991\n992\n993\n994\n995\n", "select l from sorttest order by l limit 990,-5");
+    }
+
+    //randomized cases - descending order
+    @Test
+    public void testInsertAndSelectDesc_Lo_10_on_table_with_random_order() throws Exception {
+        prepare_random_order_table();
+
+        assertQuery("l\n1000\n999\n998\n997\n996\n995\n994\n993\n992\n991\n", "select l from sorttest order by l desc limit 10");
+    }
+
+    @Test
+    public void testInsertAndSelectDesc_Lo_10_Hi_20_on_table_with_random_order() throws Exception {
+        prepare_random_order_table();
+
+        assertQuery("l\n990\n989\n988\n987\n986\n985\n984\n983\n982\n981\n", "select l from sorttest order by l desc limit 10,20");
+    }
+
+    @Test
+    public void testInsertAndSelectDesc_Lo_minus10_on_table_with_random_order() throws Exception {
+        prepare_random_order_table();
+
+        assertQuery("l\n10\n9\n8\n7\n6\n5\n4\n3\n2\n1\n", "select l from sorttest order by l desc limit -10");
+    }
+
+    @Test
+    public void testInsertAndSelectDesc_Lo_minus20_Hi_minus10_on_table_with_random_order() throws Exception {
+        prepare_random_order_table();
+
+        assertQuery("l\n20\n19\n18\n17\n16\n15\n14\n13\n12\n11\n", "select l from sorttest order by l desc limit -20,-10");
+    }
+
+    @Test
+    public void testInsertAndSelectDesc_Lo_990_Hi_minus5_on_table_with_random_order() throws Exception {
+        prepare_random_order_table();
+
+        assertQuery("l\n10\n9\n8\n7\n6\n", "select l from sorttest order by l desc limit 990,-5");
+    }
+
+    private void prepare_random_order_table() throws Exception {
+        runQueries("CREATE TABLE sorttest(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
+                "insert into sorttest " +
+                        "  select x," +
+                        "  rnd_timestamp(\n" +
+                        "    to_timestamp('2015', 'yyyy'),\n" +
+                        "    to_timestamp('2016', 'yyyy'),\n" +
+                        "    0)" +
+                        "  from long_sequence(1000);");
+    }
+
     private void runQueries(String... queries) throws Exception {
         assertMemoryLeak(() -> {
             for (String query : queries) {

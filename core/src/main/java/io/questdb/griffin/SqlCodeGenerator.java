@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.analytic.AnalyticFunction;
 import io.questdb.griffin.engine.analytic.CachedAnalyticRecordCursorFactory;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.groupby.*;
@@ -1206,42 +1207,35 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return factory;
         }
 
-        final Function loFunc = getLoFunction(executionContext, limitLo);
-        final Function hiFunc = getHiFunction(executionContext, limitHi);
+        final Function loFunc = getLoFunction(model, executionContext);
+        final Function hiFunc = getHiFunction(model, executionContext);
 
         return new LimitRecordCursorFactory(factory, loFunc, hiFunc);
     }
 
-    @Nullable
-    private Function getHiFunction(SqlExecutionContext executionContext, ExpressionNode limitHi) throws SqlException {
-        final Function hiFunc;
-
-        if (limitHi != null) {
-            hiFunc = functionParser.parseFunction(limitHi, EmptyRecordMetadata.INSTANCE, executionContext);
-            final int type = hiFunc.getType();
-            if (limitTypes.excludes(type)) {
-                throw SqlException.$(limitHi.position, "invalid type: ").put(ColumnType.nameOf(type));
-            }
-        } else {
-            hiFunc = null;
+    private Function toFunction(SqlExecutionContext executionContext,
+                                ExpressionNode limit,
+                                ConstantFunction defaultValue) throws SqlException {
+        if (limit == null) {
+            return defaultValue;
         }
-        return hiFunc;
+
+        final Function func = functionParser.parseFunction(limit, EmptyRecordMetadata.INSTANCE, executionContext);
+        final int type = func.getType();
+        if (limitTypes.excludes(type)) {
+            throw SqlException.$(limit.position, "invalid type: ").put(ColumnType.nameOf(type));
+        }
+        return func;
+    }
+
+    @Nullable
+    private Function getHiFunction(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        return toFunction(executionContext, model.getLimitHi(), null);
     }
 
     @NotNull
-    private Function getLoFunction(SqlExecutionContext executionContext, ExpressionNode limitLo) throws SqlException {
-        final Function loFunc;
-
-        if (limitLo == null) {
-            loFunc = LongConstant.ZERO;
-        } else {
-            loFunc = functionParser.parseFunction(limitLo, EmptyRecordMetadata.INSTANCE, executionContext);
-            final int type = loFunc.getType();
-            if (limitTypes.excludes(type)) {
-                throw SqlException.$(limitLo.position, "invalid type: ").put(ColumnType.nameOf(type));
-            }
-        }
-        return loFunc;
+    private Function getLoFunction(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        return toFunction(executionContext, model.getLimitLo(), LongConstant.ZERO);
     }
 
     private RecordCursorFactory generateNoSelect(
@@ -1323,8 +1317,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
 
-                final Function loFunc = getLoFunction(executionContext, model.getLimitLo());
-                final Function hiFunc = getHiFunction(executionContext, model.getLimitHi());
+                final Function loFunc = getLoFunction(model, executionContext);
+                final Function hiFunc = getHiFunction(model, executionContext);
 
                 if (recordCursorFactory.recordCursorSupportsRandomAccess()) {
                     if (canBeOptimized(model, executionContext, loFunc, hiFunc)) {

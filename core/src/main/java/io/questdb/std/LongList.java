@@ -524,14 +524,4 @@ public class LongList implements Mutable, LongVec {
         return (high + 1) << shl;
     }
 
-    public boolean contains(long value) {
-        for (int i = 0; i < pos; i++) {
-            if (data[i] == value) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
 }
