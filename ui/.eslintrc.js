@@ -48,6 +48,7 @@ module.exports = {
   },
   plugins: ["@typescript-eslint", "babel", "prettier", "react", "standard"],
   rules: {
+    "react/display-name": "off",
     "react-hooks/exhaustive-deps": "off",
     "react/jsx-no-bind": "off",
     "react/no-deprecated": "error",
@@ -82,6 +83,7 @@ module.exports = {
     "react/jsx-curly-spacing": "error",
     "react/jsx-no-comment-textnodes": "warn",
     "react/jsx-curly-brace-presence": "error",
+    "react/prop-types": "off",
     "jsx-quotes": ["error", "prefer-double"],
     "@typescript-eslint/consistent-type-definitions": ["error", "type"],
     "@typescript-eslint/explicit-function-return-type": "off",
