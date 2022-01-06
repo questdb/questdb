@@ -26,6 +26,7 @@ import { QueryAction, QueryAT, QueryStateShape } from "types"
 
 export const initialState: QueryStateShape = {
   notifications: [],
+  tables: [],
   running: {
     value: false,
     isRefresh: false,
@@ -88,6 +89,13 @@ const query = (state = initialState, action: QueryAction): QueryStateShape => {
           value: !state.running.value,
           isRefresh: action.payload.isRefresh,
         },
+      }
+    }
+
+    case QueryAT.SET_TABLES: {
+      return {
+        ...state,
+        tables: action.payload.tables,
       }
     }
 

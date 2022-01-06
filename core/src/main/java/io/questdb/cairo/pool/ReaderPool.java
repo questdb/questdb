@@ -91,13 +91,18 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                         e.readers[i] = r;
                         notifyListener(thread, name, PoolListener.EV_CREATE, e.index, i);
                     } else {
-                        r.goActive();
+                        try {
+                            r.goActive();
+                        } catch (Throwable ex) {
+                            r.close();
+                            throw ex;
+                        }
                         notifyListener(thread, name, PoolListener.EV_GET, e.index, i);
                     }
 
                     if (isClosed()) {
                         e.readers[i] = null;
-                        r.goodby();
+                        r.goodbye();
                         LOG.info().$('\'').utf8(name).$("' born free").$();
                         return r;
                     }
@@ -242,9 +247,8 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                         } else {
                             casFailures++;
-
                             if (deadline == Long.MAX_VALUE) {
-                                r.goodby();
+                                r.goodbye();
                                 LOG.info().$("shutting down. '").$(r.getTableName()).$("' is left behind").$();
                             }
                         }
@@ -256,7 +260,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         }
 
         // when we are timing out entries the result is "true" if there was any work done
-        // when we closing pool, the result is true when pool is empty
+        // when we're closing pool, the result is true when pool is empty
         if (closeReason == PoolConstants.CR_IDLE) {
             return removed;
         } else {
@@ -267,7 +271,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
     private void closeReader(long thread, Entry entry, int index, short ev, int reason) {
         R r = entry.readers[index];
         if (r != null) {
-            r.goodby();
+            r.goodbye();
             r.close();
             LOG.info().$("closed '").utf8(r.getTableName())
                     .$("' [at=").$(entry.index).$(':').$(index)
@@ -317,12 +321,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 
             e.releaseTimes[index] = clock.getTicks();
             Unsafe.arrayPutOrdered(e.allocations, index, UNALLOCATED);
-
-            // todo: there is a race condition between this method and
-            //   releaseAll() when the latter shuts down the pool. I thought of adding a version counter
-            //   that each method will attempt to increment thus recognising race condition and
-            //   taking action
-            return true;
+            return !isClosed();
         }
 
         LOG.error().$('\'').$(name).$("' is available [at=").$(e.index).$(':').$(index).$(']').$();
@@ -366,11 +365,14 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                 if (pool != null && entry != null && pool.returnToPool(this)) {
                     return;
                 }
-                super.close();
+                final Entry e = this.entry;
+                if (e == null || Unsafe.cas(e.allocations, index, UNALLOCATED, Thread.currentThread().getId())) {
+                    super.close();
+                }
             }
         }
 
-        private void goodby() {
+        private void goodbye() {
             entry = null;
             pool = null;
         }

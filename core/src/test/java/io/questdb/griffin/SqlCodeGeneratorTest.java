@@ -487,7 +487,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "1826239903\t0.5716129058692643\t1970-01-12T08:13:20.000000Z\n" +
                         "-1165635863\t0.05094182589333662\t1970-01-12T11:00:00.000000Z\n",
                 "tst",
-                "create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000000l) t from long_sequence(100)) timestamp(t)) partition by DAY",
+                "create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000000l) t from long_sequence(100)) timestamp(t)) timestamp(t) partition by DAY",
                 "t",
                 true,
                 true,
@@ -1847,7 +1847,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                         "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x latest by b",
+                "select * from x latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -1881,7 +1881,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         assertQuery("a\tb\tk\n" +
                         "97.55263540567968\ttrue\t1970-01-20T16:13:20.000000Z\n" +
                         "37.62501709498378\tfalse\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x latest by b",
+                "select * from x latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select * from" +
@@ -1919,7 +1919,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
         assertQuery(expected,
-                "select * from x latest by b where 6 < 10",
+                "select * from x where 6 < 10 latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -1957,7 +1957,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
         assertQuery(expected,
-                "select * from x latest by b where a > 40",
+                "select * from x where a > 40 latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -1995,7 +1995,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
         assertQuery(expected,
-                "select * from x latest by b",
+                "select * from x latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -2034,7 +2034,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
         assertQuery(expected,
-                "select * from x latest by b where 5 > 2",
+                "select * from x where 5 > 2 latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -2071,7 +2071,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
                 "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
         assertQuery(expected,
-                "select a,k,b from x latest by b where a > 40",
+                "select a,k,b from x where a > 40 latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -2110,7 +2110,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         final String expected = "a\tb\tc\tk\n" +
                 "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n";
         assertQuery(expected,
-                "select * from x latest by b where c = 'SXUX'",
+                "select * from x where c = 'SXUX' latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -2142,7 +2142,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         final String expected = "b\tk\n" +
                 "RXGZ\t1970-01-12T13:46:40.000000Z\n";
         assertQuery(expected,
-                "select b,k from x latest by b where b = 'RXGZ' and k < '1970-01-22'",
+                "select b,k from x where b = 'RXGZ' and k < '1970-01-22' latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -2196,7 +2196,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext,
-                            "trips latest by vendor where id > 0 order by ts",
+                            "trips where id > 0 latest on ts partition by vendor order by ts",
                             sink,
                             "id\tvendor\tts\n" +
                                     "1878619626\tKK\t1970-01-01T00:01:39.200000Z\n" +
@@ -2216,7 +2216,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz\n" +
                                     "2021-05-12T00:00:00.186000Z\tZZZ\tv\n",
-                            "select * from pos latest by uuid where hash within(#f, #z, #v)",
+                            "select * from pos where hash within(#f, #z, #v) latest on time partition by uuid",
                             "time",
                             true,
                             true,
@@ -2234,7 +2234,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
                                     "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
-                            "select * from pos latest by uuid where hash within(#f9, #z3, #ve)",
+                            "select * from pos where hash within(#f9, #z3, #ve) latest on time partition by uuid",
                             "time",
                             true,
                             true,
@@ -2252,7 +2252,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
                                     "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
-                            "select * from pos latest by uuid where hash within(make_geohash(-62, 53.4, 10), #z3, #ve)",
+                            "select * from pos where hash within(make_geohash(-62, 53.4, 10), #z3, #ve) latest on time partition by uuid",
                             "time",
                             true,
                             true,
@@ -2270,7 +2270,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf91t\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz31w\n" +
                                     "2021-05-12T00:00:00.186000Z\tZZZ\tvepe\n",
-                            "select * from pos latest by uuid where hash within(#f91, #z31w, #vepe)",
+                            "select * from pos where hash within(#f91, #z31w, #vepe) latest on time partition by uuid",
                             "time",
                             true,
                             true,
@@ -2288,7 +2288,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf91t48s7\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz31wzd5w\n" +
                                     "2021-05-12T00:00:00.186000Z\tZZZ\tvepe7h62\n",
-                            "select * from pos latest by uuid where hash within(#f91, #z31w, #vepe7h)",
+                            "select * from pos where hash within(#f91, #z31w, #vepe7h) latest on time partition by uuid",
                             "time",
                             true,
                             true,
@@ -2304,7 +2304,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     createGeoHashTable(2);
                     try {
                         assertQuery("",
-                                "select * from pos latest by uuid where hash within(#f9, #z3, #vepe7h)",
+                                "select * from pos where hash within(#f9, #z3, #vepe7h) latest on time partition by uuid",
                                 "time",
                                 true,
                                 true,
@@ -2334,7 +2334,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     );
                     try {
                         assertQuery("time\tuuid\thash\n",
-                                "select * from x latest by s where geo8 within(make_geohash(lon, lat, 40), #z3, #vegg)",
+                                "select * from x where geo8 within(make_geohash(lon, lat, 40), #z3, #vegg) latest on ts partition by s",
                                 "ts",
                                 true,
                                 true,
@@ -2356,7 +2356,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                         "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
                                         "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
                                         "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
-                                "select * from pos latest by uuid where hash within('z3', #z3, #ve)",
+                                "select * from pos where hash within('z3', #z3, #ve) latest on time partition by uuid",
                                 "time",
                                 true,
                                 true,
@@ -2378,7 +2378,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                         "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
                                         "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
                                         "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
-                                "select * from pos latest by uuid where hash within(make_geohash(-620.0, 53.4, 10), #z3, #ve)",
+                                "select * from pos where hash within(make_geohash(-620.0, 53.4, 10), #z3, #ve) latest on time partition by uuid",
                                 "time",
                                 true,
                                 true,
@@ -2405,7 +2405,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "y\t1970-01-18T07:41:40.000000Z\n" +
                                     "y\t1970-01-18T08:18:20.000000Z\n" +
                                     "z\t1970-01-18T08:35:00.000000Z\n",
-                            "select geo1, ts from x latest by s where geo1 within(#x, #y, #z)",
+                            "select geo1, ts from x where geo1 within(#x, #y, #z) latest on ts partition by s",
                             "ts",
                             true,
                             true,
@@ -2432,7 +2432,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "yvh\t1970-01-18T06:55:00.000000Z\n" +
                                     "y1n\t1970-01-18T07:28:20.000000Z\n" +
                                     "zs4\t1970-01-18T08:03:20.000000Z\n",
-                            "select geo2, ts from x latest by s where geo2 within(#x, #y, #z)",
+                            "select geo2, ts from x where geo2 within(#x, #y, #z) latest on ts partition by s",
                             "ts",
                             true,
                             true,
@@ -2459,7 +2459,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "xxusm\t1970-01-18T07:55:00.000000Z\n" +
                                     "x1dse\t1970-01-18T08:18:20.000000Z\n" +
                                     "zmt6j\t1970-01-18T08:38:20.000000Z\n",
-                            "select geo4, ts from x latest by s where geo4 within(#x, #y, #z)",
+                            "select geo4, ts from x where geo4 within(#x, #y, #z) latest on ts partition by s",
                             "ts",
                             true,
                             true,
@@ -2482,7 +2482,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "1111110\t1970-01-18T07:10:00.000000Z\n" +
                                     "1111110\t1970-01-18T08:20:00.000000Z\n" +
                                     "1111111\t1970-01-18T08:28:20.000000Z\n",
-                            "select bits7, ts from x latest by s where bits7 within(##111111)",
+                            "select bits7, ts from x where bits7 within(##111111) latest on ts partition by s",
                             "ts",
                             true,
                             true,
@@ -2503,7 +2503,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "ybsge\t1970-01-18T06:45:00.000000Z\n" +
                                     "z4t7w\t1970-01-18T07:45:00.000000Z\n" +
                                     "xxusm\t1970-01-18T07:55:00.000000Z\n",
-                            "select geo4, ts from x latest by s where geo4 within(#xx, #y, #z4)",
+                            "select geo4, ts from x where geo4 within(#xx, #y, #z4) latest on ts partition by s",
                             "ts",
                             true,
                             true,
@@ -2520,7 +2520,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     assertQuery("i\ts\tts\tbits3\tbits7\tbits9\n" +
                                     "9384\tYFFD\t1970-01-17T15:31:40.000000Z\t101\t1110000\t101111011\n" +
                                     "9397\tMXUK\t1970-01-17T15:53:20.000000Z\t100\t1110001\t110001111\n",
-                            "select * from x latest by s where bits7 within(#wt/5)",//(##11100)",
+                            "select * from x where bits7 within(#wt/5) latest on ts partition by s",//(##11100)",
                             "ts",
                             true,
                             true,
@@ -2536,7 +2536,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     createRndGeoHashBitsTable();
                     try {
                         assertQuery("",
-                                "select * from x latest by s where bits3 within(##111111)",
+                                "select * from x where bits3 within(##111111) latest on ts partition by s",
                                 "ts",
                                 true,
                                 true,
@@ -2558,7 +2558,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
                                     "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
-                            "select * from pos latest by uuid where hash within(cast('f9' as geohash(2c)), #z3, #ve)",
+                            "select * from pos where hash within(cast('f9' as geohash(2c)), #z3, #ve) latest on time partition by uuid",
                             "time",
                             true,
                             true,
@@ -2576,7 +2576,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "time\tuuid\thash\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz\n" +
                                     "2021-05-11T00:00:00.111000Z\tddd\tb\n",
-                            "select * from pos latest by uuid where time in '2021-05-11' and hash within (#z, #b)",
+                            "select * from pos where time in '2021-05-11' and hash within (#z, #b) latest on time partition by uuid",
                             "time",
                             true,
                             true,
@@ -2594,7 +2594,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "time\tuuid\thash\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
                                     "2021-05-11T00:00:00.111000Z\tddd\tbc\n",
-                            "select * from pos latest by uuid where time in '2021-05-11' and hash within (#z, #b)",
+                            "select * from pos where time in '2021-05-11' and hash within (#z, #b) latest on time partition by uuid",
                             "time",
                             true,
                             true,
@@ -2612,7 +2612,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "time\tuuid\thash\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz31w\n" +
                                     "2021-05-11T00:00:00.111000Z\tddd\tbcnk\n",
-                            "select * from pos latest by uuid where time in '2021-05-11' and hash within (#z, #b)",
+                            "select * from pos where time in '2021-05-11' and hash within (#z, #b) latest on time partition by uuid",
                             "time",
                             true,
                             true,
@@ -2629,7 +2629,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     assertQuery(
                             "time\tuuid\thash\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz31wzd5w\n",
-                            "select * from pos latest by uuid where time in '2021-05-11' and hash within (#z31, #bbx)",
+                            "select * from pos where time in '2021-05-11' and hash within (#z31, #bbx) latest on time partition by uuid",
                             "time",
                             true,
                             true,
@@ -2645,7 +2645,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     createGeoHashTable(2);
                     try {
                         assertQuery("",
-                                "select * from pos latest by uuid where 'hash' within(#f9)",
+                                "select * from pos where 'hash' within(#f9) latest on time partition by uuid",
                                 "time",
                                 true,
                                 true,
@@ -2664,7 +2664,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     createGeoHashTable(2);
                     try {
                         assertQuery("",
-                                "select * from pos latest by uuid where uuid within(#f9)",
+                                "select * from pos where uuid within(#f9) latest on time partition by uuid",
                                 "time",
                                 true,
                                 true,
@@ -2683,7 +2683,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     createGeoHashTable(2);
                     try {
                         assertQuery("",
-                                "select * from pos latest by uuid where hash within()",
+                                "select * from pos where hash within() latest on time partition by uuid",
                                 "time",
                                 true,
                                 true,
@@ -2702,7 +2702,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     createGeoHashTable(2);
                     try {
                         assertQuery("",
-                                "select * from pos latest by uuid where hash within(#f9, #z3, null)",
+                                "select * from pos where hash within(#f9, #z3, null) latest on time partition by uuid",
                                 "time",
                                 true,
                                 true,
@@ -2721,7 +2721,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     createGeoHashTable(2);
                     try {
                         assertQuery("",
-                                "select * from pos latest by uuid where hash within(#f9) or hash within(#z3)",
+                                "select * from pos where hash within(#f9) or hash within(#z3) latest on time partition by uuid",
                                 "time",
                                 true,
                                 true,
@@ -2740,7 +2740,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     createGeoHashTable(2);
                     try {
                         assertQuery("",
-                                "select * from pos latest by uuid where hash within(cast('f91t' as geohash(4c)), #z3, null)",
+                                "select * from pos where hash within(cast('f91t' as geohash(4c)), #z3, null) latest on time partition by uuid",
                                 "time",
                                 true,
                                 true,
@@ -2789,7 +2789,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext,
-                            "trips latest by vendor where vendor in ('KK', 'ZZ', 'TT', 'DD', 'PP', 'QQ', 'CC') order by ts",
+                            "trips where vendor in ('KK', 'ZZ', 'TT', 'DD', 'PP', 'QQ', 'CC') latest on ts partition by vendor order by ts",
                             sink,
                             "id\tvendor\tts\n" +
                                     "-1243990650\tZZ\t1970-01-01T00:01:39.900000Z\n" +
@@ -2814,7 +2814,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
                 "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
         assertQuery(expected,
-                "select a,k,b from x latest by b",
+                "select a,k,b from x latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -2860,7 +2860,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "1970-01-18T08:40:00.000000Z\t49.00510449885239\n" +
                 "1970-01-22T23:46:40.000000Z\t40.455469747939254\n";
         assertQuery(expected,
-                "select k,a from x latest by b",
+                "select k,a from x latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -2927,7 +2927,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext,
-                            "trips latest by vendor order by ts",
+                            "trips latest on ts partition by vendor order by ts",
                             sink,
                             "id\tvendor\tts\n" +
                                     "1878619626\tKK\t1970-01-01T00:01:39.200000Z\n" +
@@ -2951,7 +2951,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "CPSW\t1970-01-19T12:26:40.000000Z\t51.85631921367574\n" +
                         "RXGZ\t1970-01-20T16:13:20.000000Z\t50.25890936351257\n" +
                         "\t1970-01-22T23:46:40.000000Z\t72.604681060764\n",
-                "select b,k,a from x latest by b",
+                "select b,k,a from x latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3024,7 +3024,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext,
-                            "trips latest by vendor order by ts",
+                            "trips latest on ts partition by vendor order by ts",
                             sink,
                             "id\tvendor\tts\n" +
                                     "1878619626\tKK\t1970-01-01T00:01:39.200000Z\n" +
@@ -3047,7 +3047,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
         assertQuery(expected,
-                "select * from x latest by b where a > 40",
+                "select * from x where a > 40 latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3096,8 +3096,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             TestUtils.assertSql(
                     compiler,
                     sqlExecutionContext,
-                    "SELECT * FROM balances LATEST BY cust_id, balance_ccy \n" +
-                            "WHERE cust_id = 'c1' and balance_ccy='EUR'",
+                    "SELECT * FROM balances \n" +
+                            "WHERE cust_id = 'c1' and balance_ccy='EUR' \n" +
+                            "LATEST ON timestamp PARTITION BY cust_id, balance_ccy",
                     sink,
                     "cust_id\tbalance_ccy\tbalance\ttimestamp\n" +
                             "c1\tEUR\t782.0\t2021-09-14T17:35:04.000000Z\n"
@@ -3176,7 +3177,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             sqlExecutionContext);
 
                     try (final RecordCursorFactory factory = compiler.compile(
-                            "select * from x latest by b where b = 'PEHN' and a < 22",
+                            "select * from x where b = 'PEHN' and a < 22 latest on k partition by b",
                             sqlExecutionContext
                     ).getRecordCursorFactory()) {
                         try {
@@ -3202,8 +3203,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore
-    // TODO: fix, where is applied after latest by, the optimized I suspect
     @Test
     public void testLatestByIsApplicableToSubQueriesNoDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
@@ -3214,13 +3213,13 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     "    other_ts timestamp, " +
                     "    ts timestamp" +
                     ")", sqlExecutionContext);
-            executeInsert("insert into tab values ('d1', 'c1', 101.1, '2021-10-15T11:31:35.878Z', '2021-10-05T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-15T11:31:35.878Z', '2021-10-05T11:31:35.878Z')");
             executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-16T17:31:35.878Z', '2021-10-06T15:31:35.878Z')");
             assertSql(
-                    "(tab latest by id where name in (select distinct name from tab where name != 'c2')) timestamp(other_ts)",
+                    "tab where name in (select distinct name from tab where name != 'c2') latest on other_ts partition by id",
                     "id\tname\tvalue\tother_ts\tts\n" +
-                            "d1\tc1\t101.4\t2021-10-15 14:31:35.878\t2021-10-05 14:31:35.878\n" +
-                            "d2\tc1\t111.7\t2021-10-16 17:31:35.878\t2021-10-06 15:31:35.878\n");
+                            "d1\tc1\t101.2\t2021-10-15T11:31:35.878000Z\t2021-10-05T11:31:35.878000Z\n" +
+                            "d2\tc1\t111.7\t2021-10-16T17:31:35.878000Z\t2021-10-06T15:31:35.878000Z\n");
         });
     }
 
@@ -3229,7 +3228,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         // no index
         assertQuery("a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n",
-                "select * from x latest by b where b = 'RXGZ'",
+                "select * from x where b = 'RXGZ' latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select " +
@@ -3256,7 +3255,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         // no index
         assertQuery("k\ta\tb\n" +
                         "1970-01-03T07:33:20.000000Z\t23.90529010846525\tRXGZ\n",
-                "select k,a,b from x latest by b where b = 'RXGZ'",
+                "select k,a,b from x where b = 'RXGZ' latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select " +
@@ -3283,7 +3282,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         TestMatchFunctionFactory.clear();
         assertQuery("a\tb\tk\n" +
                         "5.942010834028011\tPEHN\t1970-08-03T02:53:20.000000Z\n",
-                "select * from x latest by b where b = 'PEHN' and a < 22 and test_match()",
+                "select * from x where b = 'PEHN' and a < 22 and test_match() latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3311,7 +3310,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testLatestByKeyValueFilteredEmpty() throws Exception {
         TestMatchFunctionFactory.clear();
         assertQuery("a\tb\tk\n",
-                "select * from x latest by b where b = 'PEHN' and a < 22 and 1 = 2 and test_match()",
+                "select * from x where b = 'PEHN' and a < 22 and 1 = 2 and test_match() latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3334,7 +3333,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testLatestByKeyValueIndexed() throws Exception {
         assertQuery("a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n",
-                "select * from x latest by b where b = 'RXGZ'",
+                "select * from x where b = 'RXGZ' latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3360,7 +3359,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         TestMatchFunctionFactory.clear();
         assertQuery("a\tb\tk\n" +
                         "5.942010834028011\tPEHN\t1970-08-03T02:53:20.000000Z\n",
-                "select * from x latest by b where b = 'PEHN' and a < 22 and test_match()",
+                "select * from x where b = 'PEHN' and a < 22 and test_match() latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3387,7 +3386,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testLatestByKeyValueInterval() throws Exception {
         assertQuery("a\tb\tk\n" +
                         "84.45258177211063\tPEHN\t1970-01-16T01:06:40.000000Z\n",
-                "select * from x latest by b where b = 'PEHN' and k IN '1970-01-06T18:53:20;11d'",
+                "select * from x where b = 'PEHN' and k IN '1970-01-06T18:53:20;11d' latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3406,7 +3405,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         assertQuery("a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n",
-                "select * from x latest by b where b in ('RXGZ','HYRX')",
+                "select * from x where b in ('RXGZ','HYRX') latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3441,7 +3440,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x latest by b where b in ('RXGZ','HYRX', null) and a > 12 and a < 50 and test_match()",
+                "select * from x where b in ('RXGZ','HYRX', null) and a > 12 and a < 50 and test_match() latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3476,7 +3475,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         assertQuery("a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n",
-                "select * from x latest by b where b in ('RXGZ','HYRX')",
+                "select * from x where b in ('RXGZ','HYRX') latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3509,7 +3508,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         assertQuery("a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n",
-                "select * from x latest by b where b in ('RXGZ','HYRX') and a > 20 and test_match()",
+                "select * from x where b in ('RXGZ','HYRX') and a > 20 and test_match() latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3542,7 +3541,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testLatestByMissingKeyValue() throws Exception {
         assertQuery(null,
-                "select * from x latest by b where b in ('XYZ')",
+                "select * from x where b in ('XYZ') latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3568,7 +3567,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testLatestByMissingKeyValueFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
         assertQuery(null,
-                "select * from x latest by b where b in ('XYZ') and a < 60 and test_match()",
+                "select * from x where b in ('XYZ') and a < 60 and test_match() latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3596,7 +3595,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testLatestByMissingKeyValueIndexed() throws Exception {
         assertQuery(null,
-                "select * from x latest by b where b in ('XYZ')",
+                "select * from x where b in ('XYZ') latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3621,7 +3620,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testLatestByMissingKeyValueIndexedColumnDereference() throws Exception {
         assertQuery(null,
-                "select b,k,a from x latest by b where b in ('XYZ')",
+                "select b,k,a from x where b in ('XYZ') latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3647,7 +3646,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testLatestByMissingKeyValueIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
         assertQuery(null,
-                "select * from x latest by b where b in ('XYZ') and a < 60 and test_match()",
+                "select * from x where b in ('XYZ') and a < 60 and test_match() latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3676,7 +3675,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         // no index
         assertQuery("a\tb\tk\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n",
-                "select * from x latest by b where b in ('XYZ','HYRX')",
+                "select * from x where b in ('XYZ','HYRX') latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3708,7 +3707,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         TestMatchFunctionFactory.clear();
         assertQuery("a\tb\tk\n" +
                         "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n",
-                "select * from x latest by b where b in ('XYZ', 'HYRX') and a > 30 and test_match()",
+                "select * from x where b in ('XYZ', 'HYRX') and a > 30 and test_match() latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3742,7 +3741,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testLatestByMissingKeyValuesIndexed() throws Exception {
         assertQuery("a\tb\tk\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n",
-                "select * from x latest by b where b in ('XYZ', 'HYRX')",
+                "select * from x where b in ('XYZ', 'HYRX') latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3774,7 +3773,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         TestMatchFunctionFactory.clear();
         assertQuery("a\tb\tk\n" +
                         "54.55175324785665\tHYRX\t1970-02-02T07:00:00.000000Z\n",
-                "select * from x latest by b where b in ('XYZ', 'HYRX') and a > 30 and test_match()",
+                "select * from x where b in ('XYZ', 'HYRX') and a > 30 and test_match() latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3893,7 +3892,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testLatestByMultipleColumns() throws Exception {
         assertQuery("cust_id\tbalance_ccy\tbalance\tstatus\ttimestamp\n",
-                "select * from balances latest by cust_id, balance_ccy",
+                "select * from balances latest on timestamp partition by cust_id, balance_ccy",
                 "create table balances (\n" +
                         "\tcust_id int, \n" +
                         "\tbalance_ccy symbol, \n" +
@@ -3933,7 +3932,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testLatestByNonExistingColumn() throws Exception {
         assertFailure(
-                "select * from x latest by y",
+                "select * from x latest on k partition by y",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3943,7 +3942,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from" +
                         " long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
-                26,
+                41,
                 "Invalid column");
     }
 
@@ -3994,7 +3993,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x latest by b where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10))",
+                "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10)) latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -4029,7 +4028,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x latest by b where b in (select list('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))",
+                "select * from x where b in (select list('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10)) latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -4066,8 +4065,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x latest by b where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))" +
-                        " and a > 12 and a < 50 and test_match()",
+                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))" +
+                        " and a > 12 and a < 50 and test_match()" +
+                        " latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -4105,7 +4105,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x latest by b where b in (select list('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))",
+                "select * from x where b in (select list('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10)) latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -4141,8 +4141,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x latest by b where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))" +
-                        " and a > 12 and a < 50 and test_match()",
+                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))" +
+                        " and a > 12 and a < 50 and test_match()" +
+                        " latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -4181,8 +4182,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x latest by b where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
-                        " and a > 12 and a < 50 and test_match()",
+                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
+                        " and a > 12 and a < 50 and test_match()" +
+                        " latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -4218,7 +4220,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x latest by b where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10))",
+                "select * from x where b in (select list('RXGZ', 'HYRX', null) a from long_sequence(10)) latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -4253,8 +4255,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x latest by b where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
-                        " and a > 12 and a < 50 and test_match()",
+                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
+                        " and a > 12 and a < 50 and test_match()" +
+                        " latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -4287,7 +4290,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testLatestBySubQueryIndexedIntColumn() throws Exception {
         assertFailure(
-                "select * from x latest by b where b in (select 1 a from long_sequence(4))",
+                "select * from x where b in (select 1 a from long_sequence(4)) latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -4297,7 +4300,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from" +
                         " long_sequence(20)" +
                         "), index(b) timestamp(k) partition by DAY",
-                47,
+                35,
                 "unsupported column type");
     }
 
@@ -4305,7 +4308,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testLatestBySubQueryIndexedStrColumn() throws Exception {
         assertQuery("a\tb\tk\n" +
                         "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n",
-                "select * from x latest by b where b in (select 'RXGZ' from long_sequence(4))",
+                "select * from x where b in (select 'RXGZ' from long_sequence(4)) latest on k partition by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -4345,7 +4348,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "    symbol symbol, " +
                         "    ts timestamp" +
                         ")",
-                null);
+                "ts");
     }
 
     @Test
@@ -4379,7 +4382,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "    symbol symbol index, " +
                         "    ts timestamp" +
                         ")",
-                null);
+                "ts");
     }
 
     @Test
@@ -4404,7 +4407,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         assertQuery("ts\tmarket_type\tavg\n" +
                         "1970-01-01T00:00:09.999996Z\taaa\t0.02110922811597793\n" +
                         "1970-01-01T00:00:09.999996Z\tbbb\t0.344021345830156\n",
-                "select ts, market_type, avg(bid_price) FROM market_updates LATEST BY market_type SAMPLE BY 1s",
+                "select ts, market_type, avg(bid_price) FROM market_updates LATEST ON ts PARTITION BY market_type SAMPLE BY 1s",
                 "create table market_updates as (" +
                         "select " +
                         "rnd_symbol('aaa','bbb') market_type, " +
@@ -4446,7 +4449,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             executeInsert("insert into tab values ('d2', 'c1', 401.2, '2021-10-16T11:31:35.878Z', '2021-10-06T12:31:35.878Z')");
             executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-16T17:31:35.878Z', '2021-10-26T15:31:35.878Z')");
             assertSql(
-                    "(tab latest by id where name in ('c2')) timestamp(other_ts)",
+                    "tab where name in ('c2') latest on other_ts partition by id",
                     "id\tname\tvalue\tother_ts\tts\n" +
                             "d1\tc2\t102.5\t2021-10-15T12:31:35.878000Z\t2021-01-05T15:31:35.878000Z\n" +
                             "d2\tc2\t401.1\t2021-10-16T17:31:35.878000Z\t2021-10-26T11:31:35.878000Z\n");
@@ -4487,7 +4490,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             executeInsert("insert into tab values ('d2', 'c1', 401.2, '2021-10-16T11:31:35.878Z', '2021-10-06T12:31:35.878Z')");
             executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-16T17:31:35.878Z', '2021-10-26T15:31:35.878Z')");
             assertSql(
-                    "(tab latest by id where name in ('c2')) timestamp(ts)",
+                    "tab where name in ('c2') latest on ts partition by id",
                     "id\tname\tvalue\tother_ts\tts\n" +
                             "d1\tc2\t102.10000000000001\t2021-10-15T17:31:35.878000Z\t2021-10-04T11:31:35.878000Z\n" +
                             "d2\tc2\t401.1\t2021-10-16T17:31:35.878000Z\t2021-10-26T11:31:35.878000Z\n");
@@ -4514,9 +4517,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 ") timestamp(ts) partition by DAY";
         CharSequence expectedTail = "invalid type, only [BOOLEAN, SHORT, INT, LONG, LONG256, CHAR, STRING, SYMBOL] are supported in LATEST BY";
         assertFailure(
-                "comprehensive latest by byte",
+                "comprehensive latest on ts partition by byte",
                 createTableDDL,
-                24,
+                40,
                 "byte (BYTE): " + expectedTail);
         for (String[] nameType : new String[][]{
                 {"date", "DATE"},
@@ -4530,9 +4533,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 {"binary", "BINARY"},
                 {"ts", "TIMESTAMP"}}) {
             assertFailure(
-                    "comprehensive latest by " + nameType[0],
+                    "comprehensive latest on ts partition by " + nameType[0],
                     null,
-                    24,
+                    40,
                     String.format("%s (%s): %s", nameType[0], nameType[1], expectedTail));
         }
     }
@@ -4540,6 +4543,68 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testLatestByValue() throws Exception {
         // no index
+        assertQuery("a\tb\tk\n" +
+                        "65.08594025855301\tHNR\t1970-01-02T03:46:40.000000Z\n",
+                "select * from x where b = 'HNR' latest on k partition by b",
+                "create table x as " +
+                        "(" +
+                        "select " +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(2,4,4) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'HNR'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tb\tk\n" +
+                        "34.56897991538844\tHNR\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                false,
+                true);
+    }
+
+    @Test
+    public void testLatestByDeprecated() throws Exception {
+        assertQuery("a\tb\tk\n" +
+                        "28.45577791213847\tHNR\t1970-01-02T03:46:40.000000Z\n" +
+                        "88.99286912289664\tABC\t1970-01-05T15:06:40.000000Z\n",
+                "select * from x latest by b",
+                "create table x as " +
+                        "(" +
+                        "select " +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str('ABC','HNR') b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'HNR'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tb\tk\n" +
+                        "88.99286912289664\tABC\t1970-01-05T15:06:40.000000Z\n" +
+                        "11.427984775756228\tHNR\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                false,
+                true);
+    }
+
+    @Test
+    public void testLatestByDeprecatedFiltered() throws Exception {
         assertQuery("a\tb\tk\n" +
                         "65.08594025855301\tHNR\t1970-01-02T03:46:40.000000Z\n",
                 "select * from x latest by b where b = 'HNR'",
@@ -4987,7 +5052,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_str(5,16,2) n" +
                         " from" +
                         " long_sequence(20)" +
-                        ") partition by NONE",
+                        ") timestamp(k) partition by NONE",
                 null,
                 "insert into x(a,d,c,k) select * from (" +
                         "select" +
@@ -5342,7 +5407,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_str(5,16,2) n" +
                         " from" +
                         " long_sequence(20)" +
-                        ") partition by NONE",
+                        ") timestamp(k) partition by NONE",
                 null,
                 "insert into x select * from (" +
                         "select" +
@@ -5533,7 +5598,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_str(5,16,2) n" +
                         " from" +
                         " long_sequence(20)" +
-                        ") partition by NONE",
+                        ") timestamp(k) partition by NONE",
                 null,
                 "insert into x select * from (" +
                         "select" +
@@ -5593,7 +5658,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_str(5,16,2) n" +
                         " from" +
                         " long_sequence(20)" +
-                        ") partition by NONE",
+                        ") timestamp(k) partition by NONE",
                 13, "unsupported column type: BINARY"
         );
 
@@ -5629,7 +5694,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_char() a" +
                         " from" +
                         " long_sequence(20)" +
-                        ") partition by NONE",
+                        ")",
                 null,
                 "insert into x select * from (" +
                         "select" +
@@ -6426,7 +6491,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testSumDoubleColumnWithKahanMethodVectorised1() throws Exception {
-        String ddl = "create table x (ds double) partition by NONE";
+        String ddl = "create table x (ds double)";
         compiler.compile(ddl, sqlExecutionContext);
 
         executeInsertStatement(1.0);
@@ -6439,7 +6504,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testSumDoubleColumnWithKahanMethodVectorised2() throws Exception {
-        String ddl = "create table x (ds double) partition by NONE";
+        String ddl = "create table x (ds double)";
         compiler.compile(ddl, sqlExecutionContext);
 
         executeInsertStatement(1.0);
@@ -6461,7 +6526,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testSumDoubleColumnWithKahanMethodVectorised3() throws Exception {
-        String ddl = "create table x (ds double) partition by NONE";
+        String ddl = "create table x (ds double)";
         compiler.compile(ddl, sqlExecutionContext);
 
         executeInsertStatement(1.0);
@@ -6994,8 +7059,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             TestUtils.assertSql(
                     compiler,
                     sqlExecutionContext,
-                    "select metric, sum(value) from x latest by node \n" +
-                            "where node in ('node1', 'node2') and metric in ('cpu')",
+                    "select metric, sum(value) from x \n" +
+                            "where node in ('node1', 'node2') and metric in ('cpu') \n" +
+                            "latest on ts partition by node",
                     sink,
                     "metric\tsum\n" +
                             "cpu\t175\n"
@@ -7023,44 +7089,44 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             executeInsert("insert into tab values ('d2', 'c1', 401.2, '2021-10-06T12:31:35.878Z')");
             executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-06T15:31:35.878Z')");
             assertSql(
-                    "tab latest by id, name where id = 'd1'",
+                    "tab where id = 'd1' latest on ts partition by id, name",
                     "id\tname\tvalue\tts\n" +
                             "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
                             "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n");
             assertSql(
-                    "tab latest by id, name where id != 'd2' and value < 102.5",
+                    "tab where id != 'd2' and value < 102.5 latest on ts partition by id, name",
                     "id\tname\tvalue\tts\n" +
                             "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
                             "d1\tc2\t102.4\t2021-10-05T14:31:35.878000Z\n");
             assertSql(
-                    "tab latest by id, name where name = 'c1'",
+                    "tab where name = 'c1' latest on ts partition by id, name",
                     "id\tname\tvalue\tts\n" +
                             "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
                             "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n");
             assertSql(
-                    "tab latest by id, name where name != 'c2' and value <= 111.7",
+                    "tab where name != 'c2' and value <= 111.7 latest on ts partition by id, name",
                     "id\tname\tvalue\tts\n" +
                             "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
                             "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n");
             // TODO: broken 2,4,5,7
             assertSql(
-                    "tab latest by id where name = 'c2'",
+                    "tab where name = 'c2' latest on ts partition by id",
                     "id\tname\tvalue\tts\n" +
                             "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n" +
                             "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n");
             // TODO: broken 3,4,5,6
             assertSql(
-                    "tab latest by name where id = 'd1'",
+                    "tab where id = 'd1' latest on ts partition by name",
                     "id\tname\tvalue\tts\n" +
                             "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
                             "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n");
             assertSql(
-                    "tab latest by name where id = 'd2'",
+                    "tab where id = 'd2' latest on ts partition by name",
                     "id\tname\tvalue\tts\n" +
                             "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n" +
                             "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n");
             assertSql(
-                    "tab latest by name where id != 'd1'",
+                    "tab where id != 'd1' latest on ts partition by name",
                     "id\tname\tvalue\tts\n" +
                             "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n" +
                             "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n");
@@ -7093,8 +7159,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             TestUtils.assertSql(
                     compiler,
                     sqlExecutionContext,
-                    "select * from x latest by node, metric \n" +
-                            "where node in ('node2') and metric in ('cpu', 'memory')",
+                    "select * from x \n" +
+                            "where node in ('node2') and metric in ('cpu', 'memory') \n" +
+                            "latest on ts partition by node, metric",
                     sink,
                     "ts\tnode\tmetric\tvalue\n" +
                             "2021-11-17T17:35:03.000000Z\tnode2\tcpu\t75\n" +
@@ -7122,21 +7189,21 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
                             "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest by boolean", ts);
+                    "tab latest on ts partition by boolean", ts);
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
                             "false\t14333\t14333\t8260188555232587029\t0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab timestamp(ts) latest by short", "ts");
+                    "tab latest on ts partition by short", "ts");
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
                             "false\t14333\t14333\t8260188555232587029\t0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest by int", ts);
+                    "tab latest on ts partition by int", ts);
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
@@ -7144,7 +7211,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest by long", ts);
+                    "tab latest on ts partition by long", ts);
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
@@ -7152,7 +7219,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest by long256", ts);
+                    "tab latest on ts partition by long256", ts);
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
@@ -7162,7 +7229,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest by char", ts);
+                    "tab latest on ts partition by char", ts);
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
@@ -7170,14 +7237,14 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "false\t14333\t14333\t8260188555232587029\t0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\tJ\tCOCO\t123\t1970-01-01T00:00:07.000000Z\n" +
                             "true\t24814\t24814\t7759636733976435003\t0x386129f34be87b5e3990fb6012dac1d3495a30aaa8bf53224e89d27e7ee5104e\tJ\tORANGE\t123\t1970-01-01T00:00:09.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest by string", ts);
+                    "tab latest on ts partition by string", ts);
 
             expectSqlResult(
                     "boolean\tshort\tint\tlong\tlong256\tchar\tstring\tsymbol\tts\n" +
                             "true\t24814\t24814\t3614738589890112276\t0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\tJ\t\tXoXoX\t1970-01-01T00:00:04.000000Z\n" +
                             "false\t14817\t14817\t8260188555232587029\t0x4e1c798ce76392e690c6042566c5a1cda5b9a155686af43ac109ac68336ea0c9\tZ\tBANANA\t_(*y*)_\t1970-01-01T00:00:08.000000Z\n" +
                             "false\t24814\t24814\t6404066507400987550\t0x8b04de5aad1f110fdda84f010e21add4b83e6733ca158dd091627fc790e28086\tW\tBANANA\t123\t1970-01-02T00:00:01.000000Z\n",
-                    "tab latest by symbol", ts);
+                    "tab latest on ts partition by symbol", ts);
         });
     }
 }

@@ -71,7 +71,7 @@ public class TxSerializer
      * Read _txn file and prints to std output JSON translation.
      * Reads json file and saves it to binary _txn format.
      *
-     *  Command line arguments: -s <json_path> <txn_path> | -d <json_path>
+     *  Command line arguments: -s <json_path> <txn_path> | -d <txn_path>
      */
     public static void main(String[] args) throws IOException {
         if (args.length < 2 || args.length > 3) {

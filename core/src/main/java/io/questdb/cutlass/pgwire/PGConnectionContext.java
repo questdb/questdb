@@ -28,8 +28,8 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.*;
@@ -127,6 +127,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private final CairoEngine engine;
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
+    private final SCSequence tempSequence = new SCSequence();
     private IntList activeSelectColumnTypes;
     private int parsePhaseBindVariableCount;
     private long sendBufferPtr;
@@ -167,7 +168,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private long maxRows;
     private final PGResumeProcessor resumeCursorExecuteRef = this::resumeCursorExecute;
     private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
-    private final SCSequence tempSequence = new SCSequence();
 
     public PGConnectionContext(CairoEngine engine, PGWireConfiguration configuration, SqlExecutionContextImpl sqlExecutionContext) {
         this.engine = engine;
@@ -196,16 +196,16 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         this.sqlExecutionContext.setRandom(this.rnd = configuration.getRandom());
         this.namedStatementWrapperPool = new WeakObjectPool<>(NamedStatementWrapper::new, configuration.getNamesStatementPoolCapacity()); // 16
         this.namedPortalPool = new WeakObjectPool<>(Portal::new, configuration.getNamesStatementPoolCapacity()); // 16
-        this.typesAndInsertPool = new WeakAutoClosableObjectPool<>(TypesAndInsert::new, configuration.getInsertPoolCapacity()); // 32
-        this.typesAndInsertCache = new AssociativeCache<>(
-                configuration.getInsertCacheBlockCount(), // 8
-                configuration.getInsertCacheRowCount()
-        );
         this.namedStatementMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
         this.pendingWriters = new CharSequenceObjHashMap<>(configuration.getPendingWritersCacheSize());
         this.namedPortalMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
         this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration());
+        this.typesAndInsertPool = new WeakAutoClosableObjectPool<>(TypesAndInsert::new, configuration.getInsertPoolCapacity()); // 32
+        final boolean enableInsertCache = configuration.isInsertCacheEnabled();
+        final int blockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1; // 8
+        final int rowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1; // 8
+        this.typesAndInsertCache = new AssociativeCache<>(blockCount, rowCount);
     }
 
     public static int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
@@ -391,6 +391,10 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             reportError(e.getPosition(), e.getFlyweightMessage(), 0);
         } catch (CairoException e) {
             reportError(-1, e.getFlyweightMessage(), e.getErrno());
+        } catch (AuthenticationException e) {
+            prepareError(-1, e.getMessage(), 0);
+            sendAndReset();
+            clearRecvBuffer();
         }
     }
 
@@ -996,7 +1000,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         currentCursor = Misc.free(currentCursor);
         // do not free factory, it will be cached
         currentFactory = null;
-        // we we resumed the cursor send the typeAndSelect will be null
+        // we resumed the cursor send the typeAndSelect will be null
         // we do not want to overwrite cache entries and potentially
         // leak memory
         if (typesAndSelect != null) {
@@ -1069,9 +1073,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     configureContextForSet();
                     break;
                 case CompiledQuery.ALTER:
-                   try(QueryFuture cf = cc.execute(tempSequence)) {
-                       cf.await();
-                   }
+                    try (QueryFuture cf = cc.execute(tempSequence)) {
+                        cf.await();
+                    }
                 default:
                     // DDL SQL
                     queryTag = TAG_OK;
@@ -1156,7 +1160,13 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
-    private void doAuthentication(long msgLo, long msgLimit) throws BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+    private void doAuthentication(long msgLo, long msgLimit)
+            throws
+            BadProtocolException,
+            PeerDisconnectedException,
+            PeerIsSlowToReadException,
+            AuthenticationException,
+            SqlException {
         final CairoSecurityContext cairoSecurityContext = authenticator.authenticate(username, msgLo, msgLimit);
         if (cairoSecurityContext != null) {
             sqlExecutionContext.with(cairoSecurityContext, bindVariableService, rnd, this.fd, circuitBreaker.of(this.fd));
@@ -1332,7 +1342,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
      * any additional bytes received
      */
     private void parse(long address, int len, @Transient SqlCompiler compiler)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException, SqlException {
+            throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException, SqlException, AuthenticationException {
 
         if (requireInitialMessage) {
             processInitialMessage(address, len);
@@ -1408,6 +1418,13 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 prepareForNewQuery();
                 // fall thru
             case 'H': // flush
+                // some clients (asyncpg) chose not to send 'S' (sync) message
+                // but instead fire 'H'. Can't wrap my head around as to why
+                // query execution is so ambiguous
+                if (syncActions.size() > 0) {
+                    processSyncActions();
+                    prepareForNewQuery();
+                }
                 sendAndReset();
                 break;
             case 'D': // describe
@@ -1525,7 +1542,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             bindVariableService.clear();
             currentCursor = Misc.free(currentCursor);
             typesAndInsert = null;
-            typesAndSelect = null;
+            clearCursorAndFactory();
             rowCount = 0;
             queryTag = TAG_OK;
             queryText = null;
@@ -2183,7 +2200,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         while (currentCursor.hasNext()) {
             // create checkpoint to which we can undo the buffer in case
-            // current DataRow will does not fit fully.
+            // current DataRow will not fit fully.
             responseAsciiSink.bookmark();
             try {
                 try {
@@ -2203,7 +2220,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         completed = maxRows <= 0 || rowCount < maxRows;
         if (completed) {
             clearCursorAndFactory();
-            // at this point buffer can contain unsent data
+            // at this point buffer can contain unsent data,
             // and it may not have enough space for the command
             if (sendBufferLimit - sendBufferPtr < PROTOCOL_TAIL_COMMAND_LENGTH) {
                 resumeProcessor = commandCompleteResumeProcessor;

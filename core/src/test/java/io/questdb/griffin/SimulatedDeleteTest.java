@@ -41,7 +41,7 @@ public class SimulatedDeleteTest extends AbstractGriffinTest {
             execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, inactive, timestamp) values (1, 'USD', true, 6000000006);", sqlExecutionContext).getInsertStatement());
 
             assertSql(
-                    "(select * from balances latest by balance_ccy where cust_id=1) where not inactive;",
+                    "(select * from balances where cust_id=1 latest on timestamp partition by balance_ccy) where not inactive;",
                     "cust_id\tbalance_ccy\tbalance\tinactive\ttimestamp\n" +
                             "1\tEUR\t650.5\tfalse\t1970-01-01T01:40:00.000002Z\n"
             );
@@ -60,7 +60,7 @@ public class SimulatedDeleteTest extends AbstractGriffinTest {
             TestUtils.assertSql(
                     compiler,
                     sqlExecutionContext,
-                    "(select state from state_table latest by state limit -1) where state != 'ON';",
+                    "(select state from state_table latest on time partition by state limit -1) where state != 'ON';",
                     sink,
                     "state\n"
             );
