@@ -26,11 +26,13 @@ import React, { MouseEvent, ReactNode, useCallback } from "react"
 import styled from "styled-components"
 import { Rocket } from "@styled-icons/boxicons-regular/Rocket"
 import { SortDown } from "@styled-icons/boxicons-regular/SortDown"
+import { RightArrow } from "@styled-icons/boxicons-regular/RightArrow"
 import { CheckboxBlankCircle } from "@styled-icons/remix-line/CheckboxBlankCircle"
 import { CodeSSlash } from "@styled-icons/remix-line/CodeSSlash"
 import { Information } from "@styled-icons/remix-line/Information"
 import { Table as TableIcon } from "@styled-icons/remix-line/Table"
 import { PieChart } from "@styled-icons/remix-line/PieChart"
+import type { TreeNodeKind } from "../../../components/Tree"
 
 import {
   SecondaryButton,
@@ -38,6 +40,7 @@ import {
   TransitionDuration,
   IconWithTooltip,
 } from "components"
+import type { TextProps } from "components"
 import { color } from "utils"
 import { useEditor } from "../../../providers"
 
@@ -47,7 +50,7 @@ type Props = Readonly<{
   description?: string
   expanded?: boolean
   indexed?: boolean
-  kind: "column" | "table"
+  kind: TreeNodeKind
   name: string
   onClick?: (event: MouseEvent) => void
   partitionBy?: string
@@ -60,6 +63,11 @@ const Type = styled(Text)`
   margin-right: 1rem;
   flex: 0;
   transition: opacity ${TransitionDuration.REG}ms;
+`
+
+const Title = styled(Text)<TextProps & { kind: TreeNodeKind }>`
+  cursor: ${({ kind }) =>
+    ["folder", "table"].includes(kind) ? "pointer" : "initial"};
 `
 
 const PlusButton = styled(SecondaryButton)<Pick<Props, "tooltip">>`
@@ -115,6 +123,16 @@ const RocketIcon = styled(Rocket)`
 const SortDownIcon = styled(SortDown)`
   color: ${color("draculaGreen")};
   margin-right: 0.8rem;
+`
+
+const RightArrowIcon = styled(RightArrow)`
+  color: ${color("gray2")};
+  margin-right: 0.8rem;
+  cursor: pointer;
+`
+
+const DownArrowIcon = styled(RightArrowIcon)`
+  transform: rotateZ(90deg);
 `
 
 const DotIcon = styled(CheckboxBlankCircle)`
@@ -184,6 +202,10 @@ const Row = ({
           />
         )}
 
+        {kind === "folder" && expanded && <DownArrowIcon size="14px" />}
+
+        {kind === "folder" && !expanded && <RightArrowIcon size="14px" />}
+
         {kind === "column" && !indexed && name === designatedTimestamp && (
           <IconWithTooltip
             icon={<SortDownIcon size="14px" />}
@@ -196,9 +218,9 @@ const Row = ({
           <DotIcon size="12px" />
         )}
 
-        <Text color="draculaForeground" ellipsis>
+        <Title color="draculaForeground" ellipsis kind={kind}>
           {name}
-        </Text>
+        </Title>
         {suffix}
 
         <Spacer />
@@ -216,10 +238,16 @@ const Row = ({
           </PartitionByWrapper>
         )}
 
-        <PlusButton onClick={handlePlusButtonClick} size="sm" tooltip={tooltip}>
-          <CodeSSlash size="16px" />
-          <span>Add</span>
-        </PlusButton>
+        {["column", "table"].includes(kind) && (
+          <PlusButton
+            onClick={handlePlusButtonClick}
+            size="sm"
+            tooltip={tooltip}
+          >
+            <CodeSSlash size="16px" />
+            <span>Add</span>
+          </PlusButton>
+        )}
 
         {tooltip && description && (
           <IconWithTooltip
