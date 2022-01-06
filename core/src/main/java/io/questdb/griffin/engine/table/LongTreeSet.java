@@ -70,7 +70,7 @@ public class LongTreeSet extends AbstractRedBlackTree {
         } else {
             setRight(parent, p);
         }
-        fix(p);
+        fixInsert(p);
         return true;
     }
 
