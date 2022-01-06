@@ -329,10 +329,7 @@
             </build>
         </profile>
         <profile>
-            <id>use-built-in-nodejs</id>
-            <properties>
-                <nodejs.npm.cmd>${project.basedir}/node/npm</nodejs.npm.cmd>
-            </properties>
+            <id>build-web-console</id>
             <build>
                 <plugins>
                     <plugin>
@@ -352,13 +349,6 @@
                             <nodeVersion>${nodejs.version}</nodeVersion>
                         </configuration>
                     </plugin>
-                </plugins>
-            </build>
-        </profile>
-        <profile>
-            <id>build-web-console</id>
-            <build>
-                <plugins>
                     <plugin>
                         <groupId>org.codehaus.mojo</groupId>
                         <artifactId>exec-maven-plugin</artifactId>

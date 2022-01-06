@@ -203,7 +203,7 @@ multiple active versions.
 Otherwise, you can use the dedicated `maven` profile to build the code:
 
 ```bash
-mvn clean package -DskipTests -P build-web-console,build-binaries,use-built-in-nodejs
+mvn clean package -DskipTests -P build-web-console,build-binaries
 ```
 
 That way, `maven` will install `node` on the fly in `ui/node` so you don't have
