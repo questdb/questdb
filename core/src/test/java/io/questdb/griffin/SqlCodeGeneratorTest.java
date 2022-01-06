@@ -487,7 +487,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "1826239903\t0.5716129058692643\t1970-01-12T08:13:20.000000Z\n" +
                         "-1165635863\t0.05094182589333662\t1970-01-12T11:00:00.000000Z\n",
                 "tst",
-                "create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000000l) t from long_sequence(100)) timestamp(t)) partition by DAY",
+                "create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000000l) t from long_sequence(100)) timestamp(t)) timestamp(t) partition by DAY",
                 "t",
                 true,
                 true,
@@ -3203,8 +3203,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore
-    // TODO: fix, where is applied after latest by, the optimized I suspect
     @Test
     public void testLatestByIsApplicableToSubQueriesNoDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
@@ -3215,13 +3213,13 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     "    other_ts timestamp, " +
                     "    ts timestamp" +
                     ")", sqlExecutionContext);
-            executeInsert("insert into tab values ('d1', 'c1', 101.1, '2021-10-15T11:31:35.878Z', '2021-10-05T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-15T11:31:35.878Z', '2021-10-05T11:31:35.878Z')");
             executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-16T17:31:35.878Z', '2021-10-06T15:31:35.878Z')");
             assertSql(
                     "tab where name in (select distinct name from tab where name != 'c2') latest on other_ts partition by id",
                     "id\tname\tvalue\tother_ts\tts\n" +
-                            "d1\tc1\t101.4\t2021-10-15 14:31:35.878\t2021-10-05 14:31:35.878\n" +
-                            "d2\tc1\t111.7\t2021-10-16 17:31:35.878\t2021-10-06 15:31:35.878\n");
+                            "d1\tc1\t101.2\t2021-10-15T11:31:35.878000Z\t2021-10-05T11:31:35.878000Z\n" +
+                            "d2\tc1\t111.7\t2021-10-16T17:31:35.878000Z\t2021-10-06T15:31:35.878000Z\n");
         });
     }
 
@@ -5054,7 +5052,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_str(5,16,2) n" +
                         " from" +
                         " long_sequence(20)" +
-                        ") partition by NONE",
+                        ") timestamp(k) partition by NONE",
                 null,
                 "insert into x(a,d,c,k) select * from (" +
                         "select" +
@@ -5409,7 +5407,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_str(5,16,2) n" +
                         " from" +
                         " long_sequence(20)" +
-                        ") partition by NONE",
+                        ") timestamp(k) partition by NONE",
                 null,
                 "insert into x select * from (" +
                         "select" +
@@ -5600,7 +5598,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_str(5,16,2) n" +
                         " from" +
                         " long_sequence(20)" +
-                        ") partition by NONE",
+                        ") timestamp(k) partition by NONE",
                 null,
                 "insert into x select * from (" +
                         "select" +
@@ -5660,7 +5658,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_str(5,16,2) n" +
                         " from" +
                         " long_sequence(20)" +
-                        ") partition by NONE",
+                        ") timestamp(k) partition by NONE",
                 13, "unsupported column type: BINARY"
         );
 
@@ -5696,7 +5694,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_char() a" +
                         " from" +
                         " long_sequence(20)" +
-                        ") partition by NONE",
+                        ")",
                 null,
                 "insert into x select * from (" +
                         "select" +
@@ -6493,7 +6491,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testSumDoubleColumnWithKahanMethodVectorised1() throws Exception {
-        String ddl = "create table x (ds double) partition by NONE";
+        String ddl = "create table x (ds double)";
         compiler.compile(ddl, sqlExecutionContext);
 
         executeInsertStatement(1.0);
@@ -6506,7 +6504,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testSumDoubleColumnWithKahanMethodVectorised2() throws Exception {
-        String ddl = "create table x (ds double) partition by NONE";
+        String ddl = "create table x (ds double)";
         compiler.compile(ddl, sqlExecutionContext);
 
         executeInsertStatement(1.0);
@@ -6528,7 +6526,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testSumDoubleColumnWithKahanMethodVectorised3() throws Exception {
-        String ddl = "create table x (ds double) partition by NONE";
+        String ddl = "create table x (ds double)";
         compiler.compile(ddl, sqlExecutionContext);
 
         executeInsertStatement(1.0);
