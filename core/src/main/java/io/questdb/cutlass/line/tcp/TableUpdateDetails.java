@@ -131,10 +131,6 @@ public class TableUpdateDetails implements Closeable {
         return eventsProcessedSinceReshuffle;
     }
 
-    public void setEventsProcessedSinceReshuffle(int eventsProcessedSinceReshuffle) {
-        this.eventsProcessedSinceReshuffle = eventsProcessedSinceReshuffle;
-    }
-
     public long getLastMeasurementMillis() {
         return lastMeasurementMillis;
     }
@@ -151,12 +147,8 @@ public class TableUpdateDetails implements Closeable {
         return writerThreadId;
     }
 
-    public void setWriterThreadId(int writerThreadId) {
-        this.writerThreadId = writerThreadId;
-    }
-
-    public int incrementEventsProcessedSinceReshuffle() {
-        return ++eventsProcessedSinceReshuffle;
+    public void incrementEventsProcessedSinceReshuffle() {
+        ++eventsProcessedSinceReshuffle;
     }
 
     public boolean isAssignedToJob() {
