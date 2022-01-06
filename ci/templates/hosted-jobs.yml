@@ -23,10 +23,10 @@ jobs:
           poolName: "Azure Pipelines"
           os: Linux
           jdk: "1.8"
-        mac-jdk17:
+        linux-jdk17:
           imageName: "macos-latest"
           poolName: "Azure Pipelines"
-          os: macOS
+          os: Linux
           jdk: "1.17"
     pool:
       vmImage: $(imageName)
