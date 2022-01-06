@@ -1,4 +1,4 @@
-FROM openjdk:11.0.7-jdk
+FROM openjdk:17.0.1-jdk-bullseye
 
 RUN apt-get update \
   && apt-get install git curl -y
@@ -11,7 +11,7 @@ RUN curl -L "https://www.mirrorservice.org/sites/ftp.apache.org/maven/maven-3/3.
 
 WORKDIR /build/questdb
 
-RUN ../apache-maven-3.6.3/bin/mvn clean package -DskipTests -P build-web-console,build-binaries,use-built-in-nodejs
+RUN ../apache-maven-3.6.3/bin/mvn clean package -Djdk.lang.Process.launchMechanism=vfork -DskipTests -P build-web-console,build-binaries,use-built-in-nodejs
 
 WORKDIR /build/questdb/core/target
 
