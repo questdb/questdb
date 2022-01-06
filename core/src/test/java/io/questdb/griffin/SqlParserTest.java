@@ -641,6 +641,28 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateAsSelectDuplicatedColumnNames() throws Exception {
+        assertSyntaxError("create table all as (" +
+                "    select" +
+                "        rnd_byte() b," +
+                "        rnd_short() sh," +
+                "        rnd_int() i," +
+                "        rnd_long() l," +
+                "        rnd_float() f," +
+                "        rnd_double() d," +
+                "        rnd_str() s," +
+                "        rnd_symbol('abc', 'cde') sym," +
+                "        rnd_boolean() b," +
+                "        rnd_date() dt," +
+                "        rnd_long256() lt," +
+                "        rnd_char() ch," +
+                "        rnd_timestamp(0, 1000, 0) ts," +
+                "        rnd_bin() bin" +
+                "    from long_sequence(100)" +
+                ");", 240, "A column with name b has already been defined.");
+    }
+
+    @Test
     public void testCreateNameDot() throws Exception {
         assertSyntaxError(
                 "create table . as ( select a, b, c from tab )",

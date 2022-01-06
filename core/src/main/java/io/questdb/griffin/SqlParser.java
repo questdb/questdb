@@ -550,6 +550,7 @@ public final class SqlParser {
         QueryModel queryModel = optimiser.optimise(parseDml(lexer, null), executionContext);
         ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
         assert columns.size() > 0;
+        ensureThatColumnNamesAreUnique(columns);
 
         // we do not know types of columns at this stage
         // compiler must put table together using query metadata.
@@ -559,6 +560,20 @@ public final class SqlParser {
 
         model.setQueryModel(queryModel);
         expectTok(lexer, ')');
+    }
+
+    private void ensureThatColumnNamesAreUnique(ObjList<QueryColumn> columns) throws SqlException {
+        for (int current = 0, total = columns.size(); current < total; current++) {
+            CharSequence currentName = columns.get(current).getName();
+            for (int prev = 0; prev < current; prev++) {
+                CharSequence previousName = columns.get(prev).getName();
+                if (currentName.equals(previousName)) {
+                    ExpressionNode node = columns.get(current).getAst();
+                    int literalPosition = node.position + node.token.length() + 3;
+                    throw SqlException.position(literalPosition).put("A column with name ").put(currentName).put(" has already been defined.");
+                }
+            }
+        }
     }
 
     private void parseCreateTableCastDef(GenericLexer lexer, CreateTableModel model) throws SqlException {
