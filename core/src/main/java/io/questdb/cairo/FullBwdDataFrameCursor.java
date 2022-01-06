@@ -73,7 +73,7 @@ public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
                 break;
             }
             if (partition == 0) {
-                position = -1L;//or return null?
+                position = -1L;
                 break;
             } else {
                 position -= partitionRows;

@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.RowCursor;
 /**
  * Row cursor that goes through data frame backwards / from end to start / hi to lo .
  */
-public class DataFrameBwdRowCursor extends AbstractDataFrameRowCursor implements RowCursor {
+public class DataFrameBwdRowCursor implements RowCursor {
     private long lo;
     private long current;
 

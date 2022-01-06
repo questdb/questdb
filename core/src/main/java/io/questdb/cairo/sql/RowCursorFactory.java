@@ -46,15 +46,4 @@ public interface RowCursorFactory {
     }
 
     boolean isEntity();
-
-    /**
-     * Returns true if factory allows reversing order from ASC to DESC and vice-versa .
-     */
-    default boolean supportsOrderReversal() {
-        return false;
-    }
-
-    default void reverseOrder() {
-        throw new UnsupportedOperationException();
-    }
 }

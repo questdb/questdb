@@ -46,23 +46,10 @@ public interface DataFrameCursorFactory extends Sinkable, Closeable {
     }
 
     /**
-     * Returns true if it's possible to switch order of underlying cursor,
-     * e.g. to utilize existing table ordering (e.g. for table with designated timestamp).
-     * If true is returned then switchOrder may be safely invoked .
-     */
-    default boolean supportsOrderReversal() {
-        return false;
-    }
-
-    default DataFrameCursorFactory reverseOrder() {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
      * Returns 0 for ASC, 1 for DESC
      */
     int getOrder();
 
-    static final int ORDER_ASC = 0;
-    static final int ORDER_DESC = 1;
+    int ORDER_ASC = 0;
+    int ORDER_DESC = 1;
 }

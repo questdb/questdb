@@ -26,9 +26,20 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.RowCursorFactory;
 
-//added to make it possible to switch between data frame and dataFrameBwd row cursor in DataFrameRowCursorFactory
-public abstract class AbstractDataFrameRowCursor implements RowCursor {
+public class BwdDataFrameRowCursorFactory implements RowCursorFactory {
+    private final DataFrameBwdRowCursor cursor = new DataFrameBwdRowCursor();
 
-    abstract void of(DataFrame frame);
+    @Override
+    public RowCursor getCursor(DataFrame dataFrame) {
+        cursor.of(dataFrame);
+        return cursor;
+    }
+
+    @Override
+    public boolean isEntity() {
+        return true;
+    }
 }
+

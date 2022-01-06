@@ -123,14 +123,6 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
             rowCursor = rowCursorFactory.getCursor(dataFrame);
             recordA.jumpTo(dataFrame.getPartitionIndex(), dataFrame.getRowLo()); //move to partition, rowlo doesn't matter
             next = nextRow;
-        }//what about size ?
-    }
-
-    public boolean supportsOrderReversal() {
-        return rowCursorFactory.supportsOrderReversal();
-    }
-
-    public void reverseOrder() {
-        this.rowCursorFactory.reverseOrder();
+        }
     }
 }

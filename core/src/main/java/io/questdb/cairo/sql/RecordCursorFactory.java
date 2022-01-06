@@ -103,20 +103,8 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
         return null;
     }
 
-    /**
-     * Returns true if it's possible to switch order of underlying cursor,
-     * e.g. to utilize existing table ordering (e.g. for table with designated timestamp).
-     * If true is returned then switchOrder may be safely invoked .
-     */
-    default boolean supportsOrderReversal() {
+    default boolean hasDescendingOrder() {
         return false;
     }
 
-    default boolean hasAscendingOrder() {
-        return false;
-    }
-
-    default void reverseOrder() {
-        throw new UnsupportedOperationException();
-    }
 }

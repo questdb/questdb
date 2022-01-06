@@ -76,19 +76,8 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         Misc.free(dataFrameCursorFactory);
     }
 
-    @Override
-    public boolean supportsOrderReversal() {
-        return dataFrameCursorFactory.supportsOrderReversal() && cursor.supportsOrderReversal();
-    }
-
-    public boolean hasAscendingOrder() {
-        return dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_ASC;
-    }
-
-    @Override
-    public void reverseOrder() {
-        dataFrameCursorFactory = dataFrameCursorFactory.reverseOrder();
-        cursor.reverseOrder();
+    public boolean hasDescendingOrder() {
+        return dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_DESC;
     }
 
     @Override

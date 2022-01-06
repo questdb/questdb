@@ -41,16 +41,6 @@ public class FullBwdDataFrameCursorFactory extends AbstractDataFrameCursorFactor
     }
 
     @Override
-    public boolean supportsOrderReversal() {
-        return true;
-    }
-
-    @Override
-    public DataFrameCursorFactory reverseOrder() {
-        return new FullFwdDataFrameCursorFactory(engine, tableName, tableId, tableVersion);
-    }
-
-    @Override
     public int getOrder() {
         return ORDER_DESC;
     }

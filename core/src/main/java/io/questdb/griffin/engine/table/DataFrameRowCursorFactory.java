@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.RowCursorFactory;
 
 public class DataFrameRowCursorFactory implements RowCursorFactory {
-    private AbstractDataFrameRowCursor cursor = new DataFrameRowCursor();
+    private final DataFrameRowCursor cursor = new DataFrameRowCursor();
 
     @Override
     public RowCursor getCursor(DataFrame dataFrame) {
@@ -40,19 +40,5 @@ public class DataFrameRowCursorFactory implements RowCursorFactory {
     @Override
     public boolean isEntity() {
         return true;
-    }
-
-    @Override
-    public boolean supportsOrderReversal() {
-        return true;
-    }
-
-    @Override
-    public void reverseOrder() {
-        if (cursor instanceof DataFrameRowCursor) {
-            cursor = new DataFrameBwdRowCursor();
-        } else {
-            cursor = new DataFrameRowCursor();
-        }
     }
 }

@@ -81,6 +81,6 @@ public interface DataFrameCursor extends Closeable, SymbolTableSource  {
      * Returns data frame and position (lo) of given rowNumber (according to cursor order) .
      */
     default @Nullable DataFrame skipTo(long rowNumber) {
-        throw new UnsupportedOperationException();//TODO: implement where possible
+        throw new UnsupportedOperationException();
     }
 }
