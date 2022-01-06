@@ -37,6 +37,7 @@ public class MemoryPages implements Closeable, Mutable {
     private final long pageSize;
     private final long mask;
     private final int bits;
+
     private final LongList pages = new LongList();
     private long cachePageHi;
     private long cachePageLo;
@@ -102,5 +103,11 @@ public class MemoryPages implements Closeable, Mutable {
 
         cachePageLo = index << bits;
         cachePageHi = cachePageLo + pageSize;
+    }
+
+    /* Returns number of chunks of chunkSize that fits in allocated memory (assuming there could be unused space at end of each page) */
+    public long countNumberOf(int chunkSize) {
+        return (cachePageLo >> bits) * (pageSize / chunkSize) + //full pages 
+                (cachePageLo & mask) / chunkSize; //last page
     }
 }
