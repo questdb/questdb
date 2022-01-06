@@ -108,7 +108,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "    sym2 symbol,\n" +
                         "    bid int,\n" +
                         "    ask int\n" +
-                        ")  partition by NONE",
+                        ")",
                 79,
                 "group by column does not match any key column is select statement"
         );
@@ -123,7 +123,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "    sym2 symbol,\n" +
                         "    bid int,\n" +
                         "    ask int\n" +
-                        ")  partition by NONE",
+                        ")",
                 7,
                 "not enough columns in group by"
         );
@@ -138,7 +138,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "    sym2 symbol,\n" +
                         "    bid int,\n" +
                         "    ask int\n" +
-                        ")  partition by NONE",
+                        ")",
                 7,
                 "not enough columns in group by"
         );
@@ -152,7 +152,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "    sym symbol,\n" +
                         "    bid int,\n" +
                         "    ask int\n" +
-                        ")  partition by NONE",
+                        ")",
                 77,
                 "invalid column reference"
         );
@@ -166,7 +166,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "    sym symbol,\n" +
                         "    bid int,\n" +
                         "    ask int\n" +
-                        ")  partition by NONE",
+                        ")",
                 71,
                 "group by column references aggregate expression"
         );
@@ -180,7 +180,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "    sym symbol,\n" +
                         "    bid int,\n" +
                         "    ask int\n" +
-                        ")  partition by NONE",
+                        ")",
                 71,
                 "group by column does not match any key column is select statement"
         );

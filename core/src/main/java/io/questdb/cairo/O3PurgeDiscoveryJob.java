@@ -103,9 +103,12 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
             txnList.sort();
 
             for (int i = 0, n = txnList.size() - 1; i < n; i++) {
+                // All readers should be strictly higher than minTxnToExpect
+                // in order to delete partition with nameTxnToRemove suffix
                 final long nameTxnToRemove = txnList.getQuick(i);
-                if (nameTxnToRemove <= mostRecentTxn) {
-                    final long minTxnToExpect = txnList.getQuick(i + 1);
+                final long minTxnToExpect = txnList.getQuick(i + 1);
+                if (nameTxnToRemove < mostRecentTxn) {
+                    // The name version must be strictly below last committed txn number
                     int errno;
                     if ((errno = O3PurgeJob.purgePartitionDir(
                             ff,
@@ -120,12 +123,20 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                         if (purgePubSeq != null) {
                             long cursor = purgePubSeq.next();
                             if (cursor > -1) {
-                                LOG.error()
-                                        .$("queuing [table=").$(tableName)
-                                        .$(", ts=").$ts(partitionTimestamp)
-                                        .$(", txn=").$(nameTxnToRemove)
-                                        .$(", errno=").$(errno)
-                                        .$(']').$();
+                                if (errno > 0) {
+                                    LOG.error()
+                                            .$("queuing [table=").$(tableName)
+                                            .$(", ts=").$ts(partitionTimestamp)
+                                            .$(", txn=").$(nameTxnToRemove)
+                                            .$(", errno=").$(errno)
+                                            .$(']').$();
+                                } else {
+                                    LOG.info()
+                                            .$("queuing [table=").$(tableName)
+                                            .$(", ts=").$ts(partitionTimestamp)
+                                            .$(", txn=").$(nameTxnToRemove)
+                                            .$(']').$();
+                                }
                                 O3PurgeTask task = purgeQueue.get(cursor);
                                 task.of(
                                         tableName,
