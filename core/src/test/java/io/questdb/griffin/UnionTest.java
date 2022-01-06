@@ -117,8 +117,7 @@ public class UnionTest extends AbstractGriffinTest {
                             " rnd_long256() l256," +
                             " rnd_char() chr" +
                             " from" +
-                            " long_sequence(20)" +
-                            ") partition by NONE",
+                            " long_sequence(20))",
                     sqlExecutionContext
             );
 
@@ -148,8 +147,7 @@ public class UnionTest extends AbstractGriffinTest {
                             " rnd_long256() l256," +
                             " rnd_char() chr" +
                             " from" +
-                            " long_sequence(10)" +
-                            ") partition by NONE",
+                            " long_sequence(10))",
                     sqlExecutionContext
             );
 
@@ -185,8 +183,7 @@ public class UnionTest extends AbstractGriffinTest {
                     "CREATE TABLE x as " +
                             "(SELECT " +
                             " rnd_symbol('CAR', 'VAN', 'PLANE') t " +
-                            " FROM long_sequence(7) x)" +
-                            " partition by NONE",
+                            " FROM long_sequence(7) x)",
                     sqlExecutionContext
             );
 
@@ -200,8 +197,7 @@ public class UnionTest extends AbstractGriffinTest {
                     "CREATE TABLE y as " +
                             "(SELECT " +
                             " rnd_symbol('PLANE', 'BICYCLE', 'SCOOTER') t " +
-                            " FROM long_sequence(7) x)" +
-                            " partition by NONE",
+                            " FROM long_sequence(7) x)",
                     sqlExecutionContext
             );
 
@@ -209,8 +205,7 @@ public class UnionTest extends AbstractGriffinTest {
                     "CREATE TABLE z as " +
                             "(SELECT " +
                             " rnd_symbol('MOTORBIKE', 'HELICOPTER', 'VAN') t " +
-                            " FROM long_sequence(13) x)" +
-                            " partition by NONE",
+                            " FROM long_sequence(13) x)",
                     sqlExecutionContext
             );
 
@@ -244,8 +239,7 @@ public class UnionTest extends AbstractGriffinTest {
                     "CREATE TABLE x as " +
                             "(SELECT " +
                             " rnd_symbol('CAR', 'VAN', 'PLANE') t " +
-                            " FROM long_sequence(7) x)" +
-                            " partition by NONE",
+                            " FROM long_sequence(7) x)",
                     sqlExecutionContext
             );
 
@@ -259,8 +253,7 @@ public class UnionTest extends AbstractGriffinTest {
                     "CREATE TABLE y as " +
                             "(SELECT " +
                             " rnd_symbol('PLANE', 'BICYCLE', 'SCOOTER') t " +
-                            " FROM long_sequence(7) x)" +
-                            " partition by NONE",
+                            " FROM long_sequence(7) x)",
                     sqlExecutionContext
             );
 
@@ -398,8 +391,7 @@ public class UnionTest extends AbstractGriffinTest {
                             " rnd_long256() l256," +
                             " rnd_char() chr" +
                             " from" +
-                            " long_sequence(20)" +
-                            ") partition by NONE",
+                            " long_sequence(20))",
                     sqlExecutionContext
             );
 
@@ -429,8 +421,7 @@ public class UnionTest extends AbstractGriffinTest {
                             " rnd_long256() l256," +
                             " rnd_char() chr" +
                             " from" +
-                            " long_sequence(22)" +
-                            ") partition by NONE",
+                            " long_sequence(22))",
                     sqlExecutionContext
             );
 
@@ -454,8 +445,7 @@ public class UnionTest extends AbstractGriffinTest {
                             " rnd_long256() l256," +
                             " rnd_char() chr" +
                             " from" +
-                            " long_sequence(4)" +
-                            ") partition by NONE",
+                            " long_sequence(4))",
                     sqlExecutionContext
             );
 
@@ -557,8 +547,7 @@ public class UnionTest extends AbstractGriffinTest {
                             " rnd_long256() l256," +
                             " rnd_char() chr" +
                             " from" +
-                            " long_sequence(20)" +
-                            ") partition by NONE",
+                            " long_sequence(20))",
                     sqlExecutionContext
             );
 
@@ -588,8 +577,7 @@ public class UnionTest extends AbstractGriffinTest {
                             " rnd_long256() l256," +
                             " rnd_char() chr" +
                             " from" +
-                            " long_sequence(10)" +
-                            ") partition by NONE",
+                            " long_sequence(10))",
                     sqlExecutionContext
             );
 
@@ -615,8 +603,7 @@ public class UnionTest extends AbstractGriffinTest {
                             " rnd_long256() l256," +
                             " rnd_char() chr" +
                             " from" +
-                            " long_sequence(24)" +
-                            ") partition by NONE",
+                            " long_sequence(24))",
                     sqlExecutionContext
             );
 
