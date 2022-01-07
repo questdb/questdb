@@ -502,9 +502,6 @@ public final class SqlParser {
 
         ExpressionNode partitionBy = parseCreateTablePartition(lexer, tok);
         if (partitionBy != null) {
-            if (model.getTimestamp() == null) {
-                throw SqlException.$(partitionBy.position, "Partitioning is possible only on tables with designated timestamps.");
-            }
             if (PartitionBy.fromString(partitionBy.token) == -1) {
                 throw SqlException.$(partitionBy.position, "'NONE', 'DAY', 'MONTH' or 'YEAR' expected");
             }
