@@ -35,7 +35,8 @@ import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * A version of {@link MemoryPARWImpl} that uses a single contiguous memory region instead of pages. Note that it still has the concept of a page such that the contiguous memory region will extend in page sizes.
+ * A version of {@link MemoryPARWImpl} that uses a single contiguous memory region instead of pages. 
+ * Note that it still has the concept of a page such that the contiguous memory region will extend in page sizes.
  *
  * @author Patrick Mackinlay
  */
