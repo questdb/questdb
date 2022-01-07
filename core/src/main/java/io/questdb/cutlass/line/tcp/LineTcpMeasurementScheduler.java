@@ -465,15 +465,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             } finally {
                 pubSeq.done(seq);
             }
-//            if (tableUpdateDetails.incrementEventsProcessedSinceReshuffle() > processedEventCountBeforeReshuffle) {
-//                if (tableUpdateDetailsLock.writeLock().tryLock()) {
-//                    try {
-//                        reshuffleTablesAcrossWriterThreads();
-//                    } finally {
-//                        tableUpdateDetailsLock.writeLock().unlock();
-//                    }
-//                }
-//            }
+            tableUpdateDetails.incrementEventsProcessedSinceReshuffle();
             return false;
         }
         return true;

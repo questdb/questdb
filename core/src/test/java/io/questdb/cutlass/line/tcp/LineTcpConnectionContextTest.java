@@ -870,6 +870,35 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
+    public void testDuplicateFieldNonASCIIDifferentCaseFirstRow() throws Exception {
+        String table = "dupField";
+        runInContext(() -> {
+            recvBuffer =
+                    table + ",terület=us-midwest hőmérséklet=82,HŐmérséklet=84,ветер=2.5,ветер=2.4 1465839830100400200\n" +
+                            table + ",terület=us-midwest hőmérséklet=83,ветер=3.0 1465839830100500200\n" +
+                            table + ",terület=us-eastcoast hőmérséklet=81,HŐMÉRSÉKLET=23,ветер=2.0 1465839830101400200\n" +
+                            table + ",terület=us-midwest ветер=2.1,hőmérséklet=85 1465839830102300200\n" +
+                            table + ",terület=us-eastcoast hőmérséklet=89 1465839830102400200\n" +
+                            table + ",terület=us-eastcoast hőmérséklet=80 1465839830102400200\n" +
+                            table + ",terület=us-westcost hőmérséklet=82,ветер=2.2 1465839830102500200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            closeContext();
+            String expected = "terület\thőmérséklet\tветер\ttimestamp\n" +
+                    "us-midwest\t82.0\t2.5\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t3.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2.0\t2016-06-13T17:43:50.101400Z\n" +
+                    "us-midwest\t85.0\t2.1\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\tNaN\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t80.0\tNaN\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2.2\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Test
     public void testDuplicateFieldWhenTableExistsAlreadyNonASCIIFirstRow() throws Exception {
         String table = "dupField";
         runInContext(() -> {
@@ -1695,29 +1724,6 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                 Assert.assertEquals(250_000, reader.getMetadata().getCommitLag());
             }
         });
-    }
-
-    @Test
-    public void testThreadsWithUnbalancedLoad() throws Exception {
-        nWriterThreads = 3;
-        int nTables = 12;
-        int nIterations = 20_000;
-        double[] loadFactors = {10, 10, 10, 20, 20, 20, 20, 20, 20, 30, 30, 60};
-        testThreading(nTables, nIterations, loadFactors);
-
-        int maxLoad = Integer.MIN_VALUE;
-        int minLoad = Integer.MAX_VALUE;
-        for (int load : rebalanceLoadByThread) {
-            if (maxLoad < load) {
-                maxLoad = load;
-            }
-            if (minLoad > load) {
-                minLoad = load;
-            }
-        }
-        double loadRatio = (double) maxLoad / (double) minLoad;
-        LOG.info().$("testThreadsWithUnbalancedLoad final load ratio is ").$(loadRatio).$();
-        Assert.assertTrue(loadRatio < 1.05);
     }
 
     @Test

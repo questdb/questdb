@@ -28,10 +28,16 @@ import io.questdb.cairo.*;
 import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.ObjList;
+import io.questdb.std.ThreadLocal;
+import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.StringSink;
+
+import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
 
 class TableStructureAdapter implements TableStructure {
     private static final String DEFAULT_TIMESTAMP_FIELD = "timestamp";
-    private final LowerCaseCharSequenceHashSet entityNames = new LowerCaseCharSequenceHashSet();
+    private final ThreadLocal<StringSink> tempSink = new ThreadLocal<>(StringSink::new);
+    private final LowerCaseCharSequenceHashSet entityNamesUtf16 = new LowerCaseCharSequenceHashSet();
     private final ObjList<LineTcpParser.ProtoEntity> entities = new ObjList<>();
     private final CairoConfiguration cairoConfiguration;
     private final int defaultPartitionBy;
@@ -127,13 +133,17 @@ class TableStructureAdapter implements TableStructure {
 
     TableStructureAdapter of(CharSequence tableName, LineTcpParser parser) {
         this.tableName = tableName;
-        entityNames.clear();
+        entityNamesUtf16.clear();
         entities.clear();
+        final boolean hasNonAsciiChars = parser.hasNonAsciiChars();
         for (int i = 0; i < parser.getEntityCount(); i++) {
             final LineTcpParser.ProtoEntity entity = parser.getEntity(i);
-            final CharSequence name = entity.getName();
-            if (entityNames.add(name)) {
-                if (Chars.equals(name, DEFAULT_TIMESTAMP_FIELD)) {
+            final DirectByteCharSequence colNameUtf8 = entity.getName();
+            final CharSequence colNameUtf16 = utf8ToUtf16(colNameUtf8, tempSink.get(), hasNonAsciiChars);
+            int index = entityNamesUtf16.keyIndex(colNameUtf16);
+            if (index > -1) {
+                entityNamesUtf16.addAt(index, colNameUtf16.toString());
+                if (Chars.equals(colNameUtf16, DEFAULT_TIMESTAMP_FIELD)) {
                     timestampIndex = entities.size();
                 }
                 entities.add(entity);
