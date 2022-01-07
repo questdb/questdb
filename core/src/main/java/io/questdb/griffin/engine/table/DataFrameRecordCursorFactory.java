@@ -61,7 +61,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     ) {
         super(metadata, dataFrameCursorFactory);
 
-        this.cursor = new DataFrameRecordCursor(rowCursorFactory, rowCursorFactory.isEntity(), filter, columnIndexes);//hERE!
+        this.cursor = new DataFrameRecordCursor(rowCursorFactory, rowCursorFactory.isEntity(), filter, columnIndexes);
         this.followsOrderByAdvice = followsOrderByAdvice;
         this.filter = filter;
         this.framingSupported = framingSupported;
