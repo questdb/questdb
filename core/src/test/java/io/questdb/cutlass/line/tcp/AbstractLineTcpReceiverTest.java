@@ -94,7 +94,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             return bindPort;
         }
     };
-    protected int maxMeasurementSize = 50;
+    protected int maxMeasurementSize = 256;
     protected String authKeyId = null;
     protected int msgBufferSize = 256 * 1024;
     protected long minIdleMsBeforeWriterRelease = 30000;
@@ -164,7 +164,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
 
     @After
     public void cleanup() {
-        maxMeasurementSize = 50;
+        maxMeasurementSize = 256;
     }
 
     @FunctionalInterface
