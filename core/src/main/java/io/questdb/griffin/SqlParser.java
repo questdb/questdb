@@ -60,6 +60,7 @@ public final class SqlParser {
     private final ObjList<ExpressionNode> tempExprNodes = new ObjList<>();
     private final CharacterStore characterStore;
     private final SqlOptimiser optimiser;
+    private final LowerCaseCharSequenceHashSet lowerCaseCharSequenceHashSet;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCase0Ref = this::rewriteCase0;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCount0Ref = this::rewriteCount0;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteConcat0Ref = this::rewriteConcat0;
@@ -91,6 +92,7 @@ public final class SqlParser {
         this.characterStore = characterStore;
         this.optimiser = optimiser;
         this.expressionParser = new ExpressionParser(expressionNodePool, this, characterStore);
+        this.lowerCaseCharSequenceHashSet = new LowerCaseCharSequenceHashSet();
     }
 
     public static boolean isFullSampleByPeriod(ExpressionNode n) {
@@ -162,6 +164,7 @@ public final class SqlParser {
         insertModelPool.clear();
         expressionTreeBuilder.reset();
         copyModelPool.clear();
+        lowerCaseCharSequenceHashSet.clear();
     }
 
     private CharSequence createColumnAlias(ExpressionNode node, QueryModel model) {
@@ -563,15 +566,13 @@ public final class SqlParser {
     }
 
     private void ensureThatColumnNamesAreUnique(ObjList<QueryColumn> columns) throws SqlException {
-        for (int current = 0, total = columns.size(); current < total; current++) {
-            CharSequence currentName = columns.get(current).getName();
-            for (int prev = 0; prev < current; prev++) {
-                CharSequence previousName = columns.get(prev).getName();
-                if (currentName.equals(previousName)) {
-                    ExpressionNode node = columns.get(current).getAst();
-                    int literalPosition = node.position + node.token.length() + 3;
-                    throw SqlException.position(literalPosition).put("A column with name ").put(currentName).put(" has already been defined.");
-                }
+        for (int idx = 0; idx < columns.size(); idx++) {
+            QueryColumn column = columns.get(idx);
+            boolean uniqueName = lowerCaseCharSequenceHashSet.add(column.getName());
+            if (!uniqueName) {
+                ExpressionNode node = column.getAst();
+                int literalPosition = node.position + node.token.length() + 3;
+                throw SqlException.position(literalPosition).put("A column with name ").put(column.getName()).put(" has already been defined.");
             }
         }
     }

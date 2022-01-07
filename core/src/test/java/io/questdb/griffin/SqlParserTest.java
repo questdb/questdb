@@ -660,6 +660,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "        rnd_bin() bin" +
                 "    from long_sequence(100)" +
                 ");", 240, "A column with name b has already been defined.");
+        assertSyntaxError("create table all as (select rnd_byte() B, rnd_boolean() b from long_sequence(5));", 56, "A column with name b has already been defined.");
+        assertSyntaxError("create table all as (" +
+                "   select " +
+                "       rnd_byte() 'acB12345!@#$_?\\\"\"\\\"[]{}()_+!@#$%^&*()_+?><', " +
+                "       rnd_boolean() 'ACb12345!@#$_?\\\"\"\\\"[]{}()_+!@#$%^&*()_+?><' " +
+                "   from long_sequence(5)" +
+                ");", 116, "A column with name ACb12345!@#$_?\\\"\"\\\"[]{}()_+!@#$%^&*()_+?>< has already been defined.");
     }
 
     @Test
