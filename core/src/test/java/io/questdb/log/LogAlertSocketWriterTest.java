@@ -205,7 +205,7 @@ public class LogAlertSocketWriterTest {
                                         "User-Agent: QuestDB/LogAlert\r\n" +
                                         "Accept: */*\r\n" +
                                         "Content-Type: application/json\r\n" +
-                                        "Content-Length:      560\r\n" +
+                                        "Content-Length:      559\r\n" +
                                         "\r\n" +
                                         "[\n" +
                                         "  {\n" +
@@ -226,8 +226,7 @@ public class LogAlertSocketWriterTest {
                                         "      \"message\": \"A \\\"simple\\\" \\$message\\$\"\n" +
                                         "    }\n" +
                                         "  }\n" +
-                                        "]\n" +
-                                "\n",
+                                        "]\n",
                                 writer.getAlertSink()
                         );
 
