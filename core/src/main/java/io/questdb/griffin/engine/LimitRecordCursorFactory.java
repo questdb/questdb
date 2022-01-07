@@ -62,6 +62,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         base.close();
     }
 
+    @Override
+    public boolean implementsLimit() {
+        return true;
+    }
+
     private static class LimitRecordCursor implements RecordCursor {
         private final Function loFunction;
         private final Function hiFunction;
