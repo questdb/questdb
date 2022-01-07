@@ -60,7 +60,6 @@ abstract class AbstractSSequence extends AbstractSequence implements Sequence, M
         return r;
     }
 
-
     @Override
     public void clear() {
         setBarrier(OpenBarrier.INSTANCE);

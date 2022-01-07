@@ -57,49 +57,8 @@ public class PageFrameDispatchJob implements Job {
     public boolean run(int workerId) {
         final long dispatchCursor = dispatchSubSeq.next();
         if (dispatchCursor > -1) {
-            final PageFrameDispatchTask tsk = dispatchQueue.get(dispatchCursor);
-            final int shard = tsk.getFrameSequence().getShard();
-            final int frameCount = tsk.getFrameSequence().getFrameCount();
-
-            final RingQueue<PageFrameReduceTask> queue = messageBus.getPageFrameReduceQueue(shard);
-            // publisher sequence to pass work to worker jobs
-            final MPSequence reducePubSeq = messageBus.getPageFrameReducePubSeq(shard);
-            // the sequence used to steal worker jobs
-            final MCSequence reduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
-            final MCSequence cleanupSubSeq = messageBus.getPageFrameCleanupSubSeq(shard);
-            final PageAddressCacheRecord record = records[workerId];
-
-            // Reduce counter is here to provide safe backoff point
-            // for job stealing code. It is needed because queue is shared
-            // and there is possibility of never ending stealing if we don't
-            // specifically count only our items
-            final AtomicInteger framesReducedCounter = tsk.getFrameSequence().getReduceCounter();
-
-            final int pageFrameQueueCapacity = queue.getCycle();
-
             try {
-                long cursor;
-                for (int i = 0; i < frameCount; i++) {
-                    // We cannot process work on this thread. If we do the consumer will
-                    // never get the executions results. Consumer only picks ready to go
-                    // tasks from the queue.
-                    while (true) {
-                        cursor = reducePubSeq.next();
-                        if (cursor > -1) {
-                            queue.get(cursor).of(tsk.getFrameSequence(), i);
-                            reducePubSeq.done(cursor);
-                            break;
-                        } else {
-                            // start stealing work to unload the queue
-                            stealQueueWork(shard, queue, reduceSubSeq, cleanupSubSeq, record, pageFrameQueueCapacity);
-                        }
-                    }
-                }
-
-                // join the gang to consume published tasks
-                while (framesReducedCounter.get() < frameCount) {
-                    stealQueueWork(shard, queue, reduceSubSeq, cleanupSubSeq, record, pageFrameQueueCapacity);
-                }
+                handleTask(dispatchQueue.get(dispatchCursor).getFrameSequence(), records[workerId], messageBus);
             } finally {
                 dispatchSubSeq.done(dispatchCursor);
             }
@@ -108,13 +67,53 @@ public class PageFrameDispatchJob implements Job {
         return false;
     }
 
-    private void stealQueueWork(
+    public static void handleTask(PageFrameSequence<?> frameSequence, PageAddressCacheRecord record, MessageBus messageBus) {
+        final int shard = frameSequence.getShard();
+        final int frameCount = frameSequence.getFrameCount();
+        final RingQueue<PageFrameReduceTask> queue = messageBus.getPageFrameReduceQueue(shard);
+        // publisher sequence to pass work to worker jobs
+        final MPSequence reducePubSeq = messageBus.getPageFrameReducePubSeq(shard);
+        // the sequence used to steal worker jobs
+        final MCSequence reduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
+        final MCSequence cleanupSubSeq = messageBus.getPageFrameCleanupSubSeq(shard);
+
+        // Reduce counter is here to provide safe backoff point
+        // for job stealing code. It is needed because queue is shared
+        // and there is possibility of never ending stealing if we don't
+        // specifically count only our items
+        final AtomicInteger framesReducedCounter = frameSequence.getReduceCounter();
+
+        long cursor;
+        for (int i = 0; i < frameCount; i++) {
+            // We cannot process work on this thread. If we do the consumer will
+            // never get the executions results. Consumer only picks ready to go
+            // tasks from the queue.
+            while (true) {
+                cursor = reducePubSeq.next();
+                if (cursor > -1) {
+                    queue.get(cursor).of(frameSequence, i);
+                    reducePubSeq.done(cursor);
+                    break;
+                } else {
+                    // start stealing work to unload the queue
+                    stealWork(messageBus, shard, queue, reduceSubSeq, cleanupSubSeq, record);
+                }
+            }
+        }
+
+        // join the gang to consume published tasks
+        while (framesReducedCounter.get() < frameCount) {
+            stealWork(messageBus, shard, queue, reduceSubSeq, cleanupSubSeq, record);
+        }
+    }
+
+    public static void stealWork(
+            MessageBus messageBus,
             int shard,
             RingQueue<PageFrameReduceTask> queue,
             MCSequence reduceSubSeq,
             MCSequence cleanupSubSeq,
-            PageAddressCacheRecord record,
-            int pageFrameQueueCapacity
+            PageAddressCacheRecord record
     ) {
         if (
                 PageFrameReduceJob.consumeQueue(queue, reduceSubSeq, record) &&
@@ -123,7 +122,7 @@ public class PageFrameDispatchJob implements Job {
                                 cleanupSubSeq,
                                 messageBus,
                                 shard,
-                                pageFrameQueueCapacity
+                                queue.getCycle()
                         )
         ) {
             LockSupport.parkNanos(1);

@@ -760,7 +760,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
-        return new FilteredRecordCursorFactory(configuration, factory, f);
+        if (factory.supportPageFrameCursor()) {
+            return new AsyncFilteredRecordCursorFactory(configuration, executionContext.getMessageBus(), factory, f);
+        }
+        return new FilteredRecordCursorFactory(factory, f);
     }
 
     private RecordCursorFactory generateFunctionQuery(QueryModel model) throws SqlException {
@@ -965,7 +968,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // check if there are post-filters
                 ExpressionNode filter = slaveModel.getPostJoinWhereClause();
                 if (filter != null) {
-                    master = new FilteredRecordCursorFactory(configuration, master, functionParser.parseFunction(filter, master.getMetadata(), executionContext));
+                    if (master.supportPageFrameCursor()) {
+                        master = new AsyncFilteredRecordCursorFactory(
+                                configuration,
+                                executionContext.getMessageBus(),
+                                master,
+                                functionParser.parseFunction(filter, master.getMetadata(), executionContext)
+                        );
+                    } else {
+                        master = new FilteredRecordCursorFactory(master, functionParser.parseFunction(filter, master.getMetadata(), executionContext));
+                    }
                 }
             }
 
