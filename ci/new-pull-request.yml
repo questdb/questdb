@@ -8,6 +8,8 @@ pr:
 variables:
   QDB_LOG_W_FILE_LOCATION: "$(Build.BinariesDirectory)/tests.log"
   ARCHIVED_LOGS: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt).zip"
+  CRASH_LOG_LOCATION: "$(Build.SourcesDirectory)/core/"
+  ARCHIVED_GRASH_LOGS: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).zip"
 
 stages:
   - stage: RunTestsBranches
@@ -74,4 +76,18 @@ stages:
             condition: failed()
             inputs:
               pathToPublish: $(ARCHIVED_LOGS)
+              artifactName: MavenFailedTestsLogs
+          - task: ArchiveFiles@2
+            displayName: "Tests failed -- Compress logs"
+            condition: failed()
+            inputs:
+              rootFolderOrFile: $(CRASH_LOG_LOCATION)
+              includeRootFolder: false
+              archiveFile: $(ARCHIVED_GRASH_LOGS)
+              quiet: true
+          - task: PublishBuildArtifacts@1
+            displayName: "Tests failed -- Upload crash logs"
+            condition: failed()
+            inputs:
+              pathToPublish: $(ARCHIVED_GRASH_LOGS)
               artifactName: MavenFailedTestsLogs
