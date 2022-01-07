@@ -28,9 +28,3 @@
 extern "C" void __cxa_pure_virtual() {
     abort();
 }
-
-//void* operator new(size_t size) { return malloc(size); }
-//void  operator delete(void * p) noexcept { free(p); }
-//
-//void* operator new(size_t, void* p) noexcept { return p; }
-//void  operator delete(void*, void*) noexcept {}
