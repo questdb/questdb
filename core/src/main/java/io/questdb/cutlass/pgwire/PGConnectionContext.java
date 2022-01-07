@@ -133,6 +133,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private long sendBufferPtr;
     private boolean requireInitialMessage = false;
     private long recvBufferWriteOffset = 0;
+    private long totalReceived = 0;
     private long recvBufferReadOffset = 0;
     private int bufferRemainingOffset = 0;
     private int bufferRemainingSize = 0;
@@ -286,6 +287,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         resumeProcessor = null;
         completed = true;
         clearCursorAndFactory();
+        totalReceived = 0;
     }
 
     public void clearWriters() {
@@ -369,6 +371,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                         // to retry 'send' but not parse the same input again
 
                         long readOffsetBeforeParse = recvBufferReadOffset;
+                        totalReceived += (recvBufferWriteOffset - recvBufferReadOffset);
                         parse(
                                 recvBuffer + recvBufferReadOffset,
                                 (int) (recvBufferWriteOffset - recvBufferReadOffset),
@@ -1364,7 +1367,13 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 .$(", len=").$(msgLen)
                 .$(']').$();
         if (msgLen < 1) {
-            LOG.error().$("invalid message length [type=").$(type).$(", msgLen=").$(msgLen).$(']').$();
+            LOG.error()
+                    .$("invalid message length [type=").$(type)
+                    .$(", msgLen=").$(msgLen)
+                    .$(", recvBufferReadOffset=").$(recvBufferReadOffset)
+                    .$(", recvBufferWriteOffset=").$(recvBufferWriteOffset)
+                    .$(", totalReceived=").$(totalReceived)
+                    .$(']').$();
             throw BadProtocolException.INSTANCE;
         }
 
