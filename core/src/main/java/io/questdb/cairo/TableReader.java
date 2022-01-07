@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.MemoryCMRImpl;
@@ -32,11 +33,14 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.MPSequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.O3PurgeDiscoveryTask;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.locks.LockSupport;
@@ -58,6 +62,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final TableReaderRecordCursor recordCursor = new TableReaderRecordCursor();
     private final PartitionBy.PartitionFloorMethod partitionFloorMethod;
     private final String tableName;
+    private final MessageBus messageBus;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final CairoConfiguration configuration;
     private final IntList symbolCountSnapshot = new IntList();
@@ -76,9 +81,14 @@ public class TableReader implements Closeable, SymbolTableSource {
     private boolean active;
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
+        this(configuration, tableName, null);
+    }
+
+    public TableReader(CairoConfiguration configuration, CharSequence tableName, @Nullable MessageBus messageBus) {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.tableName = Chars.toString(tableName);
+        this.messageBus = messageBus;
         this.path = new Path();
         this.path.of(configuration.getRoot()).concat(this.tableName);
         this.rootLen = path.length();
@@ -87,7 +97,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.columnCount = this.metadata.getColumnCount();
             this.columnCountBits = getColumnBits(columnCount);
             int partitionBy = this.metadata.getPartitionBy();
-            this.txnScoreboard = new TxnScoreboard(ff, path.trimTo(rootLen), configuration.getTxnScoreboardEntryCount());
+            this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
             path.trimTo(rootLen);
             LOG.debug()
                     .$("open [id=").$(metadata.getId())
@@ -312,6 +322,38 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (active) {
             active = false;
             txnScoreboard.releaseTxn(txn);
+
+            if (PartitionBy.isPartitioned(metadata.getPartitionBy())) {
+                long txnLocks = txnScoreboard.getActiveReaderCount(txn);
+                long committedTxn = txFile.unsafeReadTxn();
+                if (txnLocks == 0 && committedTxn > txn) {
+                    // Last lock for this txn is released and this is not latest txn number
+                    // Schedule a job to clean up partition versions this reader may held
+                    purgeO3Partitions();
+                }
+            }
+        }
+    }
+
+    private void purgeO3Partitions() {
+        final MPSequence seq = messageBus.getO3PurgeDiscoveryPubSeq();
+        long cursor = seq.next();
+        if (cursor > -1) {
+            O3PurgeDiscoveryTask task = messageBus.getO3PurgeDiscoveryQueue().get(cursor);
+            task.of(
+                    tableName,
+                    metadata.getPartitionBy(),
+                    null,
+                    -1,
+                    txn
+            );
+            seq.done(cursor);
+        } else {
+            LOG.error()
+                    .$("could queue to purge [errno=").$(ff.errno())
+                    .$(", table=").$(tableName)
+                    .$(", txn=").$(txn)
+                    .$(']').$();
         }
     }
 

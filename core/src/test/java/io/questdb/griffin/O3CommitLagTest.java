@@ -319,7 +319,9 @@ public class O3CommitLagTest extends AbstractO3Test {
     public void testVarColumnPageBoundariesAppendRndPageSize() throws Exception {
         int rndPagesMultiplier = new Rnd(Os.currentTimeMicros(), Os.currentTimeNanos()).nextInt(129);
         int multiplier = Numbers.ceilPow2(rndPagesMultiplier);
+
         dataAppendPageSize = (int) Files.PAGE_SIZE * multiplier;
+        dataAppendPageSize = 262144;
         LOG.info().$("Testing with random pages size of ").$(dataAppendPageSize).$();
 
         executeWithPool(0,
@@ -378,7 +380,7 @@ public class O3CommitLagTest extends AbstractO3Test {
                     for (int initialCount = initialCountLo; initialCount < initialCountLo + 3; initialCount++) {
                         for (int additionalCount = additionalCountLo; additionalCount < additionalCountLo + 3; additionalCount++) {
                             for (int i = lo; i < hi; i++) {
-                                LOG.info().$("=========== count1 ").$(initialCount).$(" count2 = ").$(additionalCount).$("iteration ").$(i).$(", max uncommitted ").$(longsPerPage).$(" ===================").$();
+                                LOG.info().$("=========== count1 ").$(initialCount).$(" count2 = ").$(additionalCount).$("iteration ").$(i).$(", max uncommitted ").$(maxUncommitted).$(" ===================").$();
                                 testVarColumnMergeWithColumnTops(
                                         engine,
                                         compiler,

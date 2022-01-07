@@ -31,6 +31,7 @@ import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
+import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -44,6 +45,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
     private final CairoConfiguration configuration;
     private final MutableCharSink[] sink;
     private final StringSink[] fileNameSinks;
+    private final DirectLongList[] partitionList;
     private final LongList[] txnList;
     private final RingQueue<O3PurgeTask> purgeQueue;
     private final Sequence purgePubSeq;
@@ -56,10 +58,12 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
         this.sink = new MutableCharSink[workerCount];
         this.fileNameSinks = new StringSink[workerCount];
         this.txnList = new LongList[workerCount];
+        this.partitionList = new DirectLongList[workerCount];
         for (int i = 0; i < workerCount; i++) {
             sink[i] = new StringSink();
             fileNameSinks[i] = new StringSink();
             txnList[i] = new LongList();
+            partitionList[i] = new DirectLongList(64, MemoryTag.NATIVE_LONG_LIST);
         }
     }
 
@@ -199,21 +203,159 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
     @Override
     protected boolean doRun(int workerId, long cursor) {
         final O3PurgeDiscoveryTask task = queue.get(cursor);
-        final boolean useful = discoverPartitions(
-                configuration.getFilesFacade(),
-                sink[workerId],
-                fileNameSinks[workerId],
-                txnList[workerId],
-                purgeQueue,
-                purgePubSeq,
-                configuration.getRoot(),
-                task.getTableName(),
-                task.getPartitionBy(),
-                task.getTimestamp(),
-                task.getTxnScoreboard(),
-                task.getMostRecentTxn()
-        );
+        boolean useful;
+        if (task.getTimestamp() != Numbers.LONG_NaN) {
+            useful = discoverPartitions(
+                    configuration.getFilesFacade(),
+                    sink[workerId],
+                    fileNameSinks[workerId],
+                    txnList[workerId],
+                    purgeQueue,
+                    purgePubSeq,
+                    configuration.getRoot(),
+                    task.getTableName(),
+                    task.getPartitionBy(),
+                    task.getTimestamp(),
+                    task.getTxnScoreboard(),
+                    task.getMostRecentTxn()
+            );
+        } else {
+            // This request comes from the place where partition to clean up is not known
+            // Scan all the partitions
+            useful = discoverPartitions(
+                    configuration.getFilesFacade(),
+                    sink[workerId],
+                    fileNameSinks[workerId],
+                    partitionList[workerId],
+                    purgeQueue,
+                    purgePubSeq,
+                    configuration.getRoot(),
+                    task.getTableName(),
+                    task.getPartitionBy()
+            );
+        }
         subSeq.done(cursor);
         return useful;
+    }
+
+    private boolean discoverPartitions(
+            FilesFacade ff,
+            MutableCharSink sink,
+            StringSink fileNameSink,
+            DirectLongList partitionList,
+            RingQueue<O3PurgeTask> purgeQueue,
+            @Nullable Sequence purgePubSeq,
+            CharSequence root,
+            CharSequence tableName,
+            int partitionBy) {
+        LOG.info().$("processing all partitions [table=").$(tableName).I$();
+        Path path = Path.getThreadLocal(root);
+        path.concat(tableName).slash$();
+        sink.clear();
+        path.slash$();
+
+        partitionList.clear();
+        DateFormat partitionByFormat = PartitionBy.getPartitionDirFormatMethod(partitionBy);
+
+        long p = ff.findFirst(path);
+        if (p > 0) {
+            try {
+                do {
+                    long fileName = ff.findName(p);
+                    if (Files.isDir(fileName, ff.findType(p), fileNameSink)) {
+                        // extract txn, partition ts from name
+                        int index = Chars.lastIndexOf(fileNameSink, '.');
+
+                        if (index < 0) {
+                            try {
+                                long partitionTs = partitionByFormat.parse(fileNameSink, null);
+                                partitionList.add(partitionTs);
+                            } catch (NumericException e) {
+                                continue;
+                            }
+                            partitionList.add(0);
+                        } else {
+                            try {
+                                try {
+                                    long partitionTs = partitionByFormat.parse(fileNameSink, 0, index,null);
+                                    partitionList.add(partitionTs);
+                                } catch (NumericException e) {
+                                    continue;
+                                }
+                                partitionList.add(Numbers.parseLong(fileNameSink, index + 1, fileNameSink.length()));
+                            } catch (NumericException e) {
+                                LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).$(']').$();
+                                partitionList.setPos(partitionList.size() - 1); // remove partition ts record
+                            }
+                        }
+                    }
+                } while (ff.findNext(p) > 0);
+            } finally {
+                ff.findClose(p);
+            }
+        }
+
+        // find duplicate partitions
+        assert partitionList.size() % 2 == 0;
+        Vect.sort128BitAscInPlace(partitionList.getAddress(), partitionList.size() / 2);
+
+        long partitionTs = Numbers.LONG_NaN;
+        int lo = 0;
+        int n = (int)partitionList.size();
+        boolean useful = false;
+
+        TxnScoreboard txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRO(path.of(root).concat(tableName));
+        TxReader txReader = new TxReader(ff,path.of(root).concat(tableName), partitionBy);
+
+        loadLastTx(txReader);
+
+
+        for(int i = 0; i < n; i += 2) {
+            if (partitionList.get(i) != partitionTs) {
+                if (i > lo + 2) {
+                    useful |= processPartition(ff, root, tableName, purgeQueue, purgePubSeq, txReader, txnScoreboard, partitionTs, partitionByFormat, partitionList, lo, i);
+                }
+                lo = i;
+                partitionTs = partitionList.get(i);
+            }
+        }
+        // Tail
+        if (n > lo + 2) {
+            useful |= processPartition(ff, root, tableName, purgeQueue, purgePubSeq, txReader, txnScoreboard, partitionTs, partitionByFormat, partitionList, lo, n);
+        }
+        txnScoreboard.close();
+        txReader.close();
+
+        return useful;
+    }
+
+    private void loadLastTx(TxReader txReader) {
+        long txn;
+        do {
+            txn = txReader.unsafeReadTxnCheck();
+
+            Unsafe.getUnsafe().loadFence();
+            txReader.unsafeLoadAll();
+
+            Unsafe.getUnsafe().loadFence();
+        } while (txn != txReader.unsafeReadTxn());
+    }
+
+    private static boolean processPartition(
+            FilesFacade ff,
+            CharSequence root,
+            CharSequence tableName,
+            RingQueue<O3PurgeTask> purgeQueue,
+            Sequence purgePubSeq,
+            TxReader txReader,
+            TxnScoreboard txnScoreboard,
+            long partitionTs,
+            DateFormat partitionByFormat,
+            DirectLongList partitionList,
+            int lo,
+            int hi
+    ) {
+        long lastCommittedPartitionName = txReader.getPartitionNameTxnByPartitionTimestamp(partitionTs);
+        return lastCommittedPartitionName > -1;
     }
 }

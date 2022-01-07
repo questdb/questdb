@@ -26,29 +26,36 @@ package io.questdb.cairo;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Numbers;
-import io.questdb.std.Transient;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-public class TxnScoreboard implements Closeable {
+public class TxnScoreboard implements Closeable, Mutable {
 
     private static final Log LOG = LogFactory.getLog(TxnScoreboard.class);
 
     private long fd ;
     private long mem;
+    private final int pow2EntryCount;
     private final long size;
     private final FilesFacade ff;
 
-    public TxnScoreboard(FilesFacade ff, @Transient Path root, int entryCount) {
+    public TxnScoreboard(FilesFacade ff, int entryCount) {
         this.ff = ff;
-        root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
-        int pow2EntryCount = Numbers.ceilPow2(entryCount);
+        this.pow2EntryCount = Numbers.ceilPow2(entryCount);
         this.size = TxnScoreboard.getScoreboardSize(pow2EntryCount);
+    }
+
+    @Override
+    public void clear() {
+        // Do full close, all memory used is native but instance will be reusable
+        close();
+    }
+
+    public TxnScoreboard ofRW(@Transient Path root) {
+        root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
         this.fd = openCleanRW(ff, root, this.size);
 
         // truncate is required to give file a size
@@ -61,6 +68,19 @@ public class TxnScoreboard implements Closeable {
             ff.close(fd);
             throw e;
         }
+        return this;
+    }
+
+    public TxnScoreboard ofRO(@Transient Path root) {
+        root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
+        this.fd = openCleanRW(ff, root, this.size);
+        try {
+            this.mem = TableUtils.mapRO(ff, fd, this.size, MemoryTag.MMAP_DEFAULT);
+        } catch (Throwable e) {
+            ff.close(fd);
+            throw e;
+        }
+        return this;
     }
 
     public static native long getScoreboardSize(int entryCount);
