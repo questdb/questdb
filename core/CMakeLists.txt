@@ -157,6 +157,7 @@ endif()
 include("${asmjit_SOURCE_DIR}/CMakeLists.txt")
 include_directories(${asmjit_SOURCE_DIR}/src SYSTEM)
 add_compile_definitions(ASMJIT_NO_STDCXX)
+add_compile_definitions(ASMJIT_BUILD_DEBUG)
 
 if (NOT DEFINED JIT_TEST)
     set(JIT_TEST FALSE)
