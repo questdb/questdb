@@ -627,8 +627,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateAsSelectMissingTimestamp() throws Exception {
         assertSyntaxError(
                 "create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 100000000000l) t from long_sequence(100000))) partition by DAY",
-                153,
-                "Partitioning is possible only on tables with designated timestamps."
+                0,
+                "timestamp is not defined"
         );
     }
 
@@ -1355,16 +1355,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "partition by YEAR",
                 112,
                 "Invalid column"
-        );
-    }
-
-    @Test
-    public void testCreateTableWithoutDesignatedTimestamp() throws Exception {
-        assertSyntaxError(
-                "create table x (a timestamp) " +
-                        "partition by DAY",
-                42,
-                "Partitioning is possible only on tables with designated timestamps."
         );
     }
 
@@ -2255,7 +2245,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create table tab (\n" +
                         "    tag string,\n" +
                         "    seq long\n" +
-                        ")",
+                        ")  partition by NONE",
                 71,
                 "empty where clause"
         );
@@ -2341,7 +2331,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create table tab (\n" +
                         "    x double,\n" +
                         "    y int\n" +
-                        ")",
+                        ")  partition by NONE",
                 27,
                 "Invalid column: tab.x"
         );
@@ -2354,7 +2344,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create table tab (\n" +
                         "    a int,\n" +
                         "    b int\n" +
-                        ")",
+                        ")  partition by NONE",
                 37,
                 "Invalid column: tab.b"
         );
@@ -2367,7 +2357,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create table tab (\n" +
                         "    a int,\n" +
                         "    b int\n" +
-                        ")",
+                        ")  partition by NONE",
                 40,
                 "Invalid column: tab.b"
         );
@@ -2380,7 +2370,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create table tab (\n" +
                         "    a int,\n" +
                         "    b int\n" +
-                        ")",
+                        ")  partition by NONE",
                 44,
                 "Invalid column: tab.b"
         );
@@ -2393,7 +2383,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create table tab (\n" +
                         "    x double,\n" +
                         "    y int\n" +
-                        ")",
+                        ")  partition by NONE",
                 59,
                 "Invalid column: tab.y"
         );
@@ -4113,7 +4103,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "    sym symbol,\n" +
                         "    bid int,\n" +
                         "    ask int\n" +
-                        ")",
+                        ")  partition by NONE",
                 71,
                 "literal expected"
         );
