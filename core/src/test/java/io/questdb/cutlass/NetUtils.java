@@ -64,8 +64,15 @@ public class NetUtils {
                             // we were sending - lets wrap up and send
                             if (len > 0) {
                                 int m = nf.send(clientFd, sendBuf, len);
-                                Assert.assertEquals("disc:" + expectDisconnect, len, m);
-                                sendPtr = sendBuf;
+                                // if we expect disconnect we might get it on either `send` or `recv`
+                                // check if we expect disconnect on recv?
+                                if (m == -2 && script.charAt(i + 1) == '!' && script.charAt(i + 2) == '!') {
+                                    // force exit
+                                    i = n;
+                                } else {
+                                    Assert.assertEquals("disc:" + expectDisconnect, len, m);
+                                    sendPtr = sendBuf;
+                                }
                             }
                         } else {
                             // we meant to receive; sendBuf will contain expected bytes we have to receive
@@ -77,13 +84,6 @@ public class NetUtils {
                                     // force exit
                                     i = n;
                                 } else {
-//                                    Assert.assertEquals(len, m);
-//                                    for (int j = 0; j < len; j++) {
-//                                        Assert.assertEquals("at " + j,
-//                                                Unsafe.getUnsafe().getByte(sendBuf + j),
-//                                                Unsafe.getUnsafe().getByte(recvBuf + j)
-//                                        );
-//                                    }
                                     // clear sendBuf
                                     sendPtr = sendBuf;
                                 }
