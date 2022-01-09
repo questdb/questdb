@@ -623,6 +623,84 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
         assertQuery("l\n3\n2\n1\n", "select l from tab order by l desc limit -3");
     }
 
+    @Test
+    public void test_partitionPerRow_select_first_N_with_different_case_in_order_by() throws Exception {//here
+        prepare_partitionPerRow_table_with_long_names();
+
+        assertQuery("record_type\n10\n9\n8\n7\n6\n", "select record_type from trips order by created_ON desc limit 5");
+    }
+
+    @Test
+    public void test_partitionPerRow_select_first_N_with_different_case_in_select_and_order_by() throws Exception {
+        prepare_partitionPerRow_table_with_long_names();
+
+        assertQuery("record_Type\tCREATED_on\n" + DATA, "select record_Type, CREATED_on from trips order by created_ON desc limit 5");
+    }
+
+    @Test
+    public void test_partitionPerRow_select_first_N_with_different_case_in_select_and_order_by_v2() throws Exception {
+        prepare_partitionPerRow_table_with_long_names();
+
+        assertQuery("record_Type\tCREATED_ON\n" + DATA, "select record_Type, CREATED_ON from trips order by created_on desc limit 5");
+    }
+
+    @Test
+    public void test_partitionPerRow_select_first_N_with_different_case_in_select_and_order_by_with_alias() throws Exception {
+        prepare_partitionPerRow_table_with_long_names();
+
+        assertQuery("record_Type\tcre_on\n" + DATA, "select record_Type, CREATED_ON as cre_on from trips order by created_on desc limit 5");
+    }
+
+    @Test
+    public void test_partitionPerRow_select_first_N_with_different_case_in_select_and_order_by_with_alias_v2() throws Exception {
+        prepare_partitionPerRow_table_with_long_names();
+
+        assertQuery("record_Type\tcre_on\n" + DATA, "select record_Type, CREATED_ON cre_on from trips order by created_on desc limit 5");
+    }
+
+    @Test
+    public void test_partitionPerRow_select_first_N_with_different_name_in_subquery() throws Exception {
+        prepare_partitionPerRow_table_with_long_names();
+
+        assertQuery(EXPECTED, "select rectype, creaton from " +
+                "( select record_Type as rectype, CREATED_ON creaton from trips order by created_on desc limit 5)");
+    }
+
+    @Test
+    public void test_partitionPerRow_select_first_N_with_different_name_in_subquery_v2() throws Exception {
+        prepare_partitionPerRow_table_with_long_names();
+
+        assertQuery(EXPECTED, "select rectype, creaton from " +
+                "( select record_Type as rectype, CREATED_ON creaton " +
+                "from trips " +
+                "order by created_on desc) " +
+                "limit 5");
+    }
+
+    @Test
+    public void test_partitionPerRow_select_first_N_with_different_name_in_subquery_v3() throws Exception {
+        prepare_partitionPerRow_table_with_long_names();
+
+        assertQuery(EXPECTED, "select rectype, creaton from " +
+                "( select record_Type as rectype, CREATED_ON creaton from trips) " +
+                "order by creaton desc limit 5");
+    }
+
+    static final String DATA = "10\t2022-01-13T10:00:00.000000Z\n" +
+            "9\t2022-01-12T06:13:20.000000Z\n" +
+            "8\t2022-01-11T02:26:40.000000Z\n" +
+            "7\t2022-01-09T22:40:00.000000Z\n" +
+            "6\t2022-01-08T18:53:20.000000Z\n";
+    static final String EXPECTED = "rectype\tcreaton\n" + DATA;
+
+    private void prepare_partitionPerRow_table_with_long_names() throws Exception {
+        runQueries("CREATE TABLE trips(record_type long, created_on TIMESTAMP) timestamp(created_on) partition by day;",
+                "insert into trips " +
+                        "  select x," +
+                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
+                        "  from long_sequence(10);");
+    }
+
     private void runQueries(String... queries) throws Exception {
         assertMemoryLeak(() -> {
             for (String query : queries) {
