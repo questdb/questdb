@@ -91,7 +91,12 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                         e.readers[i] = r;
                         notifyListener(thread, name, PoolListener.EV_CREATE, e.index, i);
                     } else {
-                        r.goActive();
+                        try {
+                            r.goActive();
+                        } catch (Throwable ex) {
+                            r.close();
+                            throw ex;
+                        }
                         notifyListener(thread, name, PoolListener.EV_GET, e.index, i);
                     }
 

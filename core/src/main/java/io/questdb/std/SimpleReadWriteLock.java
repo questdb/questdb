@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line.tcp;
+package io.questdb.std;
 
 import org.jetbrains.annotations.NotNull;
 

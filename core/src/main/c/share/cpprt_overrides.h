@@ -22,25 +22,9 @@
  *
  ******************************************************************************/
 
-export * from "./Animation"
-export * from "./Button"
-export * from "./Emoji"
-export * from "./Hooks"
-export * from "./IconWithTooltip"
-export * from "./Input"
-export * from "./Link"
-export * from "./PaneContent"
-export * from "./PaneMenu"
-export * from "./PaneWrapper"
-export * from "./PopperHover"
-export * from "./PopperToggle"
-export * from "./Splitter"
-export * from "./SwitchButton"
-export * from "./Text"
-export * from "./Toast"
-export * from "./ToggleButton"
-export * from "./Tooltip"
-export * from "./Transition"
-export * from "./VirtualList"
-export * from "./Tree"
-export * from "./WrapWithIf"
+#ifndef QUESTDB_CPPRT_OVERRIDES_H
+#define QUESTDB_CPPRT_OVERRIDES_H
+
+extern "C" void __cxa_pure_virtual();
+
+#endif //QUESTDB_CPPRT_OVERRIDES_H
