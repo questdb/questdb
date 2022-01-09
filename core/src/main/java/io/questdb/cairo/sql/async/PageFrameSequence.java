@@ -29,9 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.mp.MPSequence;
-import io.questdb.mp.SCSequence;
-import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.mp.*;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -39,6 +37,7 @@ import io.questdb.std.Rnd;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.LockSupport;
 
 public class PageFrameSequence<T> implements Mutable {
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
@@ -47,20 +46,38 @@ public class PageFrameSequence<T> implements Mutable {
     private final LongList frameRowCounts = new LongList();
     private final PageFrameReducer reducer;
     private final PageAddressCache pageAddressCache;
+    private final MessageBus messageBus;
     private long id;
     private int shard;
     private int frameCount;
     private SCSequence collectSubSeq;
-    private SymbolTableSource symbolTableSource;
+    private PageFrameCursor pageFrameCursor;
     private T atom;
+    private PageAddressCacheRecord[] records;
 
-    public PageFrameSequence(CairoConfiguration configuration, PageFrameReducer reducer) {
+    public PageFrameSequence(CairoConfiguration configuration, MessageBus messageBus, PageFrameReducer reducer) {
         this.reducer = reducer;
         this.pageAddressCache = new PageAddressCache(configuration);
+        this.messageBus = messageBus;
     }
 
     public void await() {
-        doneLatch.await(1);
+        final RingQueue<PageFrameReduceTask> queue = messageBus.getPageFrameReduceQueue(shard);
+        final MCSequence reduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
+        final MCSequence cleanupSubSeq = messageBus.getPageFrameCleanupSubSeq(shard);
+        final PageAddressCacheRecord record = records[getWorkerId()];
+        while (doneLatch.getCount() == 0) {
+            if (consumeDispatchQueue()) {
+                PageFrameDispatchJob.stealWork(
+                        messageBus,
+                        shard,
+                        queue,
+                        reduceSubSeq,
+                        cleanupSubSeq,
+                        record
+                );
+            }
+        }
     }
 
     @Override
@@ -70,8 +87,111 @@ public class PageFrameSequence<T> implements Mutable {
         this.frameCount = 0;
         pageAddressCache.clear();
         frameRowCounts.clear();
-        symbolTableSource = Misc.free(symbolTableSource);
+        pageFrameCursor = Misc.free(pageFrameCursor);
+        collectSubSeq.clear();
         doneLatch.countDown();
+    }
+
+    public boolean consumeDispatchQueue() {
+        MCSequence dispatchSubSeq = messageBus.getPageFrameDispatchSubSeq();
+        long c = dispatchSubSeq.next();
+        if (c > -1) {
+            PageFrameDispatchJob.handleTask(
+                    this,
+                    records[getWorkerId()],
+                    messageBus
+            );
+            dispatchSubSeq.done(c);
+            return false;
+        }
+        return true;
+    }
+
+    public PageFrameSequence<T> dispatch(
+            RecordCursorFactory base,
+            SqlExecutionContext executionContext,
+            SCSequence collectSubSeq,
+            T atom
+    ) throws SqlException {
+
+        // allow entry for 0 - main thread that is a non-worker
+        initWorkerRecords(executionContext.getWorkerCount() + 1);
+
+        final Rnd rnd = executionContext.getRandom();
+        final MessageBus bus = executionContext.getMessageBus();
+        // before thread begins we will need to pick a shard
+        // of queues that we will interact with
+        final int shard = rnd.nextInt(bus.getPageFrameReduceShardCount());
+        final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext);
+        final MPSequence dispatchPubSeq = bus.getPageFrameDispatchPubSeq();
+        final RingQueue<PageFrameDispatchTask> pageFrameDispatchQueue = bus.getPageFrameDispatchQueue();
+
+        // pass one to cache page addresses
+        // this has to be separate pass to ensure there no cache reads
+        // while cache might be resizing
+        this.pageAddressCache.of(base.getMetadata());
+
+        PageFrame frame;
+        int frameIndex = 0;
+        while ((frame = pageFrameCursor.next()) != null) {
+            this.pageAddressCache.add(frameIndex++, frame);
+            frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
+        }
+
+        of(
+                shard,
+                rnd.nextLong(),
+                frameIndex,
+                collectSubSeq,
+                pageFrameCursor,
+                atom,
+                dispatchPubSeq,
+                pageFrameDispatchQueue
+        );
+
+        // dispatch message only if there is anything to dispatch
+        if (frameIndex > 0) {
+            long dispatchCursor;
+            do {
+                dispatchCursor = dispatchPubSeq.next();
+                if (dispatchCursor < 0 && consumeDispatchQueue()) {
+                    LockSupport.parkNanos(1);
+                } else {
+                    break;
+                }
+            } while (true);
+
+            // We need to subscribe publisher sequence before we return
+            // control to the caller of this method. However, this sequence
+            // will be unsubscribed asynchronously.
+            bus.getPageFrameCollectFanOut(shard).and(collectSubSeq);
+
+            PageFrameDispatchTask dispatchTask = pageFrameDispatchQueue.get(dispatchCursor);
+            dispatchTask.of(this);
+            dispatchPubSeq.done(dispatchCursor);
+        } else {
+            // non-dispatched frames will leave page frame cursor and reader dangling if not freed
+            pageFrameCursor.close();
+        }
+        return this;
+    }
+
+    public void toTop() {
+        if (frameCount > 0) {
+            this.pageFrameCursor.toTop();
+            long dispatchCursor;
+            do {
+                dispatchCursor = dispatchPubSeq.next();
+                if (dispatchCursor < 0 && consumeDispatchQueue()) {
+                    LockSupport.parkNanos(1);
+                } else {
+                    break;
+                }
+            } while (true);
+            PageFrameDispatchTask dispatchTask = pageFrameDispatchQueue.get(dispatchCursor);
+            dispatchTask.of(this);
+            dispatchPubSeq.done(dispatchCursor);
+        }
     }
 
     public T getAtom() {
@@ -111,7 +231,7 @@ public class PageFrameSequence<T> implements Mutable {
     }
 
     public SymbolTableSource getSymbolTableSource() {
-        return symbolTableSource;
+        return pageFrameCursor;
     }
 
     public boolean isValid() {
@@ -122,57 +242,39 @@ public class PageFrameSequence<T> implements Mutable {
         this.valid.compareAndSet(true, valid);
     }
 
-    public PageFrameSequence<T> dispatch(
-            RecordCursorFactory base,
-            SqlExecutionContext executionContext,
-            SCSequence consumerSubSeq,
-            T atom
-    ) throws SqlException {
-        final Rnd rnd = executionContext.getRandom();
-        final MessageBus bus = executionContext.getMessageBus();
-        // before thread begins we will need to pick a shard
-        // of queues that we will interact with
-        final int shard = rnd.nextInt(bus.getPageFrameReduceShardCount());
-        final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext);
-        final MPSequence dispatchPubSeq = bus.getPageFrameDispatchPubSeq();
-        long dispatchCursor = dispatchPubSeq.next();
-
-        // pass one to cache page addresses
-        // this has to be separate pass to ensure there no cache reads
-        // while cache might be resizing
-        this.pageAddressCache.of(base.getMetadata());
-
-        PageFrame frame;
-        int frameIndex = 0;
-        while ((frame = pageFrameCursor.next()) != null) {
-            this.pageAddressCache.add(frameIndex++, frame);
-            frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
+    private static int getWorkerId() {
+        final Thread thread = Thread.currentThread();
+        final int workerId;
+        if (thread instanceof Worker) {
+            workerId = ((Worker) thread).getWorkerId() + 1;
+        } else {
+            workerId = 0;
         }
-
-        of(shard, rnd.nextLong(), frameIndex, consumerSubSeq, pageFrameCursor, atom);
-
-        if (dispatchCursor < 0) {
-            dispatchCursor = dispatchPubSeq.nextBully();
-        }
-
-        // We need to subscribe publisher sequence before we return
-        // control to the caller of this method. However, this sequence
-        // will be unsubscribed asynchronously.
-        bus.getPageFrameCollectFanOut(shard).and(consumerSubSeq);
-
-        PageFrameDispatchTask dispatchTask = bus.getPageFrameDispatchQueue().get(dispatchCursor);
-        dispatchTask.of(this);
-        dispatchPubSeq.done(dispatchCursor);
-        return this;
+        return workerId;
     }
+
+    private void initWorkerRecords(int workerCount) {
+        if (records == null || records.length < workerCount) {
+            this.records = new PageAddressCacheRecord[workerCount];
+            for (int i = 0; i < workerCount; i++) {
+                this.records[i] = new PageAddressCacheRecord();
+            }
+        }
+    }
+
+    // we need this to restart execution for `toTop`
+    private MPSequence dispatchPubSeq;
+    private RingQueue<PageFrameDispatchTask> pageFrameDispatchQueue;
 
     private void of(
             int shard,
             long frameSequenceId,
             int frameCount,
             SCSequence collectSubSeq,
-            SymbolTableSource symbolTableSource,
-            T atom
+            PageFrameCursor symbolTableSource,
+            T atom,
+            MPSequence dispatchPubSeq,
+            RingQueue<PageFrameDispatchTask> pageFrameDispatchQueue
     ) {
         this.id = frameSequenceId;
         this.doneLatch.reset();
@@ -181,7 +283,9 @@ public class PageFrameSequence<T> implements Mutable {
         this.shard = shard;
         this.frameCount = frameCount;
         this.collectSubSeq = collectSubSeq;
-        this.symbolTableSource = symbolTableSource;
+        this.pageFrameCursor = symbolTableSource;
         this.atom = atom;
+        this.dispatchPubSeq = dispatchPubSeq;
+        this.pageFrameDispatchQueue = pageFrameDispatchQueue;
     }
 }

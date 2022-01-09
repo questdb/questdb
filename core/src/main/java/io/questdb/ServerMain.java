@@ -25,6 +25,9 @@
 package io.questdb;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.async.PageFrameCleanupJob;
+import io.questdb.cairo.sql.async.PageFrameDispatchJob;
+import io.questdb.cairo.sql.async.PageFrameReduceJob;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
@@ -33,6 +36,7 @@ import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -181,6 +185,21 @@ public class ServerMain {
         workerPool.assign(new O3CopyJob(cairoEngine.getMessageBus()));
         workerPool.assign(new O3PurgeDiscoveryJob(cairoEngine.getMessageBus(), workerPool.getWorkerCount()));
         workerPool.assign(new O3PurgeJob(cairoEngine.getMessageBus()));
+
+        workerPool.assign(new PageFrameDispatchJob(cairoEngine.getMessageBus(), workerPool.getWorkerCount()));
+        for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
+            workerPool.assign(i, new PageFrameReduceJob(
+                            cairoEngine.getMessageBus(),
+                            SharedRandom.getRandom(configuration.getCairoConfiguration())
+                    )
+            );
+        }
+        workerPool.assign(0, new PageFrameCleanupJob(
+                        cairoEngine.getMessageBus(),
+                        SharedRandom.getRandom(configuration.getCairoConfiguration())
+                )
+        );
+
         O3Utils.initBuf(workerPool.getWorkerCount() + 1);
 
         Metrics metrics;
@@ -257,22 +276,6 @@ public class ServerMain {
         }
     }
 
-    private void verifyFileSystem(String kind, CharSequence dir, Path path, Log log) {
-        if (dir != null) {
-            path.of(dir).$();
-            // path will contain file system name
-            long fsStatus = Files.getFileSystemStatus(path);
-            path.seekZ();
-            LogRecord rec = log.advisory().$(kind).$(" file system magic: 0x");
-            if (fsStatus < 0) {
-                rec.$hex(-fsStatus).$(" [").$(path).$("] SUPPORTED").$();
-            } else {
-                rec.$hex(fsStatus).$(" [").$(path).$("] EXPERIMENTAL").$();
-                log.advisory().$("\n\n\n\t\t\t*** SYSTEM IS USING UNSUPPORTED FILE SYSTEM AND COULD BE UNSTABLE ***\n\n").$();
-            }
-        }
-    }
-
     public static void deleteOrException(File file) {
         if (!file.exists()) {
             return;
@@ -341,7 +344,6 @@ public class ServerMain {
 
         return optHash;
     }
-
 
     private static long getPublicVersion(String publicDir) throws IOException {
         File f = new File(publicDir, VERSION_TXT);
@@ -525,5 +527,21 @@ public class ServerMain {
             final Log log
     ) {
         workerPool.start(log);
+    }
+
+    private void verifyFileSystem(String kind, CharSequence dir, Path path, Log log) {
+        if (dir != null) {
+            path.of(dir).$();
+            // path will contain file system name
+            long fsStatus = Files.getFileSystemStatus(path);
+            path.seekZ();
+            LogRecord rec = log.advisory().$(kind).$(" file system magic: 0x");
+            if (fsStatus < 0) {
+                rec.$hex(-fsStatus).$(" [").$(path).$("] SUPPORTED").$();
+            } else {
+                rec.$hex(fsStatus).$(" [").$(path).$("] EXPERIMENTAL").$();
+                log.advisory().$("\n\n\n\t\t\t*** SYSTEM IS USING UNSUPPORTED FILE SYSTEM AND COULD BE UNSTABLE ***\n\n").$();
+            }
+        }
     }
 }

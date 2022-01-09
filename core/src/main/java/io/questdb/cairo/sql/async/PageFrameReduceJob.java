@@ -35,12 +35,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class PageFrameReduceJob implements Job {
 
-    private final PageAddressCacheRecord[] records;
+    private final PageAddressCacheRecord record;
     private final int[] shards;
     private final int shardCount;
     private final MessageBus messageBus;
 
-    public PageFrameReduceJob(MessageBus bus, Rnd rnd, int workerCount) {
+    // Each thread should be assigned own instance of this job, making the code effectively
+    // single threaded. Such assignment is necessary for threads to have their own shard walk sequence.
+    public PageFrameReduceJob(MessageBus bus, Rnd rnd) {
         this.messageBus = bus;
         this.shardCount = messageBus.getPageFrameReduceShardCount();
         this.shards = new int[shardCount];
@@ -62,10 +64,7 @@ public class PageFrameReduceJob implements Job {
             shards[randomIndex] = tmp;
         }
 
-        this.records = new PageAddressCacheRecord[workerCount];
-        for (int i = 0; i < workerCount; i++) {
-            records[i] = new PageAddressCacheRecord();
-        }
+        this.record = new PageAddressCacheRecord();
     }
 
     /**
@@ -97,7 +96,7 @@ public class PageFrameReduceJob implements Job {
                             // processing is daisy-chained. If we were to release item before
                             // finishing reduction, next step (job) will be processing an incomplete task
                             record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
-                            record.setFrameIndex(task.getFrameSequenceFrameIndex());
+                            record.setFrameIndex(task.getFrameIndex());
                             frameSequence.getReducer().reduce(record, task);
                         }
                     } catch (Throwable e) {
@@ -120,7 +119,6 @@ public class PageFrameReduceJob implements Job {
 
     @Override
     public boolean run(int workerId) {
-        final PageAddressCacheRecord record = records[workerId];
         boolean useful = false;
         for (int i = 0; i < shardCount; i++) {
             final int shard = shards[i];

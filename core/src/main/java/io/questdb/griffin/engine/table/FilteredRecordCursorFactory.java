@@ -24,30 +24,24 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.*;
-import io.questdb.cairo.sql.async.PageFrameReduceTask;
-import io.questdb.cairo.sql.async.PageFrameReducer;
-import io.questdb.cairo.sql.async.PageFrameSequence;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.mp.SCSequence;
-import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
 
 public class FilteredRecordCursorFactory implements RecordCursorFactory {
-    private static final PageFrameReducer REDUCER = FilteredRecordCursorFactory::filter;
     private final RecordCursorFactory base;
     private final FilteredRecordCursor cursor;
     private final Function filter;
-    private final PageFrameSequence<Function> frameSequence;
 
-    public FilteredRecordCursorFactory(CairoConfiguration configuration, RecordCursorFactory base, Function filter) {
+    public FilteredRecordCursorFactory(RecordCursorFactory base, Function filter) {
         assert !(base instanceof FilteredRecordCursorFactory);
         this.base = base;
         this.cursor = new FilteredRecordCursor(filter);
         this.filter = filter;
-        this.frameSequence = new PageFrameSequence<>(configuration, REDUCER);
     }
 
     @Override
@@ -74,34 +68,7 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public PageFrameSequence<Function> execute(
-            SqlExecutionContext executionContext,
-            SCSequence collectSubSeq
-    ) throws SqlException {
-        return frameSequence.dispatch(base, executionContext, collectSubSeq, filter);
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
-    }
-
-    @Override
-    public boolean usesCompiledFilter() {
-        return base.usesCompiledFilter();
-    }
-
-    private static void filter(PageAddressCacheRecord record, PageFrameReduceTask task) {
-        final DirectLongList rows = task.getRows();
-        final long frameRowCount = task.getFrameRowCount();
-        final Function filter = task.getFrameSequence(Function.class).getAtom();
-
-        rows.clear();
-        for (long r = 0; r < frameRowCount; r++) {
-            record.setRowIndex(r);
-            if (filter.getBool(record)) {
-                rows.add(r);
-            }
-        }
     }
 }

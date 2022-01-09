@@ -33,7 +33,7 @@ import java.io.Closeable;
 
 public class PageFrameReduceTask implements Closeable {
     private final DirectLongList rows;
-    private int frameSequenceFrameIndex;
+    private int frameIndex;
     private PageFrameSequence<?> frameSequence;
 
     public PageFrameReduceTask(CairoConfiguration configuration) {
@@ -46,7 +46,7 @@ public class PageFrameReduceTask implements Closeable {
     }
 
     public long getFrameRowCount() {
-        return this.frameSequence.getFrameRowCount(frameSequenceFrameIndex);
+        return this.frameSequence.getFrameRowCount(frameIndex);
     }
 
     public PageFrameSequence<?> getFrameSequence() {
@@ -58,16 +58,16 @@ public class PageFrameReduceTask implements Closeable {
         return (PageFrameSequence<T>) frameSequence;
     }
 
-    public int getFrameSequenceFrameIndex() {
-        return frameSequenceFrameIndex;
+    public int getFrameIndex() {
+        return frameIndex;
     }
 
     public DirectLongList getRows() {
         return rows;
     }
 
-    public void of(PageFrameSequence<?> frameSequence, int frameSequenceFrameIndex) {
+    public void of(PageFrameSequence<?> frameSequence, int frameIndex) {
         this.frameSequence = frameSequence;
-        this.frameSequenceFrameIndex = frameSequenceFrameIndex;
+        this.frameIndex = frameIndex;
     }
 }

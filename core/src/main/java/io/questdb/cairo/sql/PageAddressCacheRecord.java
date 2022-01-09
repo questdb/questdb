@@ -45,24 +45,14 @@ public class PageAddressCacheRecord implements Record {
     private int frameIndex;
     private long rowIndex;
 
-    public void setFrameIndex(int frameIndex) {
-        this.frameIndex = frameIndex;
+    public PageAddressCacheRecord(PageAddressCacheRecord other) {
+        this.symbolTableSource = other.symbolTableSource;
+        this.pageAddressCache = other.pageAddressCache;
+        this.frameIndex = other.frameIndex;
+        this.rowIndex = other.rowIndex;
     }
 
-    public void setRowIndex(long rowIndex) {
-        this.rowIndex = rowIndex;
-    }
-
-    public void of(SymbolTableSource symbolTableSource, PageAddressCache columnAddressCache) {
-        this.symbolTableSource = symbolTableSource;
-        this.pageAddressCache = columnAddressCache;
-        this.frameIndex = 0;
-        this.rowIndex = 0;
-    }
-
-    @Override
-    public long getRowId() {
-        return Rows.toRowID(frameIndex, rowIndex);
+    public PageAddressCacheRecord() {
     }
 
     @Override
@@ -75,25 +65,6 @@ public class PageAddressCacheRecord implements Record {
         final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + rowIndex * Long.BYTES);
         final long pageLimit = pageAddressCache.getPageSize(frameIndex, columnIndex);
         return getBin(dataPageAddress, offset, pageLimit, bsview);
-    }
-
-    private BinarySequence getBin(long base, long offset, long pageLimit, MemoryCR.ByteSequenceView view) {
-        final long address = base + offset;
-        final long len = Unsafe.getUnsafe().getLong(address);
-        if (len != TableUtils.NULL_LEN) {
-            if (len + Long.BYTES + offset <= pageLimit) {
-                return view.of(address + Long.BYTES, len);
-            }
-            throw CairoException.instance(0)
-                    .put("Bin is outside of file boundary [offset=")
-                    .put(offset)
-                    .put(", len=")
-                    .put(len)
-                    .put(", pageLimit=")
-                    .put(pageLimit)
-                    .put(']');
-        }
-        return null;
     }
 
     @Override
@@ -123,6 +94,15 @@ public class PageAddressCacheRecord implements Record {
             return NullColumn.INSTANCE.getByte(0);
         }
         return Unsafe.getUnsafe().getByte(address + rowIndex * Byte.BYTES);
+    }
+
+    @Override
+    public char getChar(int columnIndex) {
+        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+        if (address == 0) {
+            return NullColumn.INSTANCE.getChar(0);
+        }
+        return Unsafe.getUnsafe().getChar(address + rowIndex * Character.BYTES);
     }
 
     @Override
@@ -162,21 +142,39 @@ public class PageAddressCacheRecord implements Record {
     }
 
     @Override
+    public void getLong256(int columnIndex, CharSink sink) {
+        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+        if (address == 0) {
+            NullColumn.INSTANCE.getLong256(0, sink);
+            return;
+        }
+        getLong256(address + rowIndex * Long256.BYTES, sink);
+    }
+
+    @Override
+    public Long256 getLong256A(int columnIndex) {
+        getLong256(columnIndex, long256A);
+        return long256A;
+    }
+
+    @Override
+    public Long256 getLong256B(int columnIndex) {
+        getLong256(columnIndex, long256B);
+        return long256B;
+    }
+
+    @Override
+    public long getRowId() {
+        return Rows.toRowID(frameIndex, rowIndex);
+    }
+
+    @Override
     public short getShort(int columnIndex) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (address == 0) {
             return NullColumn.INSTANCE.getShort(0);
         }
         return Unsafe.getUnsafe().getShort(address + rowIndex * Short.BYTES);
-    }
-
-    @Override
-    public char getChar(int columnIndex) {
-        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-        if (address == 0) {
-            return NullColumn.INSTANCE.getChar(0);
-        }
-        return Unsafe.getUnsafe().getChar(address + rowIndex * Character.BYTES);
     }
 
     @Override
@@ -189,36 +187,6 @@ public class PageAddressCacheRecord implements Record {
         final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + rowIndex * Long.BYTES);
         final long size = pageAddressCache.getPageSize(frameIndex, columnIndex);
         return getStr(dataPageAddress, offset, size, csview);
-    }
-
-    private CharSequence getStr(long base, long offset, long size, MemoryCR.CharSequenceView view) {
-        final long address = base + offset;
-        final int len = Unsafe.getUnsafe().getInt(address);
-        if (len != TableUtils.NULL_LEN) {
-            if (len + 4 + offset <= size) {
-                return view.of(address + Vm.STRING_LENGTH_BYTES, len);
-            }
-            throw CairoException.instance(0)
-                    .put("String is outside of file boundary [offset=")
-                    .put(offset)
-                    .put(", len=")
-                    .put(len)
-                    .put(", size=")
-                    .put(size)
-                    .put(']');
-        }
-        return null;
-    }
-
-    @Override
-    public int getStrLen(int columnIndex) {
-        final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-        if (dataPageAddress == 0) {
-            return NullColumn.INSTANCE.getStrLen(0);
-        }
-        final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
-        final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + rowIndex * Long.BYTES);
-        return Unsafe.getUnsafe().getInt(dataPageAddress + offset);
     }
 
     @Override
@@ -234,50 +202,14 @@ public class PageAddressCacheRecord implements Record {
     }
 
     @Override
-    public void getLong256(int columnIndex, CharSink sink) {
-        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-        if (address == 0) {
-            NullColumn.INSTANCE.getLong256(0, sink);
-            return;
+    public int getStrLen(int columnIndex) {
+        final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+        if (dataPageAddress == 0) {
+            return NullColumn.INSTANCE.getStrLen(0);
         }
-        getLong256(address + rowIndex * Long256.BYTES, sink);
-    }
-
-    void getLong256(long offset, CharSink sink) {
-        final long addr = offset + Long.BYTES * 4;
-        final long a, b, c, d;
-        a = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4);
-        b = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3);
-        c = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2);
-        d = Unsafe.getUnsafe().getLong(addr - Long.BYTES);
-        Numbers.appendLong256(a, b, c, d, sink);
-    }
-
-    @Override
-    public Long256 getLong256A(int columnIndex) {
-        getLong256(columnIndex, long256A);
-        return long256A;
-    }
-
-    @Override
-    public Long256 getLong256B(int columnIndex) {
-        getLong256(columnIndex, long256B);
-        return long256B;
-    }
-
-    void getLong256(int columnIndex, Long256Acceptor sink) {
-        final long columnAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-        if (columnAddress == 0) {
-            NullColumn.INSTANCE.getLong256(0, sink);
-            return;
-        }
-        final long addr = columnAddress + rowIndex * Long256.BYTES + Long.BYTES * 4;
-        sink.setAll(
-                Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4),
-                Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3),
-                Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2),
-                Unsafe.getUnsafe().getLong(addr - Long.BYTES)
-        );
+        final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
+        final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + rowIndex * Long.BYTES);
+        return Unsafe.getUnsafe().getInt(dataPageAddress + offset);
     }
 
     @Override
@@ -331,5 +263,83 @@ public class PageAddressCacheRecord implements Record {
             return NullColumn.INSTANCE.getLong(0);
         }
         return Unsafe.getUnsafe().getLong(address + rowIndex * Long.BYTES);
+    }
+
+    public void of(SymbolTableSource symbolTableSource, PageAddressCache pageAddressCache) {
+        this.symbolTableSource = symbolTableSource;
+        this.pageAddressCache = pageAddressCache;
+        this.frameIndex = 0;
+        this.rowIndex = 0;
+    }
+
+    public void setFrameIndex(int frameIndex) {
+        this.frameIndex = frameIndex;
+    }
+
+    public void setRowIndex(long rowIndex) {
+        this.rowIndex = rowIndex;
+    }
+
+    private BinarySequence getBin(long base, long offset, long pageLimit, MemoryCR.ByteSequenceView view) {
+        final long address = base + offset;
+        final long len = Unsafe.getUnsafe().getLong(address);
+        if (len != TableUtils.NULL_LEN) {
+            if (len + Long.BYTES + offset <= pageLimit) {
+                return view.of(address + Long.BYTES, len);
+            }
+            throw CairoException.instance(0)
+                    .put("Bin is outside of file boundary [offset=")
+                    .put(offset)
+                    .put(", len=")
+                    .put(len)
+                    .put(", pageLimit=")
+                    .put(pageLimit)
+                    .put(']');
+        }
+        return null;
+    }
+
+    void getLong256(long offset, CharSink sink) {
+        final long addr = offset + Long.BYTES * 4;
+        final long a, b, c, d;
+        a = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4);
+        b = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3);
+        c = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2);
+        d = Unsafe.getUnsafe().getLong(addr - Long.BYTES);
+        Numbers.appendLong256(a, b, c, d, sink);
+    }
+
+    void getLong256(int columnIndex, Long256Acceptor sink) {
+        final long columnAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+        if (columnAddress == 0) {
+            NullColumn.INSTANCE.getLong256(0, sink);
+            return;
+        }
+        final long addr = columnAddress + rowIndex * Long256.BYTES + Long.BYTES * 4;
+        sink.setAll(
+                Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4),
+                Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3),
+                Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2),
+                Unsafe.getUnsafe().getLong(addr - Long.BYTES)
+        );
+    }
+
+    private CharSequence getStr(long base, long offset, long size, MemoryCR.CharSequenceView view) {
+        final long address = base + offset;
+        final int len = Unsafe.getUnsafe().getInt(address);
+        if (len != TableUtils.NULL_LEN) {
+            if (len + 4 + offset <= size) {
+                return view.of(address + Vm.STRING_LENGTH_BYTES, len);
+            }
+            throw CairoException.instance(0)
+                    .put("String is outside of file boundary [offset=")
+                    .put(offset)
+                    .put(", len=")
+                    .put(len)
+                    .put(", size=")
+                    .put(size)
+                    .put(']');
+        }
+        return null;
     }
 }

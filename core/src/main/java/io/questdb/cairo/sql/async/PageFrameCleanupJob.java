@@ -75,7 +75,7 @@ public class PageFrameCleanupJob implements Job {
                 try {
                     // frame index adjusted to 1-base
                     final PageFrameSequence<?> frameSequence = task.getFrameSequence();
-                    final int frameIndex = task.getFrameSequenceFrameIndex() + 1;
+                    final int frameIndex = task.getFrameIndex() + 1;
                     final int frameCount = frameSequence.getFrameCount();
 
                     // We have to reset capacity only on max all queue items
