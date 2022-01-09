@@ -49,15 +49,15 @@ enum class data_kind_t : uint8_t {
 
 enum class opcodes : int32_t {
     Inv = -1,
-    Ret =  0,
-    Imm =  1,
-    Mem =  2,
-    Var =  3,
-    Neg =  4,
-    Not =  5,
-    And =  6,
-    Or  =  7,
-    Eq  =  8,
+    Ret = 0,
+    Imm = 1,
+    Mem = 2,
+    Var = 3,
+    Neg = 4,
+    Not = 5,
+    And = 6,
+    Or = 7,
+    Eq = 8,
     Ne,
     Lt,
     Le,
@@ -71,12 +71,12 @@ enum class opcodes : int32_t {
 };
 
 struct instruction_t {
-   opcodes opcode;
-   int32_t options;
-   union {
-       int64_t ipayload;
-       double  dpayload;
-   };
+    opcodes opcode;
+    int32_t options;
+    union {
+        int64_t ipayload;
+        double dpayload;
+    };
 };
 
 struct jit_value_t {
@@ -101,7 +101,7 @@ struct jit_value_t {
 
     inline data_kind_t dkind() const noexcept { return kind_; }
 
-    inline const asmjit::Operand& op() const noexcept { return op_; }
+    inline const asmjit::Operand &op() const noexcept { return op_; }
 
 private:
     asmjit::Operand op_;
@@ -128,7 +128,7 @@ inline uint32_t type_shift(data_type_t type) {
 
 inline data_kind_t dst_kind(const jit_value_t &lhs, const jit_value_t &rhs) {
     auto dk = (lhs.dkind() == data_kind_t::kConst && rhs.dkind() == data_kind_t::kConst) ? data_kind_t::kConst
-            : data_kind_t::kMemory;
+                                                                                         : data_kind_t::kMemory;
     return dk;
 }
 
