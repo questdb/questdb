@@ -54,7 +54,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();
     private final CharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
     private final CharSequenceObjHashMap<TableUpdateDetails> idleTableUpdateDetailsUtf16;
-    private final int[] loadByWriterThread;
+    private final long[] loadByWriterThread;
     private final long writerIdleTimeout;
     private final NetworkIOJob[] netIoJobs;
     private final StringSink[] tableNameSinks;
@@ -92,7 +92,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         // in worker threads.
         tableUpdateDetailsUtf16 = new CharSequenceObjHashMap<>();
         idleTableUpdateDetailsUtf16 = new CharSequenceObjHashMap<>();
-        loadByWriterThread = new int[writerWorkerPool.getWorkerCount()];
+        loadByWriterThread = new long[writerWorkerPool.getWorkerCount()];
         int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();
         int queueSize = lineConfiguration.getWriterQueueCapacity();
         queue = new RingQueue<>(
@@ -363,7 +363,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     @NotNull
     private TableUpdateDetails unsafeAssignTableToWriterThread(int tudKeyIndex, CharSequence tableNameUtf16) {
         unsafeCalcThreadLoad();
-        int leastLoad = Integer.MAX_VALUE;
+        long leastLoad = Long.MAX_VALUE;
         int threadId = 0;
 
         for (int i = 0, n = loadByWriterThread.length; i < n; i++) {
