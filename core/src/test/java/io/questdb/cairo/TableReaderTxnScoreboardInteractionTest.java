@@ -45,9 +45,8 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
 
             try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
                 addRow(w);
-                TxnScoreboard txnScoreboard;
+                final TxnScoreboard txnScoreboard = w.getTxnScoreboard();
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x")) {
-                    txnScoreboard = reader.getTxnScoreboard();
                     Assert.assertEquals(1, reader.getTxn());
                     Assert.assertEquals(1, txnScoreboard.getMin());
                     Assert.assertEquals(1, txnScoreboard.getActiveReaderCount(1));
@@ -76,10 +75,15 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
                             Assert.assertEquals(2, txnScoreboard.getActiveReaderCount(2));
                             Assert.assertEquals(1, txnScoreboard.getActiveReaderCount(3));
                         }
+                        // expect 0, writer is released
+                        Assert.assertEquals(0, txnScoreboard.getActiveReaderCount(3));
                     }
 
+                    Assert.assertEquals(0, txnScoreboard.getActiveReaderCount(3));
                     Assert.assertEquals(1, txnScoreboard.getActiveReaderCount(2));
                 }
+                Assert.assertEquals(0, txnScoreboard.getActiveReaderCount(2));
+                Assert.assertEquals(0, txnScoreboard.getActiveReaderCount(3));
 
                 w.addColumn("z", ColumnType.LONG);
 
@@ -98,6 +102,7 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
                     Assert.assertEquals(4, txnScoreboard.getMin());
                     Assert.assertEquals(1, txnScoreboard.getActiveReaderCount(4));
                 }
+                Assert.assertEquals(0, txnScoreboard.getActiveReaderCount(4));
             }
         });
     }
@@ -117,8 +122,9 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
             try (TableWriter w = new TableWriter(configuration, "x")) {
                 addRow(w);
 
+                final TxnScoreboard txnScoreboard = w.getTxnScoreboard();
+
                 try (TableReader reader = new TableReader(configuration, "x")) {
-                    TxnScoreboard txnScoreboard = reader.getTxnScoreboard();
                     Assert.assertEquals(1, reader.getTxn());
                     Assert.assertEquals(1, txnScoreboard.getMin());
                     Assert.assertEquals(1, txnScoreboard.getActiveReaderCount(1));
@@ -134,11 +140,10 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
                     Assert.assertEquals(2, reader.getTxn());
                     Assert.assertEquals(2, txnScoreboard.getMin());
                     Assert.assertEquals(1, txnScoreboard.getActiveReaderCount(2));
-
-                    reader.goPassive();
-                    Assert.assertEquals(2, txnScoreboard.getMin());
-                    Assert.assertEquals(0, txnScoreboard.getActiveReaderCount(2));
                 }
+
+                Assert.assertEquals(2, txnScoreboard.getMin());
+                Assert.assertEquals(0, txnScoreboard.getActiveReaderCount(2));
             }
         });
     }
