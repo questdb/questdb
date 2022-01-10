@@ -55,6 +55,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final ColumnCopyStruct tempCopyStruct = new ColumnCopyStruct();
     private final FilesFacade ff;
     private final Path path;
+    private final int partitionBy;
     private final int rootLen;
     private final TableReaderMetadata metadata;
     private final DateFormat partitionDirFormatMethod;
@@ -96,7 +97,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.metadata = openMetaFile();
             this.columnCount = this.metadata.getColumnCount();
             this.columnCountBits = getColumnBits(columnCount);
-            int partitionBy = this.metadata.getPartitionBy();
+            this.partitionBy = this.metadata.getPartitionBy();
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
             path.trimTo(rootLen);
             LOG.debug()
@@ -323,7 +324,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             active = false;
             txnScoreboard.releaseTxn(txn);
 
-            if (PartitionBy.isPartitioned(metadata.getPartitionBy())) {
+            if (PartitionBy.isPartitioned(this.partitionBy)) {
                 long txnLocks = txnScoreboard.getActiveReaderCount(txn);
                 long committedTxn = txFile.unsafeReadTxn();
                 if (txnLocks == 0 && committedTxn > txn) {
