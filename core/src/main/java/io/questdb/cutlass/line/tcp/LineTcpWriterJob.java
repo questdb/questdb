@@ -149,18 +149,10 @@ class LineTcpWriterJob implements Job, Closeable {
                         eventProcessed = false;
                     }
                 } else {
-                    switch (event.getWriterWorkerId()) {
-                        case LineTcpMeasurementEventType.ALL_WRITERS_RESHUFFLE:
-                            eventProcessed = processReshuffleEvent(event);
-                            break;
-
-                        case LineTcpMeasurementEventType.ALL_WRITERS_RELEASE_WRITER:
-                            eventProcessed = scheduler.processWriterReleaseEvent(event, workerId);
-                            break;
-
-                        default:
-                            eventProcessed = true;
-                            break;
+                    if (event.getWriterWorkerId() == LineTcpMeasurementEventType.ALL_WRITERS_RELEASE_WRITER) {
+                        eventProcessed = scheduler.processWriterReleaseEvent(event, workerId);
+                    } else {
+                        eventProcessed = true;
                     }
                 }
             } catch (Throwable ex) {
@@ -176,42 +168,5 @@ class LineTcpWriterJob implements Job, Closeable {
                 return false;
             }
         }
-    }
-
-    private boolean processReshuffleEvent(LineTcpMeasurementEvent event) {
-        if (event.getReshuffleTargetWorkerId() == workerId) {
-            // This thread is now a declared owner of the table, but it can only become actual
-            // owner when "old" owner is fully done. This is a volatile variable on the event, used by both threads
-            // to hand over the table. The starting point is "false" and the "old" owner thread will eventually set this
-            // to "true". In the meantime current thread will not be processing the queue until the handover is
-            // complete
-            if (event.isReshuffleComplete()) {
-                LOG.info()
-                        .$("rebalance cycle, new thread ready [threadId=").$(workerId)
-                        .$(", table=").$(event.getTableUpdateDetails().getTableNameUtf16())
-                        .I$();
-                return true;
-            }
-
-            return false;
-        }
-
-        if (event.getReshuffleSrcWorkerId() == workerId) {
-            final TableUpdateDetails tab = event.getTableUpdateDetails();
-            for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
-                if (assignedTables.get(n) == tab) {
-                    assignedTables.remove(n);
-                    break;
-                }
-            }
-            LOG.info()
-                    .$("rebalance cycle, old thread finished [threadId=").$(workerId)
-                    .$(", table=").$(tab.getTableNameUtf16())
-                    .I$();
-            tab.setAssignedToJob(false);
-            event.setReshuffleComplete(true);
-        }
-
-        return true;
     }
 }

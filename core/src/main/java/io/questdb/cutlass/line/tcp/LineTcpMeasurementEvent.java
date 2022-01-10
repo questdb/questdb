@@ -46,9 +46,6 @@ class LineTcpMeasurementEvent implements Closeable {
     private int writerWorkerId;
     private TableUpdateDetails tableUpdateDetails;
     private long bufLo;
-    private int reshuffleSrcWorkerId;
-    private int reshuffleTargetWorkerId;
-    private volatile boolean reshuffleComplete;
     private boolean commitOnWriterClose;
 
     LineTcpMeasurementEvent(
@@ -70,28 +67,12 @@ class LineTcpMeasurementEvent implements Closeable {
         bufLo = 0;
     }
 
-    public int getReshuffleSrcWorkerId() {
-        return reshuffleSrcWorkerId;
-    }
-
-    public int getReshuffleTargetWorkerId() {
-        return reshuffleTargetWorkerId;
-    }
-
     public TableUpdateDetails getTableUpdateDetails() {
         return tableUpdateDetails;
     }
 
     public int getWriterWorkerId() {
         return writerWorkerId;
-    }
-
-    public boolean isReshuffleComplete() {
-        return reshuffleComplete;
-    }
-
-    public void setReshuffleComplete(boolean reshuffleComplete) {
-        this.reshuffleComplete = reshuffleComplete;
     }
 
     public void releaseWriter() {
@@ -625,14 +606,6 @@ class LineTcpMeasurementEvent implements Closeable {
         Unsafe.getUnsafe().putLong(timestampBufPos, timestamp);
         Unsafe.getUnsafe().putInt(timestampBufPos + Long.BYTES, entitiesWritten);
         writerWorkerId = tableUpdateDetails.getWriterThreadId();
-    }
-
-    void createReshuffleEvent(int fromThreadId, int toThreadId, TableUpdateDetails tableUpdateDetails) {
-        writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_RESHUFFLE;
-        reshuffleSrcWorkerId = fromThreadId;
-        reshuffleTargetWorkerId = toThreadId;
-        this.tableUpdateDetails = tableUpdateDetails;
-        reshuffleComplete = false;
     }
 
     void createWriterReleaseEvent(TableUpdateDetails tableUpdateDetails, boolean commitOnWriterClose) {
