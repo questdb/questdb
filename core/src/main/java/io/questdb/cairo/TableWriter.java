@@ -128,11 +128,9 @@ public class TableWriter implements Closeable {
     private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<>(O3MutableAtomicInteger::new, 64);
     private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<>(O3Basket::new, 64);
     private final TxnScoreboard txnScoreboard;
-    private final StringSink o3Sink = new StringSink();
     private final StringSink fileNameSink = new StringSink();
     private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
-    private final StringSink o3FileNameSink = new StringSink();
     private final RingQueue<O3PartitionUpdateTask> o3PartitionUpdateQueue;
     private final MPSequence o3PartitionUpdatePubSeq;
     private final SCSequence o3PartitionUpdateSubSeq;
@@ -265,7 +263,7 @@ public class TableWriter implements Closeable {
             openMetaFile(ff, path, rootLen, metaMem);
             this.metadata = new TableWriterMetadata(ff, metaMem);
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
-            this.txWriter = new TxWriter(ff, path, partitionBy);
+            this.txWriter = new TxWriter(ff).ofRW(path, partitionBy);
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
             path.trimTo(rootLen);
             // we have to do truncate repair at this stage of constructor
@@ -696,62 +694,6 @@ public class TableWriter implements Closeable {
         commit(commitMode, metadata.getCommitLag());
     }
 
-    public void consumeO3PartitionRemoveTasks() {
-        // consume discovery jobs
-        final RingQueue<O3PurgeDiscoveryTask> discoveryQueue = messageBus.getO3PurgeDiscoveryQueue();
-        final Sequence discoverySubSeq = messageBus.getO3PurgeDiscoverySubSeq();
-        final RingQueue<O3PurgeTask> purgeQueue = messageBus.getO3PurgeQueue();
-        final Sequence purgePubSeq = messageBus.getO3PurgePubSeq();
-        final Sequence purgeSubSeq = messageBus.getO3PurgeSubSeq();
-
-        if (discoverySubSeq != null) {
-            while (true) {
-                long cursor = discoverySubSeq.next();
-                if (cursor > -1) {
-                    O3PurgeDiscoveryTask task = discoveryQueue.get(cursor);
-                    O3PurgeDiscoveryJob.discoverPartitions(
-                            ff,
-                            o3Sink,
-                            o3FileNameSink,
-                            rowValueIsNotNull, // reuse, this is only called from writer close
-                            purgeQueue,
-                            purgePubSeq,
-                            configuration.getRoot(),
-                            tableName,
-                            task.getPartitionBy(),
-                            task.getTimestamp(),
-                            txnScoreboard,
-                            task.getMostRecentTxn()
-                    );
-                } else if (cursor == -1) {
-                    break;
-                }
-            }
-        }
-
-        // consume purge jobs
-        if (purgeSubSeq != null) {
-            while (true) {
-                long cursor = purgeSubSeq.next();
-                if (cursor > -1) {
-                    O3PurgeTask task = purgeQueue.get(cursor);
-                    other.trimTo(rootLen);
-                    O3PurgeJob.purgePartitionDir(
-                            ff,
-                            other,
-                            task.getPartitionBy(),
-                            task.getTimestamp(),
-                            txnScoreboard,
-                            task.getNameTxnToRemove(),
-                            task.getMinTxnToExpect()
-                    );
-                } else if (cursor == -1) {
-                    break;
-                }
-            }
-        }
-    }
-
     public int getColumnIndex(CharSequence name) {
         int index = metadata.getColumnIndexQuiet(name);
         if (index > -1) {
@@ -902,13 +844,7 @@ public class TableWriter implements Closeable {
         long cursor = seq.next();
         if (cursor > -1) {
             O3PurgeDiscoveryTask task = messageBus.getO3PurgeDiscoveryQueue().get(cursor);
-            task.of(
-                    tableName,
-                    partitionBy,
-                    txnScoreboard,
-                    timestamp,
-                    txn
-            );
+            task.of(tableName, partitionBy);
             seq.done(cursor);
         } else {
             LOG.error()
@@ -2120,7 +2056,6 @@ public class TableWriter implements Closeable {
     }
 
     private void doClose(boolean truncate) {
-        consumeO3PartitionRemoveTasks();
         boolean tx = inTransaction();
         freeSymbolMapWriters();
         freeIndexers();
@@ -3308,8 +3243,10 @@ public class TableWriter implements Closeable {
                 long readerTxnCount;
                 if ((readerTxnCount = txnScoreboard.getActiveReaderCount(min)) == 0) {
                     TableUtils.txnPartitionConditionally(other, txn);
-                    if (ff.rmdir(other) == 0) {
+                    long errno = ff.rmdir(other);
+                    if (errno == 0 || errno == -1) {
                         // Simple case, no readers open
+                        // or async purge has already swept it up
                         LOG.info()
                                 .$("purged [path=").$(other)
                                 .$(", readerTxnCount=").$(readerTxnCount)

@@ -103,7 +103,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     .$("open [id=").$(metadata.getId())
                     .$(", table=").$(this.tableName)
                     .I$();
-            this.txFile = new TxReader(ff, path, partitionBy);
+            this.txFile = new TxReader(ff).ofRO(path, partitionBy);
             path.trimTo(rootLen);
             readTxnSlow();
             openSymbolMaps();
@@ -340,13 +340,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         long cursor = seq.next();
         if (cursor > -1) {
             O3PurgeDiscoveryTask task = messageBus.getO3PurgeDiscoveryQueue().get(cursor);
-            task.of(
-                    tableName,
-                    metadata.getPartitionBy(),
-                    null,
-                    -1,
-                    txn
-            );
+            task.of(tableName, metadata.getPartitionBy());
             seq.done(cursor);
         } else {
             LOG.error()

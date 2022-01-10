@@ -36,7 +36,7 @@ public class TxnScoreboard implements Closeable, Mutable {
 
     private static final Log LOG = LogFactory.getLog(TxnScoreboard.class);
 
-    private long fd ;
+    private long fd = -1;
     private long mem;
     private final int pow2EntryCount;
     private final long size;
@@ -55,6 +55,7 @@ public class TxnScoreboard implements Closeable, Mutable {
     }
 
     public TxnScoreboard ofRW(@Transient Path root) {
+        clear();
         root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
         this.fd = openCleanRW(ff, root, this.size);
 
@@ -66,18 +67,21 @@ public class TxnScoreboard implements Closeable, Mutable {
             init(mem, pow2EntryCount);
         } catch (Throwable e) {
             ff.close(fd);
+            fd = -1;
             throw e;
         }
         return this;
     }
 
     public TxnScoreboard ofRO(@Transient Path root) {
+        clear();
         root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
         this.fd = openCleanRW(ff, root, this.size);
         try {
             this.mem = TableUtils.mapRO(ff, fd, this.size, MemoryTag.MMAP_DEFAULT);
         } catch (Throwable e) {
             ff.close(fd);
+            fd = -1;
             throw e;
         }
         return this;

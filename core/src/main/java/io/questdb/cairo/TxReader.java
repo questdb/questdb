@@ -33,13 +33,14 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.*;
 
-public class TxReader implements Closeable {
+public class TxReader implements Closeable, Mutable {
     protected static final int PARTITION_TS_OFFSET = 0;
     protected static final int PARTITION_SIZE_OFFSET = 1;
     protected static final int PARTITION_NAME_TX_OFFSET = 2;
     protected static final int PARTITION_DATA_TX_OFFSET = 3;
     protected final LongList attachedPartitions = new LongList();
-    private final PartitionBy.PartitionFloorMethod partitionFloorMethod;
+    private final FilesFacade ff;
+    private PartitionBy.PartitionFloorMethod partitionFloorMethod;
     protected long minTimestamp;
     protected long maxTimestamp;
     protected long txn;
@@ -53,7 +54,17 @@ public class TxReader implements Closeable {
     protected int attachedPartitionsSize = 0;
     private MemoryMR roTxMem;
 
-    public TxReader(FilesFacade ff, @Transient Path path, int partitionBy) {
+    public TxReader(FilesFacade ff) {
+        this.ff = ff;
+    }
+
+    @Override
+    public void clear() {
+        close();
+    }
+
+    public TxReader ofRO(@Transient Path path, int partitionBy) {
+        clear();
         try {
             roTxMem = openTxnFile(ff, path);
             this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
@@ -62,6 +73,7 @@ public class TxReader implements Closeable {
             close();
             throw e;
         }
+        return this;
     }
 
     public boolean attachedPartitionsContains(long ts) {

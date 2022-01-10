@@ -180,7 +180,6 @@ public class ServerMain {
         workerPool.assign(new O3OpenColumnJob(cairoEngine.getMessageBus()));
         workerPool.assign(new O3CopyJob(cairoEngine.getMessageBus()));
         workerPool.assign(new O3PurgeDiscoveryJob(cairoEngine.getMessageBus(), workerPool.getWorkerCount()));
-        workerPool.assign(new O3PurgeJob(cairoEngine.getMessageBus()));
         O3Utils.initBuf(workerPool.getWorkerCount() + 1);
 
         Metrics metrics;

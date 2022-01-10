@@ -34,7 +34,7 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.*;
 
-public final class TxWriter extends TxReader implements Closeable, SymbolValueCountCollector {
+public final class TxWriter extends TxReader implements Closeable, Mutable, SymbolValueCountCollector {
     private long prevTransientRowCount;
     private int attachedPositionDirtyIndex;
     private int txPartitionCount;
@@ -42,17 +42,8 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
     private long prevMinTimestamp;
     private MemoryCMARW txMem;
 
-    public TxWriter(FilesFacade ff, @Transient Path path, int partitionBy) {
-        super(ff, path, partitionBy);
-        try {
-            unsafeLoadAll();
-        } catch (Throwable e) {
-            // Do not truncate in case the file cannot be read
-            txMem.close(false);
-            txMem = null;
-            super.close();
-            throw e;
-        }
+    public TxWriter(FilesFacade ff) {
+        super(ff);
     }
 
     public void append() {
@@ -117,6 +108,11 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
     }
 
     @Override
+    public void clear() {
+        close();
+    }
+
+    @Override
     public void close() {
         try {
             if (txMem != null) {
@@ -128,19 +124,19 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
     }
 
     @Override
-    public void unsafeLoadAll() {
-        super.unsafeLoadAll();
-        this.prevTransientRowCount = this.transientRowCount;
-        this.prevMaxTimestamp = maxTimestamp;
-        this.prevMinTimestamp = minTimestamp;
-    }
-
-    @Override
     protected MemoryCMR openTxnFile(FilesFacade ff, Path path) {
         if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
             return txMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT);
         }
         throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
+    }
+
+    @Override
+    public void unsafeLoadAll() {
+        super.unsafeLoadAll();
+        this.prevTransientRowCount = this.transientRowCount;
+        this.prevMaxTimestamp = maxTimestamp;
+        this.prevMinTimestamp = minTimestamp;
     }
 
     @Override
@@ -203,6 +199,25 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
 
     public boolean isActivePartition(long timestamp) {
         return getPartitionTimestampLo(maxTimestamp) == timestamp;
+    }
+
+    public TxWriter ofRW(@Transient Path path, int partitionBy) {
+        super.ofRO(path, partitionBy);
+        try {
+            unsafeLoadAll();
+        } catch (Throwable e) {
+            // Do not truncate in case the file cannot be read
+            txMem.close(false);
+            txMem = null;
+            super.close();
+            throw e;
+        }
+        return this;
+    }
+
+    @Override
+    public TxWriter ofRO(@Transient Path path, int partitionBy) {
+        throw new IllegalStateException();
     }
 
     public void openFirstPartition(long timestamp) {

@@ -184,6 +184,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getPartitionPurgeListCapacity() {
+        return 64;
+    }
+
+    @Override
     public int getReaderPoolMaxSegments() {
         return 5;
     }
