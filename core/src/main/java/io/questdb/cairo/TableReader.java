@@ -944,7 +944,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         long cursor = seq.next();
         if (cursor > -1) {
             O3PurgeDiscoveryTask task = messageBus.getO3PurgeDiscoveryQueue().get(cursor);
-            task.of(tableName, metadata.getPartitionBy());
+            task.of(tableName, this.partitionBy);
             seq.done(cursor);
         } else {
             LOG.error()

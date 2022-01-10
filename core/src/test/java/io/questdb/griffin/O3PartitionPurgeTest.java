@@ -50,6 +50,76 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAsyncPurgeOnBusyWriter() throws Exception {
+        int tableCount = 3;
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < tableCount; i++) {
+                compiler.compile("create table tbl" + i + " as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY", sqlExecutionContext);
+            }
+
+            final CyclicBarrier barrier = new CyclicBarrier(3);
+            AtomicInteger done = new AtomicInteger();
+            // Open a reader so that writer will not delete partitions easily
+            ObjList<TableReader> readers = new ObjList<>(tableCount);
+            for (int i = 0; i < tableCount; i++) {
+                readers.add(engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl" + i));
+            }
+
+            Thread writeThread = new Thread(() -> {
+                try {
+                    barrier.await();
+                    for (int i = 0; i < 32; i++) {
+                        for (int j = 0; j < tableCount; j++) {
+                            compiler.compile("insert into tbl" + j +
+                                            " select 2, '1970-01-01T10' from long_sequence(1) " +
+                                            "union all " +
+                                            "select 1, '1970-01-01T09'  from long_sequence(1)"
+                                    , sqlExecutionContext);
+                        }
+                    }
+                    done.incrementAndGet();
+                    Path.clearThreadLocals();
+                } catch (Throwable ex) {
+                    LOG.error().$(ex).$();
+                    done.decrementAndGet();
+                }
+            });
+
+            Thread readThread = new Thread(() -> {
+                try {
+                    barrier.await();
+                    while (done.get() == 0) {
+                        for (int i = 0; i < tableCount; i++) {
+                            readers.get(i).openPartition(0);
+                            readers.get(i).reload();
+                        }
+                        LockSupport.parkNanos(0);
+                        Path.clearThreadLocals();
+                    }
+                } catch (Throwable ex) {
+                    LOG.error().$(ex).$();
+                    done.addAndGet(-2);
+                }
+            });
+
+            writeThread.start();
+            readThread.start();
+
+            barrier.await();
+            while (done.get() == 0) {
+                runPartitionPurgeJobs();
+                LockSupport.parkNanos(0);
+            }
+            runPartitionPurgeJobs();
+
+            Assert.assertEquals(1, done.get());
+            writeThread.join();
+            readThread.join();
+            Misc.freeObjList(readers);
+        });
+    }
+
+    @Test
     public void testManyReadersOpenClosedAscDense() throws Exception {
         testManyReadersOpenClosedDense(0, 1, 5);
     }
@@ -129,7 +199,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                         long partitionTs = txReader.getPartitionTimestamp(p);
                         long partitionNameVersion = txReader.getPartitionNameTxn(p);
 
-                        for(int v = 0; v < partitionNameVersion + 5; v++) {
+                        for (int v = 0; v < partitionNameVersion + 5; v++) {
                             path.trimTo(len);
                             TableUtils.setPathForPartition(path, partitionBy, partitionTs, false);
                             TableUtils.txnPartitionConditionally(path, v);
@@ -138,109 +208,6 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                         }
                     }
                     txReader.clear();
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testAsyncPurgeOnBusyWriter() throws Exception {
-        int tableCount = 3;
-        assertMemoryLeak(() -> {
-            for (int i = 0; i < tableCount; i++) {
-                compiler.compile("create table tbl" + i + " as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY", sqlExecutionContext);
-            }
-
-            final CyclicBarrier barrier = new CyclicBarrier(3);
-            AtomicInteger done = new AtomicInteger();
-            // Open a reader so that writer will not delete partitions easily
-            ObjList<TableReader> readers = new ObjList<>(tableCount);
-            for (int i = 0; i < tableCount; i++) {
-                readers.add(engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl" + i));
-            }
-
-                Thread writeThread = new Thread(() -> {
-                    try {
-                        barrier.await();
-                        for (int i = 0; i < 32; i++) {
-                            for (int j = 0; j < tableCount; j++) {
-                                compiler.compile("insert into tbl" + j +
-                                                " select 2, '1970-01-01T10' from long_sequence(1) " +
-                                                "union all " +
-                                                "select 1, '1970-01-01T09'  from long_sequence(1)"
-                                        , sqlExecutionContext);
-                            }
-                        }
-                        done.incrementAndGet();
-                        Path.clearThreadLocals();
-                    } catch (Throwable ex) {
-                        LOG.error().$(ex).$();
-                        done.decrementAndGet();
-                    }
-                });
-
-                Thread readThread = new Thread(() -> {
-                    try {
-                        barrier.await();
-                        while (done.get() == 0) {
-                            for(int i = 0; i < tableCount; i++) {
-                                readers.get(i).openPartition(0);
-                                readers.get(i).reload();
-                            }
-                            LockSupport.parkNanos(0);
-                            Path.clearThreadLocals();
-                        }
-                    } catch (Throwable ex) {
-                        LOG.error().$(ex).$();
-                        done.addAndGet(-2);
-                    }
-                });
-
-                writeThread.start();
-                readThread.start();
-
-                barrier.await();
-                while (done.get() == 0) {
-                    runPartitionPurgeJobs();
-                    LockSupport.parkNanos(0);
-                }
-                runPartitionPurgeJobs();
-
-                Assert.assertEquals(1, done.get());
-                writeThread.join();
-                readThread.join();
-                Misc.freeObjList(readers);
-        });
-    }
-
-    @Test
-    public void testReaderUsesPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY", sqlExecutionContext);
-
-            // OOO insert
-            compiler.compile("insert into tbl select 4, '1970-01-10T09'", sqlExecutionContext);
-
-            // This should lock partition 1970-01-10.1 from being deleted from disk
-            try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
-
-                // in order insert
-                compiler.compile("insert into tbl select 2, '1970-01-10T11'", sqlExecutionContext);
-
-                // OOO insert
-                compiler.compile("insert into tbl select 4, '1970-01-10T09'", sqlExecutionContext);
-
-                // This should not fail
-                rdr.openPartition(0);
-            }
-            runPartitionPurgeJobs();
-
-            try (Path path = new Path()) {
-                path.concat(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-10");
-                int len = path.length();
-                for (int i = 0; i < 3; i++) {
-                    path.trimTo(len).put(".").put(Integer.toString(i)).concat("x.d").$();
-                    Assert.assertFalse(Chars.toString(path), Files.exists(path));
                 }
             }
         });
@@ -282,6 +249,38 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testReaderUsesPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            // OOO insert
+            compiler.compile("insert into tbl select 4, '1970-01-10T09'", sqlExecutionContext);
+
+            // This should lock partition 1970-01-10.1 from being deleted from disk
+            try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
+
+                // in order insert
+                compiler.compile("insert into tbl select 2, '1970-01-10T11'", sqlExecutionContext);
+
+                // OOO insert
+                compiler.compile("insert into tbl select 4, '1970-01-10T09'", sqlExecutionContext);
+
+                // This should not fail
+                rdr.openPartition(0);
+            }
+            runPartitionPurgeJobs();
+
+            try (Path path = new Path()) {
+                path.concat(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-10");
+                int len = path.length();
+                for (int i = 0; i < 3; i++) {
+                    path.trimTo(len).put(".").put(Integer.toString(i)).concat("x.d").$();
+                    Assert.assertFalse(Chars.toString(path), Files.exists(path));
+                }
+            }
+        });
+    }
 
     private void runPartitionPurgeJobs() {
         // when reader is returned to pool it remains in open state
@@ -289,7 +288,8 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
         if (Os.type == Os.WINDOWS) {
             engine.releaseInactive();
         }
-        purgeJob.run(0);
+        while (purgeJob.run(0)) {
+        }
     }
 
     private void testManyReadersOpenClosedDense(int start, int increment, int iterations) throws Exception {
