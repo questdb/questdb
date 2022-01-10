@@ -28,27 +28,22 @@
 
 using namespace asmjit;
 
-class JitException : public std::exception {
-public:
-    Error err;
-    std::string message;
+struct JitErrorHandler : public ErrorHandler {
+    JitErrorHandler()
+            : error(ErrorCode::kErrorOk) {}
 
-    JitException(Error err, const char *message) noexcept
-            : err(err), message(message) {}
-
-    const char *what() const noexcept override { return message.c_str(); }
-};
-
-struct JitErrorHandler : public asmjit::ErrorHandler {
-    void handleError(asmjit::Error err, const char *msg, asmjit::BaseEmitter * /*origin*/) override {
-        throw JitException(err, msg);
+    void handleError(Error err, const char *msg, BaseEmitter * /*origin*/) override {
+        error = err;
+        message.assign(msg);
     }
+
+    asmjit::Error error;
+    asmjit::String message;
 };
 
 struct JitGlobalContext {
     //rt allocator is thread-safe
     JitRuntime rt;
-    JitErrorHandler errorHandler;
 };
 
 #ifndef __aarch64__
@@ -61,7 +56,9 @@ using CompiledFn = int64_t (*)(int64_t *cols, int64_t cols_count, int64_t *vars,
 
 struct Function {
     explicit Function(x86::Compiler &cc)
-            : c(cc) {};
+            : c(cc), zone(4094 - Zone::kBlockOverhead), allocator(&zone) {
+        values.init(&allocator);
+    };
 
     void compile(const instruction_t *istream, size_t size, uint32_t options) {
         auto features = CpuInfo::host().features().as<x86::Features>();
@@ -97,8 +94,7 @@ struct Function {
         for (int i = 0; i < unroll_factor; ++i) {
             questdb::x86::emit_code(c, istream, size, values, null_check, cols_ptr, vars_ptr, input_index);
 
-            auto mask = values.top();
-            values.pop();
+            auto mask = values.pop();
 
             x86::Gp adjusted_id = c.newInt64("input_index_+_rows_id_start_offset");
             c.lea(adjusted_id, ptr(input_index, rows_id_start_offset)); // input_index + rows_id_start_offset
@@ -166,8 +162,7 @@ struct Function {
         for (int i = 0; i < unroll_factor; ++i) {
             questdb::avx2::emit_code(c, istream, size, values, null_check, cols_ptr, vars_ptr, input_index);
 
-            auto mask = values.top();
-            values.pop();
+            auto mask = values.pop();
 
             //mask compress optimization for longs
             bool is_slow_zen = CpuInfo::host().familyId() == 23; // AMD Zen1, Zen1+ and Zen2
@@ -231,7 +226,9 @@ struct Function {
 
     x86::Compiler &c;
 
-    std::stack<jit_value_t> values{};
+    Zone zone;
+    ZoneAllocator allocator;
+    ZoneStack<jit_value_t> values;
 
     x86::Gp cols_ptr;
     x86::Gp cols_size;
@@ -290,20 +287,33 @@ Java_io_questdb_jit_FiltersCompiler_compileFunction(JNIEnv *e,
                         FormatOptions::kFlagAnnotations);
         code.setLogger(&logger);
     }
-    code.setErrorHandler(&gGlobalContext.errorHandler);
+
+    JitErrorHandler errorHandler;
+    code.setErrorHandler(&errorHandler);
+
     x86::Compiler c(&code);
     Function function(c);
 
     CompiledFn fn;
-    try {
-        function.begin_fn();
-        function.compile(reinterpret_cast<const instruction_t *>(filterAddress), size, options);
-        function.end_fn();
-        c.finalize();
-        gGlobalContext.rt.add(&fn, &code);
-        fflush(logger.file());
-    } catch (JitException &ex) {
-        fillJitErrorObject(e, error, ex.err, ex.what());
+
+    function.begin_fn();
+    function.compile(reinterpret_cast<const instruction_t *>(filterAddress), size, options);
+    function.end_fn();
+
+    Error err = errorHandler.error;
+
+    if(err == ErrorCode::kErrorOk) {
+        err = c.finalize();
+    }
+
+    if(err == ErrorCode::kErrorOk) {
+        err = gGlobalContext.rt.add(&fn, &code);
+    }
+
+    fflush(logger.file());
+
+    if(err != ErrorCode::kErrorOk) {
+        fillJitErrorObject(e, error, err, errorHandler.message.data());
         return 0;
     }
 

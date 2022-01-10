@@ -40,8 +40,10 @@ public abstract class AbstractRedBlackTree implements Mutable, Closeable {
     private static final int O_COLOUR = 24;
     private static final int O_REF = 25;
 
-    private static final byte RED = 1;
-    private static final byte BLACK = 0;
+    protected static final byte RED = 1;
+    protected static final byte BLACK = 0;
+
+    protected static final byte EMPTY = -1;//empty reference; used to mark leaves/sentinels
     protected final MemoryPages mem;
     protected long root = -1;
 
@@ -62,13 +64,14 @@ public abstract class AbstractRedBlackTree implements Mutable, Closeable {
     }
 
     public long size() {
-        return mem.size() / getBlockSize();
+        return mem.countNumberOf(getBlockSize());
     }
 
     protected static void setLeft(long blockAddress, long left) {
         Unsafe.getUnsafe().putLong(blockAddress + O_LEFT, left);
     }
 
+    //methods below check for -1 to simulate sentinel value and thus simplify insert/remove methods
     protected static long rightOf(long blockAddress) {
         return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_RIGHT);
     }
@@ -127,6 +130,24 @@ public abstract class AbstractRedBlackTree implements Mutable, Closeable {
         return p;
     }
 
+    protected static long predecessor(long current) {
+        long p = leftOf(current);
+        if (p != EMPTY) {
+            long r;
+            while ((r = rightOf(p)) != EMPTY) {
+                p = r;
+            }
+        } else {
+            p = parentOf(current);
+            long ch = current;
+            while (p != EMPTY && ch == leftOf(p)) {
+                ch = p;
+                p = parentOf(p);
+            }
+        }
+        return p;
+    }
+
     protected long allocateBlock() {
         long p = mem.allocate(getBlockSize());
         setLeft(p, -1);
@@ -135,7 +156,7 @@ public abstract class AbstractRedBlackTree implements Mutable, Closeable {
         return p;
     }
 
-    protected void fix(long x) {
+    protected void fixInsert(long x) {
         setColor(x, RED);
 
         long px;
@@ -182,6 +203,28 @@ public abstract class AbstractRedBlackTree implements Mutable, Closeable {
         setColor(root, BLACK);
     }
 
+    protected long findMinNode() {
+        long p = root;
+        long parent;
+        do {
+            parent = p;
+            p = leftOf(p);
+        } while (p > -1);
+
+        return parent;
+    }
+
+    protected long findMaxNode() {
+        long p = root;
+        long parent;
+        do {
+            parent = p;
+            p = rightOf(p);
+        } while (p > -1);
+
+        return parent;
+    }
+    
     protected int getBlockSize() {
         return BLOCK_SIZE;
     }
@@ -234,5 +277,119 @@ public abstract class AbstractRedBlackTree implements Mutable, Closeable {
             setRight(l, p);
             setParent(p, l);
         }
+    }
+
+    //based on Thomas Cormen's Introduction to Algorithm's
+    protected long remove(long node) {
+
+        long nodeToRemove;
+        if (leftOf(node) == EMPTY || rightOf(node) == EMPTY) {
+            nodeToRemove = node;
+        } else {
+            nodeToRemove = successor(node);
+        }
+
+        long current = leftOf(nodeToRemove) != EMPTY ? leftOf(nodeToRemove) : rightOf(nodeToRemove);
+        long parent = parentOf(nodeToRemove);
+        if (current != EMPTY) {
+            setParent(current, parent);
+        }
+
+        if (parent == EMPTY) {
+            root = current;
+        } else {
+            if (leftOf(parent) == nodeToRemove) {
+                setLeft(parent, current);
+            } else {
+                setRight(parent, current);
+            }
+        }
+
+        if (nodeToRemove != node) {
+            long tmp = refOf(nodeToRemove);
+            setRef(nodeToRemove, refOf(node));
+            setRef(node, tmp);
+        }
+
+        if (colorOf(nodeToRemove) == BLACK) {
+            fixDelete(current, parent);
+        }
+
+        return nodeToRemove;
+    }
+
+    void fixDelete(long node, long parent) {
+        if (root == EMPTY) {
+            return;
+        }
+
+        boolean isLeftChild = parent != EMPTY && leftOf(parent) == node;
+
+        while (node != root && colorOf(node) == BLACK) {
+            if (isLeftChild) {//node is left child of parent
+                long sibling = rightOf(parent);
+                if (colorOf(sibling) == RED) {
+                    setColor(sibling, BLACK);
+                    setColor(parent, RED);
+                    rotateLeft(parent);
+                    sibling = rightOf(parent);
+                }
+                if (colorOf(leftOf(sibling)) == BLACK &&
+                        colorOf(rightOf(sibling)) == BLACK) {
+                    setColor(sibling, RED);
+                    node = parent;
+                    parent = parentOf(parent);
+                    isLeftChild = parent != EMPTY && leftOf(parent) == node;
+                } else {
+                    if (colorOf(rightOf(sibling)) == BLACK) {
+                        setColor(leftOf(sibling), BLACK);
+                        setColor(sibling, RED);
+                        rotateRight(sibling);
+                        sibling = rightOf(parent);
+                    }
+
+                    setColor(sibling, colorOf(parent));
+                    setColor(parent, BLACK);
+                    if (rightOf(sibling) != EMPTY) {
+                        setColor(rightOf(sibling), BLACK);
+                    }
+                    rotateLeft(parent);
+                    break;
+                }
+            } else {//node is right child of parent, left/right expressions are reversed
+                long sibling = leftOf(parent);
+                if (colorOf(sibling) == RED) {
+                    setColor(sibling, BLACK);
+                    setColor(parent, RED);
+                    rotateRight(parent);
+                    sibling = leftOf(parent);
+                }
+                if (colorOf(leftOf(sibling)) == BLACK &&
+                        colorOf(rightOf(sibling)) == BLACK) {
+                    setColor(sibling, RED);
+                    node = parent;
+                    parent = parentOf(parent);
+                    isLeftChild = parent != EMPTY && leftOf(parent) == node;
+                } else {
+                    if (colorOf(leftOf(sibling)) == BLACK) {
+                        setColor(rightOf(sibling), BLACK);
+                        setColor(sibling, RED);
+                        rotateLeft(sibling);
+                        sibling = leftOf(parent);
+                    }
+
+                    setColor(sibling, colorOf(parent));
+                    setColor(parent, BLACK);
+                    if (leftOf(sibling) != EMPTY) {
+                        setColor(leftOf(sibling), BLACK);
+                    }
+                    rotateRight(parent);
+                    break;
+                }
+            }
+        }
+
+        if (node != EMPTY)
+            setColor(node, BLACK);
     }
 }

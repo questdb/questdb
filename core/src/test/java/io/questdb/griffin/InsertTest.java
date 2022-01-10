@@ -567,7 +567,7 @@ public class InsertTest extends AbstractGriffinTest {
     @Test
     public void testInsertSymbolNonPartitioned() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table symbols (sym symbol, isNewSymbol BOOLEAN)", sqlExecutionContext);
+            compiler.compile("create table symbols (sym symbol, isNewSymbol BOOLEAN)  partition by NONE", sqlExecutionContext);
             executeInsert("insert into symbols (sym, isNewSymbol) VALUES ('USDJPY', false);");
             executeInsert("insert into symbols (sym, isNewSymbol) VALUES ('USDFJD', true);");
 

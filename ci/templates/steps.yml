@@ -65,10 +65,7 @@ steps:
     condition: |
       and(
         not(
-           and(
-              and( eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11') ),
-              not( eq(variables['System.PullRequest.PullRequestId'], '') )
-          )
+          and( eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11') )
         ),
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
