@@ -308,61 +308,58 @@ namespace questdb::avx2 {
         return std::make_pair(lhs, rhs);
     }
 
-    inline jit_value_t get_argument(std::stack<jit_value_t> &values) {
-        auto arg = values.top();
-        values.pop();
+    inline jit_value_t get_argument(ZoneStack<jit_value_t> &values) {
+        auto arg = values.pop();
         return arg;
     }
 
     inline std::pair<jit_value_t, jit_value_t>
-    get_arguments(Compiler &c, std::stack<jit_value_t> &values, bool ncheck) {
-        auto lhs = values.top();
-        values.pop();
-        auto rhs = values.top();
-        values.pop();
+    get_arguments(Compiler &c, ZoneStack<jit_value_t> &values, bool ncheck) {
+        auto lhs = values.pop();
+        auto rhs = values.pop();
         return convert(c, lhs, rhs, ncheck);
     }
 
-    void emit_bin_op(Compiler &c, const instruction_t &instr, std::stack<jit_value_t> &values, bool ncheck) {
+    void emit_bin_op(Compiler &c, const instruction_t &instr, ZoneStack<jit_value_t> &values, bool ncheck) {
         auto args = get_arguments(c, values, ncheck);
         auto lhs = args.first;
         auto rhs = args.second;
         switch (instr.opcode) {
             case opcodes::And:
-                values.push(bin_and(c, lhs, rhs));
+                values.append(bin_and(c, lhs, rhs));
                 break;
             case opcodes::Or:
-                values.push(bin_or(c, lhs, rhs));
+                values.append(bin_or(c, lhs, rhs));
                 break;
             case opcodes::Eq:
-                values.push(cmp_eq(c, lhs, rhs));
+                values.append(cmp_eq(c, lhs, rhs));
                 break;
             case opcodes::Ne:
-                values.push(cmp_ne(c, lhs, rhs));
+                values.append(cmp_ne(c, lhs, rhs));
                 break;
             case opcodes::Gt:
-                values.push(cmp_gt(c, lhs, rhs, ncheck));
+                values.append(cmp_gt(c, lhs, rhs, ncheck));
                 break;
             case opcodes::Ge:
-                values.push(cmp_ge(c, lhs, rhs, ncheck));
+                values.append(cmp_ge(c, lhs, rhs, ncheck));
                 break;
             case opcodes::Lt:
-                values.push(cmp_lt(c, lhs, rhs, ncheck));
+                values.append(cmp_lt(c, lhs, rhs, ncheck));
                 break;
             case opcodes::Le:
-                values.push(cmp_le(c, lhs, rhs, ncheck));
+                values.append(cmp_le(c, lhs, rhs, ncheck));
                 break;
             case opcodes::Add:
-                values.push(add(c, lhs, rhs, ncheck));
+                values.append(add(c, lhs, rhs, ncheck));
                 break;
             case opcodes::Sub:
-                values.push(sub(c, lhs, rhs, ncheck));
+                values.append(sub(c, lhs, rhs, ncheck));
                 break;
             case opcodes::Mul:
-                values.push(mul(c, lhs, rhs, ncheck));
+                values.append(mul(c, lhs, rhs, ncheck));
                 break;
             case opcodes::Div:
-                values.push(div(c, lhs, rhs, ncheck));
+                values.append(div(c, lhs, rhs, ncheck));
                 break;
             default:
                 __builtin_unreachable();
@@ -370,7 +367,7 @@ namespace questdb::avx2 {
     }
 
     void
-    emit_code(Compiler &c, const instruction_t *istream, size_t size, std::stack<jit_value_t> &values, bool ncheck,
+    emit_code(Compiler &c, const instruction_t *istream, size_t size, ZoneStack<jit_value_t> &values, bool ncheck,
               const Gp &cols_ptr, const Gp &vars_ptr, const Gp &input_index) {
         for (size_t i = 0; i < size; ++i) {
             auto instr = istream[i];
@@ -382,23 +379,23 @@ namespace questdb::avx2 {
                 case opcodes::Var: {
                     auto type = static_cast<data_type_t>(instr.options);
                     auto idx = static_cast<int32_t>(instr.ipayload);
-                    values.push(read_vars_mem(c, type, idx, vars_ptr));
+                    values.append(read_vars_mem(c, type, idx, vars_ptr));
                 }
                     break;
                 case opcodes::Mem: {
                     auto type = static_cast<data_type_t>(instr.options);
                     auto idx = static_cast<int32_t>(instr.ipayload);
-                    values.push(read_mem(c, type, idx, cols_ptr, input_index));
+                    values.append(read_mem(c, type, idx, cols_ptr, input_index));
                 }
                     break;
                 case opcodes::Imm:
-                    values.push(read_imm(c, instr));
+                    values.append(read_imm(c, instr));
                     break;
                 case opcodes::Neg:
-                    values.push(neg(c, get_argument(values), ncheck));
+                    values.append(neg(c, get_argument(values), ncheck));
                     break;
                 case opcodes::Not:
-                    values.push(bin_not(c, get_argument(values)));
+                    values.append(bin_not(c, get_argument(values)));
                     break;
                 default:
                     emit_bin_op(c, instr, values, ncheck);
