@@ -498,6 +498,7 @@
                 <archive.name>${project.version}-rt-linux-amd64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-linux-amd64</runtime.name>
                 <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+                <nodejs.npm.cmd>${project.basedir}/node/npm</nodejs.npm.cmd>
             </properties>
         </profile>
         <profile>
@@ -512,6 +513,7 @@
                 <archive.name>${project.version}-rt-freebsd-amd64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-freebsd-amd64</runtime.name>
                 <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+                <nodejs.npm.cmd>${project.basedir}/node/npm</nodejs.npm.cmd>
             </properties>
         </profile>
         <profile>
@@ -526,6 +528,7 @@
                 <archive.name>${project.version}-rt-linux-aarch64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-linux-aarch64</runtime.name>
                 <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+                <nodejs.npm.cmd>${project.basedir}/node/npm</nodejs.npm.cmd>
             </properties>
         </profile>
         <profile>
@@ -539,6 +542,7 @@
                 <archive.name>${project.version}-rt-osx-amd64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-osx-amd64</runtime.name>
                 <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+                <nodejs.npm.cmd>${project.basedir}/node/npm</nodejs.npm.cmd>
             </properties>
         </profile>
 		<profile>
