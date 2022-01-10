@@ -24,9 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cutlass.line.tcp.fuzzer.LineData;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
+import io.questdb.cutlass.line.tcp.load.LineData;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -35,8 +33,6 @@ import java.util.List;
 import static io.questdb.cairo.ColumnType.*;
 
 public class LineTcpReceiverDuplicateColumnsTest extends LineTcpReceiverLoadTest {
-    private static final Log LOG = LogFactory.getLog(LineTcpReceiverDuplicateColumnsTest.class);
-
     private final char[] nonAsciiChars = {'ó', 'í', 'Á', 'ч', 'Ъ', 'Ж', 'ю', 0x3000, 0x3080, 0x3a55};
 
     private final int duplicatesFactor = 4;
@@ -45,43 +41,25 @@ public class LineTcpReceiverDuplicateColumnsTest extends LineTcpReceiverLoadTest
     private final int maxNumOfSkippedCols = 2;
     private final int nonAsciiValueFactor = 4;
 
-    private final int newColumnFactor;
-    private final int newColumnRandomizeFactor;
-
     public LineTcpReceiverDuplicateColumnsTest() {
-        this(500, 10, 10, 10, 50, 10000, 2);
+        super(500, 10, 10, 10, 50);
     }
 
-    protected LineTcpReceiverDuplicateColumnsTest(int numOfLines, int numOfIterations, int numOfThreads, int numOfTables, long waitBetweenIterationsMillis,
-                                                  int newColumnFactor, int newColumnRandomizeFactor) {
+    protected LineTcpReceiverDuplicateColumnsTest(int numOfLines, int numOfIterations, int numOfThreads, int numOfTables, long waitBetweenIterationsMillis) {
         super(numOfLines, numOfIterations, numOfThreads, numOfTables, waitBetweenIterationsMillis);
-        this.newColumnFactor = newColumnFactor;
-        this.newColumnRandomizeFactor = newColumnRandomizeFactor;
     }
 
-    LineData generateLine() {
-        final LineData line = new LineData(timestampMillis.incrementAndGet());
-        final int[] columnOrdering = skipColumns(generateColumnOrdering());
-        for (int i = 0; i < columnOrdering.length; i++) {
-            final int colIndex = columnOrdering[i];
-            final CharSequence colName = generateName(colIndex);
-            final CharSequence colValue = generateValue(colIndex);
-            line.add(colName, colValue);
-
-            if (random.nextInt(duplicatesFactor) == 0) {
-                final CharSequence colValueDupe = generateValue(colIndex);
-                line.add(colName, colValueDupe);
-            }
-
-            if (random.nextInt(newColumnFactor) == 0) {
-                final int extraColIndex = random.nextInt(colNameBases.length);
-                final CharSequence colNameNew = generateName(extraColIndex, true);
-                final CharSequence colValueNew = generateValue(extraColIndex);
-                line.add(colNameNew, colValueNew);
-            }
+    @Override
+    void addDuplicateColumn(LineData line, int colIndex, CharSequence colName) {
+        if (random.nextInt(duplicatesFactor) == 0) {
+            final CharSequence colValueDupe = generateValue(colIndex);
+            line.add(colName, colValueDupe);
         }
-        LOG.info().utf8(line.toString()).$();
-        return line;
+    }
+
+    @Override
+    int[] getColumnIndexes() {
+        return skipColumns(generateColumnOrdering());
     }
 
     private int[] generateColumnOrdering() {
@@ -105,6 +83,7 @@ public class LineTcpReceiverDuplicateColumnsTest extends LineTcpReceiverLoadTest
 
     private int[] skipColumns(int[] originalColumnIndexes) {
         if (random.nextInt(columnSkipFactor) == 0) {
+            // avoid list here and just copy slices of the original array into the new one
             final List<Integer> indexes = new ArrayList<>();
             for (int i = 0; i < originalColumnIndexes.length; i++) {
                 indexes.add(originalColumnIndexes[i]);
@@ -123,17 +102,14 @@ public class LineTcpReceiverDuplicateColumnsTest extends LineTcpReceiverLoadTest
         return originalColumnIndexes;
     }
 
-    private String generateName(int index) {
-        return generateName(index, false);
-    }
-
-    private String generateName(int index, boolean randomize) {
+    @Override
+    String generateName(int index) {
         final int caseIndex = random.nextInt(colNameBases[index].length);
-        final String postfix = randomize ? Integer.toString(random.nextInt(newColumnRandomizeFactor)) : "";
-        return colNameBases[index][caseIndex] + postfix;
+        return colNameBases[index][caseIndex];
     }
 
-    private String generateValue(int index) {
+    @Override
+    String generateValue(int index) {
         final String postfix;
         switch (colTypes[index]) {
             case DOUBLE:

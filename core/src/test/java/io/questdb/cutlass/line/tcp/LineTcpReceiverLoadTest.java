@@ -29,8 +29,8 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cutlass.line.tcp.fuzzer.LineData;
-import io.questdb.cutlass.line.tcp.fuzzer.TableData;
+import io.questdb.cutlass.line.tcp.load.LineData;
+import io.questdb.cutlass.line.tcp.load.TableData;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -167,22 +167,45 @@ public class LineTcpReceiverLoadTest extends AbstractLineTcpReceiverTest {
         return "weather" + tableIndex;
     }
 
-    LineData generateLine() {
+    private LineData generateLine() {
         final LineData line = new LineData(timestampMillis.incrementAndGet());
-        for (int i = 0; i < colNameBases.length; i++) {
-            final CharSequence colName = generateName(i);
-            final CharSequence colValue = generateValue(i);
-            line.add(colName, colValue);
+        final int[] columnIndexes = getColumnIndexes();
+        for (int i = 0; i < columnIndexes.length; i++) {
+            final int colIndex = columnIndexes[i];
+            final CharSequence colName = addColumn(line, colIndex);
+            addDuplicateColumn(line, colIndex, colName);
+            addNewColumn(line);
         }
         LOG.info().utf8(line.toString()).$();
         return line;
     }
 
-    private String generateName(int index) {
+    private CharSequence addColumn(LineData line, int colIndex) {
+        final CharSequence colName = generateName(colIndex);
+        final CharSequence colValue = generateValue(colIndex);
+        line.add(colName, colValue);
+        return colName;
+    }
+
+    int[] getColumnIndexes() {
+        final int[] columnOrdering = new int[colNameBases.length];
+        for (int i = 0; i < columnOrdering.length; i++) {
+            columnOrdering[i] = i;
+        }
+        return columnOrdering;
+    }
+
+    void addDuplicateColumn(LineData line, int colIndex, CharSequence colName) {
+    }
+
+    void addNewColumn(LineData line) {
+    }
+
+    String generateName(int index) {
         return colNameBases[index][0];
     }
 
-    private String generateValue(int index) {
+    String generateValue(int index) {
         final String postfix;
         switch (colTypes[index]) {
             case DOUBLE:
