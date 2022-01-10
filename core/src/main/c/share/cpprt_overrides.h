@@ -22,23 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+#ifndef QUESTDB_CPPRT_OVERRIDES_H
+#define QUESTDB_CPPRT_OVERRIDES_H
 
-import io.questdb.cairo.TableReader;
-import org.junit.Assert;
-import org.junit.Test;
+extern "C" void __cxa_pure_virtual();
 
-public class TrickTableReloadTest extends AbstractGriffinTest {
-    @Test
-    public void testSymbolAddAndReaderReload() throws SqlException {
-        compiler.compile("create table x (a int, b int, ts timestamp) partition by DAY", sqlExecutionContext);
-
-        engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing").close();
-        engine.releaseAllWriters();
-
-        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "x")) {
-            compile("alter table x add column y symbol", sqlExecutionContext);
-            Assert.assertTrue(reader.reload());
-        }
-    }
-}
+#endif //QUESTDB_CPPRT_OVERRIDES_H

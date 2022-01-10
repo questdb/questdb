@@ -626,7 +626,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         compiler.compile(sql, sqlExecutionContext);
 
         // i=184 is the last entry in date 1970-01-06
-        sql = "create table y as (select * from x where i<=150) timestamp(ts) partition by DAY";
+        sql = "create table y as (select * from x where i<=150) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=150", sink);
@@ -685,7 +685,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         compiler.compile(sql, sqlExecutionContext);
 
         // i=184 is the last entry in date 1970-01-06
-        sql = "create table y as (select * from x where i<=150) timestamp(ts) partition by DAY";
+        sql = "create table y as (select * from x where i<=150) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=150", sink);
@@ -746,7 +746,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         compiler.compile(sql, sqlExecutionContext);
 
         // i=184 is the last entry in date 1970-01-06
-        sql = "create table y as (select * from x where i<=150) timestamp(ts) partition by DAY";
+        sql = "create table y as (select * from x where i<=150) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=150", sink);
@@ -818,7 +818,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         compiler.compile(sql, sqlExecutionContext);
 
         // i=184 is the last entry in date 1970-01-06
-        sql = "create table y as (select * from x where i<=150) timestamp(ts) partition by DAY";
+        sql = "create table y as (select * from x where i<=150) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=150", sink);
@@ -881,7 +881,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         compiler.compile(sql, sqlExecutionContext);
 
         // i=184 is the last entry in date 1970-01-06
-        sql = "create table y as (select * from x where i<=150) timestamp(ts) partition by DAY";
+        sql = "create table y as (select * from x where i<=150) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=150", sink);
@@ -938,7 +938,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         compiler.compile(sql, sqlExecutionContext);
 
         // i=184 is the last entry in date 1970-01-06
-        sql = "create table y as (select * from x where i<=150) timestamp(ts) partition by DAY";
+        sql = "create table y as (select * from x where i<=150) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=150", sink);
@@ -1000,7 +1000,7 @@ public class O3CommitLagTest extends AbstractO3Test {
                 "), index(sym) timestamp (ts) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
-        sql = "create table y as (select * from x where i<=250) timestamp(ts) partition by DAY";
+        sql = "create table y as (select * from x where  i<=250) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=250", sink);
@@ -1049,7 +1049,7 @@ public class O3CommitLagTest extends AbstractO3Test {
                 "), index(sym) timestamp (ts) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
-        sql = "create table y as (select * from x where (i<=50 or i>=100) and i<=250) timestamp(ts) partition by DAY";
+        sql = "create table y as (select * from x where (i<=50 or i>=100) and i<=250) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where (i<=50 or i>=100) and i<=250", sink);
@@ -1096,7 +1096,7 @@ public class O3CommitLagTest extends AbstractO3Test {
                 "), index(sym) timestamp (ts) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
-        sql = "create table y as (select * from x where i<=490) timestamp(ts) partition by DAY";
+        sql = "create table y as (select * from x where i<=490) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=490", sink);
@@ -1142,7 +1142,7 @@ public class O3CommitLagTest extends AbstractO3Test {
                 "), index(sym) timestamp (ts) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
-        sql = "create table y as (select * from x where i<=250) timestamp(ts) partition by DAY";
+        sql = "create table y as (select * from x where i<=250) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=250", sink);
@@ -1211,7 +1211,7 @@ public class O3CommitLagTest extends AbstractO3Test {
                 "), index(sym) timestamp (ts) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
-        sql = "create table y as (select * from x where  i<=" + nInitialStateRows + ") timestamp(ts) partition by DAY";
+        sql = "create table y as (select * from x where  i<=" + nInitialStateRows + ") partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
         LOG.info().$("committed initial state").$();
 
@@ -1291,7 +1291,7 @@ public class O3CommitLagTest extends AbstractO3Test {
                 "), index(sym) timestamp (ts) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
-        sql = "create table y as (select * from x where i<=250) timestamp(ts) partition by DAY WITH maxUncommittedRows=100, commitLag=10s";
+        sql = "create table y as (select * from x where i<=250) partition by DAY WITH maxUncommittedRows=100, commitLag=10s";
         compiler.compile(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=250", sink);
@@ -1336,7 +1336,7 @@ public class O3CommitLagTest extends AbstractO3Test {
                 "), index(sym) timestamp (ts) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
-        sql = "create table y as (select * from x where i<=250) timestamp(ts) partition by DAY";
+        sql = "create table y as (select * from x where i<=250) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=250", sink);
@@ -1386,7 +1386,7 @@ public class O3CommitLagTest extends AbstractO3Test {
                 "), index(sym) timestamp (ts) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
-        sql = "create table y as (select * from x where i<=150) timestamp(ts) partition by DAY";
+        sql = "create table y as (select * from x where i<=150) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=150", sink);
@@ -1434,7 +1434,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         compiler.compile(sql, sqlExecutionContext);
 
         // i=184 is the last entry in date 1970-01-06
-        sql = "create table y as (select * from x where i<=150) timestamp(ts) partition by DAY";
+        sql = "create table y as (select * from x where i<=150) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=150", sink);
@@ -1480,7 +1480,7 @@ public class O3CommitLagTest extends AbstractO3Test {
                 "), index(sym) timestamp (ts) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
-        sql = "create table y as (select * from x where i<=250) timestamp(ts) partition by DAY";
+        sql = "create table y as (select * from x where i<=250) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=250", sink);
