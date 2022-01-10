@@ -1176,13 +1176,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         assert intrinsicModel.keyValues.size() == 0;
         // get the latest rows for all values of "latest by" column
 
-        if (indexed) {
-            return new LatestByAllIndexedFilteredAfterRecordCursorFactory(
+        if (indexed && filter == null) {
+            return new LatestByAllIndexedRecordCursorFactory(
                     metadata,
                     configuration,
                     dataFrameCursorFactory,
                     latestByIndex,
-                    filter,
                     columnIndexes,
                     prefixes
             );
@@ -2913,12 +2912,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // listColumnFilterA = latest by column indexes
             if (latestByColumnCount == 1 && myMeta.isColumnIndexed(listColumnFilterA.getColumnIndexFactored(0))) {
-                return new LatestByAllIndexedFilteredAfterRecordCursorFactory(
+                return new LatestByAllIndexedRecordCursorFactory(
                         myMeta,
                         configuration,
                         new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()),
                         listColumnFilterA.getColumnIndexFactored(0),
-                        null,
                         columnIndexes,
                         prefixes
                 );
