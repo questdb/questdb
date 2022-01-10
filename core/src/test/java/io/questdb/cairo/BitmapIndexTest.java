@@ -661,6 +661,82 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCppLatestByIndexReaderIgnoreSparseKeysUpdates() {
+        final int valueBlockCapacity = 32;
+        final int keyCount = 42;
+
+        create(configuration, path.trimTo(plen), "x", valueBlockCapacity);
+
+        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
+            for (int i = 0; i < keyCount; i++) {
+                // add even keys
+                if(i % 2 == 0) {
+                    writer.add(i, i);
+                }
+            }
+        }
+
+        DirectLongList rows = new DirectLongList(keyCount, MemoryTag.NATIVE_LONG_LIST);
+
+        rows.extend(keyCount);
+        rows.setPos(rows.getCapacity());
+        GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
+
+        //fixing memory mapping here
+        BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", 0);
+
+        // we should ignore this update
+        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
+            for (int i = 0; i < keyCount; i++) {
+                // add odd keys
+                if(i % 2 != 0) {
+                    writer.add(i, i);
+                }
+            }
+        }
+
+        long argsAddress = LatestByArguments.allocateMemory();
+        LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
+        LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
+
+        LatestByArguments.setKeyLo(argsAddress, 0);
+        LatestByArguments.setKeyHi(argsAddress, keyCount);
+        LatestByArguments.setRowsSize(argsAddress, 0);
+
+        BitmapIndexUtilsNative.latestScanBackward(
+                reader.getKeyBaseAddress(),
+                reader.getKeyMemorySize(),
+                reader.getValueBaseAddress(),
+                reader.getValueMemorySize(),
+                argsAddress,
+                reader.getUnIndexedNullCount(),
+                Long.MAX_VALUE, 0,
+                0, valueBlockCapacity - 1
+        );
+
+        long rowCount = LatestByArguments.getRowsSize(argsAddress);
+        Assert.assertEquals(keyCount / 2, rowCount);
+        long keyLo = LatestByArguments.getKeyLo(argsAddress);
+        Assert.assertEquals(0, keyLo);
+        long keyHi = LatestByArguments.getKeyHi(argsAddress);
+        Assert.assertEquals(keyCount, keyHi);
+
+        LatestByArguments.releaseMemory(argsAddress);
+        // sort and check found keys 0, 2, 4, ....
+        Vect.sortULongAscInPlace(rows.getAddress(), rowCount);
+        for (long i = 0; i < rowCount; ++i) {
+            Assert.assertEquals(2*i, Rows.toLocalRowID(rows.get(i) - 1));
+        }
+        // sort and check not found keys 1, 3, 5, ...
+        Vect.sortULongAscInPlace(rows.getAddress() + rowCount*Long.BYTES, keyCount - rowCount);
+        for (long i = 0; i < keyCount - rowCount; ++i) {
+            Assert.assertEquals(2*i + 1, rows.get(i));
+        }
+        rows.close();
+        reader.close();
+    }
+
+    @Test
     public void testEmptyCursor() {
         RowCursor cursor = new EmptyRowCursor();
         Assert.assertFalse(cursor.hasNext());
