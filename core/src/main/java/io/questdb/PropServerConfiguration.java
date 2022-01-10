@@ -709,7 +709,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.telemetryEnabled = getBoolean(properties, env, "telemetry.enabled", true);
             this.telemetryDisableCompletely = getBoolean(properties, env, "telemetry.disable.completely", false);
             this.telemetryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "telemetry.queue.capacity", 512));
-            this.o3PartitionPurgeListCapacity = getInt(properties, env, "cairo.o3.partitionPurgeEstimate", 64);
+            this.o3PartitionPurgeListCapacity = getInt(properties, env, "cairo.o3.partitionPurgeListInitialCapacity", 64);
 
             parseBindTo(properties, env, "line.udp.bind.to", "0.0.0.0:9009", (a, p) -> {
                 this.lineUdpBindIPV4Address = a;

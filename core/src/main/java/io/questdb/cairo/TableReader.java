@@ -325,18 +325,19 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public void goPassive() {
         // check for double-close
-        if (active) {
-            active = false;
-        }
         releaseTxn();
 
-        if (PartitionBy.isPartitioned(this.partitionBy)) {
-            long txnLocks = txnScoreboard.getActiveReaderCount(txn);
-            long committedTxn = txFile.unsafeReadTxn();
-            if (txnLocks == 0 && committedTxn > txn) {
-                // Last lock for this txn is released and this is not latest txn number
-                // Schedule a job to clean up partition versions this reader may held
-                purgeO3Partitions();
+        if (active) {
+            active = false;
+
+            if (PartitionBy.isPartitioned(this.partitionBy)) {
+                long txnLocks = txnScoreboard.getActiveReaderCount(txn);
+                long committedTxn = txFile.unsafeReadTxn();
+                if (txnLocks == 0 && committedTxn > txn) {
+                    // Last lock for this txn is released and this is not latest txn number
+                    // Schedule a job to clean up partition versions this reader may held
+                    purgeO3Partitions();
+                }
             }
         }
     }
