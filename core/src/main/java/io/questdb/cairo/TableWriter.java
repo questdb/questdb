@@ -839,43 +839,6 @@ public class TableWriter implements Closeable {
         o3ErrorCount.incrementAndGet();
     }
 
-    public void o3QueuePartitionForPurge(long timestamp, long txn) {
-        final MPSequence seq = messageBus.getO3PurgeDiscoveryPubSeq();
-        long cursor = seq.next();
-        if (cursor > -1) {
-            O3PurgeDiscoveryTask task = messageBus.getO3PurgeDiscoveryQueue().get(cursor);
-            task.of(tableName, partitionBy);
-            seq.done(cursor);
-        } else {
-            LOG.error()
-                    .$("could not purge [errno=").$(ff.errno())
-                    .$(", table=").$(tableName)
-                    .$(", ts=").$ts(timestamp)
-                    .$(", txn=").$(txn)
-                    .$(']').$();
-        }
-    }
-
-    public void processCommandQueue(TableWriterTask cmd, Sequence commandSubSeq, long cursor, boolean acceptStructureChange) {
-        if (cmd.getTableId() == getMetadata().getId()) {
-            switch (cmd.getType()) {
-                case TableWriterTask.TSK_SLAVE_SYNC:
-                    replPublishSyncEvent(cmd, cursor, commandSubSeq);
-                    break;
-                case TableWriterTask.TSK_ALTER_TABLE:
-                    processAlterTableEvent(cmd, cursor, commandSubSeq, acceptStructureChange);
-                    break;
-                default:
-                    LOG.error().$("unknown TableWriterTask type, ignored: ").$(cmd.getType()).$();
-                    // Don't block the queue even if command is unknown
-                    commandSubSeq.done(cursor);
-                    break;
-            }
-        } else {
-            commandSubSeq.done(cursor);
-        }
-    }
-
     public void removeColumn(CharSequence name) {
 
         checkDistressed();
@@ -3319,8 +3282,7 @@ public class TableWriter implements Closeable {
     }
 
     private void o3ProcessPartitionRemoveCandidates0(int n) {
-        long currentTxn = getTxn();
-
+        boolean tableQueued = false;
         for (int i = 0; i < n; i += 2) {
             final long timestamp = o3PartitionRemoveCandidates.getQuick(i);
             final long txn = o3PartitionRemoveCandidates.getQuick(i + 1);
@@ -3331,9 +3293,8 @@ public class TableWriter implements Closeable {
                         timestamp,
                         false
                 );
-                long min = txnScoreboard.getMin();
                 long readerTxnCount;
-                if ((readerTxnCount = txnScoreboard.getActiveReaderCount(min)) == 0) {
+                if ((readerTxnCount = txnScoreboard.getActiveReaderCount(txnScoreboard.getMin())) == 0) {
                     TableUtils.txnPartitionConditionally(other, txn);
                     long errno = ff.rmdir(other);
                     if (errno == 0 || errno == -1) {
@@ -3346,20 +3307,23 @@ public class TableWriter implements Closeable {
                         continue;
                     }
                 }
-                // Any more complicated case involve looking at what folders are present on disk before removing
-                // do it async in O3PurgeDiscoveryJob
-                LOG.info()
-                        .$("queued to purge")
-                        .$(", table=").$(tableName)
-                        .$(", ts=").$ts(timestamp)
-                        .$(", txn=").$(txn)
-                        .$(']').$();
-                o3QueuePartitionForPurge(timestamp, currentTxn);
+                if (!tableQueued) {
+                    // Any more complicated case involve looking at what folders are present on disk before removing
+                    // do it async in O3PurgeDiscoveryJob
+                    LOG.info()
+                            .$("queued to purge")
+                            .$(", table=").$(tableName)
+                            .$(", ts=").$ts(timestamp)
+                            .$(']').$();
+                    o3QueueTableForPurge();
+                    tableQueued = true;
+                }
             } finally {
                 other.trimTo(rootLen);
             }
         }
     }
+
     private void o3ProcessPartitionSafe(Sequence partitionSubSeq, long cursor, O3PartitionTask partitionTask) {
         try {
             O3PartitionJob.processPartition(tempMem16b, partitionTask, cursor, partitionSubSeq);
@@ -3367,6 +3331,18 @@ public class TableWriter implements Closeable {
             LOG.error().$((Sinkable) e).$();
         } catch (Throwable e) {
             LOG.error().$(e).$();
+        }
+    }
+
+    private void o3QueueTableForPurge() {
+        final MPSequence seq = messageBus.getO3PurgeDiscoveryPubSeq();
+        long cursor = seq.next();
+        if (cursor > -1) {
+            O3PurgeDiscoveryTask task = messageBus.getO3PurgeDiscoveryQueue().get(cursor);
+            task.of(tableName, partitionBy);
+            seq.done(cursor);
+        } else {
+            LOG.error().$("could not queue for purge, queue is full [table=").$(tableName).I$();
         }
     }
 
