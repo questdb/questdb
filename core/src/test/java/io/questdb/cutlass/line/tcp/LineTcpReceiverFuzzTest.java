@@ -86,7 +86,7 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
     private int newColumnFactor;
     private boolean diffCasesInColNames;
 
-    // there seem to be an issue with the transactionality od adding new columns
+    // there seem to be an issue with the transactionality of adding new columns
     // when the issue is fixed 'newColumnFactor' can be used and this test should be enabled
     @Ignore
     @Test
