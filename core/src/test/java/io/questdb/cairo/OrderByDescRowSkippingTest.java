@@ -24,7 +24,15 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.table.BwdDataFrameRowCursorFactory;
+import io.questdb.griffin.engine.table.DataFrameRecordCursorFactory;
+import io.questdb.std.IntList;
+import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 /**
@@ -634,56 +642,147 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
     public void test_partitionPerRow_select_first_N_with_different_case_in_select_and_order_by() throws Exception {
         prepare_partitionPerRow_table_with_long_names();
 
-        assertQuery("record_Type\tCREATED_on\n" + DATA, "select record_Type, CREATED_on from trips order by created_ON desc limit 5");
+        assertQuery("record_Type\tCREATED_on\n" + DATA,
+                "select record_Type, CREATED_on from trips order by created_ON desc limit 5",
+                null, "CREATED_on###DESC", true, false, true);
     }
 
     @Test
     public void test_partitionPerRow_select_first_N_with_different_case_in_select_and_order_by_v2() throws Exception {
         prepare_partitionPerRow_table_with_long_names();
 
-        assertQuery("record_Type\tCREATED_ON\n" + DATA, "select record_Type, CREATED_ON from trips order by created_on desc limit 5");
+        assertQuery("record_Type\tCREATED_ON\n" + DATA,
+                "select record_Type, CREATED_ON from trips order by created_on desc limit 5",
+                null, "CREATED_ON###DESC", true, false, true);
     }
 
     @Test
     public void test_partitionPerRow_select_first_N_with_different_case_in_select_and_order_by_with_alias() throws Exception {
         prepare_partitionPerRow_table_with_long_names();
 
-        assertQuery("record_Type\tcre_on\n" + DATA, "select record_Type, CREATED_ON as cre_on from trips order by created_on desc limit 5");
+        assertQuery(
+                compiler,
+                "record_Type\tcre_on\n" + DATA,
+                "select record_Type, CREATED_ON as cre_on from trips order by created_on desc limit 5",
+                "cre_on###DESC",
+                sqlExecutionContext,
+                true,
+                true,
+                true);
     }
 
     @Test
     public void test_partitionPerRow_select_first_N_with_different_case_in_select_and_order_by_with_alias_v2() throws Exception {
         prepare_partitionPerRow_table_with_long_names();
 
-        assertQuery("record_Type\tcre_on\n" + DATA, "select record_Type, CREATED_ON cre_on from trips order by created_on desc limit 5");
+        assertQuery("record_Type\tcre_on\n" + DATA,
+                "select record_Type, CREATED_ON cre_on from trips order by created_on desc limit 5",
+                null, "cre_on###DESC", true, false, true);
     }
 
     @Test
     public void test_partitionPerRow_select_first_N_with_different_name_in_subquery() throws Exception {
         prepare_partitionPerRow_table_with_long_names();
 
-        assertQuery(EXPECTED, "select rectype, creaton from " +
-                "( select record_Type as rectype, CREATED_ON creaton from trips order by created_on desc limit 5)");
+        assertQuery(EXPECTED,
+                "select rectype, creaton from " +
+                        "( select record_Type as rectype, CREATED_ON creaton from trips order by created_on desc limit 5)",
+                null, "creaton###DESC", true, false, true);
     }
 
     @Test
     public void test_partitionPerRow_select_first_N_with_different_name_in_subquery_v2() throws Exception {
         prepare_partitionPerRow_table_with_long_names();
 
-        assertQuery(EXPECTED, "select rectype, creaton from " +
-                "( select record_Type as rectype, CREATED_ON creaton " +
-                "from trips " +
-                "order by created_on desc) " +
-                "limit 5");
+        assertQuery(EXPECTED,
+                "select rectype, creaton from " +
+                        "( select record_Type as rectype, CREATED_ON creaton " +
+                        "from trips " +
+                        "order by created_on desc) " +
+                        "limit 5",
+                null, "creaton###DESC", true, false, true);
     }
 
     @Test
     public void test_partitionPerRow_select_first_N_with_different_name_in_subquery_v3() throws Exception {
         prepare_partitionPerRow_table_with_long_names();
-
+        //order by advice is not available in the subquery ... sort performed by limitRecordCursor
         assertQuery(EXPECTED, "select rectype, creaton from " +
                 "( select record_Type as rectype, CREATED_ON creaton from trips) " +
                 "order by creaton desc limit 5");
+    }
+
+    //tests "partitionCount < 1" conditional in FullBwdDataFrameCursor.skipTo()
+    @Test
+    public void test_skip_over_empty_table_with_no_partitions_returns_no_rows() throws Exception {
+        runQueries("CREATE TABLE trips(record_type long, created_on TIMESTAMP) timestamp(created_on) partition by day;");
+
+        try (TableReader reader = sqlExecutionContext.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, "trips");
+             RecordCursor cursor = prepareCursor(reader)) {
+            cursor.skipTo(1);
+            Assert.assertFalse(cursor.hasNext());
+        }
+    }
+
+    //tests "partitionIndex == partitionCount - 1" conditional in FullBwdDataFrameCursor.skipTo()
+    @Test
+    public void test_skip_beyond_end_of_nonempty_table_returns_no_rows() throws Exception {
+        prepare_partitionPerRow_table_with_long_names();
+
+        try (TableReader reader = sqlExecutionContext.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, "trips");
+             RecordCursor cursor = prepareCursor(reader)) {
+            cursor.skipTo(11);
+            Assert.assertFalse(cursor.hasNext());
+        }
+    }
+
+    private RecordCursor prepareCursor(TableReader reader) throws SqlException {
+        TableReaderMetadata metadata = reader.getMetadata();
+        IntList columnIndexes = new IntList();
+        columnIndexes.add(0);
+        columnIndexes.add(1);
+
+        IntList columnSizes = new IntList();
+        columnSizes.add(3);
+        columnSizes.add(3);
+
+        DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(engine.getConfiguration(), metadata,
+                new FullBwdDataFrameCursorFactory(engine, "trips", metadata.getId(), reader.getVersion()),
+                new BwdDataFrameRowCursorFactory(),
+                false,
+                null,
+                true,
+                columnIndexes,
+                columnSizes
+        );
+
+        return factory.getCursor(sqlExecutionContext);
+    }
+
+    @Ignore
+    @Test
+    public void test_skip_over_empty_table_with_1_empty_partition_returns_no_rows() throws Exception {
+        runQueries("CREATE TABLE trips(record_type long, created_on TIMESTAMP) timestamp(created_on) partition by none;");
+
+        assertMemoryLeak(() -> {
+            try (TableWriter writer = sqlExecutionContext.getCairoEngine().getWriter(AllowAllCairoSecurityContext.INSTANCE, "trips", "test")) {
+                TableWriter.Row row = writer.newRow(0L);
+                row.putLong(0, 0L);
+                row.append();
+
+                row = writer.newRow(100L);
+                row.putLong(0, 1L);
+                row.append();
+
+                try (TableReader reader = sqlExecutionContext.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, "trips");
+                     RecordCursor cursor = prepareCursor(reader)) {
+                    cursor.skipTo(1);
+                    Assert.assertFalse(cursor.hasNext());
+                }
+
+                writer.rollback();
+            }
+        });
     }
 
     static final String DATA = "10\t2022-01-13T10:00:00.000000Z\n" +

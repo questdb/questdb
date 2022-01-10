@@ -2953,7 +2953,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private boolean isOrderDescendingByDesignatedTimestampOnly(QueryModel model) {
         return model.getOrderByAdvice().size() == 1 && model.getTimestamp() != null &&
-                Chars.equals(model.getOrderByAdvice().getQuick(0).token, model.getTimestamp().token) &&
+                Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token, model.getTimestamp().token) &&
                 getOrderByDirectionOrDefault(model, 0) == ORDER_DIRECTION_DESCENDING;
     }
 

@@ -24,7 +24,14 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.table.DataFrameRecordCursorFactory;
+import io.questdb.griffin.engine.table.DataFrameRowCursorFactory;
+import io.questdb.std.IntList;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -613,6 +620,86 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
         prepare_partitionPerRow_table();
 
         assertQuery("l\n8\n9\n10\n", "select l from tab order by l asc limit -3");
+    }
+
+    //tests "partitionCount < 1" conditional in FullFwdDataFrameCursor.skipTo()
+    @Test
+    public void test_skip_over_empty_table_with_no_partitions_returns_no_rows() throws Exception {
+        runQueries("CREATE TABLE trips(record_type long, created_on TIMESTAMP) timestamp(created_on) partition by day;");
+
+        try (TableReader reader = sqlExecutionContext.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, "trips");
+             RecordCursor cursor = prepareCursor(reader)) {
+            cursor.skipTo(1);
+            Assert.assertFalse(cursor.hasNext());
+        }
+    }
+
+    //tests "partitionIndex == partitionCount - 1" conditional in FullFwdDataFrameCursor.skipTo()
+    @Test
+    public void test_skip_beyond_end_of_nonempty_table_returns_no_rows() throws Exception {
+        prepare_partitionPerRow_table_with_long_names();
+
+        try (TableReader reader = sqlExecutionContext.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, "trips");
+             RecordCursor cursor = prepareCursor(reader)) {
+            cursor.skipTo(11);
+            Assert.assertFalse(cursor.hasNext());
+        }
+    }
+
+    @Test
+    public void test_skip_over_empty_table_with_1_empty_partition_returns_no_rows() throws Exception {
+        runQueries("CREATE TABLE trips(record_type long, created_on TIMESTAMP) timestamp(created_on) partition by none;");
+
+        assertMemoryLeak(() -> {
+            try (TableWriter writer = sqlExecutionContext.getCairoEngine().getWriter(AllowAllCairoSecurityContext.INSTANCE, "trips", "test")) {
+                TableWriter.Row row = writer.newRow(0L);
+                row.putLong(0, 0L);
+                row.append();
+
+                row = writer.newRow(100L);
+                row.putLong(0, 1L);
+                row.append();
+
+                try (TableReader reader = sqlExecutionContext.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, "trips");
+                     RecordCursor cursor = prepareCursor(reader)) {
+                    cursor.skipTo(1);
+                    Assert.assertFalse(cursor.hasNext());
+                }
+
+                writer.rollback();
+            }
+        });
+    }
+
+    private RecordCursor prepareCursor(TableReader reader) throws SqlException {
+        TableReaderMetadata metadata = reader.getMetadata();
+        IntList columnIndexes = new IntList();
+        columnIndexes.add(0);
+        columnIndexes.add(1);
+
+        IntList columnSizes = new IntList();
+        columnSizes.add(3);
+        columnSizes.add(3);
+
+        DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(engine.getConfiguration(), metadata,
+                new FullFwdDataFrameCursorFactory(engine, "trips", metadata.getId(), reader.getVersion()),
+                new DataFrameRowCursorFactory(),
+                false,
+                null,
+                true,
+                columnIndexes,
+                columnSizes
+        );
+
+        return factory.getCursor(sqlExecutionContext);
+    }
+
+    private void prepare_partitionPerRow_table_with_long_names() throws Exception {
+        runQueries("CREATE TABLE trips(record_type long, created_on TIMESTAMP) timestamp(created_on) partition by day;",
+                "insert into trips " +
+                        "  select 10-x," +
+                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
+                        "  from long_sequence(10);");
     }
 
     private void prepare_partitionPerRow_table() throws Exception {
