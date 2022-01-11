@@ -95,7 +95,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
         int tableCount = 3;
         assertMemoryLeak(() -> {
             for (int i = 0; i < tableCount; i++) {
-                compiler.compile("create table tbl" + i + " as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY", sqlExecutionContext);
+                compiler.compile("create table tbl" + i + " as (select x, cast('1970-01-01T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY", sqlExecutionContext);
             }
 
             final CyclicBarrier barrier = new CyclicBarrier(3);
@@ -112,9 +112,9 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                     for (int i = 0; i < 32; i++) {
                         for (int j = 0; j < tableCount; j++) {
                             compiler.compile("insert into tbl" + j +
-                                            " select 2, '1970-01-01T10' from long_sequence(1) " +
+                                            " select 2, '1970-01-10T10' from long_sequence(1) " +
                                             "union all " +
-                                            "select 1, '1970-01-01T09'  from long_sequence(1)"
+                                            "select 1, '1970-01-09T09'  from long_sequence(1)"
                                     , sqlExecutionContext);
                         }
                     }
@@ -319,6 +319,51 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                     path.trimTo(len).put(".").put(Integer.toString(i)).concat("x.d").$();
                     Assert.assertFalse(Chars.toString(path), Files.exists(path));
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testTableDropAfterPurgeScheduled() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            // This should lock partition 1970-01-10.1 to not do delete in writer
+            try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
+                // OOO insert
+                compiler.compile("insert into tbl select 4, '1970-01-10T09'", sqlExecutionContext);
+            }
+
+            engine.releaseInactive();
+            compiler.compile("drop table tbl", sqlExecutionContext);
+
+            // Main assert here is that job runs without exceptions
+            runPartitionPurgeJobs();
+        });
+    }
+
+    @Test
+    public void testInvalidFolderNames() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            // This should lock partition 1970-01-10.1 from being deleted from disk
+            try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
+                // OOO insert
+                compiler.compile("insert into tbl select 4, '1970-01-10T09'", sqlExecutionContext);
+            }
+
+            try (Path path = new Path()) {
+                Files.mkdir(path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("invalid_folder.123").$(), 509);
+                Files.mkdir(path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-01.invalid").$(), 509);
+
+                runPartitionPurgeJobs();
+
+                path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-10").concat("x.d").$();
+                Assert.assertFalse(Chars.toString(path), Files.exists(path));
+
+                path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-10.1").concat("x.d").$();
+                Assert.assertTrue(Chars.toString(path), Files.exists(path));
             }
         });
     }

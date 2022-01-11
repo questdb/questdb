@@ -89,9 +89,10 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
         if (lastCommittedPartitionName > -1) {
             assert hi <= partitionList.size();
             for (int i = lo + 2, n = hi - 1; i < n; i += 2) {
-                long nextNameVersion = Math.min(lastCommittedPartitionName + 1, partitionList.get(i + 1));
-                long previousNameVersion = partitionList.get(i - 1);
-                boolean rangeUnlocked = true;
+                long nextNameVersion = Math.min(lastCommittedPartitionName + 1, partitionList.get(i));
+                long previousNameVersion = partitionList.get(i - 2);
+
+                boolean rangeUnlocked = previousNameVersion < nextNameVersion;
                 for (long txn = previousNameVersion; txn < nextNameVersion; txn++) {
                     if (txnScoreboard.getActiveReaderCount(txn) > 0) {
                         rangeUnlocked = false;
@@ -110,8 +111,9 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                     // previousNameVersion can be deleted
                     LOG.info().
                             $("purging [path=").$(path)
-                            .$(", nameTxnToRemove=").$(previousNameVersion)
+                            .$(", nameTxnToRemove=").$(previousNameVersion - 1)
                             .$(", nameTxnNext=").$(nextNameVersion)
+                            .$(", lastCommittedPartitionName=").$(lastCommittedPartitionName)
                             .I$();
                     long errno;
                     if ((errno = ff.rmdir(path)) == 0) {
@@ -124,7 +126,6 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                                 .$(", errno=").$(errno)
                                 .I$();
                     }
-
                 }
             }
         }
@@ -182,7 +183,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
             loadLastTx(txReader);
 
             for (int i = 0; i < n; i += 2) {
-                if (partitionList.get(i) != partitionTs) {
+                if (partitionList.get(i + 1) != partitionTs) {
                     if (i > lo + 2) {
                         processPartition(
                                 ff,
@@ -198,7 +199,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                         );
                     }
                     lo = i;
-                    partitionTs = partitionList.get(i);
+                    partitionTs = partitionList.get(i + 1);
                 }
             }
             // Tail
@@ -233,13 +234,6 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
             index = fileNameSink.length();
         }
         try {
-            try {
-                long partitionTs = partitionByFormat.parse(fileNameSink, 0, index, null);
-                partitionList.add(partitionTs);
-            } catch (NumericException e) {
-                return;
-            }
-
             if (index < fileNameSink.length()) {
                 long partitionVersion = Numbers.parseLong(fileNameSink, index + 1, fileNameSink.length());
                 // When reader locks transaction 100 it opens partition version .99 or lower.
@@ -254,18 +248,22 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                 // Set 0 instead of -1 and revert it later on. There should be not possible to have .0 in the partition name
                 partitionList.add(0);
             }
+
+            try {
+                long partitionTs = partitionByFormat.parse(fileNameSink, 0, index, null);
+                partitionList.add(partitionTs);
+            } catch (NumericException e) {
+                LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).$(']').$();
+                partitionList.setPos(partitionList.size() - 1); // remove partition version record
+            }
         } catch (NumericException e) {
             LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).$(']').$();
-            partitionList.setPos(partitionList.size() - 1); // remove partition ts record
         }
     }
 
     @Override
     protected boolean doRun(int workerId, long cursor) {
         final O3PurgeDiscoveryTask task = queue.get(cursor);
-        if (cursor < 0) {
-            return false;
-        }
         discoverPartitions(
                 configuration.getFilesFacade(),
                 sink[workerId],
