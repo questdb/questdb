@@ -1555,6 +1555,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlSortValuePageSize() {
+            return sqlSortValuePageSize;
+        }
+
+        @Override
         public int getAnalyticColumnPoolCapacity() {
             return sqlAnalyticColumnPoolCapacity;
         }

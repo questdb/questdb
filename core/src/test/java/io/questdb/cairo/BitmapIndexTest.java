@@ -502,7 +502,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
         try (DirectLongList rows = new DirectLongList(keyCount, MemoryTag.NATIVE_LONG_LIST)) {
 
-            rows.extend(keyCount);
+            rows.setCapacity(keyCount);
             rows.setPos(rows.getCapacity());
             GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
 
