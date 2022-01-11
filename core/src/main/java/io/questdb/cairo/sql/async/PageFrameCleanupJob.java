@@ -25,12 +25,17 @@
 package io.questdb.cairo.sql.async;
 
 import io.questdb.MessageBus;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.std.Rnd;
 
 public class PageFrameCleanupJob implements Job {
+
+    private static final Log LOG = LogFactory.getLog(PageFrameCleanupJob.class);
+
     private final MessageBus messageBus;
     private final int shardCount;
     private final int[] shards;
@@ -78,6 +83,13 @@ public class PageFrameCleanupJob implements Job {
                     final int frameIndex = task.getFrameIndex() + 1;
                     final int frameCount = frameSequence.getFrameCount();
 
+                    LOG.info()
+                            .$("cleanup [shard=").$(shard)
+                            .$(", id=").$(frameSequence.getId())
+                            .$(", frameIndex=").$(frameIndex)
+                            .$(", frameCount=").$(frameCount)
+                            .I$();
+
                     // We have to reset capacity only on max all queue items
                     // What we are avoiding here is resetting capacity on 1000 frames given our queue size
                     // is 32 items. If our particular producer resizes queue items to 10x of the initial size
@@ -89,6 +101,12 @@ public class PageFrameCleanupJob implements Job {
                     // we assume that frame indexes are published in ascending order
                     // and when we see the last index, we would free up the remaining resources
                     if (frameIndex == frameCount) {
+                        LOG.info()
+                                .$("cleanup [shard=").$(shard)
+                                .$(", id=").$(frameSequence.getId())
+                                .$(", removing=").$(frameSequence.getCollectSubSeq())
+                                .I$();
+
                         messageBus.getPageFrameCollectFanOut(shard).remove(frameSequence.getCollectSubSeq());
                         frameSequence.clear();
                     }

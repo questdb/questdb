@@ -26,6 +26,8 @@ package io.questdb.cairo.sql.async;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.PageAddressCacheRecord;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
@@ -35,6 +37,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class PageFrameReduceJob implements Job {
 
+    private final static Log LOG = LogFactory.getLog(PageFrameReduceJob.class);
     private final PageAddressCacheRecord record;
     private final int[] shards;
     private final int shardCount;
@@ -91,6 +94,13 @@ public class PageFrameReduceJob implements Job {
                 try {
                     final AtomicInteger framesReducedCounter = frameSequence.getReduceCounter();
                     try {
+                        LOG.info()
+                                .$("reducing [shard=").$(frameSequence.getShard())
+                                .$(", id=").$(frameSequence.getId())
+                                .$(", frameIndex=").$(task.getFrameIndex())
+                                .$(", frameCount=").$(frameSequence.getFrameCount())
+                                .$(", valid=").$(frameSequence.isValid())
+                                .I$();
                         if (frameSequence.isValid()) {
                             // we deliberately hold the queue item because
                             // processing is daisy-chained. If we were to release item before

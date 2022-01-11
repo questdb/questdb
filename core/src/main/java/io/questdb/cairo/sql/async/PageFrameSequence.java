@@ -29,6 +29,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -40,6 +42,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
 public class PageFrameSequence<T> implements Mutable {
+    private static final int OWNER_NONE = 0;
+    private static final int OWNER_WORK_STEALING = 1;
+    private static final int OWNER_ASYNC = 2;
+    private final static Log LOG = LogFactory.getLog(PageFrameSequence.class);
+
     public final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final AtomicBoolean valid = new AtomicBoolean(true);
     private final AtomicInteger reduceCounter = new AtomicInteger(0);
@@ -47,6 +54,7 @@ public class PageFrameSequence<T> implements Mutable {
     private final PageFrameReducer reducer;
     private final PageAddressCache pageAddressCache;
     private final MessageBus messageBus;
+    private final AtomicInteger owner = new AtomicInteger(OWNER_NONE);
     private long id;
     private int shard;
     private int frameCount;
@@ -66,8 +74,15 @@ public class PageFrameSequence<T> implements Mutable {
     }
 
     public void await() {
+        LOG.info()
+                .$("releasing [shard=").$(shard)
+                .$(", id=").$(id)
+                .$(", frameCount=").$(frameCount)
+                .I$();
         while (doneLatch.getCount() == 0) {
-            stealDispatchQueue();
+            stealWork();
+
+            // this seems necessary
             PageFrameDispatchJob.stealWork(
                     messageBus,
                     shard,
@@ -91,30 +106,7 @@ public class PageFrameSequence<T> implements Mutable {
         collectSubSeq.clear();
         doneLatch.countDown();
         this.dispatchStartIndex = 0;
-    }
-
-    public boolean stealDispatchQueue() {
-
-        // todo: this must be called in locking mode,
-        //     we must not dispatch the same task twice
-        PageFrameDispatchJob.handleTask(
-                this,
-                records[getWorkerId()],
-                messageBus,
-                true
-        );
-        // We need to handle task regardless of that being on the queue or not;
-        // the state of the task is stored on the page frame sequence instance
-        // thus making dispatch code rentable.
-        final MCSequence dispatchSubSeq = messageBus.getPageFrameDispatchSubSeq();
-
-        // we also need to click dispatch task if it appears on the queue
-        final long c = dispatchSubSeq.next();
-        if (c > -1) {
-            dispatchSubSeq.done(c);
-            return false;
-        }
-        return true;
+        this.owner.set(OWNER_NONE);
     }
 
     public PageFrameSequence<T> dispatch(
@@ -131,7 +123,7 @@ public class PageFrameSequence<T> implements Mutable {
         final MessageBus bus = executionContext.getMessageBus();
         // before thread begins we will need to pick a shard
         // of queues that we will interact with
-        final int shard = rnd.nextInt(bus.getPageFrameReduceShardCount());
+        final int shard = 0;//rnd.nextInt(bus.getPageFrameReduceShardCount());
         final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext);
         final MPSequence dispatchPubSeq = bus.getPageFrameDispatchPubSeq();
         final RingQueue<PageFrameDispatchTask> pageFrameDispatchQueue = bus.getPageFrameDispatchQueue();
@@ -164,7 +156,8 @@ public class PageFrameSequence<T> implements Mutable {
             long dispatchCursor;
             do {
                 dispatchCursor = dispatchPubSeq.next();
-                if (dispatchCursor < 0 && stealDispatchQueue()) {
+                if (dispatchCursor < 0) {
+                    stealWork();
                     LockSupport.parkNanos(1);
                 } else {
                     break;
@@ -175,6 +168,11 @@ public class PageFrameSequence<T> implements Mutable {
             // control to the caller of this method. However, this sequence
             // will be unsubscribed asynchronously.
             bus.getPageFrameCollectFanOut(shard).and(collectSubSeq);
+            LOG.info()
+                    .$("added [shard=").$(shard)
+                    .$(", id=").$(id)
+                    .$(", seq=").$(collectSubSeq)
+                    .I$();
 
             PageFrameDispatchTask dispatchTask = pageFrameDispatchQueue.get(dispatchCursor);
             dispatchTask.of(this);
@@ -234,6 +232,16 @@ public class PageFrameSequence<T> implements Mutable {
         return pageFrameCursor;
     }
 
+    /**
+     * Async owner is allowed to enter only once. The expectation is that all frames will be dispatched
+     * in the first attempt.
+     *
+     * @return true if this sequence dispatch belongs to async owner, work stealing must not touch this.
+     */
+    public boolean isAsyncOwner() {
+        return owner.compareAndSet(OWNER_NONE, OWNER_ASYNC);
+    }
+
     public boolean isValid() {
         return valid.get();
     }
@@ -242,14 +250,54 @@ public class PageFrameSequence<T> implements Mutable {
         this.valid.compareAndSet(true, valid);
     }
 
+    /**
+     * Work stealing is re-enterable, hence subsequence invocations can yield true.
+     *
+     * @return true is this sequence dispatch is owned by work stealing algo.
+     */
+    public boolean isWorkStealingOwner() {
+        return owner.get() == OWNER_WORK_STEALING || owner.compareAndSet(OWNER_NONE, OWNER_WORK_STEALING);
+    }
+
+    public void stealWork() {
+        final PageAddressCacheRecord rec = records[getWorkerId()];
+        // we were asked to steal work from dispatch queue and beyond, as much as we can
+        PageFrameDispatchJob.handleTask(this, rec, messageBus, true);
+
+        // now we need to steal all dispatch work from the queue until we reach either:
+        // - end of the queue
+        // - find out publisher id
+        final MCSequence dispatchSubSeq = messageBus.getPageFrameDispatchSubSeq();
+        while (true) {
+            final long c = dispatchSubSeq.next();
+            if (c > -1) {
+                PageFrameSequence<?> s = pageFrameDispatchQueue.get(c).getFrameSequence();
+
+                if (s == this) {
+                    dispatchSubSeq.done(c);
+                    break;
+                }
+
+                // We are entering all frame sequences in work stealing mode, which means
+                // they can end up being partially dispatched. This is done because we
+                // cannot afford to enter infinite loop here
+                PageFrameDispatchJob.handleTask(s, rec, messageBus, true);
+            } else {
+                break;
+            }
+        }
+    }
+
     public void toTop() {
         if (frameCount > 0) {
+            dispatchStartIndex = 0;
+            reduceCounter.set(0);
             this.pageFrameCursor.toTop();
             long dispatchCursor;
             do {
                 dispatchCursor = dispatchPubSeq.next();
-                if (dispatchCursor < 0 && stealDispatchQueue()) {
-                    LockSupport.parkNanos(1);
+                if (dispatchCursor < 0) {
+                    stealWork();
                 } else {
                     break;
                 }

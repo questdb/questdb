@@ -30,12 +30,15 @@ import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Rows;
 
 class AsyncFilteredRecordCursor implements RecordCursor {
+    private final static Log LOG = LogFactory.getLog(AsyncFilteredRecordCursor.class);
     private final Function filter;
     private final PageAddressCacheRecord record;
     private PageAddressCacheRecord recordB;
@@ -56,10 +59,15 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     @Override
     public void close() {
-        if (cursor > -1) {
-            collectSubSeq.done(cursor);
-            cursor = -1;
-        }
+        LOG.info()
+                .$("closing [shard=").$(frameSequence.getShard())
+                .$(", id=").$(frameSequence.getId())
+                .$(", frameIndex=").$(frameIndex)
+                .$(", frameCount=").$(frameCount)
+                .$(", cursor=").$(cursor)
+                .I$();
+
+        collectCursor();
         if (frameCount > 0) {
             frameSequence.await();
         }
@@ -92,10 +100,17 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 record.setRowIndex(rows.get(frameRowIndex++));
                 return true;
             }
-            return false;
         }
 
+        collectCursor();
         return false;
+    }
+
+    private void collectCursor() {
+        if (cursor > -1) {
+            collectSubSeq.done(cursor);
+            cursor = -1;
+        }
     }
 
     @Override
@@ -138,6 +153,14 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 this.frameIndex = task.getFrameIndex();
                 if (this.frameRowCount > 0) {
                     this.frameRowIndex = 0;
+                    LOG.info()
+                            .$("collected [shard=").$(frameSequence.getShard())
+                            .$(", id=").$(frameSequence.getId())
+                            .$(", frameIndex=").$(task.getFrameIndex())
+                            .$(", frameCount=").$(frameSequence.getFrameCount())
+                            .$(", valid=").$(frameSequence.isValid())
+                            .I$();
+
                     record.setFrameIndex(task.getFrameIndex());
                     break;
                 } else {
@@ -147,7 +170,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
             } else {
                 // multiple reasons for collect task not being ready:
                 // 1. dispatch task hasn't been published
-                frameSequence.stealDispatchQueue();
+                frameSequence.stealWork();
             }
         } while (this.frameIndex + 1 < frameCount);
     }

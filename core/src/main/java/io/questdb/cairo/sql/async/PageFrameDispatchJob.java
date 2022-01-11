@@ -26,6 +26,8 @@ package io.questdb.cairo.sql.async;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.PageAddressCacheRecord;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
@@ -35,6 +37,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
 public class PageFrameDispatchJob implements Job {
+
+    private final static Log LOG = LogFactory.getLog(PageFrameDispatchJob.class);
 
     private final MessageBus messageBus;
     private final MCSequence dispatchSubSeq;
@@ -53,58 +57,84 @@ public class PageFrameDispatchJob implements Job {
         }
     }
 
+    /**
+     * In work stealing mode this method is re enterable. It has to be in case queue capacity
+     * is smaller than number of frames to be dispatched. When it is the case, frame count published so far
+     * is stored in the `frameSequence`. Generally speaking, sequence cannot be dispatched via normal and
+     * work stealing mode at the same time. When one mode grabs, the other must yield. This is because in normal
+     * mode the method will publish all frames. It has no responsibility to deal with "collect" stage hence it
+     * deals with everything to unblock the collect stage.
+     *
+     * @param frameSequence
+     * @param record
+     * @param messageBus
+     * @param workStealingMode
+     */
     public static void handleTask(
             PageFrameSequence<?> frameSequence,
             PageAddressCacheRecord record,
             MessageBus messageBus,
             boolean workStealingMode
     ) {
+        boolean idle = true;
         final int shard = frameSequence.getShard();
-        final int frameCount = frameSequence.getFrameCount();
         final RingQueue<PageFrameReduceTask> queue = messageBus.getPageFrameReduceQueue(shard);
-        // publisher sequence to pass work to worker jobs
-        final MPSequence reducePubSeq = messageBus.getPageFrameReducePubSeq(shard);
         // the sequence used to steal worker jobs
         final MCSequence reduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
         final MCSequence cleanupSubSeq = messageBus.getPageFrameCleanupSubSeq(shard);
 
-        // Reduce counter is here to provide safe backoff point
-        // for job stealing code. It is needed because queue is shared
-        // and there is possibility of never ending stealing if we don't
-        // specifically count only our items
-        final AtomicInteger framesReducedCounter = frameSequence.getReduceCounter();
+        if ((workStealingMode && frameSequence.isWorkStealingOwner() || (!workStealingMode && frameSequence.isAsyncOwner()))) {
+            final int frameCount = frameSequence.getFrameCount();
+            final MPSequence reducePubSeq = messageBus.getPageFrameReducePubSeq(shard);
 
-        long cursor;
-        int i = frameSequence.getDispatchStartIndex();
-        frameSequence.setDispatchStartIndex(frameCount);
-        OUT:
-        for (; i < frameCount; i++) {
-            // We cannot process work on this thread. If we do the consumer will
-            // never get the executions results. Consumer only picks ready to go
-            // tasks from the queue.
-            while (true) {
-                cursor = reducePubSeq.next();
-                if (cursor > -1) {
-                    queue.get(cursor).of(frameSequence, i);
-                    reducePubSeq.done(cursor);
-                    break;
-                } else {
-                    // start stealing work to unload the queue
-                    if (stealWork(messageBus, shard, queue, reduceSubSeq, cleanupSubSeq, record) || !workStealingMode) {
-                        continue;
+            // Reduce counter is here to provide safe backoff point
+            // for job stealing code. It is needed because queue is shared
+            // and there is possibility of never ending stealing if we don't
+            // specifically count only our items
+            final AtomicInteger framesReducedCounter = frameSequence.getReduceCounter();
+
+            long cursor;
+            int i = frameSequence.getDispatchStartIndex();
+            frameSequence.setDispatchStartIndex(frameCount);
+            OUT:
+            for (; i < frameCount; i++) {
+                // We cannot process work on this thread. If we do the consumer will
+                // never get the executions results. Consumer only picks ready to go
+                // tasks from the queue.
+
+                while (true) {
+                    cursor = reducePubSeq.next();
+                    if (cursor > -1) {
+                        queue.get(cursor).of(frameSequence, i);
+                        LOG.info()
+                                .$("dispatched [shard=").$(shard)
+                                .$(", id=").$(frameSequence.getId())
+                                .$(", staling=").$(workStealingMode)
+                                .$(", frameIndex=").$(i)
+                                .$(", frameCount=").$(frameCount)
+                                .I$();
+                        reducePubSeq.done(cursor);
+                        break;
+                    } else {
+                        idle = false;
+                        // start stealing work to unload the queue
+                        if (stealWork(messageBus, shard, queue, reduceSubSeq, cleanupSubSeq, record) || !workStealingMode) {
+                            continue;
+                        }
+                        frameSequence.setDispatchStartIndex(i);
+                        break OUT;
                     }
-                    frameSequence.setDispatchStartIndex(i);
-                    break OUT;
                 }
             }
-        }
 
-        // join the gang to consume published tasks
-        while (framesReducedCounter.get() < frameCount) {
-            if (stealWork(messageBus, shard, queue, reduceSubSeq, cleanupSubSeq, record) || !workStealingMode) {
-                continue;
+            // join the gang to consume published tasks
+            while (framesReducedCounter.get() < frameCount) {
+                idle = false;
+                if (stealWork(messageBus, shard, queue, reduceSubSeq, cleanupSubSeq, record) || !workStealingMode) {
+                    continue;
+                }
+                break;
             }
-            break;
         }
     }
 
