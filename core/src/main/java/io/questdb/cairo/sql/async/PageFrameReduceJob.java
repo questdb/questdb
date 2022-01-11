@@ -97,6 +97,7 @@ public class PageFrameReduceJob implements Job {
                             // finishing reduction, next step (job) will be processing an incomplete task
                             record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
                             record.setFrameIndex(task.getFrameIndex());
+                            assert frameSequence.doneLatch.getCount() == 0;
                             frameSequence.getReducer().reduce(record, task);
                         }
                     } catch (Throwable e) {

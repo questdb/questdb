@@ -40,7 +40,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
 public class PageFrameSequence<T> implements Mutable {
-    private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
+    public final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final AtomicBoolean valid = new AtomicBoolean(true);
     private final AtomicInteger reduceCounter = new AtomicInteger(0);
     private final LongList frameRowCounts = new LongList();
@@ -54,6 +54,10 @@ public class PageFrameSequence<T> implements Mutable {
     private PageFrameCursor pageFrameCursor;
     private T atom;
     private PageAddressCacheRecord[] records;
+    // we need this to restart execution for `toTop`
+    private MPSequence dispatchPubSeq;
+    private RingQueue<PageFrameDispatchTask> pageFrameDispatchQueue;
+    private int dispatchStartIndex = 0;
 
     public PageFrameSequence(CairoConfiguration configuration, MessageBus messageBus, PageFrameReducer reducer) {
         this.reducer = reducer;
@@ -62,22 +66,18 @@ public class PageFrameSequence<T> implements Mutable {
     }
 
     public void await() {
-        final RingQueue<PageFrameReduceTask> queue = messageBus.getPageFrameReduceQueue(shard);
-        final MCSequence reduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
-        final MCSequence cleanupSubSeq = messageBus.getPageFrameCleanupSubSeq(shard);
-        final PageAddressCacheRecord record = records[getWorkerId()];
         while (doneLatch.getCount() == 0) {
-            if (consumeDispatchQueue()) {
-                PageFrameDispatchJob.stealWork(
-                        messageBus,
-                        shard,
-                        queue,
-                        reduceSubSeq,
-                        cleanupSubSeq,
-                        record
-                );
-            }
+            stealDispatchQueue();
+            PageFrameDispatchJob.stealWork(
+                    messageBus,
+                    shard,
+                    messageBus.getPageFrameReduceQueue(shard),
+                    messageBus.getPageFrameReduceSubSeq(shard),
+                    messageBus.getPageFrameCleanupSubSeq(shard),
+                    records[getWorkerId()]
+            );
         }
+        frameCount = 0;
     }
 
     @Override
@@ -90,17 +90,27 @@ public class PageFrameSequence<T> implements Mutable {
         pageFrameCursor = Misc.free(pageFrameCursor);
         collectSubSeq.clear();
         doneLatch.countDown();
+        this.dispatchStartIndex = 0;
     }
 
-    public boolean consumeDispatchQueue() {
-        MCSequence dispatchSubSeq = messageBus.getPageFrameDispatchSubSeq();
-        long c = dispatchSubSeq.next();
+    public boolean stealDispatchQueue() {
+
+        // todo: this must be called in locking mode,
+        //     we must not dispatch the same task twice
+        PageFrameDispatchJob.handleTask(
+                this,
+                records[getWorkerId()],
+                messageBus,
+                true
+        );
+        // We need to handle task regardless of that being on the queue or not;
+        // the state of the task is stored on the page frame sequence instance
+        // thus making dispatch code rentable.
+        final MCSequence dispatchSubSeq = messageBus.getPageFrameDispatchSubSeq();
+
+        // we also need to click dispatch task if it appears on the queue
+        final long c = dispatchSubSeq.next();
         if (c > -1) {
-            PageFrameDispatchJob.handleTask(
-                    this,
-                    records[getWorkerId()],
-                    messageBus
-            );
             dispatchSubSeq.done(c);
             return false;
         }
@@ -117,7 +127,7 @@ public class PageFrameSequence<T> implements Mutable {
         // allow entry for 0 - main thread that is a non-worker
         initWorkerRecords(executionContext.getWorkerCount() + 1);
 
-        final Rnd rnd = executionContext.getRandom();
+        final Rnd rnd = executionContext.getAsyncRandom();
         final MessageBus bus = executionContext.getMessageBus();
         // before thread begins we will need to pick a shard
         // of queues that we will interact with
@@ -154,7 +164,7 @@ public class PageFrameSequence<T> implements Mutable {
             long dispatchCursor;
             do {
                 dispatchCursor = dispatchPubSeq.next();
-                if (dispatchCursor < 0 && consumeDispatchQueue()) {
+                if (dispatchCursor < 0 && stealDispatchQueue()) {
                     LockSupport.parkNanos(1);
                 } else {
                     break;
@@ -176,30 +186,20 @@ public class PageFrameSequence<T> implements Mutable {
         return this;
     }
 
-    public void toTop() {
-        if (frameCount > 0) {
-            this.pageFrameCursor.toTop();
-            long dispatchCursor;
-            do {
-                dispatchCursor = dispatchPubSeq.next();
-                if (dispatchCursor < 0 && consumeDispatchQueue()) {
-                    LockSupport.parkNanos(1);
-                } else {
-                    break;
-                }
-            } while (true);
-            PageFrameDispatchTask dispatchTask = pageFrameDispatchQueue.get(dispatchCursor);
-            dispatchTask.of(this);
-            dispatchPubSeq.done(dispatchCursor);
-        }
-    }
-
     public T getAtom() {
         return atom;
     }
 
     public SCSequence getCollectSubSeq() {
         return collectSubSeq;
+    }
+
+    public int getDispatchStartIndex() {
+        return dispatchStartIndex;
+    }
+
+    public void setDispatchStartIndex(int i) {
+        this.dispatchStartIndex = i;
     }
 
     public int getFrameCount() {
@@ -242,6 +242,24 @@ public class PageFrameSequence<T> implements Mutable {
         this.valid.compareAndSet(true, valid);
     }
 
+    public void toTop() {
+        if (frameCount > 0) {
+            this.pageFrameCursor.toTop();
+            long dispatchCursor;
+            do {
+                dispatchCursor = dispatchPubSeq.next();
+                if (dispatchCursor < 0 && stealDispatchQueue()) {
+                    LockSupport.parkNanos(1);
+                } else {
+                    break;
+                }
+            } while (true);
+            final PageFrameDispatchTask dispatchTask = pageFrameDispatchQueue.get(dispatchCursor);
+            dispatchTask.of(this);
+            dispatchPubSeq.done(dispatchCursor);
+        }
+    }
+
     private static int getWorkerId() {
         final Thread thread = Thread.currentThread();
         final int workerId;
@@ -261,10 +279,6 @@ public class PageFrameSequence<T> implements Mutable {
             }
         }
     }
-
-    // we need this to restart execution for `toTop`
-    private MPSequence dispatchPubSeq;
-    private RingQueue<PageFrameDispatchTask> pageFrameDispatchQueue;
 
     private void of(
             int shard,

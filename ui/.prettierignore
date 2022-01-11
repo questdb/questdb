@@ -1,3 +1,4 @@
 src/index.hbs
 ../core/src/test/
 ../core/cmake-*
+../core/target/*

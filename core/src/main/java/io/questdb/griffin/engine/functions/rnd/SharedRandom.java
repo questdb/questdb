@@ -26,14 +26,27 @@ package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.std.Rnd;
+import org.jetbrains.annotations.NotNull;
 
 public class SharedRandom {
     public static final ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
+    // async random is used by SQL Async implementation in order to
+    // not disturb the existing tests
+    public static final ThreadLocal<Rnd> ASYNC_RANDOM = new ThreadLocal<>();
 
     public static Rnd getRandom(CairoConfiguration configuration) {
-        Rnd rnd = RANDOM.get();
+        return getRnd(configuration, RANDOM);
+    }
+
+    public static Rnd getAsyncRandom(CairoConfiguration configuration) {
+        return getRnd(configuration, ASYNC_RANDOM);
+    }
+
+    @NotNull
+    private static Rnd getRnd(CairoConfiguration configuration, ThreadLocal<Rnd> tlRnd) {
+        Rnd rnd = tlRnd.get();
         if (rnd == null) {
-            RANDOM.set(rnd = new Rnd(
+            tlRnd.set(rnd = new Rnd(
                     configuration.getMillisecondClock().getTicks(),
                     configuration.getMicrosecondClock().getTicks())
             );

@@ -88,8 +88,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
             // release previous queue item
             collectSubSeq.done(cursor);
             fetchNextFrame();
-            record.setRowIndex(rows.get(frameRowIndex++));
-            return true;
+            if (frameRowCount > 0) {
+                record.setRowIndex(rows.get(frameRowIndex++));
+                return true;
+            }
+            return false;
         }
 
         return false;
@@ -132,18 +135,19 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 PageFrameReduceTask task = queue.get(cursor);
                 this.rows = task.getRows();
                 this.frameRowCount = rows.size();
+                this.frameIndex = task.getFrameIndex();
                 if (this.frameRowCount > 0) {
                     this.frameRowIndex = 0;
-                    this.frameIndex = task.getFrameIndex();
                     record.setFrameIndex(task.getFrameIndex());
                     break;
                 } else {
-                    this.frameIndex++;
                     collectSubSeq.done(cursor);
                     cursor = -1;
                 }
             } else {
-                frameSequence.consumeDispatchQueue();
+                // multiple reasons for collect task not being ready:
+                // 1. dispatch task hasn't been published
+                frameSequence.stealDispatchQueue();
             }
         } while (this.frameIndex + 1 < frameCount);
     }

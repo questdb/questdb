@@ -53,21 +53,12 @@ public class PageFrameDispatchJob implements Job {
         }
     }
 
-    @Override
-    public boolean run(int workerId) {
-        final long dispatchCursor = dispatchSubSeq.next();
-        if (dispatchCursor > -1) {
-            try {
-                handleTask(dispatchQueue.get(dispatchCursor).getFrameSequence(), records[workerId], messageBus);
-            } finally {
-                dispatchSubSeq.done(dispatchCursor);
-            }
-            return true;
-        }
-        return false;
-    }
-
-    public static void handleTask(PageFrameSequence<?> frameSequence, PageAddressCacheRecord record, MessageBus messageBus) {
+    public static void handleTask(
+            PageFrameSequence<?> frameSequence,
+            PageAddressCacheRecord record,
+            MessageBus messageBus,
+            boolean workStealingMode
+    ) {
         final int shard = frameSequence.getShard();
         final int frameCount = frameSequence.getFrameCount();
         final RingQueue<PageFrameReduceTask> queue = messageBus.getPageFrameReduceQueue(shard);
@@ -84,7 +75,10 @@ public class PageFrameDispatchJob implements Job {
         final AtomicInteger framesReducedCounter = frameSequence.getReduceCounter();
 
         long cursor;
-        for (int i = 0; i < frameCount; i++) {
+        int i = frameSequence.getDispatchStartIndex();
+        frameSequence.setDispatchStartIndex(frameCount);
+        OUT:
+        for (; i < frameCount; i++) {
             // We cannot process work on this thread. If we do the consumer will
             // never get the executions results. Consumer only picks ready to go
             // tasks from the queue.
@@ -96,18 +90,25 @@ public class PageFrameDispatchJob implements Job {
                     break;
                 } else {
                     // start stealing work to unload the queue
-                    stealWork(messageBus, shard, queue, reduceSubSeq, cleanupSubSeq, record);
+                    if (stealWork(messageBus, shard, queue, reduceSubSeq, cleanupSubSeq, record) || !workStealingMode) {
+                        continue;
+                    }
+                    frameSequence.setDispatchStartIndex(i);
+                    break OUT;
                 }
             }
         }
 
         // join the gang to consume published tasks
         while (framesReducedCounter.get() < frameCount) {
-            stealWork(messageBus, shard, queue, reduceSubSeq, cleanupSubSeq, record);
+            if (stealWork(messageBus, shard, queue, reduceSubSeq, cleanupSubSeq, record) || !workStealingMode) {
+                continue;
+            }
+            break;
         }
     }
 
-    public static void stealWork(
+    public static boolean stealWork(
             MessageBus messageBus,
             int shard,
             RingQueue<PageFrameReduceTask> queue,
@@ -126,6 +127,27 @@ public class PageFrameDispatchJob implements Job {
                         )
         ) {
             LockSupport.parkNanos(1);
+            return false;
         }
+        return true;
+    }
+
+    @Override
+    public boolean run(int workerId) {
+        final long dispatchCursor = dispatchSubSeq.next();
+        if (dispatchCursor > -1) {
+            try {
+                handleTask(
+                        dispatchQueue.get(dispatchCursor).getFrameSequence(),
+                        records[workerId],
+                        messageBus,
+                        false
+                );
+            } finally {
+                dispatchSubSeq.done(dispatchCursor);
+            }
+            return true;
+        }
+        return false;
     }
 }
