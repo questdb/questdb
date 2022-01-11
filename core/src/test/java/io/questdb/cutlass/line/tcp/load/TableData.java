@@ -27,10 +27,11 @@ package io.questdb.cutlass.line.tcp.load;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableWriter;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.IntLongPriorityQueue;
 import io.questdb.std.ObjList;
 
-import java.util.concurrent.locks.LockSupport;
+import java.util.concurrent.TimeUnit;
 
 import static io.questdb.cairo.ColumnType.*;
 
@@ -38,8 +39,8 @@ public class TableData {
     private final CharSequence tableName;
     private final ObjList<LineData> rows = new ObjList<>();
     private final IntLongPriorityQueue index = new IntLongPriorityQueue();
+    private final SOCountDownLatch readyLatch = new SOCountDownLatch(1);
 
-    private volatile boolean ready = false;
     private volatile boolean checked = false;
 
     public TableData(CharSequence tableName) {
@@ -51,13 +52,13 @@ public class TableData {
     }
 
     public void setReady(TableWriter writer) {
-        ready = size() <= writer.size();
+        if (size() <= writer.size()) {
+            readyLatch.countDown();
+        }
     }
 
-    public void await() {
-        while (!ready) {
-            LockSupport.parkNanos(10);
-        }
+    public boolean await(long seconds) {
+        return readyLatch.await(TimeUnit.SECONDS.toNanos(seconds));
     }
 
     public boolean isChecked() {
