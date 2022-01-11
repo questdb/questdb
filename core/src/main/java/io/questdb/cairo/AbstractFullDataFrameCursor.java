@@ -72,7 +72,7 @@ public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
     }
 
     protected class FullTableDataFrame implements DataFrame {
-        final static private long rowLo = 0;
+        protected long rowLo = 0;
         protected long rowHi;
         protected int partitionIndex;
 
