@@ -1301,6 +1301,40 @@ public class TimestampQueryTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testTimestampDifferentThanFixedValue() throws Exception {
+        assertQuery(
+                "t\n" +
+                        "1970-01-01T00:00:01.000000Z\n" +
+                        "1970-01-01T00:00:02.000000Z\n",
+                "select t from x where t != to_timestamp('1970-01-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ",
+                "create table x as (select timestamp_sequence(0, 1000000) t from long_sequence(3)) timestamp(t)",
+                "t",
+                null,
+                null,
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testTimestampDifferentThanNonFixedValue() throws Exception {
+        assertQuery(
+                "t\n" +
+                        "1970-01-01T00:00:00.000000Z\n" +
+                        "1970-01-01T00:00:01.000000Z\n",
+                "select t from x where t != to_timestamp('201' || rnd_long(0,9,0),'yyyy')",
+                "create table x as (select timestamp_sequence(0, 1000000) t from long_sequence(2)) timestamp(t)",
+                "t",
+                null,
+                null,
+                true,
+                true,
+                false
+        );
+    }
+
     private void assertTimestampTtFailedQuery(String expectedError, String query) {
         assertTimestampTtFailedQuery0(expectedError, query);
         String dtsQuery = query.replace("nts", "dts");
