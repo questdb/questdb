@@ -53,6 +53,11 @@ int64_t find_latest_for_key(int64_t k,
         bool is_offset_in_mapped_area = tail.offset() + tail.memory_size() <= value_memory_size;
         bool is_inconsistent = !key.is_block_consistent || !is_offset_in_mapped_area;
         if (is_inconsistent) {
+            // first value block can be outside of file mapping as well
+            bool inside_mapped_area = inconsistent_tail.offset() + inconsistent_tail.memory_size() <= value_memory_size;
+            if(!inside_mapped_area) {
+                return -1;
+            }
             // can trust only first block offset
             int64_t block_traversed = 1;
             while (inconsistent_tail.next_offset()

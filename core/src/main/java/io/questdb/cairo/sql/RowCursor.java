@@ -37,4 +37,11 @@ public interface RowCursor {
      * @return numeric index of the next row
      */
     long next();
+
+    /**
+     * Iterates or jumps to given position.
+     */
+    default void jumpTo(long position) {
+        while (position-- > 0 && hasNext()) next();
+    }
 }

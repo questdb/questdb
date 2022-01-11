@@ -52,8 +52,6 @@ public interface LineTcpReceiverConfiguration {
      */
     long getMaintenanceInterval();
 
-    double getMaxLoadRatio();
-
     int getMaxMeasurementSize();
 
     MicrosecondClock getMicrosecondClock();
@@ -61,8 +59,6 @@ public interface LineTcpReceiverConfiguration {
     MillisecondClock getMillisecondClock();
 
     long getWriterIdleTimeout();
-
-    int getNUpdatesPerLoadRebalance();
 
     IODispatcherConfiguration getNetDispatcherConfiguration();
 
