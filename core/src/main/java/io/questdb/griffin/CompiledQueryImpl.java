@@ -156,6 +156,10 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
+    CompiledQuery ofVacuum() {
+        return of(VACUUM);
+    }
+
     CompiledQuery ofBackupTable() {
         return of(BACKUP_TABLE);
     }

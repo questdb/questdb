@@ -326,7 +326,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 if (txnLocks == 0 && txFile.unsafeReadPartitionTableVersion() > txFile.getPartitionTableVersion()) {
                     // Last lock for this txn is released and this is not latest txn number
                     // Schedule a job to clean up partition versions this reader may held
-                    schedulePurgeO3Partitions();
+                    schedulePurgeO3Partitions(messageBus, tableName);
                 }
             }
         }
@@ -1315,17 +1315,17 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void schedulePurgeO3Partitions() {
+    private void schedulePurgeO3Partitions(MessageBus messageBus, String tableName) {
         final MPSequence seq = messageBus.getO3PurgeDiscoveryPubSeq();
         long cursor = seq.next();
         if (cursor > -1) {
-            O3PurgeDiscoveryTask task = messageBus.getO3PurgeDiscoveryQueue().get(cursor);
+            O3PurgeDiscoveryTask task = this.messageBus.getO3PurgeDiscoveryQueue().get(cursor);
             task.of(tableName, this.partitionBy);
             seq.done(cursor);
         } else {
             LOG.error()
                     .$("could queue to purge [errno=").$(ff.errno())
-                    .$(", table=").$(tableName)
+                    .$(", table=").$(this.tableName)
                     .$(", txn=").$(txn)
                     .$(']').$();
         }

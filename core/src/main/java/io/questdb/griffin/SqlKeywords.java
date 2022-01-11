@@ -376,16 +376,18 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == '|';
     }
 
-    public static boolean isCopyKeyword(CharSequence tok) {
-        if (tok.length() != 4) {
+    public static boolean isVacuumKeyword(CharSequence tok) {
+        if (tok.length() != 6) {
             return false;
         }
 
         int i = 0;
-        return (tok.charAt(i++) | 32) == 'c'
-                && (tok.charAt(i++) | 32) == 'o'
-                && (tok.charAt(i++) | 32) == 'p'
-                && (tok.charAt(i) | 32) == 'y';
+        return (tok.charAt(i++) | 32) == 'v'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 'c'
+                && (tok.charAt(i++) | 32) == 'c'
+                && (tok.charAt(i++) | 32) == 'u'
+                && (tok.charAt(i) | 32) == 'm';
     }
 
     public static boolean isCountKeyword(CharSequence tok) {
@@ -1039,6 +1041,24 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'n';
     }
 
+    public static boolean isPartitionsKeyword(CharSequence tok) {
+        if (tok.length() != 10) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'p'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 'r'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == 'n'
+                && (tok.charAt(i) | 32) == 's';
+    }
+
     public static boolean isPrecisionKeyword(CharSequence tok) {
         if (tok.length() != 9) {
             return false;
@@ -1395,6 +1415,18 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'o'
                 && (tok.charAt(i++) | 32) == 'c'
                 && (tok.charAt(i) | 32) == 'k';
+    }
+
+    public static boolean isCopyKeyword(CharSequence tok) {
+        if (tok.length() != 4) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'c'
+                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == 'p'
+                && (tok.charAt(i) | 32) == 'y';
     }
 
     public static boolean isValuesKeyword(CharSequence tok) {

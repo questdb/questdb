@@ -46,10 +46,12 @@ import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.MPSequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.tasks.O3PurgeDiscoveryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -136,6 +138,7 @@ public class SqlCompiler implements Closeable {
         final KeywordBasedExecutor dropTable = this::dropTable;
         final KeywordBasedExecutor sqlBackup = backupAgent::sqlBackup;
         final KeywordBasedExecutor sqlShow = this::sqlShow;
+        final KeywordBasedExecutor vacuumTable = this::vacuum;
 
         keywordBasedExecutors.put("truncate", truncateTables);
         keywordBasedExecutors.put("TRUNCATE", truncateTables);
@@ -159,6 +162,8 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("BACKUP", sqlBackup);
         keywordBasedExecutors.put("show", sqlShow);
         keywordBasedExecutors.put("SHOW", sqlShow);
+        keywordBasedExecutors.put("vacuum", vacuumTable);
+        keywordBasedExecutors.put("VACUUM", vacuumTable);
 
         configureLexer(lexer);
 
@@ -2285,6 +2290,18 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofRepair();
     }
 
+    private void schedulePurgeO3Partitions(CharSequence tableName, int partitionBy) {
+        final MPSequence seq = messageBus.getO3PurgeDiscoveryPubSeq();
+        long cursor = seq.next();
+        if (cursor > -1) {
+            O3PurgeDiscoveryTask task = this.messageBus.getO3PurgeDiscoveryQueue().get(cursor);
+            task.of(tableName, partitionBy);
+            seq.done(cursor);
+            return;
+        }
+        throw CairoException.instance(0).put("cannot schedule vacuum action, queue is full");
+    }
+
     void setFullFatJoins(boolean value) {
         codeGenerator.setFullFatJoins(value);
     }
@@ -2462,6 +2479,28 @@ public class SqlCompiler implements Closeable {
             tableWriters.clear();
         }
         return compiledQuery.ofTruncate();
+    }
+
+    private CompiledQuery vacuum(SqlExecutionContext executionContext) throws SqlException {
+        CharSequence tok = expectToken(lexer, "'partitions'");
+        if (isPartitionsKeyword(tok)) {
+            CharSequence tableName = expectToken(lexer, "table name");
+            tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tableName), lexer.lastTokenPosition());
+            CharSequence eol = SqlUtil.fetchNext(lexer);
+            if (eol == null || Chars.equals(eol, ';')) {
+                tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
+                try (TableReader rdr = engine.getReader(executionContext.getCairoSecurityContext(), tableName)) {
+                    int partitionBy = rdr.getMetadata().getPartitionBy();
+                    if (PartitionBy.isPartitioned(partitionBy)) {
+                        schedulePurgeO3Partitions(tableName, partitionBy);
+                        return compiledQuery.ofVacuum();
+                    }
+                    throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tableName).put("' is not partitioned");
+                }
+            }
+            throw SqlException.$(lexer.lastTokenPosition(), "end of line or ';' expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), "'partitions' expected");
     }
 
     private Function validateAndConsume(
