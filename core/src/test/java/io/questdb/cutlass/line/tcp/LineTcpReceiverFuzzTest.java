@@ -88,7 +88,7 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testAddColumns() throws Exception {
-        initLoadParameters(50, 10, 10, 10, 100);
+        initLoadParameters(25, 10, 10, 10, 100);
         initFuzzParameters(-1, -1, -1, 4, -1, false);
         runTest();
     }
