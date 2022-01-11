@@ -200,7 +200,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static int getOrderByDirectionOrDefault(QueryModel model, int index) {
         IntList direction = model.getOrderByDirectionAdvice();
         if (index >= direction.size()) {
-            return 0;
+            return ORDER_DIRECTION_ASCENDING;
         }
         return model.getOrderByDirectionAdvice().getQuick(index);
     }
@@ -1176,13 +1176,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         assert intrinsicModel.keyValues.size() == 0;
         // get the latest rows for all values of "latest by" column
 
-        if (indexed) {
-            return new LatestByAllIndexedFilteredAfterRecordCursorFactory(
+        if (indexed && filter == null) {
+            return new LatestByAllIndexedRecordCursorFactory(
                     metadata,
                     configuration,
                     dataFrameCursorFactory,
                     latestByIndex,
-                    filter,
                     columnIndexes,
                     prefixes
             );
@@ -1302,7 +1301,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // if first column index is the same as timestamp of underling record cursor factory
                 // we could have two possibilities:
                 // 1. if we only have one column to order by - the cursor would already be ordered
-                //    by timestamp; we have nothing to do
+                //    by timestamp (either ASC or DESC); we have nothing to do
                 // 2. metadata of the new cursor will have timestamp
 
                 RecordMetadata orderedMetadata;
@@ -1310,8 +1309,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     CharSequence column = columnNames.getQuick(0);
                     int index = metadata.getColumnIndexQuiet(column);
                     if (index == metadata.getTimestampIndex()) {
-                        if (size == 1 && orderBy.get(column) == QueryModel.ORDER_DIRECTION_ASCENDING) {
-                            return recordCursorFactory;
+                        if (size == 1) {
+                            if (orderBy.get(column) == QueryModel.ORDER_DIRECTION_ASCENDING) {
+                                return recordCursorFactory;
+                            } else if (orderBy.get(column) == ORDER_DIRECTION_DESCENDING &&
+                                    recordCursorFactory.hasDescendingOrder()) {
+                                return recordCursorFactory;
+                            }
                         }
                     }
                 }
@@ -2894,15 +2898,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // no where clause
             if (latestByColumnCount == 0) {
-
                 // construct new metadata, which is a copy of what we constructed just above, but
                 // in the interest of isolating problems we will only affect this factory
+
+                AbstractDataFrameCursorFactory cursorFactory;
+                RowCursorFactory rowCursorFactory;
+
+                if (isOrderDescendingByDesignatedTimestampOnly(model)) {
+                    cursorFactory = new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion());
+                    rowCursorFactory = new BwdDataFrameRowCursorFactory();
+                } else {
+                    cursorFactory = new FullFwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion());
+                    rowCursorFactory = new DataFrameRowCursorFactory();
+                }
 
                 return new DataFrameRecordCursorFactory(
                         configuration,
                         myMeta,
-                        new FullFwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()),
-                        new DataFrameRowCursorFactory(),
+                        cursorFactory,
+                        rowCursorFactory,
                         false,
                         null,
                         framingSupported,
@@ -2913,12 +2927,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // listColumnFilterA = latest by column indexes
             if (latestByColumnCount == 1 && myMeta.isColumnIndexed(listColumnFilterA.getColumnIndexFactored(0))) {
-                return new LatestByAllIndexedFilteredAfterRecordCursorFactory(
+                return new LatestByAllIndexedRecordCursorFactory(
                         myMeta,
                         configuration,
                         new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()),
                         listColumnFilterA.getColumnIndexFactored(0),
-                        null,
                         columnIndexes,
                         prefixes
                 );
@@ -2934,6 +2947,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     columnIndexes
             );
         }
+    }
+
+    private boolean isOrderDescendingByDesignatedTimestampOnly(QueryModel model) {
+        return model.getOrderByAdvice().size() == 1 && model.getTimestamp() != null &&
+                Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token, model.getTimestamp().token) &&
+                getOrderByDirectionOrDefault(model, 0) == ORDER_DIRECTION_DESCENDING;
     }
 
     private int prepareLatestByColumnIndexes(ObjList<ExpressionNode> latestBy, GenericRecordMetadata myMeta) throws SqlException {

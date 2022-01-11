@@ -68,7 +68,9 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     @Override
     public void close() {
         base.close();
-        chain.close();
+        if (chain != null) {
+            chain.close();
+        }
     }
 
     @Override

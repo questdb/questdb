@@ -24,8 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -54,6 +56,16 @@ public class O3Utils {
         for (int i = 0; i < workerCount; i++) {
             temp8ByteBuf[i] = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_O3);
         }
+    }
+
+    public static void setupWorkerPool(WorkerPool workerPool, MessageBus messageBus) {
+        workerPool.assign(new O3PurgeDiscoveryJob(messageBus, workerPool.getWorkerCount()));
+        workerPool.assign(new O3PurgeJob(messageBus));
+        workerPool.assign(new O3PartitionJob(messageBus));
+        workerPool.assign(new O3OpenColumnJob(messageBus));
+        workerPool.assign(new O3CopyJob(messageBus));
+        workerPool.assign(new O3CallbackJob(messageBus));
+        initBuf(workerPool.getWorkerCount() + 1);
     }
 
     static long get8ByteBuf(int worker) {
