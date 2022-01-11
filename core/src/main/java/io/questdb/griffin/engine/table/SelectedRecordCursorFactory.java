@@ -68,4 +68,8 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
     }
+
+    public boolean hasDescendingOrder() {
+        return base.hasDescendingOrder();
+    }
 }

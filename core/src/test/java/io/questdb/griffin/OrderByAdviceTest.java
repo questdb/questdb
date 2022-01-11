@@ -470,7 +470,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "    ask int,\n" +
                         "    ts timestamp\n" +
                         ") timestamp(ts) partition by DAY",
-                null,
+                "ts",
                 "insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
                         "        rnd_int() bid, \n" +
                         "        rnd_int() ask, \n" +

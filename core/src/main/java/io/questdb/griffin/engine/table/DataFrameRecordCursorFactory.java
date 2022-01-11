@@ -79,6 +79,10 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         Misc.free(dataFrameCursorFactory);
     }
 
+    public boolean hasDescendingOrder() {
+        return dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_DESC;
+    }
+
     @Override
     public boolean followedOrderByAdvice() {
         return followsOrderByAdvice;

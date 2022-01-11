@@ -116,4 +116,8 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
     default boolean implementsLimit() {
         return false;
     }
+
+    default boolean hasDescendingOrder() {
+        return false;
+    }
 }

@@ -7,7 +7,9 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_C_VISIBILITY_PRESET hidden)
-set(CMAKE_VERBOSE_MAKEFILE ON)
+
+# use this is for debug purposes
+#set(CMAKE_VERBOSE_MAKEFILE ON)
 
 # deal with windows slashes in JAVA_HOME
 if ($ENV{JAVA_HOME})
@@ -157,7 +159,9 @@ endif()
 include("${asmjit_SOURCE_DIR}/CMakeLists.txt")
 include_directories(${asmjit_SOURCE_DIR}/src SYSTEM)
 add_compile_definitions(ASMJIT_NO_STDCXX)
-add_compile_definitions(ASMJIT_BUILD_DEBUG)
+
+# use this is for debug purposes
+#add_compile_definitions(ASMJIT_BUILD_DEBUG)
 
 if (NOT DEFINED JIT_TEST)
     set(JIT_TEST FALSE)

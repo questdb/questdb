@@ -22,34 +22,24 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.engine.table;
 
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Sinkable;
-import io.questdb.std.str.CharSink;
+import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.RowCursorFactory;
 
-import java.io.Closeable;
+public class BwdDataFrameRowCursorFactory implements RowCursorFactory {
+    private final DataFrameBwdRowCursor cursor = new DataFrameBwdRowCursor();
 
-/**
- * A factory interface for dataframe cursors
- */
-public interface DataFrameCursorFactory extends Sinkable, Closeable {
-
-    DataFrameCursor getCursor(SqlExecutionContext executionContext) throws SqlException;
-
-    /**
-     * @param sink to print data frame cursor to
-     */
-    default void toSink(CharSink sink) {
-        throw new UnsupportedOperationException();
+    @Override
+    public RowCursor getCursor(DataFrame dataFrame) {
+        cursor.of(dataFrame);
+        return cursor;
     }
 
-    /**
-     * Returns 0 for ASC, 1 for DESC
-     */
-    int getOrder();
-
-    int ORDER_ASC = 0;
-    int ORDER_DESC = 1;
+    @Override
+    public boolean isEntity() {
+        return true;
+    }
 }
+

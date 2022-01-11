@@ -162,7 +162,7 @@ public class LatestByParallelTest {
                 " from long_sequence(20)" +
                 "), index(b) timestamp(k) partition by DAY";
 
-        final String query = "select a,k,b from x where a > 40 latest on k partition by b";
+        final String query = "select * from (select a,k,b from x latest on k partition by b) where a > 40";
 
         assertQuery(compiler, sqlExecutionContext, expected, ddl, query);
     }

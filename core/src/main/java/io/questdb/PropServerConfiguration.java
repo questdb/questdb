@@ -227,7 +227,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerDataIndexKeyAppendPageSize;
     private final long writerDataIndexValueAppendPageSize;
     private final long writerAsyncCommandBusyWaitTimeout;
-    private final int writerAsyncCommandQueueCapcity;
     private final int writerTickRowsCountMod;
     private final long writerAsyncCommandMaxWaitTimeout;
     private final int cairoFilterQueueCapacity;
@@ -349,8 +348,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean lineTcpIOWorkerPoolHaltOnError;
     private long lineTcpIOWorkerYieldThreshold;
     private long lineTcpIOWorkerSleepThreshold;
-    private int lineTcpNUpdatesPerLoadRebalance;
-    private double lineTcpMaxLoadRatio;
     private long lineTcpMaintenanceInterval;
     private String lineTcpAuthDbPath;
     private int lineDefaultPartitionBy;
@@ -372,6 +369,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinRcvBufSize;
     private int httpMinSndBufSize;
     private long symbolCacheWaitUsBeforeReload;
+    private final int writerAsyncCommandQueueCapacity;
 
     public PropServerConfiguration(
             String root,
@@ -778,8 +776,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpIOWorkerPoolHaltOnError = getBoolean(properties, env, "line.tcp.io.halt.on.error", false);
                 this.lineTcpIOWorkerYieldThreshold = getLong(properties, env, "line.tcp.io.worker.yield.threshold", 10);
                 this.lineTcpIOWorkerSleepThreshold = getLong(properties, env, "line.tcp.io.worker.sleep.threshold", 10000);
-                this.lineTcpNUpdatesPerLoadRebalance = getInt(properties, env, "line.tcp.n.updates.per.load.balance", 10_000_000);
-                this.lineTcpMaxLoadRatio = getDouble(properties, env, "line.tcp.max.load.ratio", 1.9);
                 this.lineTcpMaintenanceInterval = getInt(properties, env, "line.tcp.maintenance.job.interval", 30_000);
                 this.lineTcpAuthDbPath = getString(properties, env, "line.tcp.auth.db.path", null);
                 String defaultPartitionByProperty = getString(properties, env, "line.tcp.default.partition.by", "DAY");
@@ -805,7 +801,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.writerAsyncCommandBusyWaitTimeout = getLong(properties, env, "cairo.writer.alter.busy.wait.timeout.micro", 500_000);
             this.writerAsyncCommandMaxWaitTimeout = getLong(properties, env, "cairo.writer.alter.max.wait.timeout.micro", 30_000_000L);
             this.writerTickRowsCountMod = Numbers.ceilPow2(getInt(properties, env, "cairo.writer.tick.rows.count", 1024)) - 1;
-            this.writerAsyncCommandQueueCapcity = Numbers.ceilPow2(getInt(properties, env, "cairo.writer.command.queue.capacity", 32));
+            this.writerAsyncCommandQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.writer.command.queue.capacity", 32));
 
             this.buildInformation = buildInformation;
             this.binaryEncodingMaxLength = getInt(properties, env, "binary.data.encoding.maxlength", 32768);
@@ -1964,53 +1960,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlJitBindVarsMemoryMaxPages() {
-            return sqlJitBindVarsMemoryMaxPages;
-        }
-
-        @Override
-        public long getSqlJitBindVarsMemoryPageSize() {
-            return sqlJitBindVarsMemoryPageSize;
-        }
-
-        @Override
-        public int getSqlJitIRMemoryMaxPages() {
-            return sqlJitIRMemoryMaxPages;
-        }
-
-        @Override
-        public long getSqlJitIRMemoryPageSize() {
-            return sqlJitIRMemoryPageSize;
-        }
-
-        @Override
-        public int getSqlJitMode() {
-            return sqlJitMode;
-        }
-
-        @Override
-        public long getSqlJitPageAddressCacheThreshold() {
-            return sqlJitPageAddressCacheThreshold;
-        }
-
-        @Override
-        public int getSqlJitRowsThreshold() {
-            return sqlJitRowsThreshold;
-        }
-
-        @Override
         public int getSqlJoinContextPoolCapacity() {
             return sqlJoinContextPoolCapacity;
-        }
-
-        @Override
-        public int getSqlJoinMetadataMaxResizes() {
-            return sqlJoinMetadataMaxResizes;
-        }
-
-        @Override
-        public int getSqlJoinMetadataPageSize() {
-            return sqlJoinMetadataPageSize;
         }
 
         @Override
@@ -2079,9 +2030,51 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlSortValuePageSize() {
-            return sqlSortValuePageSize;
+        public int getSqlJoinMetadataPageSize() {
+            return sqlJoinMetadataPageSize;
         }
+
+        @Override
+        public int getSqlJoinMetadataMaxResizes() {
+            return sqlJoinMetadataMaxResizes;
+        }
+
+
+        @Override
+        public int getSqlJitMode() {
+            return sqlJitMode;
+        }
+
+        @Override
+        public long getSqlJitIRMemoryPageSize() {
+            return sqlJitIRMemoryPageSize;
+        }
+
+        @Override
+        public int getSqlJitIRMemoryMaxPages() {
+            return sqlJitIRMemoryMaxPages;
+        }
+
+        @Override
+        public long getSqlJitBindVarsMemoryPageSize() {
+            return sqlJitBindVarsMemoryPageSize;
+        }
+
+        @Override
+        public int getSqlJitBindVarsMemoryMaxPages() {
+            return sqlJitBindVarsMemoryMaxPages;
+        }
+
+        @Override
+        public int getSqlJitRowsThreshold() {
+            return sqlJitRowsThreshold;
+        }
+
+        @Override
+        public long getSqlJitPageAddressCacheThreshold() {
+            return sqlJitPageAddressCacheThreshold;
+        }
+
 
         @Override
         public TelemetryConfiguration getTelemetryConfiguration() {
@@ -2125,7 +2118,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getWriterCommandQueueCapacity() {
-            return writerAsyncCommandQueueCapcity;
+            return writerAsyncCommandQueueCapacity;
         }
 
         @Override
@@ -2431,11 +2424,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public double getMaxLoadRatio() {
-            return lineTcpMaxLoadRatio;
-        }
-
-        @Override
         public int getMaxMeasurementSize() {
             return lineTcpMaxMeasurementSize;
         }
@@ -2453,11 +2441,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWriterIdleTimeout() {
             return minIdleMsBeforeWriterRelease;
-        }
-
-        @Override
-        public int getNUpdatesPerLoadRebalance() {
-            return lineTcpNUpdatesPerLoadRebalance;
         }
 
         @Override

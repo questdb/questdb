@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
 
 public class FullBwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {
@@ -37,5 +38,10 @@ public class FullBwdDataFrameCursorFactory extends AbstractDataFrameCursorFactor
     @Override
     public DataFrameCursor getCursor(SqlExecutionContext executionContext) {
         return cursor.of(getReader(executionContext.getCairoSecurityContext()));
+    }
+
+    @Override
+    public int getOrder() {
+        return ORDER_DESC;
     }
 }

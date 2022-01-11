@@ -24,7 +24,14 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.table.DataFrameRecordCursorFactory;
+import io.questdb.griffin.engine.table.DataFrameRowCursorFactory;
+import io.questdb.std.IntList;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -36,91 +43,91 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
 
     //normal table without designated timestamp with rows (including duplicates) in descending order
     @Test
-    public void test_noDesignatedTsTableWithDuplicates_select_all() throws Exception {
-        prepare_no_designated_ts_table_with_duplicates();
+    public void testNoDesignatedTsTableWithDuplicatesSelectAll() throws Exception {
+        prepareNoDesignatedTsTableWithDuplicates();
 
         assertQuery("l\n1\n1\n2\n2\n3\n3\n4\n4\n5\n5\n6\n6\n7\n7\n8\n8\n9\n9\n10\n10\n", "select l from tab order by ts");
     }
 
     @Test
-    public void test_noDesignatedTsTableWithDuplicates_select_first_N() throws Exception {
-        prepare_no_designated_ts_table_with_duplicates();
+    public void testNoDesignatedTsTableWithDuplicatesSelectFirstN() throws Exception {
+        prepareNoDesignatedTsTableWithDuplicates();
 
         assertQuery("l\n1\n1\n2\n", "select l from tab order by ts limit 3");
     }
 
     @Test
-    public void test_noDesignatedTsTableWithDuplicates_select_middle_N_from_start() throws Exception {
-        prepare_no_designated_ts_table_with_duplicates();
+    public void testNoDesignatedTsTableWithDuplicatesSelectMiddleNfromStart() throws Exception {
+        prepareNoDesignatedTsTableWithDuplicates();
 
         assertQuery("l\n8\n9\n9\n", "select l from tab order by ts limit 15,18");
     }
 
     @Test
-    public void test_noDesignatedTsTableWithDuplicates_select_N_beyond_end_returns_empty_result() throws Exception {
-        prepare_no_designated_ts_table_with_duplicates();
+    public void testNoDesignatedTsTableWithDuplicatesSelectNbeyondEndReturnsEmptyResult() throws Exception {
+        prepareNoDesignatedTsTableWithDuplicates();
 
         assertQuery("l\n", "select l from tab order by ts limit 21,22");
     }
 
     @Test
-    public void test_noDesignatedTsTableWithDuplicates_select_N_before_start_returns_empty_result() throws Exception {
-        prepare_no_designated_ts_table_with_duplicates();
+    public void testNoDesignatedTsTableWithDuplicatesSelectNbeforeStartReturnsEmptyResult() throws Exception {
+        prepareNoDesignatedTsTableWithDuplicates();
 
         assertQuery("l\n", "select l from tab order by ts limit -25,-21");
     }
 
     @Test
-    public void test_noDesignatedTsTableWithDuplicates_select_last_N() throws Exception {
-        prepare_no_designated_ts_table_with_duplicates();
+    public void testNoDesignatedTsTableWithDuplicatesSelectLastN() throws Exception {
+        prepareNoDesignatedTsTableWithDuplicates();
 
         assertQuery("l\n9\n10\n10\n", "select l from tab order by ts limit -3");
     }
 
     @Test
-    public void test_noDesignatedTsTableWithDuplicates_select_middle_N_from_end() throws Exception {
-        prepare_no_designated_ts_table_with_duplicates();
+    public void testNoDesignatedTsTableWithDuplicatesSelectMiddleNfromEnd() throws Exception {
+        prepareNoDesignatedTsTableWithDuplicates();
 
         assertQuery("l\n2\n2\n3\n", "select l from tab order by ts limit -18,-15");
     }
 
     @Test
-    public void test_noDesignatedTsTableWithDuplicates_select_middle_N_from_both_directions() throws Exception {
-        prepare_no_designated_ts_table_with_duplicates();
+    public void testNoDesignatedTsTableWithDuplicatesSelectMiddleNfromBothDirections() throws Exception {
+        prepareNoDesignatedTsTableWithDuplicates();
 
         assertQuery("l\n5\n6\n", "select l from tab order by ts limit 9,-9");
     }
 
     @Test
-    public void test_noDesignatedTsTableWithDuplicates_select_N_intersecting_end() throws Exception {
-        prepare_no_designated_ts_table_with_duplicates();
+    public void testNoDesignatedTsTableWithDuplicatesSelectNintersectingEnd() throws Exception {
+        prepareNoDesignatedTsTableWithDuplicates();
 
         assertQuery("l\n10\n10\n", "select l from tab order by ts limit 18,22");
     }
 
     @Test
-    public void test_noDesignatedTsTableWithDuplicates_select_N_intersecting_start() throws Exception {
-        prepare_no_designated_ts_table_with_duplicates();
+    public void testNoDesignatedTsTableWithDuplicatesSelectNintersectingStart() throws Exception {
+        prepareNoDesignatedTsTableWithDuplicates();
 
         assertQuery("l\n1\n1\n", "select l from tab order by ts limit -22,-18");
     }
 
     @Test
-    public void test_noDesignatedTsTableWithDuplicates_select_first_N_with_same_lo_hi_returns_no_rows() throws Exception {
-        prepare_no_designated_ts_table_with_duplicates();
+    public void testNoDesignatedTsTableWithDuplicatesSelectFirstNwithSameLoHiReturnsNoRows() throws Exception {
+        prepareNoDesignatedTsTableWithDuplicates();
 
         assertQuery("l\n", "select l from tab order by ts limit 8,8");
     }
 
     @Test
-    public void test_noDesignatedTsTableWithDuplicates_select_last_N_with_same_lo_hi_returns_no_rows() throws Exception {
-        prepare_no_designated_ts_table_with_duplicates();
+    public void testNoDesignatedTsTableWithDuplicatesSelectLastNwithSameLoHiReturnsNoRows() throws Exception {
+        prepareNoDesignatedTsTableWithDuplicates();
 
         assertQuery("l\n", "select l from tab order by ts limit -8,-8");
     }
 
     //creates test table in descending and then ascending order order 10,9,..,1, 1,2,..,10
-    private void prepare_no_designated_ts_table_with_duplicates() throws Exception {
+    private void prepareNoDesignatedTsTableWithDuplicates() throws Exception {
         runQueries("CREATE TABLE tab(l long, ts TIMESTAMP);",
                 "insert into tab " +
                         "  select 11-x," +
@@ -134,91 +141,91 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
 
     //normal table without designated timestamp with rows in descending order
     @Test
-    public void test_noDesignatedTsTable_select_all() throws Exception {
-        prepare_no_designated_ts_table();
+    public void testNoDesignatedTsTableSelectAll() throws Exception {
+        prepareNoDesignatedTsTable();
 
         assertQuery("l\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n", "select l from tab order by ts");
     }
 
     @Test
-    public void test_noDesignatedTsTable_select_first_N() throws Exception {
-        prepare_no_designated_ts_table();
+    public void testNoDesignatedTsTableSelectFirstN() throws Exception {
+        prepareNoDesignatedTsTable();
 
         assertQuery("l\n1\n2\n3\n", "select l from tab order by ts limit 3");
     }
 
     @Test
-    public void test_noDesignatedTsTable_select_middle_N_from_start() throws Exception {
-        prepare_no_designated_ts_table();
+    public void testNoDesignatedTsTableSelectMiddleNfromStart() throws Exception {
+        prepareNoDesignatedTsTable();
 
         assertQuery("l\n6\n7\n8\n", "select l from tab order by ts limit 5,8");
     }
 
     @Test
-    public void test_noDesignatedTsTable_select_N_beyond_end_returns_empty_result() throws Exception {
-        prepare_no_designated_ts_table();
+    public void testNoDesignatedTsTableSelectNbeyondEndReturnsEmptyResult() throws Exception {
+        prepareNoDesignatedTsTable();
 
         assertQuery("l\n", "select l from tab order by ts limit 11,12");
     }
 
     @Test
-    public void test_noDesignatedTsTable_select_N_before_start_returns_empty_result() throws Exception {
-        prepare_no_designated_ts_table();
+    public void testNoDesignatedTsTableSelectNbeforeStartReturnsEmptyResult() throws Exception {
+        prepareNoDesignatedTsTable();
 
         assertQuery("l\n", "select l from tab order by ts limit -11,-15");
     }
 
     @Test
-    public void test_noDesignatedTsTable_select_last_N() throws Exception {
-        prepare_no_designated_ts_table();
+    public void testNoDesignatedTsTableSelectLastN() throws Exception {
+        prepareNoDesignatedTsTable();
 
         assertQuery("l\n8\n9\n10\n", "select l from tab order by ts limit -3");
     }
 
     @Test
-    public void test_noDesignatedTsTable_select_middle_N_from_end() throws Exception {
-        prepare_no_designated_ts_table();
+    public void testNoDesignatedTsTableSelectMiddleNfromEnd() throws Exception {
+        prepareNoDesignatedTsTable();
 
         assertQuery("l\n3\n4\n5\n", "select l from tab order by ts limit -8,-5");
     }
 
     @Test
-    public void test_noDesignatedTsTable_select_middle_N_from_both_directions() throws Exception {
-        prepare_no_designated_ts_table();
+    public void testNoDesignatedTsTableSelectMiddleNfromBothDirections() throws Exception {
+        prepareNoDesignatedTsTable();
 
         assertQuery("l\n5\n6\n", "select l from tab order by ts limit 4,-4");
     }
 
     @Test
-    public void test_noDesignatedTsTable_select_N_intersecting_end() throws Exception {
-        prepare_no_designated_ts_table();
+    public void testNoDesignatedTsTableSelectNintersectingEnd() throws Exception {
+        prepareNoDesignatedTsTable();
 
         assertQuery("l\n9\n10\n", "select l from tab order by ts limit 8,12");
     }
 
     @Test
-    public void test_noDesignatedTsTable_select_N_intersecting_start() throws Exception {
-        prepare_no_designated_ts_table();
+    public void testNoDesignatedTsTableSelectNintersectingStart() throws Exception {
+        prepareNoDesignatedTsTable();
 
         assertQuery("l\n1\n2\n", "select l from tab order by ts limit -12,-8");
     }
 
     @Test
-    public void test_noDesignatedTsTable_select_first_N_with_same_lo_hi_returns_no_rows() throws Exception {
-        prepare_no_designated_ts_table();
+    public void testNoDesignatedTsTableSelectFirstNwithSameLoHiReturnsNoRows() throws Exception {
+        prepareNoDesignatedTsTable();
 
         assertQuery("l\n", "select l from tab order by ts limit 8,8");
     }
 
     @Test
-    public void test_noDesignatedTsTable_select_last_N_with_same_lo_hi_returns_no_rows() throws Exception {
-        prepare_no_designated_ts_table();
+    public void testNoDesignatedTsTableSelectLastNwithSameLoHiReturnsNoRows() throws Exception {
+        prepareNoDesignatedTsTable();
 
         assertQuery("l\n", "select l from tab order by ts limit -8,-8");
     }
 
     //creates test table in descending order 10,9,..,1
-    private void prepare_no_designated_ts_table() throws Exception {
+    private void prepareNoDesignatedTsTable() throws Exception {
         runQueries("CREATE TABLE tab(l long, ts TIMESTAMP);",
                 "insert into tab " +
                         "  select 11-x," +
@@ -228,179 +235,179 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
 
     //empty table
     @Test
-    public void test_emptyTable_select_all_returns_no_rows() throws Exception {
-        create_empty_table();
+    public void testEmptyTableSelectAllReturnsNoRows() throws Exception {
+        createEmptyTable();
 
         assertQuery("l\n", "select l from tab order by ts");
     }
 
     @Test
-    public void test_emptyTable_select_first_N_returns_no_rows() throws Exception {
-        create_empty_table();
+    public void testEmptyTableSelectFirstNreturnsNoRows() throws Exception {
+        createEmptyTable();
 
         assertQuery("l\n", "select l from tab order by ts limit 3");
     }
 
     @Test
-    public void test_emptyTable_select_middle_N_from_start_returns_no_rows() throws Exception {
-        create_empty_table();
+    public void testEmptyTableSelectMiddleNfromStartReturnsNoRows() throws Exception {
+        createEmptyTable();
 
         assertQuery("l\n", "select l from tab order by ts limit 5,8");
     }
 
     @Test
-    public void test_emptyTable_select_N_intersecting_end_returns_empty_result() throws Exception {
-        create_empty_table();
+    public void testEmptyTableSelectNintersectingEndReturnsEmptyResult() throws Exception {
+        createEmptyTable();
 
         assertQuery("l\n", "select l from tab order by ts limit 8,12");
     }
 
     @Test
-    public void test_emptyTable_select_N_beyond_end_returns_empty_result() throws Exception {
-        create_empty_table();
+    public void testEmptyTableSelectNbeyondEndReturnsEmptyResult() throws Exception {
+        createEmptyTable();
 
         assertQuery("l\n", "select l from tab order by ts limit 11,12");
     }
 
     @Test
-    public void test_emptyTable_select_N_before_start_returns_empty_result() throws Exception {
-        create_empty_table();
+    public void testEmptyTableSelectNbeforeStartReturnsEmptyResult() throws Exception {
+        createEmptyTable();
 
         assertQuery("l\n", "select l from tab order by ts limit -11,-15");
     }
 
     @Test
-    public void test_emptyTable_select_N_intersecting_start_returns_empty_result() throws Exception {
-        create_empty_table();
+    public void testEmptyTable_select_N_intersecting_start_returns_empty_result() throws Exception {
+        createEmptyTable();
 
         assertQuery("l\n", "select l from tab order by ts limit -8,-12");
     }
 
     @Test
-    public void test_emptyTable_select_last_N_returns_no_rows() throws Exception {
-        create_empty_table();
+    public void testEmptyTableSelectLastNreturnsNoRows() throws Exception {
+        createEmptyTable();
 
         assertQuery("l\n", "select l from tab order by ts limit -3");
     }
 
     @Test
-    public void test_emptyTable_select_middle_N_from_end_returns_no_rows() throws Exception {
-        create_empty_table();
+    public void testEmptyTableSelectMiddleNfromEndReturnsNoRows() throws Exception {
+        createEmptyTable();
 
         assertQuery("l\n", "select l from tab order by ts limit -8,-5");
     }
 
     @Test
-    public void test_emptyTable_select_middle_N_from_both_directions() throws Exception {
-        create_empty_table();
+    public void testEmptyTableSelectMiddleNfromBothDirections() throws Exception {
+        createEmptyTable();
 
         assertQuery("l\n", "select l from tab order by ts limit 4,-4");
     }
 
     @Test
-    public void test_emptyTable_select_first_N_with_same_lo_hi_returns_no_rows() throws Exception {
-        create_empty_table();
+    public void testEmptyTableSelectFirstNwithSameLoHiReturnsNoRows() throws Exception {
+        createEmptyTable();
 
         assertQuery("l\n", "select l from tab order by ts limit 8,8");
     }
 
     @Test
-    public void test_emptyTable_select_last_N_with_same_lo_hi_returns_no_rows() throws Exception {
-        create_empty_table();
+    public void testEmptyTableSelectLastNwithSameLoHiReturnsNoRows() throws Exception {
+        createEmptyTable();
 
         assertQuery("l\n", "select l from tab order by ts limit -8,-8");
     }
 
-    private void create_empty_table() throws Exception {
+    private void createEmptyTable() throws Exception {
         runQueries("CREATE TABLE tab(l long, ts TIMESTAMP) timestamp(ts);");
     }
 
     //regular table with one partition
     @Test
-    public void test_normalTable_select_all() throws Exception {
-        prepare_normal_table();
+    public void testNormalTableSelectAll() throws Exception {
+        prepareNormalTable();
 
         assertQuery("l\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n", "select l from tab order by ts");
     }
 
     @Test
-    public void test_normalTable_select_first_N() throws Exception {
-        prepare_normal_table();
+    public void testNormalTableSelectFirstN() throws Exception {
+        prepareNormalTable();
 
         assertQuery("l\n1\n2\n3\n", "select l from tab order by ts limit 3");
     }
 
     @Test
-    public void test_normalTable_select_middle_N_from_start() throws Exception {
-        prepare_normal_table();
+    public void testNormalTableSelectMiddleNfromStart() throws Exception {
+        prepareNormalTable();
 
         assertQuery("l\n6\n7\n8\n", "select l from tab order by ts limit 5,8");
     }
 
     @Test
-    public void test_normalTable_select_N_beyond_end_returns_empty_result() throws Exception {
-        prepare_normal_table();
+    public void testNormalTableSelectNbeyondEndReturnsEmptyResult() throws Exception {
+        prepareNormalTable();
 
         assertQuery("l\n", "select l from tab order by ts limit 11,12");
     }
 
     @Test
-    public void test_normalTable_select_N_before_start_returns_empty_result() throws Exception {
-        prepare_normal_table();
+    public void testNormalTableSelectNbeforeStartReturnsEmptyResult() throws Exception {
+        prepareNormalTable();
 
         assertQuery("l\n", "select l from tab order by ts limit -11,-15");
     }
 
     @Test
-    public void test_normalTable_select_last_N() throws Exception {
-        prepare_normal_table();
+    public void testNormalTableSelectLastN() throws Exception {
+        prepareNormalTable();
 
         assertQuery("l\n8\n9\n10\n", "select l from tab order by ts limit -3");
     }
 
     @Test
-    public void test_normalTable_select_middle_N_from_end() throws Exception {
-        prepare_normal_table();
+    public void testNormalTableSelectMiddleNfromEnd() throws Exception {
+        prepareNormalTable();
 
         assertQuery("l\n3\n4\n5\n", "select l from tab order by ts limit -8,-5");
     }
 
     @Test
-    public void test_normalTable_select_middle_N_from_both_directions() throws Exception {
-        prepare_normal_table();
+    public void testNormalTableSelectMiddleNfromBothDirections() throws Exception {
+        prepareNormalTable();
 
         assertQuery("l\n5\n6\n", "select l from tab order by ts limit 4,-4");
     }
 
     @Test
-    public void test_normalTable_select_N_intersecting_end() throws Exception {
-        prepare_normal_table();
+    public void testNormalTableSelectNintersectingEnd() throws Exception {
+        prepareNormalTable();
 
         assertQuery("l\n9\n10\n", "select l from tab order by ts limit 8,12");
     }
 
     @Test
-    public void test_normalTable_select_N_intersecting_start() throws Exception {
-        prepare_normal_table();
+    public void testNormalTableSelectNintersectingStart() throws Exception {
+        prepareNormalTable();
 
         assertQuery("l\n1\n2\n", "select l from tab order by ts limit -12,-8");
     }
 
     @Test
-    public void test_normalTable_select_first_N_with_same_lo_hi_returns_no_rows() throws Exception {
-        prepare_normal_table();
+    public void testNormalTableSelectFirstNwithSameLoHiReturnsNoRows() throws Exception {
+        prepareNormalTable();
 
         assertQuery("l\n", "select l from tab order by ts limit 8,8");
     }
 
     @Test
-    public void test_normalTable_select_last_N_with_same_lo_hi_returns_no_rows() throws Exception {
-        prepare_normal_table();
+    public void testNormalTableSelectLastNwithSameLoHiReturnsNoRows() throws Exception {
+        prepareNormalTable();
 
         assertQuery("l\n", "select l from tab order by ts limit -8,-8");
     }
 
-    private void prepare_normal_table() throws Exception {
+    private void prepareNormalTable() throws Exception {
         runQueries("CREATE TABLE tab(l long, ts TIMESTAMP) timestamp(ts);",
                 "insert into tab " +
                         "  select x," +
@@ -410,90 +417,90 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
 
     //partitionedTable with two partitions, 5 rows per partition
     @Test
-    public void test_2partitions_select_all() throws Exception {
-        prepare_2partitions_table();
+    public void test2partitionsSelectAll() throws Exception {
+        prepare2partitionsTable();
 
         assertQuery("l\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n", "select l from tab order by ts");
     }
 
     @Test
-    public void test_2partitions_select_first_N() throws Exception {
-        prepare_2partitions_table();
+    public void test2partitionsSelectFirstN() throws Exception {
+        prepare2partitionsTable();
 
         assertQuery("l\n1\n2\n3\n", "select l from tab order by ts limit 3");
     }
 
     @Test
-    public void test_2partitions_select_middle_N_from_start() throws Exception {
-        prepare_2partitions_table();
+    public void test2partitionsSelectMiddleNfromStart() throws Exception {
+        prepare2partitionsTable();
 
         assertQuery("l\n6\n7\n8\n", "select l from tab order by ts limit 5,8");
     }
 
     @Test
-    public void test_2partitions_select_N_beyond_end_returns_empty_result() throws Exception {
-        prepare_2partitions_table();
+    public void test2partitionsSelectNbeyondEndReturnsEmptyResult() throws Exception {
+        prepare2partitionsTable();
 
         assertQuery("l\n", "select l from tab order by ts limit 11,12");
     }
 
     @Test
-    public void test_2partitions_select_N_before_start_returns_empty_result() throws Exception {
-        prepare_2partitions_table();
+    public void test2partitionsSelectNbeforeStartReturnsEmptyResult() throws Exception {
+        prepare2partitionsTable();
 
         assertQuery("l\n", "select l from tab order by ts limit -11,-15");
     }
 
     @Test
-    public void test_2partitions_select_last_N() throws Exception {
-        prepare_2partitions_table();
+    public void test2partitionsSelectLastN() throws Exception {
+        prepare2partitionsTable();
 
         assertQuery("l\n8\n9\n10\n", "select l from tab order by ts limit -3");
     }
 
     @Test
-    public void test_2partitions_select_middle_N_from_end() throws Exception {
-        prepare_2partitions_table();
+    public void test2partitionsSelectMiddleNfromEnd() throws Exception {
+        prepare2partitionsTable();
 
         assertQuery("l\n3\n4\n5\n", "select l from tab order by ts limit -8,-5");
     }
 
     @Test
-    public void test_2partitions_select_middle_N_from_both_directions() throws Exception {
-        prepare_2partitions_table();
+    public void test2partitionsSelectMiddleNfromBothDirections() throws Exception {
+        prepare2partitionsTable();
 
         assertQuery("l\n5\n6\n", "select l from tab order by ts limit 4,-4");
     }
 
     @Test
-    public void test_2partitions_select_first_N_with_same_lo_hi_returns_no_rows() throws Exception {
-        prepare_2partitions_table();
+    public void test2partitionsSelectFirstNwithSameLoHiReturnsNoRows() throws Exception {
+        prepare2partitionsTable();
 
         assertQuery("l\n", "select l from tab order by ts limit 8,8");
     }
 
     @Test
-    public void test_2partitions_select_last_N_with_same_lo_hi_returns_no_rows() throws Exception {
-        prepare_2partitions_table();
+    public void test2partitionsSelectLastNwithSameLoHiReturnsNoRows() throws Exception {
+        prepare2partitionsTable();
 
         assertQuery("l\n", "select l from tab order by ts limit -8,-8");
     }
 
     @Test
-    public void test_2partitions_select_N_intersecting_end() throws Exception {
-        prepare_2partitions_table();
+    public void test2partitionsSelectNintersectingEnd() throws Exception {
+        prepare2partitionsTable();
 
         assertQuery("l\n9\n10\n", "select l from tab order by ts limit 8,12");
     }
 
     @Test
-    public void test_2partitions_select_N_intersecting_start() throws Exception {
-        prepare_2partitions_table();
+    public void test2partitionsSelectNintersectingStart() throws Exception {
+        prepare2partitionsTable();
 
         assertQuery("l\n1\n2\n", "select l from tab order by ts limit -12,-8");
     }
 
-    private void prepare_2partitions_table() throws Exception {
+    private void prepare2partitionsTable() throws Exception {
         runQueries("CREATE TABLE tab(l long, ts TIMESTAMP) timestamp(ts) partition by day;",
                 "insert into tab " +
                         "  select x," +
@@ -503,119 +510,199 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
 
     //partitioned table with one row per partition
     @Test
-    public void test_partitionPerRow_select_all() throws Exception {
-        prepare_partitionPerRow_table();
+    public void testPartitionPerRowSelectAll() throws Exception {
+        preparePartitionPerRowTable();
 
         assertQuery("l\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n", "select l from tab order by ts");
     }
 
     @Test
-    public void test_partitionPerRow_select_first_N() throws Exception {
-        prepare_partitionPerRow_table();
+    public void testPartitionPerRowSelectFirstN() throws Exception {
+        preparePartitionPerRowTable();
 
         assertQuery("l\n1\n2\n3\n", "select l from tab order by ts limit 3");
     }
 
     @Test
-    public void test_partitionPerRow_select_middle_N_from_start() throws Exception {
-        prepare_partitionPerRow_table();
+    public void testPartitionPerRowSelectMiddleNfromStart() throws Exception {
+        preparePartitionPerRowTable();
 
         assertQuery("l\n6\n7\n8\n", "select l from tab order by ts limit 5,8");
     }
 
     @Test
-    public void test_partitionPerRow_select_N_beyond_end_returns_empty_result() throws Exception {
-        prepare_partitionPerRow_table();
+    public void testPartitionPerRowSelectNbeyondEndReturnsEmptyResult() throws Exception {
+        preparePartitionPerRowTable();
 
         assertQuery("l\n", "select l from tab order by ts limit 11,12");
     }
 
     @Test
-    public void test_partitionPerRows_select_N_before_start_returns_empty_result() throws Exception {
-        prepare_partitionPerRow_table();
+    public void testPartitionPerRowsSelectNbeforeStartReturnsEmptyResult() throws Exception {
+        preparePartitionPerRowTable();
 
         assertQuery("l\n", "select l from tab order by ts limit -11,-15");
     }
 
     @Test
-    public void test_partitionPerRow_select_last_N() throws Exception {
-        prepare_partitionPerRow_table();
+    public void testPartitionPerRowSelectLastN() throws Exception {
+        preparePartitionPerRowTable();
 
         assertQuery("l\n8\n9\n10\n", "select l from tab order by ts limit -3");
     }
 
     @Test
-    public void test_partitionPerRow_select_middle_N_from_end() throws Exception {
-        prepare_partitionPerRow_table();
+    public void testPartitionPerRowSelectMiddleNfromEnd() throws Exception {
+        preparePartitionPerRowTable();
 
         assertQuery("l\n3\n4\n5\n", "select l from tab order by ts limit -8,-5");
     }
 
     @Test
-    public void test_partitionPerRow_select_middle_N_from_both_directions() throws Exception {
-        prepare_partitionPerRow_table();
+    public void testPartitionPerRowSelectMiddleNfromBothDirections() throws Exception {
+        preparePartitionPerRowTable();
 
         assertQuery("l\n5\n6\n", "select l from tab order by ts limit 4,-4");
     }
 
     @Test
-    public void test_partitionPerRow_select_N_intersecting_end() throws Exception {
-        prepare_partitionPerRow_table();
+    public void testPartitionPerRowSelectNintersectingEnd() throws Exception {
+        preparePartitionPerRowTable();
 
         assertQuery("l\n9\n10\n", "select l from tab order by ts limit 8,12");
     }
 
     @Test
-    public void test_partitionPerRow_select_N_intersecting_start() throws Exception {
-        prepare_partitionPerRow_table();
+    public void testPartitionPerRowSelectNintersectingStart() throws Exception {
+        preparePartitionPerRowTable();
 
         assertQuery("l\n1\n2\n", "select l from tab order by ts limit -12,-8");
     }
 
     @Test
-    public void test_partitionPerRow_select_first_N_with_same_lo_hi_returns_no_rows() throws Exception {
-        prepare_partitionPerRow_table();
+    public void testPartitionPerRowSelectFirstNwithSameLoHiReturnsNoRows() throws Exception {
+        preparePartitionPerRowTable();
 
         assertQuery("l\n", "select l from tab order by ts limit 8,8");
     }
 
     @Test
-    public void test_partitionPerRow_select_last_N_with_same_lo_hi_returns_no_rows() throws Exception {
-        prepare_partitionPerRow_table();
+    public void testPartitionPerRowSelectLastNwithSameLoHiReturnsNoRows() throws Exception {
+        preparePartitionPerRowTable();
 
         assertQuery("l\n", "select l from tab order by ts limit -8,-8");
     }
 
     //special cases
     @Test
-    public void test_partitionPerRow_select_first_N_ordered_by_multiple_columns() throws Exception {
-        prepare_partitionPerRow_table();
+    public void testPartitionPerRow_select_first_N_ordered_by_multiple_columns() throws Exception {
+        preparePartitionPerRowTable();
 
         assertQuery("l\n1\n2\n3\n", "select l from tab order by ts asc, l asc limit 3");
     }
 
     @Test
-    public void test_partitionPerRow_select_last_N_ordered_by_multiple_columns() throws Exception {
-        prepare_partitionPerRow_table();
+    public void testPartitionPerRow_select_last_N_ordered_by_multiple_columns() throws Exception {
+        preparePartitionPerRowTable();
 
         assertQuery("l\n8\n9\n10\n", "select l from tab order by ts asc, l asc limit -3");
     }
 
     @Test
-    public void test_partitionPerRow_select_first_N_ordered_by_nonTs_column() throws Exception {
-        prepare_partitionPerRow_table();
+    public void testPartitionPerRow_select_first_N_ordered_by_nonTs_column() throws Exception {
+        preparePartitionPerRowTable();
 
         assertQuery("l\n1\n2\n3\n", "select l from tab order by l asc limit 3");
     }
 
     @Test
-    public void test_partitionPerRow_select_last_N_ordered_by_nonTs_column() throws Exception {
-        prepare_partitionPerRow_table();
+    public void testPartitionPerRow_select_last_N_ordered_by_nonTs_column() throws Exception {
+        preparePartitionPerRowTable();
 
         assertQuery("l\n8\n9\n10\n", "select l from tab order by l asc limit -3");
     }
 
-    private void prepare_partitionPerRow_table() throws Exception {
+    //tests "partitionCount < 1" conditional in FullFwdDataFrameCursor.skipTo()
+    @Test
+    public void testSkipOverEmptyTableWithNoPartitionsReturnsNoRows() throws Exception {
+        runQueries("CREATE TABLE trips(record_type long, created_on TIMESTAMP) timestamp(created_on) partition by day;");
+
+        try (TableReader reader = sqlExecutionContext.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, "trips");
+             RecordCursor cursor = prepareCursor(reader)) {
+            cursor.skipTo(1);
+            Assert.assertFalse(cursor.hasNext());
+        }
+    }
+
+    //tests "partitionIndex == partitionCount - 1" conditional in FullFwdDataFrameCursor.skipTo()
+    @Test
+    public void testSkipBeyondEndOfNonEmptyTableReturnsNoRows() throws Exception {
+        preparePartitionPerRowTableWithLongNames();
+
+        try (TableReader reader = sqlExecutionContext.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, "trips");
+             RecordCursor cursor = prepareCursor(reader)) {
+            cursor.skipTo(11);
+            Assert.assertFalse(cursor.hasNext());
+        }
+    }
+
+    @Test
+    public void testSkipOverEmptyTableWith1emptyPartitionReturnsNoRows() throws Exception {
+        runQueries("CREATE TABLE trips(record_type long, created_on TIMESTAMP) timestamp(created_on) partition by none;");
+
+        assertMemoryLeak(() -> {
+            try (TableWriter writer = sqlExecutionContext.getCairoEngine().getWriter(AllowAllCairoSecurityContext.INSTANCE, "trips", "test")) {
+                TableWriter.Row row = writer.newRow(0L);
+                row.putLong(0, 0L);
+                row.append();
+
+                row = writer.newRow(100L);
+                row.putLong(0, 1L);
+                row.append();
+
+                try (TableReader reader = sqlExecutionContext.getCairoEngine().getReader(AllowAllCairoSecurityContext.INSTANCE, "trips");
+                     RecordCursor cursor = prepareCursor(reader)) {
+                    cursor.skipTo(1);
+                    Assert.assertFalse(cursor.hasNext());
+                }
+
+                writer.rollback();
+            }
+        });
+    }
+
+    private RecordCursor prepareCursor(TableReader reader) throws SqlException {
+        TableReaderMetadata metadata = reader.getMetadata();
+        IntList columnIndexes = new IntList();
+        columnIndexes.add(0);
+        columnIndexes.add(1);
+
+        IntList columnSizes = new IntList();
+        columnSizes.add(3);
+        columnSizes.add(3);
+
+        DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(engine.getConfiguration(), metadata,
+                new FullFwdDataFrameCursorFactory(engine, "trips", metadata.getId(), reader.getVersion()),
+                new DataFrameRowCursorFactory(),
+                false,
+                null,
+                true,
+                columnIndexes,
+                columnSizes
+        );
+
+        return factory.getCursor(sqlExecutionContext);
+    }
+
+    private void preparePartitionPerRowTableWithLongNames() throws Exception {
+        runQueries("CREATE TABLE trips(record_type long, created_on TIMESTAMP) timestamp(created_on) partition by day;",
+                "insert into trips " +
+                        "  select 10-x," +
+                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
+                        "  from long_sequence(10);");
+    }
+
+    private void preparePartitionPerRowTable() throws Exception {
         runQueries("CREATE TABLE tab(l long, ts TIMESTAMP) timestamp(ts) partition by day;",
                 "insert into tab " +
                         "  select x," +
