@@ -79,7 +79,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private long rowCount;
     private long txn = TableUtils.INITIAL_TXN;
     private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
-    private boolean active;
     private boolean txnAcquired = false;
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
@@ -169,11 +168,10 @@ public class TableReader implements Closeable, SymbolTableSource {
     @Override
     public void close() {
         if (isOpen()) {
-            releaseTxn();
+            goPassive();
             freeSymbolMapReaders();
             freeBitmapIndexCache();
             Misc.free(metadata);
-            goPassive();
             Misc.free(txFile);
             Misc.free(todoMem);
             freeColumns();
@@ -316,27 +314,19 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public void goActive() {
-        if (active) {
-            return;
-        }
-        reload(true);
-        active = true;
+        reload();
     }
 
     public void goPassive() {
-        // check for double-close
-        releaseTxn();
-
-        if (active) {
-            active = false;
-
+        if (releaseTxn()) {
+            // check if reader unlocks a transaction in scoreboard
+            // to house keep the partition versions
             if (PartitionBy.isPartitioned(this.partitionBy)) {
                 long txnLocks = txnScoreboard.getActiveReaderCount(txn);
-                long committedTxn = txFile.unsafeReadTxn();
-                if (txnLocks == 0 && committedTxn > txn) {
+                if (txnLocks == 0 && txFile.unsafeReadPartitionTableVersion() > txFile.getPartitionTableVersion()) {
                     // Last lock for this txn is released and this is not latest txn number
                     // Schedule a job to clean up partition versions this reader may held
-                    purgeO3Partitions();
+                    schedulePurgeO3Partitions();
                 }
             }
         }
@@ -466,7 +456,19 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public boolean reload() {
-        return reload(false);
+        if (this.txn == txFile.unsafeReadTxn()) {
+            if (!this.txnAcquired) {
+                acquireTxn();
+            }
+            return false;
+        }
+        try {
+            reloadSlow();
+            return true;
+        } catch (Throwable e) {
+            releaseTxn();
+            throw e;
+        }
     }
 
     public void reshuffleSymbolMapReaders(long pTransitionIndex) {
@@ -940,22 +942,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return path;
     }
 
-    private void purgeO3Partitions() {
-        final MPSequence seq = messageBus.getO3PurgeDiscoveryPubSeq();
-        long cursor = seq.next();
-        if (cursor > -1) {
-            O3PurgeDiscoveryTask task = messageBus.getO3PurgeDiscoveryQueue().get(cursor);
-            task.of(tableName, this.partitionBy);
-            seq.done(cursor);
-        } else {
-            LOG.error()
-                    .$("could queue to purge [errno=").$(ff.errno())
-                    .$(", table=").$(tableName)
-                    .$(", txn=").$(txn)
-                    .$(']').$();
-        }
-    }
-
     private void readTxnSlow() {
         int count = 0;
         final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
@@ -1052,27 +1038,13 @@ public class TableReader implements Closeable, SymbolTableSource {
         reconcileOpenPartitionsFrom(0);
     }
 
-    private void releaseTxn() {
+    private boolean releaseTxn() {
         if (txnAcquired) {
             txnScoreboard.releaseTxn(txn);
             txnAcquired = false;
-        }
-    }
-
-    private boolean reload(boolean activation) {
-        if (this.txn == txFile.unsafeReadTxn()) {
-            if (activation) {
-                acquireTxn();
-            }
-            return false;
-        }
-        try {
-            reloadSlow();
             return true;
-        } catch (Throwable e) {
-            releaseTxn();
-            throw e;
         }
+        return false;
     }
 
     private void reloadColumnAt(
@@ -1340,6 +1312,22 @@ public class TableReader implements Closeable, SymbolTableSource {
             } finally {
                 path.trimTo(rootLen);
             }
+        }
+    }
+
+    private void schedulePurgeO3Partitions() {
+        final MPSequence seq = messageBus.getO3PurgeDiscoveryPubSeq();
+        long cursor = seq.next();
+        if (cursor > -1) {
+            O3PurgeDiscoveryTask task = messageBus.getO3PurgeDiscoveryQueue().get(cursor);
+            task.of(tableName, this.partitionBy);
+            seq.done(cursor);
+        } else {
+            LOG.error()
+                    .$("could queue to purge [errno=").$(ff.errno())
+                    .$(", table=").$(tableName)
+                    .$(", txn=").$(txn)
+                    .$(']').$();
         }
     }
 

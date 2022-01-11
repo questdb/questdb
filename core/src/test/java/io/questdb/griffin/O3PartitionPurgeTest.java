@@ -50,6 +50,47 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void test2ReadersUsePartition() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            // OOO insert
+            compiler.compile("insert into tbl select 4, '1970-01-10T09'", sqlExecutionContext);
+
+            // This should lock partition 1970-01-10.1 from being deleted from disk
+            try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
+
+                try (TableReader rdr2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
+                    // in order insert
+                    compiler.compile("insert into tbl select 2, '1970-01-10T11'", sqlExecutionContext);
+
+                    // OOO insert
+                    compiler.compile("insert into tbl select 4, '1970-01-10T09'", sqlExecutionContext);
+
+                    runPartitionPurgeJobs();
+
+                    rdr2.openPartition(0);
+                }
+
+                runPartitionPurgeJobs();
+
+                // This should not fail
+                rdr.openPartition(0);
+            }
+            runPartitionPurgeJobs();
+
+            try (Path path = new Path()) {
+                path.concat(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-10");
+                int len = path.length();
+                for (int i = 0; i < 3; i++) {
+                    path.trimTo(len).put(".").put(Integer.toString(i)).concat("x.d").$();
+                    Assert.assertFalse(Chars.toString(path), Files.exists(path));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAsyncPurgeOnBusyWriter() throws Exception {
         int tableCount = 3;
         assertMemoryLeak(() -> {
@@ -288,7 +329,9 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
         if (Os.type == Os.WINDOWS) {
             engine.releaseInactive();
         }
+        //noinspection StatementWithEmptyBody
         while (purgeJob.run(0)) {
+            // drain the purge job queue fully
         }
     }
 

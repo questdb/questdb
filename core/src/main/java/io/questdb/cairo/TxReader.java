@@ -173,6 +173,10 @@ public class TxReader implements Closeable, Mutable {
         return txn;
     }
 
+    public long unsafeReadPartitionTableVersion() {
+        return roTxMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION);
+    }
+
     private int findAttachedPartitionIndex(long ts) {
         return findAttachedPartitionIndexByLoTimestamp(getPartitionTimestampLo(ts));
     }
