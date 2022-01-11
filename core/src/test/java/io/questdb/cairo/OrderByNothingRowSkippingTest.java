@@ -36,84 +36,84 @@ import org.junit.Test;
 public class OrderByNothingRowSkippingTest extends AbstractGriffinTest {
 
     @Test
-    public void test_unorderedNoDesignatedTsTable_select_all() throws Exception {
+    public void testSelectAll() throws Exception {
         prepare_unordered_noTs_table();
 
         assertQuery("l\n1\n4\n7\n9\n3\n6\n10\n8\n2\n5\n", "select l from tab");
     }
 
     @Test
-    public void test_unorderedNoDesignatedTsTable_select_first_N() throws Exception {
+    public void testSelectFirstN() throws Exception {
         prepare_unordered_noTs_table();
 
         assertQuery("l\n1\n4\n7\n", "select l from tab limit 3");
     }
 
     @Test
-    public void test_unorderedNoDesignatedTsTable_select_middle_N_from_start() throws Exception {
+    public void testSelectMiddleNfromStart() throws Exception {
         prepare_unordered_noTs_table();
 
         assertQuery("l\n6\n10\n8\n", "select l from tab limit 5,8");
     }
 
     @Test
-    public void test_unorderedNoDesignatedTsTable_select_N_beyond_end_returns_empty_result() throws Exception {
+    public void testSelectNbeyondEndreturnsEmptyResult() throws Exception {
         prepare_unordered_noTs_table();
 
         assertQuery("l\n", "select l from tab limit 11,12");
     }
 
     @Test
-    public void test_unorderedNoDesignatedTsTable_select_N_before_start_returns_empty_result() throws Exception {
+    public void testSelectNbeforeStartReturnsEmptyResult() throws Exception {
         prepare_unordered_noTs_table();
 
         assertQuery("l\n", "select l from tab limit -11,-15");
     }
 
     @Test
-    public void test_unorderedNoDesignatedTsTable_select_last_N() throws Exception {
+    public void testSelectLastN() throws Exception {
         prepare_unordered_noTs_table();
 
         assertQuery("l\n8\n2\n5\n", "select l from tab limit -3");
     }
 
     @Test
-    public void test_unorderedNoDesignatedTsTable_select_middle_N_from_end() throws Exception {
+    public void testSelectMiddleNfromEnd() throws Exception {
         prepare_unordered_noTs_table();
 
         assertQuery("l\n7\n9\n3\n", "select l from tab limit -8,-5");
     }
 
     @Test
-    public void test_unorderedNoDesignatedTsTable_select_middle_N_from_both_directions() throws Exception {
+    public void testSelectMiddleNfromBothDirections() throws Exception {
         prepare_unordered_noTs_table();
 
         assertQuery("l\n3\n6\n", "select l from tab limit 4,-4");
     }
 
     @Test
-    public void test_unorderedNoDesignatedTsTable_select_first_N_with_same_lo_hi_returns_no_rows() throws Exception {
+    public void testSelectFirstNwithSameLoHiReturnsNoRows() throws Exception {
         prepare_unordered_noTs_table();
 
         assertQuery("l\n", "select l from tab limit 8,8");
     }
 
     @Test
-    public void test_unorderedNoDesignatedTsTable_select_last_N_with_same_lo_hi_returns_no_rows() throws Exception {
+    public void testSelectLastNwithSameLoHiReturnsNoRows() throws Exception {
         prepare_unordered_noTs_table();
 
         assertQuery("l\n", "select l from tab limit -8,-8");
     }
 
     @Test
-    public void test_unorderedNoDesignatedTsTable_select_N_intersecting_end() throws Exception {
+    public void testSelectNintersectingEnd() throws Exception {
         prepare_unordered_noTs_table();
 
         assertQuery("l\n2\n5\n", "select l from tab limit 8,12");
     }
 
     @Test
-    public void test_unorderedNoDesignatedTsTable_select_N_intersecting_start() throws Exception {
+    public void testSelectNintersectingStart() throws Exception {
         prepare_unordered_noTs_table();
 
         assertQuery("l\n1\n4\n", "select l from tab limit -12,-8");
