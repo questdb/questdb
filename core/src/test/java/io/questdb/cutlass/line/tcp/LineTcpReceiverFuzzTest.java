@@ -90,35 +90,35 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
     @Ignore
     @Test
     public void testAddColumns() throws Exception {
-        initLoadParameters(25, 10, 10, 10, 100);
+        initLoadParameters(15, 2, 2, 5, 100);
         initFuzzParameters(-1, -1, -1, 4, -1, false);
         runTest();
     }
 
     @Test
     public void testDuplicatesReorderingColumns() throws Exception {
-        initLoadParameters(500, 15, 15, 15, 50);
+        initLoadParameters(100, 5, 5, 5, 50);
         initFuzzParameters(4, 4, -1, -1, -1, true);
         runTest();
     }
 
     @Test
     public void testLoad() throws Exception {
-        initLoadParameters(1000, 10, 10, 10, 50);
+        initLoadParameters(100, 5, 5, 5, 50);
         initFuzzParameters(-1, -1, -1, -1, -1, false);
         runTest();
     }
 
     @Test
     public void testReorderingAddSkipDuplicateColumnsWithNonAscii() throws Exception {
-        initLoadParameters(500, 10, 10, 10, 50);
+        initLoadParameters(100, 5, 5, 5, 50);
         initFuzzParameters(4, 4, 4, -1, 4, true);
         runTest();
     }
 
     @Test
     public void testReorderingColumns() throws Exception {
-        initLoadParameters(500, 15, 15, 15, 50);
+        initLoadParameters(100, 5, 5, 5, 50);
         initFuzzParameters(-1, 4, -1, -1, -1, false);
         runTest();
     }
