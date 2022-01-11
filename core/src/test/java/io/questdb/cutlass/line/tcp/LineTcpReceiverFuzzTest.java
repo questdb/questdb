@@ -320,7 +320,7 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
                 for (int i = 0; i < numOfTables; i++) {
                     final CharSequence tableName = getTableName(i);
                     final TableData table = tables.get(tableName);
-                    if (table.await(30L)) {
+                    if (table.await(120L)) {
                         assertTable(table);
                     } else {
                         Assert.fail("Timed out on waiting for the data to be ingested");

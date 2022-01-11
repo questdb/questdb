@@ -24,8 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.TableReader;
+import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.log.Log;
@@ -171,6 +170,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             final Path path = new Path(4096);
             try (LineTcpReceiver receiver = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine)) {
                 sharedWorkerPool.assignCleaner(Path.CLEANER);
+                O3Utils.setupWorkerPool(sharedWorkerPool, messageBus);
                 if (needMaintenanceJob) {
                     sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
                 }
@@ -182,6 +182,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                     throw err;
                 } finally {
                     sharedWorkerPool.halt();
+                    O3Utils.freeBuf();
                     Path.clearThreadLocals();
                 }
             } catch (Throwable err) {
