@@ -48,7 +48,7 @@ public class TableUpdateDetails implements Closeable {
     private int writerThreadId;
     // Number of rows processed since the last reshuffle, this is an estimate because it is incremented by
     // multiple threads without synchronisation
-    private int eventsProcessedSinceReshuffle = 0;
+    private long eventsProcessedSinceReshuffle = 0;
     private TableWriter writer;
     private boolean assignedToJob = false;
     private long lastMeasurementMillis = Long.MAX_VALUE;
@@ -127,12 +127,8 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
-    public int getEventsProcessedSinceReshuffle() {
+    public long getEventsProcessedSinceReshuffle() {
         return eventsProcessedSinceReshuffle;
-    }
-
-    public void setEventsProcessedSinceReshuffle(int eventsProcessedSinceReshuffle) {
-        this.eventsProcessedSinceReshuffle = eventsProcessedSinceReshuffle;
     }
 
     public long getLastMeasurementMillis() {
@@ -151,12 +147,8 @@ public class TableUpdateDetails implements Closeable {
         return writerThreadId;
     }
 
-    public void setWriterThreadId(int writerThreadId) {
-        this.writerThreadId = writerThreadId;
-    }
-
-    public int incrementEventsProcessedSinceReshuffle() {
-        return ++eventsProcessedSinceReshuffle;
+    public void incrementEventsProcessedSinceReshuffle() {
+        ++eventsProcessedSinceReshuffle;
     }
 
     public boolean isAssignedToJob() {
