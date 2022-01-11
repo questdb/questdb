@@ -91,8 +91,12 @@ public class TableData {
         switch (colType) {
             case DOUBLE:
                 return "NaN";
-            default:
+            case STRING:
+            case SYMBOL:
+            case TIMESTAMP:
                 return "";
+            default:
+                throw new RuntimeException("Unexpected column type");
         }
     }
 
