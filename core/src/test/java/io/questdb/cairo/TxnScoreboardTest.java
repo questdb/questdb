@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
@@ -37,7 +38,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class TxnScoreboardTest extends AbstractCairoTest {
     @Test
-    public void testCleanFailsNoResourceLeak() throws Exception {
+    public void testCleanFailsNoResourceLeakRW() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = new FilesFacadeImpl() {
                 @Override
@@ -52,6 +53,72 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                         Assert.fail();
                     } catch (CairoException ex) {
                         TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-write with clean allocation");
+                    }
+                }
+            });
+        });
+    }
+
+    @Test
+    public void testCleanFailsNoResourceLeakRO() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            FilesFacade ff = new FilesFacadeImpl() {
+                @Override
+                public long openCleanRW(LPSZ name, long fd) {
+                    return -1;
+                }
+            };
+
+            assertMemoryLeak(() -> {
+                try (final Path shmPath = new Path()) {
+                    try (TxnScoreboard ignored = new TxnScoreboard(ff, 2048).ofRO(shmPath.of(root))) {
+                        Assert.fail();
+                    } catch (CairoException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-write with clean allocation");
+                    }
+                }
+            });
+        });
+    }
+
+    @Test
+    public void testMapFailsNoResourceLeakRW() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            FilesFacade ff = new FilesFacadeImpl() {
+                @Override
+                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                    return -1;
+                }
+            };
+
+            assertMemoryLeak(() -> {
+                try (final Path shmPath = new Path()) {
+                    try (TxnScoreboard ignored = new TxnScoreboard(ff, 2048).ofRW(shmPath.of(root))) {
+                        Assert.fail();
+                    } catch (CairoException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "could not mmap");
+                    }
+                }
+            });
+        });
+    }
+
+    @Test
+    public void testMapFailsNoResourceLeakRO() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            FilesFacade ff = new FilesFacadeImpl() {
+                @Override
+                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                    return -1;
+                }
+            };
+
+            assertMemoryLeak(() -> {
+                try (final Path shmPath = new Path()) {
+                    try (TxnScoreboard ignored = new TxnScoreboard(ff, 2048).ofRO(shmPath.of(root))) {
+                        Assert.fail();
+                    } catch (CairoException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "could not mmap");
                     }
                 }
             });

@@ -329,7 +329,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             compiler.compile("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY", sqlExecutionContext);
 
             // This should lock partition 1970-01-10.1 to not do delete in writer
-            try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
+            try (TableReader ignored = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
                 // OOO insert
                 compiler.compile("insert into tbl select 4, '1970-01-10T09'", sqlExecutionContext);
             }
@@ -348,7 +348,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             compiler.compile("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY", sqlExecutionContext);
 
             // This should lock partition 1970-01-10.1 from being deleted from disk
-            try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
+            try (TableReader ignored = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
                 // OOO insert
                 compiler.compile("insert into tbl select 4, '1970-01-10T09'", sqlExecutionContext);
             }
@@ -361,6 +361,40 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
 
                 path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-10").concat("x.d").$();
                 Assert.assertFalse(Chars.toString(path), Files.exists(path));
+
+                path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-10.1").concat("x.d").$();
+                Assert.assertTrue(Chars.toString(path), Files.exists(path));
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeFailed() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicInteger deleteAttempts = new AtomicInteger();
+            ff = new FilesFacadeImpl() {
+                @Override
+                public int rmdir(Path name) {
+                    if (Chars.endsWith(name, "1970-01-10" + Files.SEPARATOR)) {
+                        deleteAttempts.incrementAndGet();
+                        return -1;
+                    }
+                    return super.rmdir(name);
+                }
+            };
+
+            compiler.compile("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            // This should lock partition 1970-01-10.1 from being deleted from disk
+            try (TableReader ignored = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
+                // OOO insert
+                compiler.compile("insert into tbl select 4, '1970-01-10T09'", sqlExecutionContext);
+            }
+
+            try (Path path = new Path()) {
+                runPartitionPurgeJobs();
+
+                Assert.assertEquals(2, deleteAttempts.get()); // One message from Writer, one from Reader
 
                 path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-10.1").concat("x.d").$();
                 Assert.assertTrue(Chars.toString(path), Files.exists(path));
