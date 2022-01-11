@@ -26,7 +26,6 @@ package io.questdb.cutlass.line.tcp.load;
 
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.cairo.TableWriter;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.IntLongPriorityQueue;
 import io.questdb.std.ObjList;
@@ -41,8 +40,6 @@ public class TableData {
     private final IntLongPriorityQueue index = new IntLongPriorityQueue();
     private final SOCountDownLatch readyLatch = new SOCountDownLatch(1);
 
-    private volatile boolean checked = false;
-
     public TableData(CharSequence tableName) {
         this.tableName = tableName;
     }
@@ -51,22 +48,16 @@ public class TableData {
         return tableName;
     }
 
-    public void setReady(TableWriter writer) {
-        if (size() <= writer.size()) {
-            readyLatch.countDown();
-        }
+    public void notReady() {
+        readyLatch.setCount(1);
+    }
+
+    public void ready() {
+        readyLatch.countDown();
     }
 
     public boolean await(long seconds) {
         return readyLatch.await(TimeUnit.SECONDS.toNanos(seconds));
-    }
-
-    public boolean isChecked() {
-        return checked;
-    }
-
-    public void setChecked(boolean checked) {
-        this.checked = checked;
     }
 
     public synchronized int size() {

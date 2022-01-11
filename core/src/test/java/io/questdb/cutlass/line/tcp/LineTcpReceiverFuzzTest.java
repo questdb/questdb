@@ -56,7 +56,7 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
     private static final int MAX_NUM_OF_SKIPPED_COLS = 2;
     private static final int NEW_COLUMN_RANDOMIZE_FACTOR = 2;
 
-    private final Rnd random = new Rnd();
+    private final Rnd random = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
     private final AtomicLong timestampMillis = new AtomicLong(1465839830102300L);
     private final short[] colTypes = new short[]{STRING, DOUBLE, DOUBLE, DOUBLE, STRING, DOUBLE};
     private final String[][] colNameBases = new String[][]{
@@ -86,12 +86,9 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
     private int newColumnFactor;
     private boolean diffCasesInColNames;
 
-    // there seem to be an issue with the transactionality of adding new columns
-    // when the issue is fixed 'newColumnFactor' can be used and this test should be enabled
-    @Ignore
     @Test
     public void testAddColumns() throws Exception {
-        initLoadParameters(10, 10, 10, 10, 100);
+        initLoadParameters(50, 10, 10, 10, 100);
         initFuzzParameters(-1, -1, -1, 4, -1, false);
         runTest();
     }
@@ -147,25 +144,23 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
         }
     }
 
-    private void assertTable(TableData table) {
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, table.getName())) {
-            final TableReaderMetadata metadata = reader.getMetadata();
-            final CharSequence expected = table.generateRows(metadata);
-            LOG.info().$(table.getName()).$(" expected:\n").utf8(expected).$();
-            assertCursorTwoPass(expected, reader.getCursor(), metadata);
+    private boolean assertTable(TableData table) {
+        if (table.await(120L)) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, table.getName())) {
+                LOG.info().$("table.getName(): ").$(table.getName()).$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
+                if (table.size() <= reader.size()) {
+                    final TableReaderMetadata metadata = reader.getMetadata();
+                    final CharSequence expected = table.generateRows(metadata);
+                    LOG.info().$(table.getName()).$(" expected:\n").utf8(expected).$();
+                    assertCursorTwoPass(expected, reader.getCursor(), metadata);
+                } else {
+                    table.notReady();
+                }
+            }
+        } else {
+            Assert.fail("Timed out on waiting for the data to be ingested");
         }
-    }
-
-    private void checkTableReady(TableData table) {
-        if (threadPushFinished.getCount() > 0) {
-            // we are still sending, no point to check the table yet
-            return;
-        }
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, table.getName(), "checkTableReady")) {
-            LOG.info().$("table.getName(): ").$(table.getName()).$(", table.size(): ").$(table.size()).$(", writer.size(): ").$(writer.size()).$();
-            table.setReady(writer);
-            table.setChecked(true);
-        }
+        return false;
     }
 
     private int[] generateColumnOrdering() {
@@ -284,12 +279,12 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
 
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    final TableData table = tables.get(name);
-                    if (!table.isChecked()) {
-                        checkTableReady(table);
-                    } else {
-                        table.setChecked(false);
+                    if (threadPushFinished.getCount() > 0) {
+                        // we are still sending, no point to check the table yet
+                        return;
                     }
+                    final TableData table = tables.get(name);
+                    table.ready();
                 }
             });
 
@@ -320,11 +315,7 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
                 for (int i = 0; i < numOfTables; i++) {
                     final CharSequence tableName = getTableName(i);
                     final TableData table = tables.get(tableName);
-                    if (table.await(30L)) {
-                        assertTable(table);
-                    } else {
-                        Assert.fail("Timed out on waiting for the data to be ingested");
-                    }
+                    while (assertTable(table));
                 }
             } finally {
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
