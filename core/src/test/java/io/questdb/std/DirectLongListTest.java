@@ -41,21 +41,20 @@ public class DirectLongListTest {
     @Test
     public void test128BitSort() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            DirectLongList list = new DirectLongList(256, MemoryTag.NATIVE_LONG_LIST);
-            final int N = 100;
-            for (int i = 0; i < N; ++i) {
-                list.add((100 - i - 1) / 10);
-                list.add((100 - i - 1));
+            try(DirectLongList list = new DirectLongList(256, MemoryTag.NATIVE_LONG_LIST)) {
+                final int N = 100;
+                for (int i = 0; i < N; ++i) {
+                    list.add((100 - i - 1) / 10);
+                    list.add((100 - i - 1));
+                }
+
+                Vect.sort128BitAscInPlace(list.getAddress(), list.size() / 2);
+
+                for (int i = 0; i < 100; i++) {
+                    Assert.assertEquals(i / 10, list.get(i * 2));
+                    Assert.assertEquals(i, list.get(i * 2 + 1));
+                }
             }
-
-            Vect.sort128BitAscInPlace(list.getAddress(), list.size() / 2);
-
-            for (int i = 0; i < 100; i++) {
-                Assert.assertEquals(i / 10, list.get(i * 2));
-                Assert.assertEquals(i, list.get(i * 2 + 1));
-            }
-
-            list.close();
         });
     }
 
@@ -67,87 +66,36 @@ public class DirectLongListTest {
         System.out.printf("random seed : %d, %d%n", s0, s1);
 
         int size = 1024 * 1024;
-        int range = Short.MAX_VALUE - 1;
+        int range = Integer.MAX_VALUE - 1;
 
         TestUtils.assertMemoryLeak(() -> {
-            DirectLongList list = new DirectLongList(size, MemoryTag.NATIVE_LONG_LIST);
-            int[] intList = new int[size];
-            LongList check = new LongList();
+            try (DirectLongList list = new DirectLongList(size, MemoryTag.NATIVE_LONG_LIST)) {
+                long[] longList = new long[size];
+                for (int i = 0; i < size; ++i) {
+                    int rnd1 = Math.abs(rnd.nextInt() % (range));
+                    int rnd2 = Math.abs(rnd.nextShort());
 
-            for (int i = 0; i < size; ++i) {
-                short rnd1 = (short) Math.abs((int) rnd.nextShort() % (range));
-                short rnd2 = (short) Math.abs((int) rnd.nextShort() % (range));
+                    list.add(rnd1);
+                    list.add(rnd2);
 
-                check.add(rnd1);
-                check.add(rnd2);
+                    longList[i] = Numbers.encodeLowHighInts(rnd1, rnd2);
+                    assert longList[i] >= 0;
+                }
 
-                list.add(rnd1);
-                list.add(rnd2);
+                Vect.sort128BitAscInPlace(list.getAddress(), list.size() / 2);
+                Arrays.sort(longList);
 
-                intList[i] = Numbers.encodeLowHighShorts(rnd1, rnd2);
-                assert intList[i] >= 0;
+                for (int i = 0; i < size; i++) {
+                    int rnd1 = (int) list.get(2 * i);
+                    int rnd2 = (int) list.get(2 * i + 1);
+
+                    int expectedLow = Numbers.decodeLowInt(longList[i]);
+                    int expectedHi = Numbers.decodeHighInt(longList[i]);
+
+                    Assert.assertEquals(expectedLow, rnd1);
+                    Assert.assertEquals(expectedHi, rnd2);
+                }
             }
-
-            Vect.sort128BitAscInPlace(list.getAddress(), list.size() / 2);
-            Arrays.sort(intList);
-
-            for (int i = 0; i < size; i++) {
-                short rnd1 = (short)list.get(2 * i);
-                short rnd2 = (short)list.get(2 * i + 1);
-
-                short expectedLow = Numbers.decodeLowShort(intList[i]);
-                short expectedHi = Numbers.decodeHighShort(intList[i]);
-//
-//                if (expectedLow != rnd1) {
-//                    if (expectedLow > rnd1) {
-//                        int index = check.indexOf(rnd1);
-//                        if (index < 0 || index % 2 != 0) {
-//                            assert false;
-//                        }
-//                    } else {
-//                        int index = check.indexOf(expectedLow);
-//                        if (index < 0 || index % 2 != 0) {
-//                            assert false;
-//                        }
-//                    }
-//
-//                }
-
-                Assert.assertEquals(expectedLow, rnd1);
-                Assert.assertEquals(expectedHi, rnd2);
-            }
-
-            list.close();
-        });
-    }
-
-    @Test
-    public void testSortTest() throws Exception {
-        long s0 = System.currentTimeMillis();
-        long s1 = System.nanoTime();
-        Rnd rnd = new Rnd(s0, s1);
-        System.out.printf("random seed : %d, %d%n", s0, s1);
-
-        int size = 1024 * 1024;
-
-        TestUtils.assertMemoryLeak(() -> {
-            DirectLongList list = new DirectLongList(size, MemoryTag.NATIVE_LONG_LIST);
-            long[] intList = new long[size];
-
-            for (int i = 0; i < size; ++i) {
-                long rnd1 = rnd.nextPositiveLong();
-                list.add(rnd1);
-                intList[i] = rnd1;
-            }
-
-            Vect.sortULongAscInPlace(list.getAddress(), list.size());
-            Arrays.sort(intList);
-
-            for (int i = 0; i < size; i++) {
-                Assert.assertEquals(intList[i], list.get(i));
-            }
-
-            list.close();
         });
     }
 

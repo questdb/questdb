@@ -3287,14 +3287,14 @@ public class TableWriter implements Closeable {
             final long timestamp = o3PartitionRemoveCandidates.getQuick(i);
             final long txn = o3PartitionRemoveCandidates.getQuick(i + 1);
             try {
-                setPathForPartition(
-                        other,
-                        partitionBy,
-                        timestamp,
-                        false
-                );
                 long readerTxnCount;
                 if ((readerTxnCount = txnScoreboard.getActiveReaderCount(txnScoreboard.getMin())) == 0) {
+                    setPathForPartition(
+                            other,
+                            partitionBy,
+                            timestamp,
+                            false
+                    );
                     TableUtils.txnPartitionConditionally(other, txn);
                     long errno = ff.rmdir(other);
                     if (errno == 0 || errno == -1) {
