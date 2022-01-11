@@ -22,34 +22,35 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.engine.table;
 
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Sinkable;
-import io.questdb.std.str.CharSink;
-
-import java.io.Closeable;
+import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.RowCursor;
 
 /**
- * A factory interface for dataframe cursors
+ * Row cursor that goes through data frame backwards / from end to start / hi to lo .
  */
-public interface DataFrameCursorFactory extends Sinkable, Closeable {
+public class DataFrameBwdRowCursor implements RowCursor {
+    private long lo;
+    private long current;
 
-    DataFrameCursor getCursor(SqlExecutionContext executionContext) throws SqlException;
-
-    /**
-     * @param sink to print data frame cursor to
-     */
-    default void toSink(CharSink sink) {
-        throw new UnsupportedOperationException();
+    @Override
+    public boolean hasNext() {
+        return current >= lo;
     }
 
-    /**
-     * Returns 0 for ASC, 1 for DESC
-     */
-    int getOrder();
+    @Override
+    public long next() {
+        return current--;
+    }
 
-    int ORDER_ASC = 0;
-    int ORDER_DESC = 1;
+    void of(DataFrame frame) {
+        this.current = frame.getRowHi() - 1;
+        this.lo = frame.getRowLo();
+    }
+
+    @Override
+    public void jumpTo(long position) {
+        this.current = position;
+    }
 }

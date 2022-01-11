@@ -61,7 +61,43 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
         if (pattern == null) {
             throw SqlException.$(argPositions.getQuick(1), "pattern is required");
         }
-        return new Func(arg, tlCompiler.get().compile(pattern), configuration.getDefaultDateLocale());
+        if (arg.isConstant()) {
+            return new ConstantFunc(arg, tlCompiler.get().compile(pattern), configuration.getDefaultDateLocale());
+        } else {
+            return new Func(arg, tlCompiler.get().compile(pattern), configuration.getDefaultDateLocale());
+        }
+    }
+
+    private static final class ConstantFunc extends TimestampFunction implements UnaryFunction {
+        private final Function arg;
+        private final long timestamp;
+
+        public ConstantFunc(Function arg, DateFormat timestampFormat, DateLocale locale) {
+            this.arg = arg;
+            timestamp = evaluateConstant(arg, timestampFormat, locale);
+        }
+
+        private long evaluateConstant(Function arg, DateFormat timestampFormat, DateLocale locale) {
+            CharSequence value = arg.getStr(null);
+            try {
+                if (value != null) {
+                    return timestampFormat.parse(value, locale);
+                }
+            } catch (NumericException ignore) {
+            }
+
+            return Numbers.LONG_NaN;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return timestamp;
+        }
     }
 
     private static final class Func extends TimestampFunction implements UnaryFunction {

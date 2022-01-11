@@ -24,10 +24,19 @@
 
 package io.questdb.griffin.engine.functions.date;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.griffin.engine.functions.columns.TimestampColumn;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import org.hamcrest.MatcherAssert;
+
+import static org.hamcrest.CoreMatchers.*;
+
 import org.junit.Test;
 
 public class ToTimestampVCFunctionFactoryTest extends AbstractFunctionFactoryTest {
@@ -49,6 +58,28 @@ public class ToTimestampVCFunctionFactoryTest extends AbstractFunctionFactoryTes
     @Test
     public void testSimple() throws SqlException {
         call("2015 03/12 514", "yyyy dd/MM UUU").andAssertTimestamp(1449100800000514L);
+    }
+
+    @Test
+    public void test_whenInputStringIsConstant_functionCachesValue() throws SqlException {
+        ObjList<Function> funcs = new ObjList<>();
+        funcs.add(new StrConstant("2021 01/04"));
+        funcs.add(new StrConstant("yyyy dd/MM"));
+
+        Function f = new ToTimestampVCFunctionFactory().newInstance(0, funcs, new IntList(), configuration, sqlExecutionContext);
+
+        MatcherAssert.assertThat(f.getClass().getName(), equalTo("io.questdb.griffin.engine.functions.date.ToTimestampVCFunctionFactory$ConstantFunc"));
+    }
+
+    @Test
+    public void test_whenInputStringIsNotConstant_functionDoesntCacheValue() throws SqlException {
+        ObjList<Function> funcs = new ObjList<>();
+        funcs.add(new TimestampColumn(1));
+        funcs.add(new StrConstant("yyyy dd/MM"));
+
+        Function f = new ToTimestampVCFunctionFactory().newInstance(0, funcs, new IntList(), configuration, sqlExecutionContext);
+
+        MatcherAssert.assertThat(f.getClass().getName(), equalTo("io.questdb.griffin.engine.functions.date.ToTimestampVCFunctionFactory$Func"));
     }
 
     @Override
