@@ -44,10 +44,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
-    private int[] rebalanceLoadByThread;
-    private int rebalanceNLoadCheckCycles = 0;
-    private int rebalanceNRebalances = 0;
-
     @Test
     public void testAddCastFieldColumnNoTable() throws Exception {
         String tableName = "addCastColumn";
@@ -1233,20 +1229,19 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
-    public void testMultiplTablesWithMultipleWriterThreads() throws Exception {
+    public void testMultipleTablesWithMultipleWriterThreads() throws Exception {
         nWriterThreads = 5;
         int nTables = 12;
         int nIterations = 20_000;
-        testThreading(nTables, nIterations, null);
+        testThreading(nTables, nIterations);
     }
 
     @Test
-    public void testMultiplTablesWithSingleWriterThread() throws Exception {
+    public void testMultipleTablesWithSingleWriterThread() throws Exception {
         nWriterThreads = 1;
         int nTables = 3;
         int nIterations = 20_000;
-        testThreading(nTables, nIterations, null);
-        Assert.assertEquals(0, rebalanceNRebalances);
+        testThreading(nTables, nIterations);
     }
 
     @Test
@@ -1593,29 +1588,6 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
-    public void testThreadsWithUnbalancedLoad() throws Exception {
-        nWriterThreads = 3;
-        int nTables = 12;
-        int nIterations = 20_000;
-        double[] loadFactors = {10, 10, 10, 20, 20, 20, 20, 20, 20, 30, 30, 60};
-        testThreading(nTables, nIterations, loadFactors);
-
-        int maxLoad = Integer.MIN_VALUE;
-        int minLoad = Integer.MAX_VALUE;
-        for (int load : rebalanceLoadByThread) {
-            if (maxLoad < load) {
-                maxLoad = load;
-            }
-            if (minLoad > load) {
-                minLoad = load;
-            }
-        }
-        double loadRatio = (double) maxLoad / (double) minLoad;
-        LOG.info().$("testThreadsWithUnbalancedLoad final load ratio is ").$(loadRatio).$();
-        Assert.assertTrue(loadRatio < 1.05);
-    }
-
-    @Test
     public void testUseReceivedTimestamp1() throws Exception {
         String table = "testAutoTimestamp";
         runInContext(() -> {
@@ -1704,13 +1676,9 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         });
     }
 
-    private void testThreading(int nTables, int nIterations, double[] lf) throws Exception {
-        if (null == lf) {
-            lf = new double[nTables];
+    private void testThreading(int nTables, int nIterations) throws Exception {
+        double[] lf = new double[nTables];
             Arrays.fill(lf, 1d);
-        } else {
-            assert lf.length == nTables;
-        }
         for (int n = 1; n < nTables; n++) {
             lf[n] += lf[n - 1];
         }
@@ -1757,9 +1725,6 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                 } while (recvBuffer.length() > 0);
             }
             waitForIOCompletion();
-            rebalanceNLoadCheckCycles = scheduler.getLoadCheckCycles();
-            rebalanceNRebalances = scheduler.getReshuffleCount();
-            rebalanceLoadByThread = scheduler.getLoadByWriterThread();
             closeContext();
             LOG.info().$("Completed ")
                     .$(nTotalUpdates)
@@ -1768,10 +1733,6 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     .$(" measurement types processed by ")
                     .$(nWriterThreads)
                     .$(" threads. ")
-                    .$(rebalanceNLoadCheckCycles)
-                    .$(" load checks lead to ")
-                    .$(rebalanceNRebalances)
-                    .$(" load rebalancing operations")
                     .$();
             for (int nTable = 0; nTable < nTables; nTable++) {
                 assertTableCount("weather" + nTable, countByTable[nTable], maxTimestampByTable[nTable] - timestampIncrementInNanos);

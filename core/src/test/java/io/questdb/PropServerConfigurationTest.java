@@ -93,7 +93,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(16, configuration.getHttpServerConfiguration().getQueryCacheRowCount());
 
         // this is going to need interesting validation logic
-        // configuration path is expected to be relative and we need to check if absolute path is good
+        // configuration path is expected to be relative, and we need to check if absolute path is good
         Assert.assertEquals(new File(root, "public").getAbsolutePath(),
                 configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getPublicDirectory());
 
@@ -261,8 +261,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getYieldThreshold());
         Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getSleepThreshold());
         Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().haltOnError());
-        Assert.assertEquals(10_000_000, configuration.getLineTcpReceiverConfiguration().getNUpdatesPerLoadRebalance());
-        Assert.assertEquals(1.9, configuration.getLineTcpReceiverConfiguration().getMaxLoadRatio(), 0.001);
         Assert.assertEquals(30_000, configuration.getLineTcpReceiverConfiguration().getMaintenanceInterval());
         Assert.assertEquals(PartitionBy.DAY, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
         Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getAggressiveReadRetryCount());
@@ -628,8 +626,6 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(30, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getYieldThreshold());
             Assert.assertEquals(10_003, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getSleepThreshold());
             Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().haltOnError());
-            Assert.assertEquals(100_000, configuration.getLineTcpReceiverConfiguration().getNUpdatesPerLoadRebalance());
-            Assert.assertEquals(1.5, configuration.getLineTcpReceiverConfiguration().getMaxLoadRatio(), 0.001);
             Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getMaintenanceInterval());
             Assert.assertEquals(PartitionBy.MONTH, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
             Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getAggressiveReadRetryCount());

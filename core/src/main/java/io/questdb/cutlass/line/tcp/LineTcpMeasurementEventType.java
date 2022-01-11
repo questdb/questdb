@@ -25,9 +25,6 @@
 package io.questdb.cutlass.line.tcp;
 
 class LineTcpMeasurementEventType {
-    // A reshuffle event is used to redistribute load across threads
-    static final int ALL_WRITERS_RESHUFFLE = -1;
-
     // An incomplete event is used when the queue producer has grabbed an event but is not able
     // to populate it for some reason, the event needs to be committed to the queue incomplete
     static final int ALL_WRITERS_INCOMPLETE_EVENT = -2;
