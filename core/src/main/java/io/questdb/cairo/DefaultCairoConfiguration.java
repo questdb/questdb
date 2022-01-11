@@ -79,11 +79,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getO3PurgeQueueCapacity() {
-        return 1024;
-    }
-
-    @Override
     public int getSampleByIndexSearchPageSize() {
         return 0;
     }
@@ -518,11 +513,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getMiscAppendPageSize() {
         return getFilesFacade().getPageSize();
-    }
-
-    @Override
-    public int getTableBlockWriterQueueCapacity() {
-        return 4;
     }
 
     @Override

@@ -158,8 +158,6 @@ public interface CairoConfiguration {
 
     int getO3PurgeDiscoveryQueueCapacity();
 
-    int getO3PurgeQueueCapacity();
-
     int getParallelIndexThreshold();
 
     long getPartitionPurgeListCapacity();
@@ -279,8 +277,6 @@ public interface CairoConfiguration {
     int getSqlJitPageAddressCacheThreshold();
 
     boolean isSqlJitDebugEnabled();
-
-    int getTableBlockWriterQueueCapacity();
 
     TelemetryConfiguration getTelemetryConfiguration();
 

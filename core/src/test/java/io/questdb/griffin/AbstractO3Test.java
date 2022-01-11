@@ -37,7 +37,6 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
@@ -285,11 +284,6 @@ public class AbstractO3Test {
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                     @Override
                     public int getO3PurgeDiscoveryQueueCapacity() {
-                        return 0;
-                    }
-
-                    @Override
-                    public int getO3PurgeQueueCapacity() {
                         return 0;
                     }
 

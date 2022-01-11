@@ -184,7 +184,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean httpMinServerEnabled;
     private final PropHttpMinIODispatcherConfiguration httpMinIODispatcherConfiguration = new PropHttpMinIODispatcherConfiguration();
     private final PropSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new PropSqlExecutionCircuitBreakerConfiguration();
-    private final int tableBlockWriterQueueCapacity;
     private final int sqlAnalyticStorePageSize;
     private final int sqlAnalyticStoreMaxPages;
     private final int sqlAnalyticRowIdPageSize;
@@ -207,7 +206,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3CopyQueueCapacity;
     private final int o3UpdPartitionSizeQueueCapacity;
     private final int o3PurgeDiscoveryQueueCapacity;
-    private final int o3PurgeQueueCapacity;
     private final int o3ColumnMemorySize;
     private final int maxUncommittedRows;
     private final long commitLag;
@@ -682,7 +680,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.backupDirTimestampFormat = getTimestampFormat(properties, env);
             this.backupTempDirName = getString(properties, env, "cairo.sql.backup.dir.tmp.name", "tmp");
             this.backupMkdirMode = getInt(properties, env, "cairo.sql.backup.mkdir.mode", 509);
-            this.tableBlockWriterQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.table.block.writer.queue.capacity", 256));
             this.columnIndexerQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.column.indexer.queue.capacity", 64));
             this.vectorAggregateQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.vector.aggregate.queue.capacity", 128));
             this.o3CallbackQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.callback.queue.capacity", 128));
@@ -691,7 +688,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3CopyQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.copy.queue.capacity", 128));
             this.o3UpdPartitionSizeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.upd.partition.size.queue.capacity", 128));
             this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.discovery.queue.capacity", 128));
-            this.o3PurgeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.queue.capacity", 128));
             this.o3ColumnMemorySize = (int) Files.ceilPageSize(getIntSize(properties, env, "cairo.o3.column.memory.size", 16 * Numbers.SIZE_1MB));
             this.maxUncommittedRows = getInt(properties, env, "cairo.max.uncommitted.rows", 500_000);
             this.commitLag = getLong(properties, env, "cairo.commit.lag", 300_000) * 1_000;
@@ -1812,11 +1808,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getO3PurgeQueueCapacity() {
-            return o3PurgeQueueCapacity;
-        }
-
-        @Override
         public int getParallelIndexThreshold() {
             return parallelIndexThreshold;
         }
@@ -2096,12 +2087,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             return sqlRenameTableModelPoolCapacity;
         }
 
-        @Override
-        public int getTableBlockWriterQueueCapacity() {
-            return tableBlockWriterQueueCapacity;
-        }
-
-        @Override
         public TelemetryConfiguration getTelemetryConfiguration() {
             return telemetryConfiguration;
         }
