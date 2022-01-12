@@ -175,13 +175,7 @@ public class ServerMain {
         }
 
         workerPool.assignCleaner(Path.CLEANER);
-        workerPool.assign(new O3CallbackJob(cairoEngine.getMessageBus()));
-        workerPool.assign(new O3PartitionJob(cairoEngine.getMessageBus()));
-        workerPool.assign(new O3OpenColumnJob(cairoEngine.getMessageBus()));
-        workerPool.assign(new O3CopyJob(cairoEngine.getMessageBus()));
-        workerPool.assign(new O3PurgeDiscoveryJob(cairoEngine.getMessageBus(), workerPool.getWorkerCount()));
-        workerPool.assign(new O3PurgeJob(cairoEngine.getMessageBus()));
-        O3Utils.initBuf(workerPool.getWorkerCount() + 1);
+        O3Utils.setupWorkerPool(workerPool, cairoEngine.getMessageBus());
 
         Metrics metrics;
         if (configuration.getMetricsConfiguration().isEnabled()) {

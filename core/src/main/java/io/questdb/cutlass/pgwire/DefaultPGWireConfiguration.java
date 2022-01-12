@@ -87,12 +87,17 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
-    public int getFactoryCacheColumnCount() {
+    public boolean isSelectCacheEnabled() {
+        return true;
+    }
+
+    @Override
+    public int getSelectCacheBlockCount() {
         return 16;
     }
 
     @Override
-    public int getFactoryCacheRowCount() {
+    public int getSelectCacheRowCount() {
         return 16;
     }
 
@@ -104,6 +109,11 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     @Override
     public int getIdleSendCountBeforeGivingUp() {
         return 10_000;
+    }
+
+    @Override
+    public boolean isInsertCacheEnabled() {
+        return true;
     }
 
     @Override

@@ -21,32 +21,10 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-const fs = require("fs")
-const path = require("path")
-const archiver = require("archiver")
-const rimraf = require("rimraf")
 
-const source = path.join(process.cwd(), "/dist/")
-const destination = path.join(
-  process.cwd(),
-  "..",
-  "core/src/main/resources/io/questdb/site/public.zip",
-)
+#ifndef QUESTDB_CPPRT_OVERRIDES_H
+#define QUESTDB_CPPRT_OVERRIDES_H
 
-const start = async () => {
-  const archive = archiver("zip", { zlib: { level: 9 } })
+extern "C" void __cxa_pure_virtual();
 
-  rimraf.sync(destination)
-  const stream = fs.createWriteStream(destination)
-
-  archive
-    .on("error", (err) => {
-      throw err
-    })
-    .directory(source, false)
-    .pipe(stream)
-
-  await archive.finalize()
-}
-
-start()
+#endif //QUESTDB_CPPRT_OVERRIDES_H

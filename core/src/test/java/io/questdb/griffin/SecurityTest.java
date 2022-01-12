@@ -511,7 +511,7 @@ public class SecurityTest extends AbstractGriffinTest {
                 assertQuery(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
-                        "select ts, d from tb1 LATEST BY d",
+                        "select ts, d from tb1 LATEST ON ts PARTITION BY d",
                         "ts",
                         true, readOnlyExecutionContext);
                 Assert.fail();

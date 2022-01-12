@@ -6,8 +6,10 @@ pr:
       - master
 
 variables:
-  QDB_LOG_W_FILE_LOCATION: "$(Build.BinariesDirectory)/tests.log"
+  QDB_LOG_W_FILE_LOCATION: "$(Build.BinariesDirectory)"
   ARCHIVED_LOGS: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt).zip"
+  CRASH_LOG_LOCATION: "$(Build.SourcesDirectory)/core/"
+  ARCHIVED_GRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
 
 stages:
   - stage: RunTestsBranches
@@ -33,9 +35,9 @@ stages:
               imageName: "ubuntu-latest"
               os: Linux
               jdk: "1.8"
-            mac-jdk17:
+            linux-jdk17:
               imageName: "mac-latest"
-              os: macOS
+              os: Linux
               jdk: "1.17"
         pool:
           vmImage: $(imageName)
@@ -74,4 +76,19 @@ stages:
             condition: failed()
             inputs:
               pathToPublish: $(ARCHIVED_LOGS)
+              artifactName: MavenFailedTestsLogs
+          - task: Bash@3
+            displayName: "Tests failed -- rename crash dump"
+            condition: failed()
+            inputs:
+              workingDirectory: $(CRASH_LOG_LOCATION)
+              targetType: 'inline'
+              script: find . -type f -name 'hs_*.log' -exec sh -c 'x="{}"; mv "$x" "$ARCHIVED_GRASH_LOG"' \;
+            env:
+              ARCHIVED_GRASH_LOG: $(ARCHIVED_GRASH_LOG)
+          - task: PublishBuildArtifacts@1
+            displayName: "Tests failed -- Upload crash logs"
+            condition: failed()
+            inputs:
+              pathToPublish: $(ARCHIVED_GRASH_LOG)
               artifactName: MavenFailedTestsLogs

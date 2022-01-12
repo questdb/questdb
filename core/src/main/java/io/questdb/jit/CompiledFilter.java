@@ -67,6 +67,7 @@ public class CompiledFilter implements Closeable {
     public void close() {
         if (fnAddress > 0) {
             FiltersCompiler.freeFunction(fnAddress);
+            fnAddress = 0;
         }
     }
 }

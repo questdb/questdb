@@ -329,10 +329,7 @@
             </build>
         </profile>
         <profile>
-            <id>use-built-in-nodejs</id>
-            <properties>
-                <nodejs.npm.cmd>${project.basedir}/node/npm</nodejs.npm.cmd>
-            </properties>
+            <id>build-web-console</id>
             <build>
                 <plugins>
                     <plugin>
@@ -352,13 +349,6 @@
                             <nodeVersion>${nodejs.version}</nodeVersion>
                         </configuration>
                     </plugin>
-                </plugins>
-            </build>
-        </profile>
-        <profile>
-            <id>build-web-console</id>
-            <build>
-                <plugins>
                     <plugin>
                         <groupId>org.codehaus.mojo</groupId>
                         <artifactId>exec-maven-plugin</artifactId>
@@ -380,7 +370,7 @@
                         <executions>
                             <execution>
                                 <id>package-web-console</id>
-                                <phase>package</phase>
+                                <phase>generate-resources</phase>
                                 <goals>
                                     <goal>single</goal>
                                 </goals>
@@ -508,6 +498,7 @@
                 <archive.name>${project.version}-rt-linux-amd64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-linux-amd64</runtime.name>
                 <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+                <nodejs.npm.cmd>${project.basedir}/node/npm</nodejs.npm.cmd>
             </properties>
         </profile>
         <profile>
@@ -522,6 +513,7 @@
                 <archive.name>${project.version}-rt-freebsd-amd64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-freebsd-amd64</runtime.name>
                 <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+                <nodejs.npm.cmd>${project.basedir}/node/npm</nodejs.npm.cmd>
             </properties>
         </profile>
         <profile>
@@ -536,6 +528,7 @@
                 <archive.name>${project.version}-rt-linux-aarch64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-linux-aarch64</runtime.name>
                 <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+                <nodejs.npm.cmd>${project.basedir}/node/npm</nodejs.npm.cmd>
             </properties>
         </profile>
         <profile>
@@ -549,6 +542,7 @@
                 <archive.name>${project.version}-rt-osx-amd64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-osx-amd64</runtime.name>
                 <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+                <nodejs.npm.cmd>${project.basedir}/node/npm</nodejs.npm.cmd>
             </properties>
         </profile>
 		<profile>

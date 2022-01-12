@@ -44,7 +44,6 @@ shared.worker.count=1
 
 line.tcp.net.active.connection.limit=64
 line.tcp.msg.buffer.size=32768
-line.tcp.n.updates.per.load.balance=100000
 #line.tcp.net.bind.to=10.0.0.1:9009
 line.tcp.max.uncommitted.rows=100
 #line.tcp.maintenance.job.hysteresis.in.ms=300000

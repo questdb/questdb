@@ -54,9 +54,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();
     private final CharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
     private final CharSequenceObjHashMap<TableUpdateDetails> idleTableUpdateDetailsUtf16;
-    private final int[] loadByWriterThread;
-    private final int processedEventCountBeforeReshuffle;
-    private final double maxLoadRatio;
+    private final long[] loadByWriterThread;
     private final long writerIdleTimeout;
     private final NetworkIOJob[] netIoJobs;
     private final StringSink[] tableNameSinks;
@@ -65,8 +63,6 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final LineTcpReceiverConfiguration configuration;
     private Sequence pubSeq;
-    private int loadCheckCycles = 0;
-    private int reshuffleCount = 0;
     private LineTcpReceiver.SchedulerListener listener;
 
     LineTcpMeasurementScheduler(
@@ -96,7 +92,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         // in worker threads.
         tableUpdateDetailsUtf16 = new CharSequenceObjHashMap<>();
         idleTableUpdateDetailsUtf16 = new CharSequenceObjHashMap<>();
-        loadByWriterThread = new int[writerWorkerPool.getWorkerCount()];
+        loadByWriterThread = new long[writerWorkerPool.getWorkerCount()];
         int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();
         int queueSize = lineConfiguration.getWriterQueueCapacity();
         queue = new RingQueue<>(
@@ -147,8 +143,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         this.tableStructureAdapter = new TableStructureAdapter(cairoConfiguration, configuration.getDefaultPartitionBy());
-        processedEventCountBeforeReshuffle = lineConfiguration.getNUpdatesPerLoadRebalance();
-        maxLoadRatio = lineConfiguration.getMaxLoadRatio();
         writerIdleTimeout = lineConfiguration.getWriterIdleTimeout();
     }
 
@@ -253,16 +247,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         return new LineTcpNetworkIOJob(configuration, this, dispatcher, workerId);
     }
 
-    @TestOnly
-    int[] getLoadByWriterThread() {
-        return loadByWriterThread;
-    }
-
-    @TestOnly
-    int getLoadCheckCycles() {
-        return loadCheckCycles;
-    }
-
     long getNextPublisherEventSequence() {
         assert isOpen();
         long seq;
@@ -270,11 +254,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         while ((seq = pubSeq.next()) == -2) {
         }
         return seq;
-    }
-
-    @TestOnly
-    int getReshuffleCount() {
-        return reshuffleCount;
     }
 
     private TableUpdateDetails getTableUpdateDetailsFromSharedArea(@NotNull NetworkIOJob netIoJob, @NotNull LineTcpParser parser) {
@@ -337,96 +316,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         return null != pubSeq;
     }
 
-    private void reshuffleTablesAcrossWriterThreads() {
-        LOG.debug().$("load check [cycle=").$(++loadCheckCycles).$(']').$();
-        unsafeCalcThreadLoad();
-        final int tableCount = tableUpdateDetailsUtf16.size();
-        int fromThreadId = -1;
-        int toThreadId = -1;
-        TableUpdateDetails tableToMove = null;
-        int maxLoad = Integer.MAX_VALUE;
-        while (true) {
-            int highestLoad = Integer.MIN_VALUE;
-            int highestLoadedThreadId = -1;
-            int lowestLoad = Integer.MAX_VALUE;
-            int lowestLoadedThreadId = -1;
-            for (int i = 0, n = loadByWriterThread.length; i < n; i++) {
-                if (loadByWriterThread[i] >= maxLoad) {
-                    continue;
-                }
-
-                if (highestLoad < loadByWriterThread[i]) {
-                    highestLoad = loadByWriterThread[i];
-                    highestLoadedThreadId = i;
-                }
-
-                if (lowestLoad > loadByWriterThread[i]) {
-                    lowestLoad = loadByWriterThread[i];
-                    lowestLoadedThreadId = i;
-                }
-            }
-
-            if (highestLoadedThreadId == -1 || lowestLoadedThreadId == -1 || highestLoadedThreadId == lowestLoadedThreadId) {
-                break;
-            }
-
-            double loadRatio = (double) highestLoad / (double) lowestLoad;
-            if (loadRatio < maxLoadRatio) {
-                // Load is not sufficiently unbalanced
-                break;
-            }
-
-            int nTables = 0;
-            lowestLoad = Integer.MAX_VALUE;
-            String leastLoadedTableName = null;
-            for (int i = 0; i < tableCount; i++) {
-                TableUpdateDetails tab = tableUpdateDetailsUtf16.valueQuick(i);
-                if (tab.getWriterThreadId() == highestLoadedThreadId && tab.getEventsProcessedSinceReshuffle() > 0) {
-                    nTables++;
-                    if (tab.getEventsProcessedSinceReshuffle() < lowestLoad) {
-                        lowestLoad = tab.getEventsProcessedSinceReshuffle();
-                        leastLoadedTableName = tab.getTableNameUtf16();
-                    }
-                }
-            }
-
-            if (nTables < 2) {
-                // The most loaded thread only has 1 table with load assigned to it
-                maxLoad = highestLoad;
-                continue;
-            }
-
-            fromThreadId = highestLoadedThreadId;
-            toThreadId = lowestLoadedThreadId;
-            tableToMove = tableUpdateDetailsUtf16.get(leastLoadedTableName);
-            break;
-        }
-
-        for (int i = 0; i < tableCount; i++) {
-            tableUpdateDetailsUtf16.valueQuick(i).setEventsProcessedSinceReshuffle(0);
-        }
-
-        if (null != tableToMove) {
-            long seq = getNextPublisherEventSequence();
-            if (seq >= 0) {
-                try {
-                    LineTcpMeasurementEvent event = queue.get(seq);
-                    event.createReshuffleEvent(fromThreadId, toThreadId, tableToMove);
-                    tableToMove.setWriterThreadId(toThreadId);
-                    LOG.info()
-                            .$("reshuffle cycle, requesting table move [cycle=").$(loadCheckCycles)
-                            .$(", reshuffleCount=").$(++reshuffleCount)
-                            .$(", table=").$(tableToMove.getTableNameUtf16())
-                            .$(", fromThreadId=").$(fromThreadId)
-                            .$(", toThreadId=").$(toThreadId)
-                            .I$();
-                } finally {
-                    pubSeq.done(seq);
-                }
-            }
-        }
-    }
-
     @TestOnly
     void setListener(LineTcpReceiver.SchedulerListener listener) {
         this.listener = listener;
@@ -465,15 +354,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             } finally {
                 pubSeq.done(seq);
             }
-            if (tableUpdateDetails.incrementEventsProcessedSinceReshuffle() > processedEventCountBeforeReshuffle) {
-                if (tableUpdateDetailsLock.writeLock().tryLock()) {
-                    try {
-                        reshuffleTablesAcrossWriterThreads();
-                    } finally {
-                        tableUpdateDetailsLock.writeLock().unlock();
-                    }
-                }
-            }
+            tableUpdateDetails.incrementEventsProcessedSinceReshuffle();
             return false;
         }
         return true;
@@ -482,13 +363,13 @@ class LineTcpMeasurementScheduler implements Closeable {
     @NotNull
     private TableUpdateDetails unsafeAssignTableToWriterThread(int tudKeyIndex, CharSequence tableNameUtf16) {
         unsafeCalcThreadLoad();
-        int leastLoad = Integer.MAX_VALUE;
+        long leastLoad = Long.MAX_VALUE;
         int threadId = 0;
 
-        for (int n = 0; n < loadByWriterThread.length; n++) {
-            if (loadByWriterThread[n] < leastLoad) {
-                leastLoad = loadByWriterThread[n];
-                threadId = n;
+        for (int i = 0, n = loadByWriterThread.length; i < n; i++) {
+            if (loadByWriterThread[i] < leastLoad) {
+                leastLoad = loadByWriterThread[i];
+                threadId = i;
             }
         }
 
@@ -516,7 +397,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             if (stats != null) {
                 loadByWriterThread[stats.getWriterThreadId()] += stats.getEventsProcessedSinceReshuffle();
             } else {
-                LOG.error().$("could not find static for table [name=").$(tableName).I$();
+                LOG.error().$("could not find statistic for table [name=").$(tableName).I$();
             }
         }
     }

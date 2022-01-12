@@ -37,6 +37,9 @@ import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
+import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
+import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8BytesToString;
+
 public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
     private final String tableNameUtf16;
@@ -48,7 +51,7 @@ public class TableUpdateDetails implements Closeable {
     private int writerThreadId;
     // Number of rows processed since the last reshuffle, this is an estimate because it is incremented by
     // multiple threads without synchronisation
-    private int eventsProcessedSinceReshuffle = 0;
+    private long eventsProcessedSinceReshuffle = 0;
     private TableWriter writer;
     private boolean assignedToJob = false;
     private long lastMeasurementMillis = Long.MAX_VALUE;
@@ -127,12 +130,8 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
-    public int getEventsProcessedSinceReshuffle() {
+    public long getEventsProcessedSinceReshuffle() {
         return eventsProcessedSinceReshuffle;
-    }
-
-    public void setEventsProcessedSinceReshuffle(int eventsProcessedSinceReshuffle) {
-        this.eventsProcessedSinceReshuffle = eventsProcessedSinceReshuffle;
     }
 
     public long getLastMeasurementMillis() {
@@ -151,12 +150,8 @@ public class TableUpdateDetails implements Closeable {
         return writerThreadId;
     }
 
-    public void setWriterThreadId(int writerThreadId) {
-        this.writerThreadId = writerThreadId;
-    }
-
-    public int incrementEventsProcessedSinceReshuffle() {
-        return ++eventsProcessedSinceReshuffle;
+    public void incrementEventsProcessedSinceReshuffle() {
+        ++eventsProcessedSinceReshuffle;
     }
 
     public boolean isAssignedToJob() {
@@ -251,18 +246,26 @@ public class TableUpdateDetails implements Closeable {
     }
 
     public class ThreadLocalDetails implements Closeable {
+        static final int COLUMN_NOT_FOUND = -1;
+        static final int DUPLICATED_COLUMN = -2;
+
         private final Path path = new Path();
-        private final ObjIntHashMap<CharSequence> columnIndexByNameUtf8 = new ObjIntHashMap<>();
+        // maps column names to their indexes
+        // keys are mangled strings created from the utf-8 encoded byte representations of the column names
+        private final CharSequenceIntHashMap columnIndexByNameUtf8 = new CharSequenceIntHashMap();
         private final ObjList<SymbolCache> symbolCacheByColumnIndex = new ObjList<>();
         private final ObjList<SymbolCache> unusedSymbolCaches;
         // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)
-        private final IntList geoHashBitsSizeByColIdx = new IntList();
+        private final IntList columnTypeMeta = new IntList();
         private final StringSink tempSink = new StringSink();
-        private final MangledUtf8Sink mangledUtf8Sink = new MangledUtf8Sink(tempSink);
+        // tracking of processed columns by their index, duplicates will be ignored
         private final BoolList processedCols = new BoolList();
-        private final LowerCaseCharSequenceHashSet addedCols = new LowerCaseCharSequenceHashSet();
+        // tracking of processed columns by their name, duplicates will be ignored
+        // columns end up in this set only if their index cannot be resolved, i.e. new columns
+        private final LowerCaseCharSequenceHashSet addedColsUtf16 = new LowerCaseCharSequenceHashSet();
         private final LineTcpReceiverConfiguration configuration;
         private int columnCount;
+        private String colName;
 
         ThreadLocalDetails(LineTcpReceiverConfiguration configuration, ObjList<SymbolCache> unusedSymbolCaches, int columnCount) {
             this.configuration = configuration;
@@ -271,6 +274,7 @@ public class TableUpdateDetails implements Closeable {
             // the cache continue to live
             this.unusedSymbolCaches = unusedSymbolCaches;
             this.columnCount = columnCount;
+            columnTypeMeta.add(0);
         }
 
         @Override
@@ -307,31 +311,82 @@ public class TableUpdateDetails implements Closeable {
                 }
             }
             symbolCacheByColumnIndex.clear();
-            geoHashBitsSizeByColIdx.clear();
+            columnTypeMeta.clear();
+            columnTypeMeta.add(0);
         }
 
-        LowerCaseCharSequenceHashSet getAddedCols() {
-            return addedCols;
+        // returns the column index for column name passed in colNameUtf8,
+        // or COLUMN_NOT_FOUND if column index cannot be resolved (i.e. new column),
+        // or DUPLICATED_COLUMN if the column has already been processed on the current event
+        int getColumnIndex(DirectByteCharSequence colNameUtf8, boolean hasNonAsciiChars) {
+            int colIndex = columnIndexByNameUtf8.get(colNameUtf8);
+            if (colIndex < 0) {
+                // lookup was unsuccessful we have to check whether the column can be passed by name to the writer
+                final CharSequence colNameUtf16 = utf8ToUtf16(colNameUtf8, tempSink, hasNonAsciiChars);
+                final int index = addedColsUtf16.keyIndex(colNameUtf16);
+                if (index > -1) {
+                    // column has not been sent to the writer by name on this line before
+                    // we can try to resolve column index using table reader
+                    colIndex = getColumnIndexFromReader(colNameUtf16);
+                    if (colIndex > -1) {
+                        // keys of this map will be checked against DirectByteCharSequence when get() is called
+                        // DirectByteCharSequence.equals() compares chars created from each byte, basically it
+                        // assumes that each char is encoded on a single byte (ASCII)
+                        // utf8BytesToString() is used here instead of a simple toString() call to make sure
+                        // column names with non-ASCII chars are handled properly
+                        columnIndexByNameUtf8.put(utf8BytesToString(colNameUtf8, tempSink), colIndex);
+                    } else {
+                        // cannot not resolve column index even from the reader
+                        // column will be passed to the writer by name
+                        colName = colNameUtf16.toString();
+                        addedColsUtf16.addAt(index, colName);
+                        return COLUMN_NOT_FOUND;
+                    }
+                } else {
+                    // column has been passed by name earlier on this event, duplicate should be skipped
+                    return DUPLICATED_COLUMN;
+                }
+            }
+
+            if (processedCols.extendAndReplace(colIndex, true)) {
+                // column has been passed by index earlier on this event, duplicate should be skipped
+                return DUPLICATED_COLUMN;
+            }
+            return colIndex;
         }
 
-        int getColumnCount() {
-            return columnCount;
-        }
-
-        int getColumnIndex(DirectByteCharSequence colName) {
-            final int colIndex = columnIndexByNameUtf8.get(colName);
-            if (colIndex != CharSequenceIntHashMap.NO_ENTRY_VALUE) {
+        private int getColumnIndexFromReader(CharSequence colNameUtf16) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16)) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                int colIndex = metadata.getColumnIndexQuiet(colNameUtf16);
+                updateColumnTypeCache(colIndex, metadata);
                 return colIndex;
             }
-            return populateCacheAndGetColumnIndex(colName);
+        }
+
+        private void updateColumnTypeCache(int colIndex, TableReaderMetadata metadata) {
+            if (colIndex < 0) {
+                return;
+            }
+            columnCount = metadata.getColumnCount();
+            final int colType = metadata.getColumnType(colIndex);
+            final int geoHashBits = ColumnType.getGeoHashBits(colType);
+            columnTypeMeta.extendAndSet(colIndex + 1,
+                    geoHashBits == 0 ? 0 : Numbers.encodeLowHighShorts((short) geoHashBits, ColumnType.tagOf(colType)));
         }
 
         int getColumnTypeMeta(int colIndex) {
-            return geoHashBitsSizeByColIdx.getQuick(colIndex + 1); // first val accounts for new cols, index -1
+            return columnTypeMeta.getQuick(colIndex + 1); // first val accounts for new cols, index -1
         }
 
-        BoolList getProcessedCols() {
-            return processedCols;
+        void resetProcessedColumnsTracking() {
+            processedCols.setAll(columnCount, false);
+            addedColsUtf16.clear();
+        }
+
+        String getColName() {
+            assert colName != null;
+            return colName;
         }
 
         int getSymbolIndex(int colIndex, CharSequence symValue) {
@@ -340,52 +395,6 @@ public class TableUpdateDetails implements Closeable {
                 symCache = addSymbolCache(colIndex);
             }
             return symCache.getSymbolKey(symValue);
-        }
-
-        private int populateCacheAndGetColumnIndex(DirectByteCharSequence colName) {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16)) {
-                TableReaderMetadata metadata = reader.getMetadata();
-                tempSink.clear();
-                if (!Chars.utf8Decode(colName.getLo(), colName.getHi(), tempSink)) {
-                    throw CairoException.instance(0).put("invalid UTF8 in value for ").put(colName);
-                }
-                int colIndex = metadata.getColumnIndexQuiet(tempSink);
-                if (colIndex < 0) {
-                    if (geoHashBitsSizeByColIdx.size() == 0) {
-                        geoHashBitsSizeByColIdx.add(0); // first value is for cols indexed with -1
-                    }
-                    return CharSequenceIntHashMap.NO_ENTRY_VALUE;
-                }
-                // re-cache all column names/types once
-                columnIndexByNameUtf8.clear();
-                geoHashBitsSizeByColIdx.clear();
-                geoHashBitsSizeByColIdx.add(0); // first value is for cols indexed with -1
-                columnCount = metadata.getColumnCount();
-                for (int n = 0, sz = columnCount; n < sz; n++) {
-                    String columnName = metadata.getColumnName(n);
-
-                    // We cannot cache on real column name values if chars are not ASCII
-                    // We need to construct non-ASCII CharSequence +representation same as DirectByteCharSequence will have
-                    CharSequence mangledUtf8Representation = mangledUtf8Sink.encodeMangledUtf8(columnName);
-                    // Check if mangled UTF8 length is different from original
-                    // If they are same it means column name is ASCII and DirectByteCharSequence name will be same as metadata column name
-                    String mangledColumnName = mangledUtf8Representation.length() != columnName.length() ? tempSink.toString() : columnName;
-
-                    columnIndexByNameUtf8.put(mangledColumnName, n);
-                    final int colType = metadata.getColumnType(n);
-                    final int geoHashBits = ColumnType.getGeoHashBits(colType);
-                    if (geoHashBits == 0) {
-                        geoHashBitsSizeByColIdx.add(0);
-                    } else {
-                        geoHashBitsSizeByColIdx.add(
-                                Numbers.encodeLowHighShorts(
-                                        (short) geoHashBits,
-                                        ColumnType.tagOf(colType))
-                        );
-                    }
-                }
-                return colIndex;
-            }
         }
 
         private int resolveSymbolIndex(TableReaderMetadata metadata, int colIndex) {
@@ -397,6 +406,5 @@ public class TableUpdateDetails implements Closeable {
             }
             return symIndex;
         }
-
     }
 }

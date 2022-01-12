@@ -24,7 +24,7 @@
 
 import type { ReactNode } from "react"
 
-import type { QueryRawResult } from "utils/questdb"
+import type { QueryRawResult, Table } from "utils/questdb"
 
 export enum NotificationType {
   ERROR = "error",
@@ -47,6 +47,7 @@ export type RunningShape = Readonly<{
 
 export type QueryStateShape = Readonly<{
   notifications: NotificationShape[]
+  tables: Table[]
   result?: QueryRawResult
   running: RunningShape
   maxNotifications: number
@@ -59,6 +60,7 @@ export enum QueryAT {
   SET_RESULT = "QUERY/SET_RESULT",
   STOP_RUNNING = "QUERY/STOP_RUNNING",
   TOGGLE_RUNNING = "QUERY/TOGGLE_RUNNING",
+  SET_TABLES = "QUERY/SET_TABLES",
 }
 
 type AddNotificationAction = Readonly<{
@@ -91,6 +93,13 @@ type ToggleRunningAction = Readonly<{
   }>
 }>
 
+type SetTablesAction = Readonly<{
+  type: QueryAT.SET_TABLES
+  payload: Readonly<{
+    tables: Table[]
+  }>
+}>
+
 export type QueryAction =
   | AddNotificationAction
   | CleanupNotificationsAction
@@ -98,3 +107,4 @@ export type QueryAction =
   | SetResultAction
   | StopRunningAction
   | ToggleRunningAction
+  | SetTablesAction

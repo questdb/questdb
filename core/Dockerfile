@@ -11,7 +11,7 @@ RUN curl -L "https://www.mirrorservice.org/sites/ftp.apache.org/maven/maven-3/3.
 
 WORKDIR /build/questdb
 
-RUN ../apache-maven-3.6.3/bin/mvn clean package -Djdk.lang.Process.launchMechanism=vfork -DskipTests -P build-web-console,build-binaries,use-built-in-nodejs
+RUN ../apache-maven-3.6.3/bin/mvn clean package -Djdk.lang.Process.launchMechanism=vfork -DskipTests -P build-web-console,build-binaries
 
 WORKDIR /build/questdb/core/target
 

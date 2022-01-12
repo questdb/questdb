@@ -69,4 +69,18 @@ public interface DataFrameCursor extends Closeable, SymbolTableSource  {
     long size();
 
     StaticSymbolTable getSymbolTable(int columnIndex);
+
+    /**
+     * Returns true if cursor supports random record access (without having to iterate through all results).
+     */
+    default boolean supportsRandomAccess() {
+        return false;
+    }
+
+    /**
+     * Returns data frame and position (lo) of given rowNumber (according to cursor order) .
+     */
+    default @Nullable DataFrame skipTo(long rowNumber) {
+        throw new UnsupportedOperationException();
+    }
 }

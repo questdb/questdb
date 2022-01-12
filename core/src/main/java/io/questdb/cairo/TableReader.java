@@ -74,6 +74,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private long txn = TableUtils.INITIAL_TXN;
     private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
     private boolean active;
+    private boolean txnAcquired = false;
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
         this.configuration = configuration;
@@ -120,7 +121,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.columnTops = new LongList(capacity / 2);
             this.columnTops.setPos(capacity / 2);
             this.recordCursor.of(this);
-            this.active = true;
         } catch (Throwable e) {
             close();
             throw e;
@@ -158,6 +158,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     @Override
     public void close() {
         if (isOpen()) {
+            releaseTxn();
             freeSymbolMapReaders();
             freeBitmapIndexCache();
             Misc.free(metadata);
@@ -295,6 +296,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         return tableName;
     }
 
+    public long getTransientRowCount() {
+        return txFile.getTransientRowCount();
+    }
+
     public long getVersion() {
         return this.txFile.getStructureVersion();
     }
@@ -311,8 +316,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         // check for double-close
         if (active) {
             active = false;
-            txnScoreboard.releaseTxn(txn);
         }
+        releaseTxn();
     }
 
     public boolean isOpen() {
@@ -551,6 +556,14 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
+    private void acquireTxn() {
+        if (txnAcquired) {
+            return;
+        }
+        txnScoreboard.acquireTxn(txn);
+        txnAcquired = true;
+    }
+
     private void closeColumn(int columnBase, int columnIndex) {
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
         Misc.free(columns.getAndSetQuick(index, NullColumn.INSTANCE));
@@ -758,10 +771,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
     }
 
-    public long getTransientRowCount() {
-        return txFile.getTransientRowCount();
-    }
-
     long getTxn() {
         return txn;
     }
@@ -909,7 +918,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         return path;
     }
 
-    private boolean readTxnSlow() {
+    private void readTxnSlow() {
         int count = 0;
         final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
         while (true) {
@@ -938,11 +947,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // ok, we have snapshot, check if our snapshot is stable
                 if (txn == txFile.unsafeReadTxn()) {
                     // good, very stable, congrats
-                    if (active) {
-                        txnScoreboard.releaseTxn(this.txn);
-                    }
+                    releaseTxn();
                     this.txn = txn;
-                    txnScoreboard.acquireTxn(txn);
+                    acquireTxn();
                     this.rowCount = txFile.getFixedRowCount() + txFile.getTransientRowCount();
                     LOG.debug()
                             .$("new transaction [txn=").$(txn)
@@ -952,7 +959,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                             .$(", attempts=").$(count)
                             .$(", thread=").$(Thread.currentThread().getName())
                             .$(']').$();
-                    return true;
+                    break;
                 }
                 // This is unlucky, sequences have changed while we were reading transaction data
                 // We must discard and try again
@@ -1007,14 +1014,27 @@ public class TableReader implements Closeable, SymbolTableSource {
         reconcileOpenPartitionsFrom(0);
     }
 
+    private void releaseTxn() {
+        if (txnAcquired) {
+            txnScoreboard.releaseTxn(txn);
+            txnAcquired = false;
+        }
+    }
+
     private boolean reload(boolean activation) {
         if (this.txn == txFile.unsafeReadTxn()) {
             if (activation) {
-                txnScoreboard.acquireTxn(txn);
+                acquireTxn();
             }
             return false;
         }
-        return reloadSlow();
+        try {
+            reloadSlow();
+            return true;
+        } catch (Throwable e) {
+            releaseTxn();
+            throw e;
+        }
     }
 
     private void reloadColumnAt(
@@ -1160,21 +1180,17 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private boolean reloadSlow() {
+    private void reloadSlow() {
         // Save tx file versions on stack
         final long prevStructVersion = this.txFile.getStructureVersion();
         final long prevPartitionVersion = this.txFile.getPartitionTableVersion();
 
         // reload tx file, this will update the versions
-        if (this.readTxnSlow()) {
-            reloadStruct(prevStructVersion);
-            // partition reload will apply truncate if necessary
-            // applyTruncate for non-partitioned tables only
-            reconcileOpenPartitions(prevPartitionVersion);
-            return true;
-        }
-
-        return false;
+        this.readTxnSlow();
+        reloadStruct(prevStructVersion);
+        // partition reload will apply truncate if necessary
+        // applyTruncate for non-partitioned tables only
+        reconcileOpenPartitions(prevPartitionVersion);
     }
 
     private void reloadStruct(long prevStructVersion) {
