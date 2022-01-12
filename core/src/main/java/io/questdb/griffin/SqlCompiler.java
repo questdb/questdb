@@ -46,12 +46,10 @@ import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.MPSequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.tasks.O3PurgeDiscoveryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -2290,18 +2288,6 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofRepair();
     }
 
-    private void schedulePurgeO3Partitions(CharSequence tableName, int partitionBy) {
-        final MPSequence seq = messageBus.getO3PurgeDiscoveryPubSeq();
-        long cursor = seq.next();
-        if (cursor > -1) {
-            O3PurgeDiscoveryTask task = this.messageBus.getO3PurgeDiscoveryQueue().get(cursor);
-            task.of(tableName, partitionBy);
-            seq.done(cursor);
-            return;
-        }
-        throw CairoException.instance(0).put("cannot schedule vacuum action, queue is full");
-    }
-
     void setFullFatJoins(boolean value) {
         codeGenerator.setFullFatJoins(value);
     }
@@ -2492,7 +2478,9 @@ public class SqlCompiler implements Closeable {
                 try (TableReader rdr = engine.getReader(executionContext.getCairoSecurityContext(), tableName)) {
                     int partitionBy = rdr.getMetadata().getPartitionBy();
                     if (PartitionBy.isPartitioned(partitionBy)) {
-                        schedulePurgeO3Partitions(tableName, partitionBy);
+                        if (!TableUtils.schedulePurgeO3Partitions(messageBus, rdr.getTableName(), partitionBy)) {
+                            throw CairoException.instance(0).put("cannot schedule vacuum action, queue is full");
+                        }
                         return compiledQuery.ofVacuum();
                     }
                     throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tableName).put("' is not partitioned");

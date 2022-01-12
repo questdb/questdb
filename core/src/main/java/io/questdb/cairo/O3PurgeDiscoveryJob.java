@@ -60,7 +60,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
         for (int i = 0; i < workerCount; i++) {
             sink[i] = new StringSink();
             fileNameSinks[i] = new StringSink();
-            partitionList.add(new DirectLongList(configuration.getPartitionPurgeListCapacity() * 2, MemoryTag.NATIVE_LONG_LIST));
+            partitionList.add(new DirectLongList(configuration.getPartitionPurgeListCapacity() * 2, MemoryTag.NATIVE_O3));
             txnScoreboards.add(new TxnScoreboard(configuration.getFilesFacade(), configuration.getTxnScoreboardEntryCount()));
             txnReaders.add(new TxReader(configuration.getFilesFacade()));
         }
@@ -174,7 +174,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
         assert partitionList.size() % 2 == 0;
         Vect.sort128BitAscInPlace(partitionList.getAddress(), partitionList.size() / 2);
 
-        long partitionTs = Numbers.LONG_NaN;
+        long partitionTimestamp = Numbers.LONG_NaN;
         int lo = 0;
         int n = (int) partitionList.size();
 
@@ -188,7 +188,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
 
             for (int i = 0; i < n; i += 2) {
                 long currentPartitionTs = partitionList.get(i + 1);
-                if (currentPartitionTs != partitionTs) {
+                if (currentPartitionTs != partitionTimestamp) {
                     if (i > lo + 2) {
                         processPartition(
                                 ff,
@@ -196,7 +196,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                                 tableRootLen,
                                 txReader,
                                 txnScoreboard,
-                                partitionTs,
+                                partitionTimestamp,
                                 partitionBy,
                                 partitionList,
                                 lo,
@@ -204,7 +204,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                         );
                     }
                     lo = i;
-                    partitionTs = currentPartitionTs;
+                    partitionTimestamp = currentPartitionTs;
                 }
             }
             // Tail
@@ -215,7 +215,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                         tableRootLen,
                         txReader,
                         txnScoreboard,
-                        partitionTs,
+                        partitionTimestamp,
                         partitionBy,
                         partitionList,
                         lo,

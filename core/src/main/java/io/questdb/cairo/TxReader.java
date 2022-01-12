@@ -162,12 +162,14 @@ public class TxReader implements Closeable, Mutable {
 
     public TxReader ofRO(@Transient Path path, int partitionBy) {
         clear();
+        int tableRootLen = path.length();
         try {
             roTxMem = openTxnFile(ff, path);
             this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
             this.partitionBy = partitionBy;
         } catch (Throwable e) {
             close();
+            path.trimTo(tableRootLen);
             throw e;
         }
         return this;

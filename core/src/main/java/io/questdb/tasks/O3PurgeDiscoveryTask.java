@@ -25,18 +25,18 @@
 package io.questdb.tasks;
 
 public class O3PurgeDiscoveryTask {
-    private CharSequence tableName;
+    private String tableName;
     private int partitionBy;
 
     public int getPartitionBy() {
         return partitionBy;
     }
 
-    public CharSequence getTableName() {
+    public String getTableName() {
         return tableName;
     }
 
-    public void of(CharSequence tableName, int partitionBy) {
+    public void of(String tableName, int partitionBy) {
         this.tableName = tableName;
         this.partitionBy = partitionBy;
     }

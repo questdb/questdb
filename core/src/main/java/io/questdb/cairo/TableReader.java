@@ -33,12 +33,10 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.MPSequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
-import io.questdb.tasks.O3PurgeDiscoveryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -318,17 +316,27 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public void goPassive() {
-        if (releaseTxn()) {
+        if (releaseTxn() && PartitionBy.isPartitioned(this.partitionBy)) {
             // check if reader unlocks a transaction in scoreboard
             // to house keep the partition versions
-            if (PartitionBy.isPartitioned(this.partitionBy)) {
-                long txnLocks = txnScoreboard.getActiveReaderCount(txn);
-                if (txnLocks == 0 && txFile.unsafeReadPartitionTableVersion() > txFile.getPartitionTableVersion()) {
-                    // Last lock for this txn is released and this is not latest txn number
-                    // Schedule a job to clean up partition versions this reader may held
-                    schedulePurgeO3Partitions(messageBus, tableName);
-                }
+            checkSchedulePurgeO3Partitions();
+        }
+    }
+
+    private void checkSchedulePurgeO3Partitions() {
+        long txnLocks = txnScoreboard.getActiveReaderCount(txn);
+        if (txnLocks == 0 && txFile.unsafeReadPartitionTableVersion() > txFile.getPartitionTableVersion()) {
+            // Last lock for this txn is released and this is not latest txn number
+            // Schedule a job to clean up partition versions this reader may held
+            if (TableUtils.schedulePurgeO3Partitions(messageBus, tableName, partitionBy)) {
+                return;
             }
+
+            LOG.error()
+                    .$("could queue purge partition task, queue is full [")
+                    .$("table=").$(this.tableName)
+                    .$(", txn=").$(txn)
+                    .$(']').$();
         }
     }
 
@@ -1312,22 +1320,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             } finally {
                 path.trimTo(rootLen);
             }
-        }
-    }
-
-    private void schedulePurgeO3Partitions(MessageBus messageBus, String tableName) {
-        final MPSequence seq = messageBus.getO3PurgeDiscoveryPubSeq();
-        long cursor = seq.next();
-        if (cursor > -1) {
-            O3PurgeDiscoveryTask task = this.messageBus.getO3PurgeDiscoveryQueue().get(cursor);
-            task.of(tableName, this.partitionBy);
-            seq.done(cursor);
-        } else {
-            LOG.error()
-                    .$("could queue to purge [errno=").$(ff.errno())
-                    .$(", table=").$(this.tableName)
-                    .$(", txn=").$(txn)
-                    .$(']').$();
         }
     }
 
