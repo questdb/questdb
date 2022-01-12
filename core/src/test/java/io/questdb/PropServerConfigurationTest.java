@@ -188,7 +188,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(64, configuration.getCairoConfiguration().getInsertPoolCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getColumnCastModelPoolCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getCreateTableModelPoolCapacity());
-        Assert.assertEquals(64, configuration.getCairoConfiguration().getPartitionPurgeListCapacity());
+        Assert.assertEquals(1, configuration.getCairoConfiguration().getPartitionPurgeListCapacity());
 
         Assert.assertEquals(0, configuration.getLineUdpReceiverConfiguration().getBindIPv4Address());
         Assert.assertEquals(9009, configuration.getLineUdpReceiverConfiguration().getPort());
