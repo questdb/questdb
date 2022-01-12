@@ -156,10 +156,6 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
-    CompiledQuery ofVacuum() {
-        return of(VACUUM);
-    }
-
     CompiledQuery ofBackupTable() {
         return of(BACKUP_TABLE);
     }
@@ -204,6 +200,10 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     CompiledQuery ofTruncate() {
         return of(TRUNCATE);
+    }
+
+    CompiledQuery ofVacuum() {
+        return of(VACUUM);
     }
 
     private class AlterTableQueryFuture implements QueryFuture {

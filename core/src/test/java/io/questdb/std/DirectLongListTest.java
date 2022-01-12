@@ -31,7 +31,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 
 public class DirectLongListTest {
@@ -41,7 +40,7 @@ public class DirectLongListTest {
     @Test
     public void test128BitSort() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try(DirectLongList list = new DirectLongList(256, MemoryTag.NATIVE_LONG_LIST)) {
+            try (DirectLongList list = new DirectLongList(256, MemoryTag.NATIVE_LONG_LIST)) {
                 final int N = 100;
                 for (int i = 0; i < N; ++i) {
                     list.add((100 - i - 1) / 10);

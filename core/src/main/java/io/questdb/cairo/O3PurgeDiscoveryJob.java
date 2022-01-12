@@ -237,6 +237,36 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
         }
     }
 
+    @Override
+    protected boolean doRun(int workerId, long cursor) {
+        final O3PurgeDiscoveryTask task = queue.get(cursor);
+        discoverPartitions(
+                configuration.getFilesFacade(),
+                sink[workerId],
+                fileNameSinks[workerId],
+                partitionList.get(workerId),
+                configuration.getRoot(),
+                task.getTableName(),
+                txnScoreboards.get(workerId),
+                txnReaders.get(workerId),
+                task.getPartitionBy()
+        );
+        subSeq.done(cursor);
+        return true;
+    }
+
+    private void loadLastTx(TxReader txReader) {
+        long txn;
+        do {
+            txn = txReader.unsafeReadTxnCheck();
+
+            Unsafe.getUnsafe().loadFence();
+            txReader.unsafeLoadAll();
+
+            Unsafe.getUnsafe().loadFence();
+        } while (txn != txReader.unsafeReadTxn());
+    }
+
     private void parsePartitionDateVersion(StringSink fileNameSink, DirectLongList partitionList, CharSequence tableName, DateFormat partitionByFormat) {
         int index = Chars.lastIndexOf(fileNameSink, '.');
 
@@ -270,35 +300,5 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
         } catch (NumericException e) {
             LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).$(']').$();
         }
-    }
-
-    @Override
-    protected boolean doRun(int workerId, long cursor) {
-        final O3PurgeDiscoveryTask task = queue.get(cursor);
-        discoverPartitions(
-                configuration.getFilesFacade(),
-                sink[workerId],
-                fileNameSinks[workerId],
-                partitionList.get(workerId),
-                configuration.getRoot(),
-                task.getTableName(),
-                txnScoreboards.get(workerId),
-                txnReaders.get(workerId),
-                task.getPartitionBy()
-        );
-        subSeq.done(cursor);
-        return true;
-    }
-
-    private void loadLastTx(TxReader txReader) {
-        long txn;
-        do {
-            txn = txReader.unsafeReadTxnCheck();
-
-            Unsafe.getUnsafe().loadFence();
-            txReader.unsafeLoadAll();
-
-            Unsafe.getUnsafe().loadFence();
-        } while (txn != txReader.unsafeReadTxn());
     }
 }

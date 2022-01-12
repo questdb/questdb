@@ -124,11 +124,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     @Override
-    protected MemoryCMR openTxnFile(FilesFacade ff, Path path) {
-        if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
-            return txMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT);
-        }
-        throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
+    public TxWriter ofRO(@Transient Path path, int partitionBy) {
+        throw new IllegalStateException();
     }
 
     @Override
@@ -137,6 +134,14 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         this.prevTransientRowCount = this.transientRowCount;
         this.prevMaxTimestamp = maxTimestamp;
         this.prevMinTimestamp = minTimestamp;
+    }
+
+    @Override
+    protected MemoryCMR openTxnFile(FilesFacade ff, Path path) {
+        if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
+            return txMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT);
+        }
+        throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
     }
 
     @Override
@@ -213,11 +218,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             throw e;
         }
         return this;
-    }
-
-    @Override
-    public TxWriter ofRO(@Transient Path path, int partitionBy) {
-        throw new IllegalStateException();
     }
 
     public void openFirstPartition(long timestamp) {
