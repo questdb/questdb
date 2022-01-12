@@ -200,8 +200,6 @@ public class ServerMain {
                 )
         );
 
-        O3Utils.initBuf(workerPool.getWorkerCount() + 1);
-
         Metrics metrics;
         if (configuration.getMetricsConfiguration().isEnabled()) {
             metrics = Metrics.enabled();
