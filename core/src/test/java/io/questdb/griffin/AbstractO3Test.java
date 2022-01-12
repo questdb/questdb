@@ -41,6 +41,7 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
+import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.net.URISyntaxException;
@@ -341,8 +342,9 @@ public class AbstractO3Test {
             try {
                 if (pool != null) {
                     pool.assignCleaner(Path.CLEANER);
-                    O3Utils.setupWorkerPool(pool, engine.getMessageBus());
-                    pool.start(LOG);
+                    try (Closeable ignored = O3Utils.setupWorkerPool(pool, engine.getMessageBus())) {
+                        pool.start(LOG);
+                    }
                 } else {
                     O3Utils.initBuf();
                 }
