@@ -369,9 +369,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
         if (!sizeCanBeVariable) {
             if (sizeExpected) {
-                Assert.assertTrue("Concrete cursor size expected", cursorSize != -1);
+                Assert.assertTrue("Concrete cursor size expected but was -1", cursorSize != -1);
             } else {
-                Assert.assertTrue("Invalid/undetermined cursor size expected", cursorSize <= 0);
+                Assert.assertTrue("Invalid/undetermined cursor size expecte but was " + cursorSize, cursorSize <= 0);
             }
         }
         if (cursorSize != -1) {
@@ -536,15 +536,20 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     protected static void assertTimestampColumnValues(RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        assertTimestampColumnValues(factory, sqlExecutionContext, true);
+    }
+
+    protected static void assertTimestampColumnValues(RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext, boolean isAscending) throws SqlException {
         int index = factory.getMetadata().getTimestampIndex();
-        long timestamp = Long.MIN_VALUE;
+        long timestamp = isAscending ? Long.MIN_VALUE : Long.MAX_VALUE;
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             final Record record = cursor.getRecord();
             long c = 0;
             while (cursor.hasNext()) {
                 long ts = record.getTimestamp(index);
-                if (timestamp > ts) {
-                    Assert.fail("record #" + c);
+                if ((isAscending && timestamp > ts) ||
+                        (!isAscending && timestamp < ts)) {
+                    Assert.fail("record # " + c + " should have " + (isAscending ? "bigger" : "smaller") + " (or equal) timestamp than the row before");
                 }
                 timestamp = ts;
                 c++;
@@ -701,6 +706,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 false);
     }
 
+    /**
+     * expectedTimestamp can either be exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
+     */
     protected static void assertQuery(CharSequence expected,
                                       CharSequence query,
                                       CharSequence ddl,
@@ -720,6 +728,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 false);
     }
 
+    /**
+     * expectedTimestamp can either be exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
+     */
     protected static void assertQuery(CharSequence expected,
                                       CharSequence query,
                                       CharSequence ddl,
@@ -740,6 +751,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 false);
     }
 
+    /**
+     * expectedTimestamp can either be exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
+     */
     protected static void assertQuery(CharSequence expected,
                                       CharSequence query,
                                       CharSequence ddl,
@@ -759,6 +773,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 false);
     }
 
+    /**
+     * expectedTimestamp can either be exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
+     */
     protected static void assertQuery(CharSequence expected,
                                       CharSequence query,
                                       CharSequence ddl,
@@ -779,6 +796,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 false);
     }
 
+    /**
+     * expectedTimestamp can either be exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
+     */
     protected static void assertQuery(CharSequence expected,
                                       CharSequence query,
                                       CharSequence ddl,
@@ -801,6 +821,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 false);
     }
 
+    /**
+     * expectedTimestamp can either be exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
+     */
     protected static void assertQuery(CharSequence expected,
                                       CharSequence query,
                                       CharSequence ddl,
@@ -824,20 +847,36 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 sizeCanBeVariable);
     }
 
+    /**
+     * expectedTimestamp can either be exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
+     */
     protected static void assertTimestamp(CharSequence expectedTimestamp, RecordCursorFactory factory) throws SqlException {
         assertTimestamp(expectedTimestamp, factory, sqlExecutionContext);
     }
 
+    /**
+     * expectedTimestamp can either be exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
+     */
     protected static void assertTimestamp(CharSequence expectedTimestamp,
                                           RecordCursorFactory factory,
                                           SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (expectedTimestamp == null) {
-            Assert.assertEquals(-1, factory.getMetadata().getTimestampIndex());
+            Assert.assertEquals("Expected -1 as timestamp index", -1, factory.getMetadata().getTimestampIndex());
         } else {
-            int index = factory.getMetadata().getColumnIndex(expectedTimestamp);
-            Assert.assertNotEquals(-1, index);
+
+            boolean expectAscendingOrder = true;
+            String tsDesc = expectedTimestamp.toString();
+            int position = tsDesc.indexOf("###");
+            if (position > 0) {
+                expectedTimestamp = tsDesc.substring(0, position);
+                expectAscendingOrder = tsDesc.substring(position + 3).equalsIgnoreCase("asc");
+            }
+
+            int index = factory.getMetadata().getColumnIndexQuiet(expectedTimestamp);
+            Assert.assertTrue("Column " + expectedTimestamp + " can't be found in metadata", index > -1);
+            Assert.assertNotEquals("Expected non-negative value as timestamp index", -1, index);
             Assert.assertEquals(index, factory.getMetadata().getTimestampIndex());
-            assertTimestampColumnValues(factory, sqlExecutionContext);
+            assertTimestampColumnValues(factory, sqlExecutionContext, expectAscendingOrder);
         }
     }
 

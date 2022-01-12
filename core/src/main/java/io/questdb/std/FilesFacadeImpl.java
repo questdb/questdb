@@ -151,7 +151,11 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public long length(long fd) {
-        return Files.length(fd);
+        long r = Files.length(fd);
+        if (r < 0) {
+            throw CairoException.instance(Os.errno()).put("Checking file size failed");
+        }
+        return r;
     }
 
     @Override

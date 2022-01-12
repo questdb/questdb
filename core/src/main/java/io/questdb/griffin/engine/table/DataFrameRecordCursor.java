@@ -110,4 +110,19 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
         }
         return false;
     }
+
+    @Override
+    public void skipTo(long rowNumber) {
+        if (!dataFrameCursor.supportsRandomAccess() || filter != null) {
+            super.skipTo(rowNumber);
+            return;
+        }
+
+        DataFrame dataFrame = dataFrameCursor.skipTo(rowNumber);
+        if (dataFrame != null) {
+            rowCursor = rowCursorFactory.getCursor(dataFrame);
+            recordA.jumpTo(dataFrame.getPartitionIndex(), dataFrame.getRowLo()); //move to partition, rowlo doesn't matter
+            next = nextRow;
+        }
+    }
 }

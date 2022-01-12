@@ -31,13 +31,12 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.FloatingDirectCharSink;
-import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
+import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.COLUMN_NOT_FOUND;
 
 class LineTcpMeasurementEvent implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementEvent.class);
@@ -80,7 +79,7 @@ class LineTcpMeasurementEvent implements Closeable {
         tableUpdateDetails.releaseWriter(commitOnWriterClose);
     }
 
-    void append(StringSink charSink, FloatingDirectCharSink floatingCharSink) {
+    void append(FloatingDirectCharSink floatingCharSink) {
         TableWriter.Row row = null;
         try {
             TableWriter writer = tableUpdateDetails.getWriter();
@@ -102,30 +101,31 @@ class LineTcpMeasurementEvent implements Closeable {
                     entityType = Unsafe.getUnsafe().getByte(bufPos);
                     bufPos += Byte.BYTES;
                 } else {
-                    int colNameLen = -1 * colIndex;
-                    long nameLo = bufPos; // UTF8 encoded
-                    long nameHi = bufPos + colNameLen;
-                    charSink.clear();
-                    if (!Chars.utf8Decode(nameLo, nameHi, charSink)) {
-                        throw CairoException.instance(0)
-                                .put("invalid UTF8 in column name ");
-                        // todo: dump hex of bad column name
-                    }
+                    long nameLo = bufPos;
+                    long nameHi = bufPos + -2L * colIndex;
+                    // Column is passed by name, it is possible that
+                    // column is new and has to be added. It is also possible that column
+                    // already exist but the publisher is a little out of date and does not yet
+                    // have column index.
+
+                    // Column name will be UTF16 encoded already
+                    floatingCharSink.asCharSequence(nameLo, nameHi);
                     bufPos = nameHi;
                     entityType = Unsafe.getUnsafe().getByte(bufPos);
                     bufPos += Byte.BYTES;
-                    colIndex = writer.getMetadata().getColumnIndexQuiet(charSink);
+                    colIndex = writer.getMetadata().getColumnIndexQuiet(floatingCharSink);
                     if (colIndex < 0) {
-                        // Cannot create a column with an open row, writer will commit when a column is created
+                        // we have to cancel "active" row to avoid writer committing when
+                        // column is added
                         row.cancel();
                         row = null;
-                        int colType = DefaultColumnTypes.DEFAULT_COLUMN_TYPES[entityType];
-                        if (TableUtils.isValidInfluxColumnName(charSink)) {
-                            writer.addColumn(charSink, colType);
+                        if (TableUtils.isValidInfluxColumnName(floatingCharSink)) {
+                            final int colType = DefaultColumnTypes.DEFAULT_COLUMN_TYPES[entityType];
+                            writer.addColumn(floatingCharSink, colType);
                         } else {
                             throw CairoException.instance(0)
                                     .put("invalid column name [table=").put(writer.getTableName())
-                                    .put(", columnName=").put(charSink)
+                                    .put(", columnName=").put(floatingCharSink)
                                     .put(']');
                         }
                         // Reset to beginning of entities
@@ -411,56 +411,53 @@ class LineTcpMeasurementEvent implements Closeable {
     ) {
         writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_INCOMPLETE_EVENT;
         final TableUpdateDetails.ThreadLocalDetails localDetails = tableUpdateDetails.getThreadLocalDetails(workerId);
-        final BoolList processedCols = localDetails.getProcessedCols();
-        final LowerCaseCharSequenceHashSet addedCols = localDetails.getAddedCols();
-        processedCols.setAll(localDetails.getColumnCount(), false);
-        addedCols.clear();
+        localDetails.resetProcessedColumnsTracking();
         this.tableUpdateDetails = tableUpdateDetails;
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
             timestamp = timestampAdapter.getMicros(timestamp);
-            processedCols.setQuick(tableUpdateDetails.getTimestampIndex(), true);
         }
         long bufPos = bufLo;
         long bufMax = bufLo + bufSize;
         long timestampBufPos = bufPos;
-        //timestamp and entitiesWritten are saved to timestampBufPos after saving all fields
+        // timestamp and entitiesWritten are saved to timestampBufPos after saving all fields
+        // because their values are worked out while the columns are processed
         bufPos += Long.BYTES;
         int entitiesWritten = 0;
         bufPos += Integer.BYTES;
         for (int nEntity = 0, n = parser.getEntityCount(); nEntity < n; nEntity++) {
             if (bufPos + Long.BYTES < bufMax) {
                 LineTcpParser.ProtoEntity entity = parser.getEntity(nEntity);
-                int colIndex = localDetails.getColumnIndex(entity.getName());
-                if (colIndex < 0) {
-                    final DirectByteCharSequence colName = entity.getName();
-                    if (!addedCols.add(colName)) {
-                        continue;
-                    }
-                    int colNameLen = colName.length();
-                    Unsafe.getUnsafe().putInt(bufPos, -1 * colNameLen);
-                    bufPos += Integer.BYTES;
-                    if (bufPos + colNameLen < bufMax) {
-                        // Memcpy the buffer with the column name to the message
-                        // so that writing thread will create the column
-                        // Note that writing thread will be responsible to convert it from utf8
-                        // to utf16. This should happen rarely
-                        Vect.memcpy(bufPos, colName.getLo(), colNameLen);
-                    } else {
-                        throw CairoException.instance(0).put("queue buffer overflow");
-                    }
-                    bufPos += colNameLen;
-                } else {
+                int colIndex = localDetails.getColumnIndex(entity.getName(), parser.hasNonAsciiChars());
+                if (colIndex > -1) {
+                    // column index found, processing column by index
                     if (colIndex == tableUpdateDetails.getTimestampIndex()) {
                         timestamp = timestampAdapter.getMicros(entity.getLongValue());
                         continue;
                     }
-                    if (!processedCols.extendAndReplace(colIndex, true)) {
-                        Unsafe.getUnsafe().putInt(bufPos, colIndex);
-                        bufPos += Integer.BYTES;
+
+                    Unsafe.getUnsafe().putInt(bufPos, colIndex);
+                    bufPos += Integer.BYTES;
+                } else if (colIndex == COLUMN_NOT_FOUND) {
+                    // send column by name
+                    String colName = localDetails.getColName();
+                    int colNameLen = colName.length();
+
+                    // Negative length indicates to the writer thread that column is passed by
+                    // name rather than by index. When value is positive (on the else branch)
+                    // the value is treated as column index.
+                    Unsafe.getUnsafe().putInt(bufPos, -1 * colNameLen);
+                    bufPos += Integer.BYTES;
+                    if (bufPos + 2L * colNameLen < bufMax) {
+                        Chars.copyStrChars(colName, 0, colNameLen, bufPos);
                     } else {
-                        continue;
+                        throw CairoException.instance(0).put("queue buffer overflow");
                     }
+                    bufPos += 2L * colNameLen;
+                } else {
+                    // duplicate column, skip
+                    // we could set a boolean in the config if we want to throw exception instead
+                    continue;
                 }
                 entitiesWritten++;
                 switch (entity.getType()) {

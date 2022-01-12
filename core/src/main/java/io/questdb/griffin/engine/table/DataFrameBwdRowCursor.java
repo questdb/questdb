@@ -22,33 +22,35 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line.tcp;
+package io.questdb.griffin.engine.table;
 
-import io.questdb.std.str.AbstractCharSink;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.StringSink;
+import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.RowCursor;
 
-class MangledUtf8Sink extends AbstractCharSink {
-    private final StringSink tempSink;
+/**
+ * Row cursor that goes through data frame backwards / from end to start / hi to lo .
+ */
+public class DataFrameBwdRowCursor implements RowCursor {
+    private long lo;
+    private long current;
 
-    public MangledUtf8Sink(StringSink tempSink) {
-        this.tempSink = tempSink;
-    }
-
-    public CharSequence encodeMangledUtf8(CharSequence value) {
-        tempSink.clear();
-        encodeUtf8(value);
-        return tempSink;
+    @Override
+    public boolean hasNext() {
+        return current >= lo;
     }
 
     @Override
-    public CharSink put(char c) {
-        tempSink.put((char)((byte)c));
-        return this;
+    public long next() {
+        return current--;
+    }
+
+    void of(DataFrame frame) {
+        this.current = frame.getRowHi() - 1;
+        this.lo = frame.getRowLo();
     }
 
     @Override
-    public CharSink put(char[] chars, int start, int len) {
-        throw new UnsupportedOperationException();
+    public void jumpTo(long position) {
+        this.current = position;
     }
 }

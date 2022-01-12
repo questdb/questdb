@@ -48,11 +48,8 @@ import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CyclicBarrier;
 
 public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
-    public static final int WAIT_NO_WAIT = 0x0;
-    public static final int WAIT_ENGINE_TABLE_RELEASE = 0x1;
-    public static final int WAIT_ILP_TABLE_RELEASE = 0x2;
-    public static final int WAIT_ALTER_TABLE_RELEASE = 0x4;
     private final static Log LOG = LogFactory.getLog(AlterTableLineTcpReceiverTest.class);
+
     private final SCSequence scSequence = new SCSequence();
     private SqlException sqlException;
     private volatile QueryFuture alterCommandQueryFuture;
@@ -284,9 +281,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     private void assertTable(CharSequence expected) {
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "plug")) {
-            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
-        }
+        assertTable(expected, "plug");
     }
 
     private QueryFuture executeAlterSql(String sql) throws SqlException {
@@ -328,7 +323,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
         if (alterTableCommand != null && (wait & WAIT_ALTER_TABLE_RELEASE) != 0) {
             new Thread(() -> {
-                // Wait in parallel thead
+                // Wait in parallel thread
                 try {
                     startBarrier.await();
                     LOG.info().$("Busy waiting for writer ASYNC event ").$(alterCommandQueryFuture).$();
@@ -420,10 +415,5 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             }
         }
         return null;
-    }
-
-    @FunctionalInterface
-    public interface LineTcpServerAwareContext {
-        void run(LineTcpReceiver receiver);
     }
 }

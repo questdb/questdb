@@ -22,34 +22,30 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.cutlass.line.tcp;
 
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Sinkable;
-import io.questdb.std.str.CharSink;
+import io.questdb.cairo.CairoException;
+import io.questdb.std.Chars;
+import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.StringSink;
 
-import java.io.Closeable;
-
-/**
- * A factory interface for dataframe cursors
- */
-public interface DataFrameCursorFactory extends Sinkable, Closeable {
-
-    DataFrameCursor getCursor(SqlExecutionContext executionContext) throws SqlException;
-
-    /**
-     * @param sink to print data frame cursor to
-     */
-    default void toSink(CharSink sink) {
-        throw new UnsupportedOperationException();
+final class LineTcpUtils {
+    static CharSequence utf8ToUtf16(DirectByteCharSequence utf8CharSeq, StringSink tempSink, boolean hasNonAsciiChars) {
+        if (hasNonAsciiChars) {
+            tempSink.clear();
+            if (!Chars.utf8Decode(utf8CharSeq.getLo(), utf8CharSeq.getHi(), tempSink)) {
+                throw CairoException.instance(0).put("invalid UTF8 in value for ").put(utf8CharSeq);
+            }
+            return tempSink;
+        }
+        return utf8CharSeq;
     }
 
-    /**
-     * Returns 0 for ASC, 1 for DESC
-     */
-    int getOrder();
-
-    int ORDER_ASC = 0;
-    int ORDER_DESC = 1;
+    static CharSequence utf8BytesToString(DirectByteCharSequence utf8CharSeq, StringSink tempSink) {
+        tempSink.clear();
+        for (int i = 0, n = utf8CharSeq.length(); i < n; i++) {
+            tempSink.put(utf8CharSeq.charAt(i));
+        }
+        return tempSink.toString();
+    }
 }

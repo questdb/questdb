@@ -26,24 +26,21 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
-public class LatestByAllIndexedFilteredAfterRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
+public class LatestByAllIndexedRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
     protected final DirectLongList prefixes;
 
-    public LatestByAllIndexedFilteredAfterRecordCursorFactory(
+    public LatestByAllIndexedRecordCursorFactory(
             @NotNull RecordMetadata metadata,
             @NotNull CairoConfiguration configuration,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
-            @Nullable Function filter,
             @NotNull IntList columnIndexes,
             @NotNull LongList prefixes
     ) {
@@ -55,11 +52,7 @@ public class LatestByAllIndexedFilteredAfterRecordCursorFactory extends Abstract
             this.prefixes.add(prefixes.get(i));
         }
 
-        if (filter == null) {
-            this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, rows, columnIndexes, this.prefixes);
-        } else {
-            this.cursor = new LatestByAllIndexedFilteredAfterRecordCursor(columnIndex, rows, filter, columnIndexes, this.prefixes);
-        }
+        this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, rows, columnIndexes, this.prefixes);
     }
 
     @Override
