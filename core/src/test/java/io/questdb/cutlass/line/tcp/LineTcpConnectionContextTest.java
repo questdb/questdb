@@ -36,6 +36,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -603,8 +604,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     table + ",location=us-midwest temperature=82 1465839830100400200\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
                             table + ",location=us-eastcoast temperature=81,timestamp=1465839830101600200t\n" +
-                            table + ",location=us-midwest temperature=85,Timestamp=1465839830102300200t\n" +
-                            table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
+                            table + ",location=us-midwest temperature=85,timestamp=1465839830102300200t,Timestamp=1465839830102800200t\n" +
+                            table + ",location=us-eastcoast temperature=89,Timestamp=1465839830102400200t\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
             do {
@@ -866,6 +867,73 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
+    public void testDuplicateFieldNonASCIIDifferentCaseFirstRow() throws Exception {
+        String table = "dupField";
+        runInContext(() -> {
+            recvBuffer =
+                    table + ",terület=us-midwest hőmérséklet=82,HŐmérséklet=84,ветер=2.5,ветер=2.4 1465839830100400200\n" +
+                            table + ",terület=us-midwest hőmérséklet=83,ветер=3.0 1465839830100500200\n" +
+                            table + ",terület=us-eastcoast hőmérséklet=81,HŐMÉRSÉKLET=23,ветер=2.0 1465839830101400200\n" +
+                            table + ",terület=us-midwest ветер=2.1,hőmérséklet=85 1465839830102300200\n" +
+                            table + ",terület=us-eastcoast hőmérséklet=89 1465839830102400200\n" +
+                            table + ",terület=us-eastcoast hőmérséklet=80 1465839830102400200\n" +
+                            table + ",terület=us-westcost hőmérséklet=82,ветер=2.2 1465839830102500200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            closeContext();
+            String expected = "terület\thőmérséklet\tветер\ttimestamp\n" +
+                    "us-midwest\t82.0\t2.5\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t3.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2.0\t2016-06-13T17:43:50.101400Z\n" +
+                    "us-midwest\t85.0\t2.1\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\tNaN\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t80.0\tNaN\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2.2\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Test
+    public void testDuplicateFieldWhenTableExistsAlreadyNonASCIIFirstRow() throws Exception {
+        String table = "dupField";
+        runInContext(() -> {
+            try (
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                compiler.compile(
+                        "create table " + table + " (terület SYMBOL, hőmérséklet DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);",
+                        sqlExecutionContext);
+            } catch (SqlException ex) {
+                throw new RuntimeException(ex);
+            }
+            recvBuffer =
+                    table + ",terület=us-midwest hőmérséklet=82,ветер=2.5,ВЕтеР=2.4 1465839830100400200\n" +
+                            table + ",terület=us-midwest hőmérséklet=83,ветер=3.0 1465839830100500200\n" +
+                            table + ",terület=us-eastcoast hőmérséklet=81,HŐMÉRSÉKLET=23,ветер=2.0 1465839830101400200\n" +
+                            table + ",terület=us-midwest ветер=2.1,hőmérséklet=85 1465839830102300200\n" +
+                            table + ",terület=us-eastcoast hőmérséklet=89 1465839830102400200\n" +
+                            table + ",terület=us-eastcoast hőmérséklet=80 1465839830102400200\n" +
+                            table + ",terület=us-westcost hőmérséklet=82,ветер=2.2 1465839830102500200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            closeContext();
+            String expected = "terület\thőmérséklet\ttimestamp\tветер\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t2.5\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\t3.0\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\t2.0\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\t2.1\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\tNaN\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\tNaN\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\t2.2\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Test
     public void testDuplicateFieldWhenTableExistsAlready() throws Exception {
         String table = "tableExistAlready";
         runInContext(() -> {
@@ -904,6 +972,74 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
+    public void testDifferentCaseForExistingColumnWhenTableExistsAlready() throws Exception {
+        String table = "tableExistAlready";
+        runInContext(() -> {
+            try (
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                compiler.compile(
+                        "create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);",
+                        sqlExecutionContext);
+            } catch (SqlException ex) {
+                throw new RuntimeException(ex);
+            }
+            recvBuffer =
+                    table + ",location=us-midwest temperature=82,timestamp=1465839830100400200t 1465839830100300200\n" +
+                            table + ",location=us-midwest temperature=83 1465839830100500200\n" +
+                            table + ",location=us-eastcoast,city=york,city=london temperature=81,Temperature=89 1465839830101400200\n" +
+                            table + ",location=us-midwest,City=london,city=windsor temperature=85,city=glasgow,City=manchaster 1465839830102300200\n" +
+                            table + ",location=us-eastcoast Temperature=89,temperature=88 1465839830102400200\n" +
+                            table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
+                            table + ",location=us-westcost temperature=82,timestamp=1465839830102500200t\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\tcity\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\t\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\tyork\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\tlondon\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\t\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\t\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\t\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Ignore
+    @Test
+    public void testNonAsciiTablenameWithUtf16SurrogateChar() throws Exception {
+        String table = "\uD834\uDD1E g-clef";
+        runInContext(() -> {
+            recvBuffer =
+                    table + ",location=us-midwest temperature=82 1465839830100400200\n" +
+                            table + ",location=us-midwest temperature=83 1465839830100500200\n" +
+                            table + ",location=us-eastcoast temperature=81 1465839830101400200\n" +
+                            table + ",location=us-midwest temperature=85 1465839830102300200\n" +
+                            table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
+                            table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
+                            table + ",location=us-westcost temperature=82 1465839830102500200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Test
     public void testDuplicateNewField() throws Exception {
         String table = "dupField";
         runInContext(() -> {
@@ -928,6 +1064,35 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\tNaN\n" +
                     "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\tNaN\n" +
                     "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\tNaN\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Test
+    public void testDuplicateNewFieldAlternating() throws Exception {
+        String table = "dupField";
+        runInContext(() -> {
+            recvBuffer =
+                    table + ",location=us-midwest temperature=82 1465839830100400200\n" +
+                            table + ",location=us-midwest temperature=83 1465839830100500200\n" +
+                            table + ",location=us-eastcoast temperature=81,humidity=24,another=26,humidity=25,another=28,humidity=29 1465839830101400200\n" +
+                            table + ",location=us-midwest temperature=85,humidity=27 1465839830102300200\n" +
+                            table + ",location=us-eastcoast temperature=89,another=30,humidity=31 1465839830102400200\n" +
+                            table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
+                            table + ",location=us-westcost temperature=82 1465839830102500200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\thumidity\tanother\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\tNaN\tNaN\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\tNaN\tNaN\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\t24.0\t26.0\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\t27.0\tNaN\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\t31.0\t30.0\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\tNaN\tNaN\n" +
+                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\tNaN\tNaN\n";
             assertTable(expected, table);
         });
     }
@@ -995,7 +1160,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         String table = "duplicateTimestamp";
         runInContext(() -> {
             recvBuffer =
-                    table + ",location=us-midwest temperature=82,timestamp=1465839830100400200t,TimeStamp=1465839830100400200t 1465839830100700200\n" +
+                    table + ",location=us-midwest temperature=82,timestamp=1465839830100400200t,TimeStamp=1465839830100450200t 1465839830100700200\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
                             table + ",location=us-eastcoast temperature=81 1465839830101600200\n" +
                             table + ",location=us-midwest temperature=85 1465839830102300200\n" +

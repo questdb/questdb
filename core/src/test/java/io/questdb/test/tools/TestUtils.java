@@ -70,12 +70,16 @@ public final class TestUtils {
         return true;
     }
 
-    public static void assertConnect(long fd, long sockAddr, boolean noLinger) {
+    public static long connect(long fd, long sockAddr, boolean noLinger) {
         Assert.assertTrue(fd > -1);
         if (noLinger) {
             Net.configureNoLinger(fd);
         }
-        long rc = Net.connect(fd, sockAddr);
+        return Net.connect(fd, sockAddr);
+    }
+
+    public static void assertConnect(long fd, long sockAddr, boolean noLinger) {
+        long rc = connect(fd, sockAddr, noLinger);
         if (rc != 0) {
             Assert.fail("could not connect, errno=" + Os.errno());
         }

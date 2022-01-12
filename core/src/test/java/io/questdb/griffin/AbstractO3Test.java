@@ -340,17 +340,9 @@ public class AbstractO3Test {
         ) {
             try {
                 if (pool != null) {
-                    try (O3PurgeDiscoveryJob o3PurgeDiscoveryJob = new O3PurgeDiscoveryJob(engine.getMessageBus(), pool.getWorkerCount())) {
-                        pool.assignCleaner(Path.CLEANER);
-                        pool.assign(new O3CallbackJob(engine.getMessageBus()));
-                        pool.assign(new O3PartitionJob(engine.getMessageBus()));
-                        pool.assign(new O3OpenColumnJob(engine.getMessageBus()));
-                        pool.assign(new O3CopyJob(engine.getMessageBus()));
-                        pool.assign(o3PurgeDiscoveryJob);
-
-                        O3Utils.initBuf(pool.getWorkerCount() + 1);
-                        pool.start(LOG);
-                    }
+                    pool.assignCleaner(Path.CLEANER);
+                    O3Utils.setupWorkerPool(pool, engine.getMessageBus());
+                    pool.start(LOG);
                 } else {
                     O3Utils.initBuf();
                 }
