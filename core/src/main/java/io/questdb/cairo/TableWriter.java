@@ -1703,6 +1703,24 @@ public class TableWriter implements Closeable {
         throw new CairoError("Table '" + tableName + "' is distressed");
     }
 
+    private boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
+        long lastCommittedTxn = txWriter.getTxn();
+        try {
+            txnScoreboard.acquireTxn(lastCommittedTxn);
+            txnScoreboard.releaseTxn(lastCommittedTxn);
+        } catch (CairoException ex) {
+            // Scoreboard can be over allocated, don't stall writing because of that.
+            // Schedule async purge and continue
+            LOG.error().$("cannot lock last txn in scoreboard, partition purge will be scheduled [table=")
+                    .$(tableName)
+                    .$(", txn=").$(lastCommittedTxn)
+                    .$(", error=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno()).I$();
+        }
+
+        return txnScoreboard.getMin() != lastCommittedTxn;
+    }
+
     private void clearO3() {
         this.o3MasterRef = -1; // clears o3 flag, hasO3() will be returning false
         rowActon = ROW_ACTION_SWITCH_PARTITION;
@@ -3210,15 +3228,15 @@ public class TableWriter implements Closeable {
     }
 
     private void o3ProcessPartitionRemoveCandidates0(int n) {
-        boolean tableQueued = false;
-        for (int i = 0; i < n; i += 2) {
-            final long timestamp = o3PartitionRemoveCandidates.getQuick(i);
-            final long txn = o3PartitionRemoveCandidates.getQuick(i + 1);
-            try {
-                long readerTxnCount;
-                long min = txnScoreboard.getMin();
-                if ((readerTxnCount = txnScoreboard.getActiveReaderCount(min)) == 0) {
-                    other.trimTo(rootLen);
+        boolean anyReadersBeforeCommittedTxn = checkScoreboardHasReadersBeforeLastCommittedTxn();
+        // This flag will determine to schedule O3PurgeDiscoveryJob at the end or all done already.
+        boolean scheduleAsyncPurge = anyReadersBeforeCommittedTxn;
+
+        if (!anyReadersBeforeCommittedTxn) {
+            for (int i = 0; i < n; i += 2) {
+                try {
+                    final long timestamp = o3PartitionRemoveCandidates.getQuick(i);
+                    final long txn = o3PartitionRemoveCandidates.getQuick(i + 1);
                     setPathForPartition(
                             other,
                             partitionBy,
@@ -3228,28 +3246,28 @@ public class TableWriter implements Closeable {
                     TableUtils.txnPartitionConditionally(other, txn);
                     long errno = ff.rmdir(other.$());
                     if (errno == 0 || errno == -1) {
-                        // Simple case, no readers open
-                        // or async purge has already swept it up
+                        // Successfully deleted or async purge has already swept it up
+                        LOG.info().$("purged [path=").$(other).I$();
+                    } else {
                         LOG.info()
-                                .$("purged [path=").$(other)
-                                .$(", readerTxnCount=").$(readerTxnCount)
-                                .$(']').$();
-                        continue;
+                                .$("cannot purge partition version, async purge will be scheduled [path=")
+                                .$(other)
+                                .$(", errno=").$(errno).I$();
+                        scheduleAsyncPurge = true;
                     }
+                } finally {
+                    other.trimTo(rootLen);
                 }
-                if (!tableQueued) {
-                    // Any more complicated case involve looking at what folders are present on disk before removing
-                    // do it async in O3PurgeDiscoveryJob
-                    LOG.info()
-                            .$("queued to purge")
-                            .$(", table=").$(tableName)
-                            .$(", ts=").$ts(timestamp)
-                            .$(']').$();
-                    o3QueueTableForPurge();
-                    tableQueued = true;
-                }
-            } finally {
-                other.trimTo(rootLen);
+            }
+        }
+
+        if (scheduleAsyncPurge) {
+            // Any more complicated case involve looking at what folders are present on disk before removing
+            // do it async in O3PurgeDiscoveryJob
+            if (schedulePurgeO3Partitions(messageBus, tableName, partitionBy)) {
+                LOG.info().$("scheduled to purge partitions").$(", table=").$(tableName).$(']').$();
+            } else {
+                LOG.error().$("could not queue for purge, queue is full [table=").$(tableName).I$();
             }
         }
     }
@@ -3261,12 +3279,6 @@ public class TableWriter implements Closeable {
             LOG.error().$((Sinkable) e).$();
         } catch (Throwable e) {
             LOG.error().$(e).$();
-        }
-    }
-
-    private void o3QueueTableForPurge() {
-        if (!schedulePurgeO3Partitions(messageBus, tableName, partitionBy)) {
-            LOG.error().$("could not queue for purge, queue is full [table=").$(tableName).I$();
         }
     }
 

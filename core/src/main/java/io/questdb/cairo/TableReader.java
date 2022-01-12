@@ -323,23 +323,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void checkSchedulePurgeO3Partitions() {
-        long txnLocks = txnScoreboard.getActiveReaderCount(txn);
-        if (txnLocks == 0 && txFile.unsafeReadPartitionTableVersion() > txFile.getPartitionTableVersion()) {
-            // Last lock for this txn is released and this is not latest txn number
-            // Schedule a job to clean up partition versions this reader may held
-            if (TableUtils.schedulePurgeO3Partitions(messageBus, tableName, partitionBy)) {
-                return;
-            }
-
-            LOG.error()
-                    .$("could queue purge partition task, queue is full [")
-                    .$("table=").$(this.tableName)
-                    .$(", txn=").$(txn)
-                    .$(']').$();
-        }
-    }
-
     public boolean isOpen() {
         return tempMem8b != 0;
     }
@@ -464,10 +447,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public boolean reload() {
-        if (this.txn == txFile.unsafeReadTxn()) {
-            if (!this.txnAcquired) {
-                acquireTxn();
-            }
+        if (acquireTxn()) {
             return false;
         }
         try {
@@ -588,12 +568,34 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void acquireTxn() {
-        if (txnAcquired) {
-            return;
+    private boolean acquireTxn() {
+        if (!txnAcquired) {
+            txnScoreboard.acquireTxn(txn);
+            txnAcquired = true;
         }
-        txnScoreboard.acquireTxn(txn);
-        txnAcquired = true;
+
+        // We have to be sure last txn is acquired in Scoreboard
+        // otherwise writer can delete partition version files
+        // between reading txn file and acquiring txn in the Scoreboard.
+        Unsafe.getUnsafe().loadFence();
+        return txn == txFile.unsafeReadTxn();
+    }
+
+    private void checkSchedulePurgeO3Partitions() {
+        long txnLocks = txnScoreboard.getActiveReaderCount(txn);
+        if (txnLocks == 0 && txFile.unsafeReadPartitionTableVersion() > txFile.getPartitionTableVersion()) {
+            // Last lock for this txn is released and this is not latest txn number
+            // Schedule a job to clean up partition versions this reader may held
+            if (TableUtils.schedulePurgeO3Partitions(messageBus, tableName, partitionBy)) {
+                return;
+            }
+
+            LOG.error()
+                    .$("could queue purge partition task, queue is full [")
+                    .$("table=").$(this.tableName)
+                    .$(", txn=").$(txn)
+                    .$(']').$();
+        }
     }
 
     private void closeColumn(int columnBase, int columnIndex) {
@@ -981,17 +983,19 @@ public class TableReader implements Closeable, SymbolTableSource {
                     // good, very stable, congrats
                     releaseTxn();
                     this.txn = txn;
-                    acquireTxn();
-                    this.rowCount = txFile.getFixedRowCount() + txFile.getTransientRowCount();
-                    LOG.debug()
-                            .$("new transaction [txn=").$(txn)
-                            .$(", transientRowCount=").$(txFile.getTransientRowCount())
-                            .$(", fixedRowCount=").$(txFile.getFixedRowCount())
-                            .$(", maxTimestamp=").$ts(txFile.getMaxTimestamp())
-                            .$(", attempts=").$(count)
-                            .$(", thread=").$(Thread.currentThread().getName())
-                            .$(']').$();
-                    break;
+
+                    if (acquireTxn()) {
+                        this.rowCount = txFile.getFixedRowCount() + txFile.getTransientRowCount();
+                        LOG.debug()
+                                .$("new transaction [txn=").$(txn)
+                                .$(", transientRowCount=").$(txFile.getTransientRowCount())
+                                .$(", fixedRowCount=").$(txFile.getFixedRowCount())
+                                .$(", maxTimestamp=").$ts(txFile.getMaxTimestamp())
+                                .$(", attempts=").$(count)
+                                .$(", thread=").$(Thread.currentThread().getName())
+                                .$(']').$();
+                        break;
+                    }
                 }
                 // This is unlucky, sequences have changed while we were reading transaction data
                 // We must discard and try again
