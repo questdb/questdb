@@ -108,16 +108,6 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public int getNUpdatesPerLoadRebalance() {
-        return 1000;
-    }
-
-    @Override
-    public double getMaxLoadRatio() {
-        return 1.1;
-    }
-
-    @Override
     public long getMaintenanceInterval() {
         return 100;
     }

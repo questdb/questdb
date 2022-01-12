@@ -44,4 +44,12 @@ public interface DataFrameCursorFactory extends Sinkable, Closeable {
     default void toSink(CharSink sink) {
         throw new UnsupportedOperationException();
     }
+
+    /**
+     * Returns 0 for ASC, 1 for DESC
+     */
+    int getOrder();
+
+    int ORDER_ASC = 0;
+    int ORDER_DESC = 1;
 }

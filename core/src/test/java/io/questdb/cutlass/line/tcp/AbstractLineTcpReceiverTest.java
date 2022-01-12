@@ -108,17 +108,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
 
         @Override
-        public int getNUpdatesPerLoadRebalance() {
-            return 100;
-        }
-
-        @Override
-        public double getMaxLoadRatio() {
-            // Always rebalance as long as there are more tables than threads;
-            return 1;
-        }
-
-        @Override
         public long getMaintenanceInterval() {
             return 25;
         }

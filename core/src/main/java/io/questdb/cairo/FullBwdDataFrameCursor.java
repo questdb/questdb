@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrame;
+import org.jetbrains.annotations.Nullable;
 
 public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
 
@@ -49,5 +50,45 @@ public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
     @Override
     public void toTop() {
         this.partitionIndex = this.partitionHi - 1;
+    }
+
+    @Override
+    public @Nullable DataFrame skipTo(long rowNumber) {
+        int partitionCount = getTableReader().getPartitionCount();
+
+        if (partitionCount < 1) {
+            return null;
+        }
+
+        long position = rowNumber;
+        long partitionRows = 0;
+        int partitionIndex = partitionCount - 1;
+
+        for (; partitionIndex > -1; partitionIndex--) {
+            partitionRows = getTableReader().openPartition(partitionIndex);
+            if (partitionRows < 0) {
+                continue;
+            }
+            if (partitionRows > position) {
+                break;
+            }
+            if (partitionIndex == 0) {
+                position = -1L;
+                break;
+            } else {
+                position -= partitionRows;
+            }
+        }
+
+        frame.partitionIndex = partitionIndex;
+        frame.rowHi = position > -1L ? partitionRows - position : position;
+        frame.rowLo = 0;
+        this.partitionIndex = partitionIndex - 1;
+
+        return frame;
+    }
+
+    public boolean supportsRandomAccess() {
+        return true;
     }
 }

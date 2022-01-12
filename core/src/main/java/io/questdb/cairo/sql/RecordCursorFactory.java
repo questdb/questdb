@@ -102,4 +102,14 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
     default SingleSymbolFilter convertToSampleByIndexDataFrameCursorFactory() {
         return null;
     }
+
+    /* Returns true if this factory handles limit M , N clause already and false otherwise .
+     *  If true then separate limit cursor factory is not needed (and could actually cause problem by re-applying limit logic).   */
+    default boolean implementsLimit() {
+        return false;
+    }
+
+    default boolean hasDescendingOrder() {
+        return false;
+    }
 }
