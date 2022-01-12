@@ -225,6 +225,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int binaryEncodingMaxLength;
     private final long writerDataIndexKeyAppendPageSize;
     private final long writerDataIndexValueAppendPageSize;
+    private final long writerAsyncCommandBusyWaitTimeout;
+    private final int writerAsyncCommandQueueCapacity;
+    private final int writerTickRowsCountMod;
+    private final long writerAsyncCommandMaxWaitTimeout;
+    private final long o3PartitionPurgeListCapacity;
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int[] httpMinWorkerAffinity;
@@ -360,12 +365,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinListenBacklog;
     private int httpMinRcvBufSize;
     private int httpMinSndBufSize;
-    private final long writerAsyncCommandBusyWaitTimeout;
-    private final int writerAsyncCommandQueueCapacity;
     private long symbolCacheWaitUsBeforeReload;
-    private final int writerTickRowsCountMod;
-    private final long writerAsyncCommandMaxWaitTimeout;
-    private final long o3PartitionPurgeListCapacity;
 
     public PropServerConfiguration(
             String root,
@@ -913,29 +913,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         return CommitMode.NOSYNC;
     }
 
-    private int getSqlJitMode(Properties properties, @Nullable Map<String, String> env) {
-        final String key = "cairo.sql.jit.mode";
-        final String jitMode = overrideWithEnv(properties, env, key);
-
-        if (jitMode == null) {
-            return SqlJitMode.JIT_MODE_DISABLED;
-        }
-
-        if (Chars.equalsLowerCaseAscii(jitMode, "on")) {
-            return SqlJitMode.JIT_MODE_ENABLED;
-        }
-
-        if (Chars.equalsLowerCaseAscii(jitMode, "off")) {
-            return SqlJitMode.JIT_MODE_DISABLED;
-        }
-
-        if (Chars.equalsLowerCaseAscii(jitMode, "scalar")) {
-            return SqlJitMode.JIT_MODE_FORCE_SCALAR;
-        }
-
-        return SqlJitMode.JIT_MODE_DISABLED;
-    }
-
     private double getDouble(Properties properties, @Nullable Map<String, String> env, String key, double defaultValue) throws ServerConfigurationException {
         final String value = overrideWithEnv(properties, env, key);
         try {
@@ -962,14 +939,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         } catch (NumericException e) {
             throw new ServerConfigurationException(key, value);
         }
-    }
-
-    private int getQueueCapacity(Properties properties, @Nullable Map<String, String> env, String key, int defaultValue) throws ServerConfigurationException {
-        final int value = getInt(properties, env, key, defaultValue);
-        if (!Numbers.isPow2(value)) {
-            throw new ServerConfigurationException(key, "Value must be power of 2, e.g. 1,2,4,8,16,32,64...");
-        }
-        return value;
     }
 
     protected int getIntSize(Properties properties, @Nullable Map<String, String> env, String key, int defaultValue) throws ServerConfigurationException {
@@ -1015,6 +984,37 @@ public class PropServerConfiguration implements ServerConfiguration {
         } catch (NumericException e) {
             throw new ServerConfigurationException(key, value);
         }
+    }
+
+    private int getQueueCapacity(Properties properties, @Nullable Map<String, String> env, String key, int defaultValue) throws ServerConfigurationException {
+        final int value = getInt(properties, env, key, defaultValue);
+        if (!Numbers.isPow2(value)) {
+            throw new ServerConfigurationException(key, "Value must be power of 2, e.g. 1,2,4,8,16,32,64...");
+        }
+        return value;
+    }
+
+    private int getSqlJitMode(Properties properties, @Nullable Map<String, String> env) {
+        final String key = "cairo.sql.jit.mode";
+        final String jitMode = overrideWithEnv(properties, env, key);
+
+        if (jitMode == null) {
+            return SqlJitMode.JIT_MODE_DISABLED;
+        }
+
+        if (Chars.equalsLowerCaseAscii(jitMode, "on")) {
+            return SqlJitMode.JIT_MODE_ENABLED;
+        }
+
+        if (Chars.equalsLowerCaseAscii(jitMode, "off")) {
+            return SqlJitMode.JIT_MODE_DISABLED;
+        }
+
+        if (Chars.equalsLowerCaseAscii(jitMode, "scalar")) {
+            return SqlJitMode.JIT_MODE_FORCE_SCALAR;
+        }
+
+        return SqlJitMode.JIT_MODE_DISABLED;
     }
 
     private String getString(Properties properties, @Nullable Map<String, String> env, String key, String defaultValue) {
@@ -1364,16 +1364,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private class PropSqlExecutionCircuitBreakerConfiguration implements SqlExecutionCircuitBreakerConfiguration {
         @Override
-        public MicrosecondClock getClock() {
-            return MicrosecondClockImpl.INSTANCE;
-        }
-
-        @Override
-        public long getMaxTime() {
-            return circuitBreakerMaxTime;
-        }
-
-        @Override
         public int getBufferSize() {
             return circuitBreakerBufferSize;
         }
@@ -1391,6 +1381,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isEnabled() {
             return interruptOnClosedConnection;
+        }
+
+        @Override
+        public MicrosecondClock getClock() {
+            return MicrosecondClockImpl.INSTANCE;
+        }
+
+        @Override
+        public long getMaxTime() {
+            return circuitBreakerMaxTime;
         }
     }
 
@@ -1823,6 +1823,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getRenameTableModelPoolCapacity() {
+            return sqlRenameTableModelPoolCapacity;
+        }
+
+        @Override
         public CharSequence getRoot() {
             return root;
         }
@@ -1943,6 +1948,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlJoinMetadataMaxResizes() {
+            return sqlJoinMetadataMaxResizes;
+        }
+
+        @Override
+        public int getSqlJoinMetadataPageSize() {
+            return sqlJoinMetadataPageSize;
+        }
+
+        @Override
         public long getSqlLatestByRowCount() {
             return sqlLatestByRowCount;
         }
@@ -1998,43 +2013,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlSortValuePageSize() {
-            return sqlSortValuePageSize;
-        }
-
-        @Override
         public int getSqlSortValueMaxPages() {
             return sqlSortValueMaxPages;
         }
 
         @Override
-        public long getWriterAsyncCommandBusyWaitTimeout() {
-            return writerAsyncCommandBusyWaitTimeout;
-        }
-
-        @Override
-        public long getWriterAsyncCommandMaxTimeout() {
-            return writerAsyncCommandMaxWaitTimeout;
-        }
-
-        @Override
-        public int getWriterCommandQueueCapacity() {
-            return writerAsyncCommandQueueCapacity;
-        }
-
-        @Override
-        public int getWriterTickRowsCountMod() {
-            return writerTickRowsCountMod;
-        }
-
-        @Override
-        public int getSqlJoinMetadataPageSize() {
-            return sqlJoinMetadataPageSize;
-        }
-
-        @Override
-        public int getSqlJoinMetadataMaxResizes() {
-            return sqlJoinMetadataMaxResizes;
+        public int getSqlSortValuePageSize() {
+            return sqlSortValuePageSize;
         }
 
         @Override
@@ -2082,11 +2067,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             return sqlJitDebugEnabled;
         }
 
-        @Override
-        public int getRenameTableModelPoolCapacity() {
-            return sqlRenameTableModelPoolCapacity;
-        }
-
         public TelemetryConfiguration getTelemetryConfiguration() {
             return telemetryConfiguration;
         }
@@ -2114,6 +2094,26 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWorkStealTimeoutNanos() {
             return workStealTimeoutNanos;
+        }
+
+        @Override
+        public long getWriterAsyncCommandBusyWaitTimeout() {
+            return writerAsyncCommandBusyWaitTimeout;
+        }
+
+        @Override
+        public long getWriterAsyncCommandMaxTimeout() {
+            return writerAsyncCommandMaxWaitTimeout;
+        }
+
+        @Override
+        public int getWriterCommandQueueCapacity() {
+            return writerAsyncCommandQueueCapacity;
+        }
+
+        @Override
+        public int getWriterTickRowsCountMod() {
+            return writerTickRowsCountMod;
         }
 
         @Override
@@ -2686,6 +2686,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getIdleRecvCountBeforeGivingUp() {
+            return pgIdleRecvCountBeforeGivingUp;
+        }
+
+        @Override
+        public int getIdleSendCountBeforeGivingUp() {
+            return pgIdleSendCountBeforeGivingUp;
+        }
+
+        @Override
         public boolean isSelectCacheEnabled() {
             return pgSelectCacheEnabled;
         }
@@ -2698,16 +2708,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSelectCacheRowCount() {
             return pgSelectCacheRowCount;
-        }
-
-        @Override
-        public int getIdleRecvCountBeforeGivingUp() {
-            return pgIdleRecvCountBeforeGivingUp;
-        }
-
-        @Override
-        public int getIdleSendCountBeforeGivingUp() {
-            return pgIdleSendCountBeforeGivingUp;
         }
 
         @Override
