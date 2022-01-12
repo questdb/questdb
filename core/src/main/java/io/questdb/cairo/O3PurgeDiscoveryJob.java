@@ -225,6 +225,11 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
         } catch (CairoException ex) {
             // It is possible that table is dropped while this async job was in the queue.
             // so it can be not too bad. Log error and continue work on the queue
+            LOG.error()
+                    .$("could not purge partition open [table=`").utf8(tableName)
+                    .$("`, ex=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
             LOG.error().$(ex.getFlyweightMessage()).$();
         } finally {
             txReader.clear();

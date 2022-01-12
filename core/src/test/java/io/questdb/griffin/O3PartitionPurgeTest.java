@@ -317,6 +317,41 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testTableWriterDeletePartitionWhenNoReadersOpen() throws Exception {
+        String tableName = "tbl";
+
+        assertMemoryLeak(() -> {
+            compiler.compile("create table " + tableName + " as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            compiler.compile("insert into " + tableName +
+                            " select 2, '1970-01-11T09' from long_sequence(1) " +
+                            "union all " +
+                            " select 2, '1970-01-12T09' from long_sequence(1) " +
+                            "union all " +
+                            " select 2, '1970-01-11T08' from long_sequence(1) " +
+                            "union all " +
+                            " select 2, '1970-01-10T09' from long_sequence(1) " +
+                            "union all " +
+                            "select 1, '1970-01-09T09'  from long_sequence(1)"
+                    , sqlExecutionContext);
+
+            try (Path path = new Path()) {
+                path.of(engine.getConfiguration().getRoot()).concat(tableName).concat("1970-01-10").concat("x.d").$();
+                Assert.assertFalse(Chars.toString(path), Files.exists(path));
+
+                path.of(engine.getConfiguration().getRoot()).concat(tableName).concat("1970-01-10.1").concat("x.d").$();
+                Assert.assertTrue(Chars.toString(path), Files.exists(path));
+
+                path.of(engine.getConfiguration().getRoot()).concat(tableName).concat("1970-01-11").concat("x.d").$();
+                Assert.assertFalse(Chars.toString(path), Files.exists(path));
+
+                path.of(engine.getConfiguration().getRoot()).concat(tableName).concat("1970-01-11.1").concat("x.d").$();
+                Assert.assertTrue(Chars.toString(path), Files.exists(path));
+            }
+        });
+    }
+
+    @Test
     public void testPurgeFailed() throws Exception {
         assertMemoryLeak(() -> {
             AtomicInteger deleteAttempts = new AtomicInteger();

@@ -3289,6 +3289,7 @@ public class TableWriter implements Closeable {
             try {
                 long readerTxnCount;
                 if ((readerTxnCount = txnScoreboard.getActiveReaderCount(txnScoreboard.getMin())) == 0) {
+                    other.trimTo(rootLen);
                     setPathForPartition(
                             other,
                             partitionBy,
@@ -3296,7 +3297,7 @@ public class TableWriter implements Closeable {
                             false
                     );
                     TableUtils.txnPartitionConditionally(other, txn);
-                    long errno = ff.rmdir(other);
+                    long errno = ff.rmdir(other.$());
                     if (errno == 0 || errno == -1) {
                         // Simple case, no readers open
                         // or async purge has already swept it up
