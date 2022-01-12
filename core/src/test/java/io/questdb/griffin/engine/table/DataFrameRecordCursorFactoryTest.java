@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -136,6 +137,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
 
         TestUtils.assertMemoryLeak(() -> {
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
+                    col("str", ColumnType.STRING).
                     col("i", ColumnType.INT).
                     timestamp()
             ) {
@@ -147,7 +149,13 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
+            CharSequence[] strConsts = new CharSequence[4 + 1]; // str, i, j, s, + timestamp
+            for (int i = 0; i < strConsts.length; i++) {
+                strConsts[i] = rnd.nextChars(32);
+            }
             try (TableWriter writer = new TableWriter(configuration, "x")) {
+                final int cc = writer.getMetadata().getColumnCount();
+                int strIndex = writer.getColumnIndex("str");
                 int iIndex = writer.getColumnIndex("i");
                 int jIndex = -1;
                 int sIndex = -1;
@@ -160,10 +168,12 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                     }
 
                     TableWriter.Row row = writer.newRow(timestamp += increment);
+                    row.putStr(strIndex, strConsts[strIndex]);
                     row.putInt(iIndex, rnd.nextInt());
                     if (startTopAt > 0 && i >= startTopAt) {
                         row.putLong(jIndex, rnd.nextLong());
-                        row.putStr(sIndex, rnd.nextChars(32));
+                        row.putStr(sIndex, strConsts[strIndex]);
+//                        row.putStr(sIndex, rnd.nextChars(32));
                     }
                     row.append();
                 }
@@ -192,14 +202,47 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
 
                 Assert.assertTrue(factory.supportPageFrameCursor());
 
+                final CompiledFilterRecordCursor.PageFrameRecord record = new CompiledFilterRecordCursor.PageFrameRecord();
+                final CompiledFilterRecordCursor.PageAddressCache pageAddressCache = new CompiledFilterRecordCursor.PageAddressCache(configuration);
+                pageAddressCache.of(metadata);
+
                 int frameCount = 0;
                 try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext)) {
+                    record.of(cursor, pageAddressCache);
                     PageFrame frame;
+                    int pageFrameIndex = -1;
                     while ((frame = cursor.next()) != null) {
                         Assert.assertEquals(0, frame.getPartitionIndex());
                         long len = frame.getPartitionHi() - frame.getPartitionLo();
                         Assert.assertTrue(len > 0);
                         Assert.assertTrue(len <= maxSize);
+
+                        pageFrameIndex += 1;
+                        record.jumpTo(pageFrameIndex);
+                        pageAddressCache.add(pageFrameIndex, frame);
+
+                        //check variable-length columns validity
+                        for (int c = 0, n = metadata.getColumnCount(); c < n; c++) {
+                            if (ColumnType.isVariableLength(metadata.getColumnType(c))) {
+                                final long indexAddress = frame.getIndexPageAddress(c);
+                                final long size = frame.getPageSize(c);
+                                if(indexAddress > 0) {
+                                    for (long r = 0; r < len; r++) {
+                                        final long offset = Unsafe.getUnsafe().getLong(indexAddress + r * Long.BYTES);
+                                        Assert.assertTrue(offset >= 0 && offset < size);
+                                        record.setIndex(r);
+                                        final CharSequence str = record.getStr(c);
+                                        Assert.assertEquals( strConsts[c], str);
+                                    }
+                                } else { // frame with column tops
+                                    for (long r = 0; r < len; r++) {
+                                        record.setIndex(r);
+                                        Assert.assertNull(record.getStr(c));
+                                    }
+                                }
+                            }
+                        }
+
                         frameCount++;
                     }
                 }
