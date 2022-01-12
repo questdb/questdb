@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -469,7 +470,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "    ask int,\n" +
                         "    ts timestamp\n" +
                         ") timestamp(ts) partition by DAY",
-                null,
+                "ts",
                 "insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
                         "        rnd_int() bid, \n" +
                         "        rnd_int() ask, \n" +
@@ -1145,4 +1146,45 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
 
         );
     }
+
+    @Test
+    public void testDistinctWithOrderBy() throws Exception {
+        assertQuery("b\n2\n1\n0\n",
+                "select distinct b from x order by b desc;",
+                "create table x as (" +
+                        "select" +
+                        " x a," +
+                        " x % 3 b" +
+                        " from long_sequence(9)" +
+                        ")", null);
+    }
+
+    @Test
+    public void testDistinctWithOrderByIndex() throws Exception {
+        assertQuery("b\n2\n1\n0\n",
+                "select distinct b from x order by 1 desc;",
+                "create table x as (" +
+                        "select" +
+                        " x a," +
+                        " x % 3 b" +
+                        " from long_sequence(9)" +
+                        ")", null);
+    }
+
+    @Test
+    public void testDistinctWithOrderByAnotherColumn() throws Exception {
+        try {
+            assertQuery("b\n1\n2\n0\n",
+                    "select distinct b from x order by a desc;",
+                    "create table x as (" +
+                            "select" +
+                            " x a," +
+                            " x % 3 b" +
+                            " from long_sequence(9)" +
+                            ")", null);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "ORDER BY expressions must appear in select list.");
+        }
+    }
+
 }

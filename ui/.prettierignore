@@ -1,2 +1,4 @@
 src/index.hbs
-../core/src/test/
+../core/
+../benchmarks/
+../.*

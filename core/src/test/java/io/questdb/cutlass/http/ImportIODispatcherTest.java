@@ -37,6 +37,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -47,7 +52,9 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
+import static io.questdb.cutlass.http.SendAndReceiveRequestBuilder.RequestHeaders;
 import static io.questdb.test.tools.TestUtils.getSendDelayNetworkFacade;
 
 public class ImportIODispatcherTest {
@@ -743,6 +750,65 @@ public class ImportIODispatcherTest {
             temp.delete();
             temp.create();
         }
+    }
+
+    @Test
+    public void testPartitionDeletedUnlocksTxn() throws Exception {
+        // Simulate file not found on partition reopen on reader reload
+        // so that JsonQueryProcessor gets error like here
+
+        // I i.q.c.h.p.QueryCache hit [thread=questdb-worker-2, sql=select count(*) from xyz where x > 0;]
+        // I i.q.c.h.p.JsonQueryProcessorState [27] execute-cached [skip: 0, stop: 9223372036854775807]
+        // I i.q.c.TableReader open partition /tmp/junit5370415536490581256/xyz/1970-01-01 [rowCount=1, partitionNameTxn=-1, transientRowCount=10000000, partitionIndex=0, partitionCount=1]
+        // E i.q.c.h.p.JsonQueryProcessorState [27] internal error [q=`select count(*) from xyz where x > 0;`, ex=io.questdb.cairo.CairoException: [0] File not found: /tmp/junit5370415536490581256/xyz/1970-01-01/x.d
+        AtomicLong count = new AtomicLong();
+        FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                if (Chars.endsWith(path, "x.d") && count.incrementAndGet() == 4) {
+                    return false;
+                }
+                return Files.exists(path);
+            }
+        };
+
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .withFilesFacade(ff)
+                .run((engine) -> {
+                    setupSql(engine);
+                    compiler.compile("create table xyz as (select x, timestamp_sequence(0, " + Timestamps.DAY_MICROS + ") ts from long_sequence(1)) timestamp(ts) Partition by DAY ", sqlExecutionContext);
+
+                    // Cache query plan
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders("GET /query?query=select+count(*)+from+xyz+where+x+%3E+0; HTTP/1.1\r\n",
+                            "76\r\n" +
+                                    "{\"query\":\"select count(*) from xyz where x > 0;\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[1]],\"count\":1}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n");
+
+                    // Add new commit
+                    compiler.compile("insert into xyz select x, timestamp_sequence(" + Timestamps.DAY_MICROS + ", 1) ts from long_sequence(10) ", sqlExecutionContext);
+
+                    // Here fail expected
+                    new SendAndReceiveRequestBuilder().withCompareLength(20).executeWithStandardHeaders("GET /query?query=select+count(*)+from+xyz+where+x+%3E+0; HTTP/1.1\r\n" + RequestHeaders,
+                            "8e\r\n" +
+                                    "{\"query\":\"select count(*) from xyz where x > 0;\",\"error\":\"File not found: ");
+
+                    // Check that txn_scoreboard is fully unlocked, e.g. no reader scoreboard leaks after the failure
+                    CairoConfiguration configuration = engine.getConfiguration();
+                    try (
+                            Path path = new Path().concat(configuration.getRoot()).concat("xyz");
+                            TxnScoreboard txnScoreboard = new TxnScoreboard(ff, path, configuration.getTxnScoreboardEntryCount())
+                    ) {
+                        Assert.assertEquals(2, txnScoreboard.getMin());
+                        Assert.assertEquals(0, txnScoreboard.getActiveReaderCount(2));
+                    }
+
+                    compiler.close();
+                });
     }
 
     private static int stringLen(int number) {

@@ -73,4 +73,8 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     public boolean supportTableRowId(CharSequence tableName) {
         return base.supportTableRowId(tableName);
     }
+
+    public boolean hasDescendingOrder() {
+        return base.hasDescendingOrder();
+    }
 }

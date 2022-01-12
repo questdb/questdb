@@ -2067,11 +2067,55 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testLatestByAllIndexedFilter() throws Exception {
         final String expected = "a\tk\tb\n" +
                 "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
+                "95.40069089049732\t1970-01-11T10:00:00.000000Z\tHYRX\n" +
                 "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
                 "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
                 "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
         assertQuery(expected,
                 "select a,k,b from x where a > 40 latest on k partition by b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " timestamp_sequence(0, 100000000000) k," +
+                        " rnd_double(0)*100 a1," +
+                        " rnd_double(0)*100 a2," +
+                        " rnd_double(0)*100 a3," +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b" +
+                        " from long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " to_timestamp('2019', 'yyyy') t," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " 46.578761277152225," +
+                        " 'VTJW'" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "a\tk\tb\n" +
+                        "95.40069089049732\t1970-01-11T10:00:00.000000Z\tHYRX\n" +
+                        "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
+                        "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
+                        "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
+                        "46.578761277152225\t2019-01-01T00:00:00.000000Z\tVTJW\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testLatestByAllIndexedExternalFilter() throws Exception {
+        final String expected = "a\tk\tb\n" +
+                "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
+                "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
+                "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
+                "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
+        assertQuery(expected,
+                "select * from (select a,k,b from x latest on k partition by b) where a > 40",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -2101,7 +2145,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "46.578761277152225\t2019-01-01T00:00:00.000000Z\tVTJW\n",
                 true,
                 true,
-                true
+                false
         );
     }
 
@@ -2130,6 +2174,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp (t)",
                 "a\tb\tc\tk\n" +
+                        "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n" +
                         "94.41658975532606\tVTJW\tSXUX\t2019-01-01T00:00:00.000000Z\n",
                 true,
                 true,
@@ -2200,8 +2245,12 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             sink,
                             "id\tvendor\tts\n" +
                                     "1878619626\tKK\t1970-01-01T00:01:39.200000Z\n" +
+                                    "666152026\tZZ\t1970-01-01T00:01:39.500000Z\n" +
+                                    "1093218218\tTT\t1970-01-02T00:01:37.700000Z\n" +
                                     "371958898\tDD\t1970-01-02T00:01:39.900000Z\n" +
-                                    "1699760758\tPP\t1970-01-03T00:01:39.100000Z\n"
+                                    "1699760758\tPP\t1970-01-03T00:01:39.100000Z\n" +
+                                    "415357759\tCC\t1970-01-03T00:01:39.200000Z\n" +
+                                    "1176091947\tQQ\t1970-01-03T00:01:39.400000Z\n"
                     );
                 }
         );
@@ -3203,8 +3252,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore
-    // TODO: fix, where is applied after latest by, the optimized I suspect
     @Test
     public void testLatestByIsApplicableToSubQueriesNoDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
@@ -3215,13 +3262,13 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     "    other_ts timestamp, " +
                     "    ts timestamp" +
                     ")", sqlExecutionContext);
-            executeInsert("insert into tab values ('d1', 'c1', 101.1, '2021-10-15T11:31:35.878Z', '2021-10-05T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-15T11:31:35.878Z', '2021-10-05T11:31:35.878Z')");
             executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-16T17:31:35.878Z', '2021-10-06T15:31:35.878Z')");
             assertSql(
                     "tab where name in (select distinct name from tab where name != 'c2') latest on other_ts partition by id",
                     "id\tname\tvalue\tother_ts\tts\n" +
-                            "d1\tc1\t101.4\t2021-10-15 14:31:35.878\t2021-10-05 14:31:35.878\n" +
-                            "d2\tc1\t111.7\t2021-10-16 17:31:35.878\t2021-10-06 15:31:35.878\n");
+                            "d1\tc1\t101.2\t2021-10-15T11:31:35.878000Z\t2021-10-05T11:31:35.878000Z\n" +
+                            "d2\tc1\t111.7\t2021-10-16T17:31:35.878000Z\t2021-10-06T15:31:35.878000Z\n");
         });
     }
 
@@ -3825,7 +3872,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 ") timestamp(ts) partition by DAY");
     }
 
-    @Ignore("LatestByAllIndexedFilteredRecordCursorFactory applies filter after latest by is executed")
     @Test
     public void testLatestByMultiColumnPlusFilter2() throws Exception {
         testLatestByMultiColumnPlusFilter("create table tab(" +
@@ -3836,7 +3882,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 ") timestamp(ts) partition by DAY");
     }
 
-    @Ignore("LatestByAllIndexedFilteredRecordCursorFactory applies filter after latest by is executed")
     @Test
     public void testLatestByMultiColumnPlusFilter3() throws Exception {
         testLatestByMultiColumnPlusFilter("create table tab(" +
@@ -3847,7 +3892,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 ") timestamp(ts) partition by DAY");
     }
 
-    @Ignore("LatestByAllIndexedFilteredRecordCursorFactory applies filter after latest by is executed")
     @Test
     public void testLatestByMultiColumnPlusFilter4() throws Exception {
         testLatestByMultiColumnPlusFilter("create table tab(" +
@@ -3858,7 +3902,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 ") timestamp(ts) partition by DAY");
     }
 
-    @Ignore("LatestByAllIndexedFilteredRecordCursorFactory applies filter after latest by is executed")
     @Test
     public void testLatestByMultiColumnPlusFilter5() throws Exception {
         testLatestByMultiColumnPlusFilter("create table tab(" +
@@ -3869,7 +3912,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 ")");
     }
 
-    @Ignore("LatestByAllIndexedFilteredRecordCursorFactory applies filter after latest by is executed")
     @Test
     public void testLatestByMultiColumnPlusFilter6() throws Exception {
         testLatestByMultiColumnPlusFilter("create table tab(" +
@@ -3880,7 +3922,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 ")");
     }
 
-    @Ignore("LatestByAllIndexedFilteredRecordCursorFactory applies filter after latest by is executed")
     @Test
     public void testLatestByMultiColumnPlusFilter7() throws Exception {
         testLatestByMultiColumnPlusFilter("create table tab(" +
@@ -7110,13 +7151,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     "id\tname\tvalue\tts\n" +
                             "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
                             "d2\tc1\t111.7\t2021-10-06T15:31:35.878000Z\n");
-            // TODO: broken 2,4,5,7
             assertSql(
                     "tab where name = 'c2' latest on ts partition by id",
                     "id\tname\tvalue\tts\n" +
                             "d1\tc2\t102.5\t2021-10-05T15:31:35.878000Z\n" +
                             "d2\tc2\t401.1\t2021-10-06T11:31:35.878000Z\n");
-            // TODO: broken 3,4,5,6
             assertSql(
                     "tab where id = 'd1' latest on ts partition by name",
                     "id\tname\tvalue\tts\n" +

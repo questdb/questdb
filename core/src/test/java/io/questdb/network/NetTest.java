@@ -272,6 +272,38 @@ public class NetTest {
             Net.close(fd1);
         }
     }
+    
+    @Test
+    public void testBindAndListenTcpToLocalhost(){
+        long fd = Net.socketTcp(false);
+        try {
+            if (!Net.bindTcp(fd, "127.0.0.1", 9005)){
+                Assert.fail("Failed to bind tcp socket to localhost. Errno=" + Os.errno());
+            }
+            else {
+                Net.listen(fd, 100);
+            }
+        }
+        finally {
+            Net.close(fd);
+        }
+    }
+
+    @Test
+    public void testBindAndListenUdpToLocalhost(){
+        long fd = Net.socketUdp();
+        try {
+            if (!Net.bindUdp(fd, Net.parseIPv4("127.0.0.1"), 9005)){
+                Assert.fail("Failed to bind udp socket to localhost. Errno=" + Os.errno());
+            }
+            else {
+                Net.listen(fd, 100);
+            }
+        }
+        finally {
+            Net.close(fd);
+        }
+    }
 
     private void bindSocket(long fd) {
         Assert.assertTrue(fd > 0);

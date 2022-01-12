@@ -624,14 +624,14 @@ class SqlOptimiser {
         sqlNodeStack.clear();
         while (node != null) {
             if (node.rhs != null) {
-                if (functionParser.isGroupBy(node.rhs.token)) {
+                if (functionParser.getFunctionFactoryCache().isGroupBy(node.rhs.token)) {
                     return true;
                 }
                 this.sqlNodeStack.push(node.rhs);
             }
 
             if (node.lhs != null) {
-                if (functionParser.isGroupBy(node.lhs.token)) {
+                if (functionParser.getFunctionFactoryCache().isGroupBy(node.lhs.token)) {
                     return true;
                 }
                 node = node.lhs;
@@ -1455,7 +1455,7 @@ class SqlOptimiser {
                         node = null;
                         continue;
                     case ExpressionNode.FUNCTION:
-                        if (functionParser.isGroupBy(node.token)) {
+                        if (functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
                             return true;
                         }
                         break;
@@ -1502,7 +1502,7 @@ class SqlOptimiser {
                 node = node.lhs;
             }
 
-            if (!(node.type == ExpressionNode.CONSTANT || (node.type == ExpressionNode.FUNCTION && functionParser.isRuntimeConstant(node.token)))) {
+            if (!(node.type == ExpressionNode.CONSTANT || (node.type == ExpressionNode.FUNCTION && functionParser.getFunctionFactoryCache().isRuntimeConstant(node.token)))) {
                 return false;
             }
 
@@ -2343,7 +2343,7 @@ class SqlOptimiser {
             final ObjList<QueryColumn> bottomUpColumns = model.getBottomUpColumns();
             for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
                 QueryColumn qc = bottomUpColumns.getQuick(i);
-                if (qc.getAst().type != FUNCTION || !functionParser.isGroupBy(qc.getAst().token)) {
+                if (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
                     model.addTopDownColumn(qc, qc.getAlias());
                 }
             }
@@ -2439,7 +2439,7 @@ class SqlOptimiser {
     }
 
     private ExpressionNode replaceIfAggregate(@Transient ExpressionNode node, QueryModel model) {
-        if (node != null && functionParser.isGroupBy(node.token)) {
+        if (node != null && functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
             QueryColumn c = model.findBottomUpColumnByAst(node);
             if (c == null) {
                 c = queryColumnPool.next().of(createColumnAlias(node, model), node);
@@ -2458,7 +2458,7 @@ class SqlOptimiser {
             QueryModel baseModel,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        if (node != null && functionParser.isCursor(node.token)) {
+        if (node != null && functionParser.getFunctionFactoryCache().isCursor(node.token)) {
             return nextLiteral(
                     addCursorFunctionAsCrossJoin(
                             node,
@@ -2553,7 +2553,7 @@ class SqlOptimiser {
                             continue;
                         }
 
-                        if (functionParser.isValidNoArgFunction(node)) {
+                        if (functionParser.getFunctionFactoryCache().isValidNoArgFunction(node)) {
                             node.type = FUNCTION;
                         }
                     } else {
@@ -2595,19 +2595,21 @@ class SqlOptimiser {
         QueryModel baseParent = model;
         QueryModel wrapper = null;
         final int modelColumnCount = model.getBottomUpColumns().size();
-        boolean groupBy = false;
+        boolean groupByOrDistinct = false;
 
         while (base.getBottomUpColumns().size() > 0 && !base.isNestedModelIsSubQuery()) {
             baseParent = base;
             base = base.getNestedModel();
-            groupBy = groupBy || baseParent.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY;
+            final int selectModelType = baseParent.getSelectModelType();
+            groupByOrDistinct = groupByOrDistinct
+                    || selectModelType == QueryModel.SELECT_MODEL_GROUP_BY
+                    || selectModelType == QueryModel.SELECT_MODEL_DISTINCT;
         }
 
         // find out how "order by" columns are referenced
         ObjList<ExpressionNode> orderByNodes = base.getOrderBy();
         int sz = orderByNodes.size();
         if (sz > 0) {
-            boolean ascendColumns = true;
             // for each order by column check how deep we need to go between "model" and "base"
             for (int i = 0; i < sz; i++) {
                 final ExpressionNode orderBy = orderByNodes.getQuick(i);
@@ -2619,7 +2621,7 @@ class SqlOptimiser {
                     validateColumnAndGetModelIndex(base, column, dot, orderBy.position);
                     // good news, our column matched base model
                     // this condition is to ignore order by columns that are not in select and behind group by
-                    if (ascendColumns && base != model) {
+                    if (base != model) {
                         // check if column is aliased as either
                         // "x y" or "tab.x y" or "t.x y", where "t" is alias of table "tab"
                         final LowerCaseCharSequenceObjHashMap<CharSequence> map = baseParent.getColumnNameToAliasMap();
@@ -2645,9 +2647,12 @@ class SqlOptimiser {
                             }
 
                             // we must attempt to ascend order by column
-                            // when we have group by model, ascent is not possible
-                            if (groupBy) {
-                                ascendColumns = false;
+                            // when we have group by or distinct model, ascent is not possible
+                            if (groupByOrDistinct) {
+                                throw SqlException.position(orderBy.position)
+                                        .put("ORDER BY expressions must appear in select list. ")
+                                        .put("Invalid column: ")
+                                        .put(column);
                             } else {
                                 if (baseParent.getSelectModelType() != QueryModel.SELECT_MODEL_CHOOSE) {
                                     QueryModel synthetic = queryModelPool.next();
@@ -2701,7 +2706,7 @@ class SqlOptimiser {
                         }
                     }
                 }
-                if (ascendColumns && base != baseParent) {
+                if (base != baseParent) {
                     model.addOrderBy(orderBy, base.getOrderByDirection().getQuick(i));
                 }
             }
@@ -2915,10 +2920,10 @@ class SqlOptimiser {
                     if (analytic) {
                         useAnalyticModel = true;
                         continue;
-                    } else if (functionParser.isGroupBy(qc.getAst().token)) {
+                    } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
                         useGroupByModel = true;
                         continue;
-                    } else if (functionParser.isCursor(qc.getAst().token)) {
+                    } else if (functionParser.getFunctionFactoryCache().isCursor(qc.getAst().token)) {
                         continue;
                     }
                 }
@@ -3002,7 +3007,7 @@ class SqlOptimiser {
                         replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getPartitionBy());
                         replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getOrderBy());
                         continue;
-                    } else if (functionParser.isGroupBy(qc.getAst().token)) {
+                    } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
                         qc = ensureAliasUniqueness(groupByModel, qc);
                         groupByModel.addBottomUpColumn(qc);
                         // group-by column references might be needed when we have
@@ -3014,7 +3019,7 @@ class SqlOptimiser {
                         // pull out literals
                         emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, false);
                         continue;
-                    } else if (functionParser.isCursor(qc.getAst().token)) {
+                    } else if (functionParser.getFunctionFactoryCache().isCursor(qc.getAst().token)) {
                         addCursorFunctionAsCrossJoin(
                                 qc.getAst(),
                                 qc.getAlias(),

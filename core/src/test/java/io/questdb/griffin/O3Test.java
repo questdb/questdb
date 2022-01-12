@@ -1417,6 +1417,8 @@ public class O3Test extends AbstractO3Test {
                 "create table y as (x union all append)",
                 "y order by ts",
                 "insert into x select * from append",
+                "x",
+                "y",
                 "x"
         );
 
@@ -1553,6 +1555,8 @@ public class O3Test extends AbstractO3Test {
                 "create table y as (x union all append)",
                 "y order by ts",
                 "insert into x select * from append",
+                "x",
+                "y",
                 "x"
         );
 
@@ -1570,7 +1574,9 @@ public class O3Test extends AbstractO3Test {
                 "create table z as (x union all append2)",
                 "z order by i,sym,amt",
                 "insert into x select * from append2",
-                "x order by i,sym,amt"
+                "x order by i,sym,amt",
+                "z",
+                "x"
         );
 
         assertMaxTimestamp(
@@ -1587,7 +1593,9 @@ public class O3Test extends AbstractO3Test {
                 "create table w as (x union all append3)",
                 "w order by i,sym,amt",
                 "insert into x select * from append3",
-                "x order by i,sym,amt"
+                "x order by i,sym,amt",
+                "w",
+                "x"
         );
 
         assertMaxTimestamp(
@@ -1665,6 +1673,8 @@ public class O3Test extends AbstractO3Test {
                 "create table y as (select * from x union all select * from top)",
                 "y order by ts",
                 "insert into x select * from top",
+                "x",
+                "y",
                 "x"
         );
 
@@ -1848,6 +1858,8 @@ public class O3Test extends AbstractO3Test {
                 "create table y as (select * from x union all select * from top union all select * from bottom)",
                 "y order by ts",
                 "insert into x select * from (top union all bottom)",
+                "x",
+                "y",
                 "x"
         );
 
@@ -1955,6 +1967,8 @@ public class O3Test extends AbstractO3Test {
                 "create table y as (x union all top)",
                 "y order by ts",
                 o3InsertSql,
+                "x",
+                "y",
                 "x"
         );
 
@@ -2051,6 +2065,8 @@ public class O3Test extends AbstractO3Test {
                 "create table y as (x union all top)",
                 "y order by ts",
                 "insert batch 2000000 commitLag 180s into x select * from top",
+                "x",
+                "y",
                 "x"
         );
 
@@ -2650,6 +2666,8 @@ public class O3Test extends AbstractO3Test {
                 "create table y as (select * from x union all select * from 1am union all select * from prev)",
                 "y order by ts",
                 "insert into x select * from (1am union all prev)",
+                "x",
+                "y",
                 "x"
         );
 
@@ -2954,6 +2972,8 @@ public class O3Test extends AbstractO3Test {
                 "create table y as (x union all middle)",
                 "y order by ts",
                 "insert into x select * from middle",
+                "x",
+                "y",
                 "x"
         );
 
@@ -3494,6 +3514,8 @@ public class O3Test extends AbstractO3Test {
                 "create table y as (x union all middle)",
                 "y order by ts, i desc",
                 "insert into x select * from middle",
+                "x",
+                "y",
                 "x"
         );
 
@@ -3730,6 +3752,8 @@ public class O3Test extends AbstractO3Test {
                 "create table y as (x union all append)",
                 "y order by ts",
                 "insert into x select * from append",
+                "x",
+                "y",
                 "x"
         );
 
@@ -3808,6 +3832,8 @@ public class O3Test extends AbstractO3Test {
                 "create table y as (x union all append)",
                 "y where sym = 'googl' order by ts",
                 "insert into x select * from append",
+                "x where sym = 'googl'",
+                "y where sym = 'googl'",
                 "x where sym = 'googl'"
         );
 
@@ -5462,6 +5488,8 @@ public class O3Test extends AbstractO3Test {
                 "create table y as (x union all append)",
                 "y order by ts",
                 "insert into x select * from append",
+                "x",
+                "y",
                 "x"
         );
 
@@ -5503,6 +5531,8 @@ public class O3Test extends AbstractO3Test {
                 "create table y2 as (y union all append2)",
                 "y2 order by ts",
                 "insert into x select * from append2",
+                "x",
+                "y2",
                 "x"
         );
 
@@ -5613,6 +5643,8 @@ public class O3Test extends AbstractO3Test {
                 "create table y as (x union all append)",
                 "y order by ts",
                 "insert into x select * from append",
+                "x",
+                "y",
                 "x"
         );
 
@@ -5712,6 +5744,8 @@ public class O3Test extends AbstractO3Test {
                 "create table y as (x union all append)",
                 "y order by ts",
                 "insert into x select * from append",
+                "x",
+                "y",
                 "x"
         );
 
@@ -6370,6 +6404,8 @@ public class O3Test extends AbstractO3Test {
                 "create table y as (x union all append)",
                 "y order by ts",
                 "insert into x select * from append",
+                "x",
+                "y",
                 "x"
         );
 
@@ -6428,6 +6464,8 @@ public class O3Test extends AbstractO3Test {
                 "create table y as (x union all append)",
                 "y order by ts",
                 "insert into x select * from append",
+                "x",
+                "y",
                 "x"
         );
         assertXCountY(compiler, executionContext);
@@ -6551,6 +6589,8 @@ public class O3Test extends AbstractO3Test {
                 "create table y as (x union all append)",
                 "y order by ts",
                 "insert into x select * from append",
+                "x",
+                "y",
                 "x"
         );
 
@@ -6763,6 +6803,8 @@ public class O3Test extends AbstractO3Test {
                 "create table y as (x union all append)",
                 "y order by ts, i desc",
                 "insert into x select * from append",
+                "x",
+                "y",
                 "x"
         );
 
@@ -6842,6 +6884,8 @@ public class O3Test extends AbstractO3Test {
                 "create table y as (x union all append)",
                 "y order by ts, i desc",
                 "insert into x select * from append",
+                "x",
+                "y",
                 "x"
         );
 
@@ -7190,6 +7234,8 @@ public class O3Test extends AbstractO3Test {
                 "create table z as (select * from x union all append2)",
                 "z order by ts",
                 "insert into x select * from append2",
+                "x",
+                "z",
                 "x"
         );
 
@@ -7315,6 +7361,8 @@ public class O3Test extends AbstractO3Test {
                 "create table y as (x union all append)",
                 "y order by ts",
                 "insert into x select * from append",
+                "x",
+                "y",
                 "x"
         );
         assertXCountY(compiler, sqlExecutionContext);

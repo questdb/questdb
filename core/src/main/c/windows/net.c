@@ -105,7 +105,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_bindTcp
 
     // int ip address to string
     struct in_addr ip_addr;
-    ip_addr.s_addr = (u_long) address;
+    ip_addr.s_addr = htonl((u_long) address);
     inet_ntoa(ip_addr);
 
     // port to string
@@ -155,7 +155,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_bindUdp
     ZeroMemory(&RecvAddr, sizeof(RecvAddr));
 
     RecvAddr.sin_family = AF_INET;
-    RecvAddr.sin_addr.s_addr = ipv4Address;
+    RecvAddr.sin_addr.s_addr = htonl((u_long)ipv4Address);
     RecvAddr.sin_port = htons((u_short) port);
 
     if (bind((SOCKET) fd, (SOCKADDR *) &RecvAddr, sizeof(RecvAddr)) == 0) {

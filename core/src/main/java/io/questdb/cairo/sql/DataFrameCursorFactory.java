@@ -46,4 +46,12 @@ public interface DataFrameCursorFactory extends Sinkable, Closeable {
     }
 
     boolean supportTableRowId(CharSequence tableName);
+
+    /**
+     * Returns 0 for ASC, 1 for DESC
+     */
+    int getOrder();
+
+    int ORDER_ASC = 0;
+    int ORDER_DESC = 1;
 }
