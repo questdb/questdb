@@ -67,9 +67,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     private final static String AUTH_KEY_ID2 = "testUser2";
     private final static PrivateKey AUTH_PRIVATE_KEY2 = AuthDb.importPrivateKey("lwJi3TSb4G6UcHxFJmPhOTWa4BLwJOOiK76wT6Uk7pI");
     private static final long TEST_TIMEOUT_IN_MS = 120000;
-    public static final int WAIT_NO_WAIT = 0x0;
-    public static final int WAIT_ENGINE_TABLE_RELEASE = 0x1;
-    public static final int WAIT_ILP_TABLE_RELEASE = 0x2;
     private Path path;
 
     @Before
@@ -959,62 +956,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         }
     }
 
-    private void assertTable(CharSequence expected, CharSequence tableName) {
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
-        }
-    }
-
-    @FunctionalInterface
-    public interface LineTcpServerAwareContext {
-        void run(LineTcpReceiver receiver) throws Exception;
-    }
-
     private void send(LineTcpReceiver receiver, String lineData, String tableName, int wait) {
         send(receiver, tableName, wait, () -> sendToSocket(lineData, true));
     }
 
     private void sendLinger(LineTcpReceiver receiver, String lineData, String tableName) {
         send(receiver, tableName, LineTcpReceiverTest.WAIT_ENGINE_TABLE_RELEASE, () -> sendToSocket(lineData, false));
-    }
-
-    private void send(LineTcpReceiver receiver, String tableName, int wait, Runnable sendToSocket) {
-        SOCountDownLatch releaseLatch = new SOCountDownLatch(1);
-        final String t = tableName;
-        switch (wait) {
-            case WAIT_ENGINE_TABLE_RELEASE:
-                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                    if (Chars.equals(tableName, name)) {
-                        if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(tableName, t) ) {
-                            releaseLatch.countDown();
-                        }
-                    }
-                });
-                break;
-            case WAIT_ILP_TABLE_RELEASE:
-                receiver.setSchedulerListener((tableName1, event) -> {
-                    if (Chars.equals(tableName1, tableName1)) {
-                            releaseLatch.countDown();
-                    }
-                });
-                break;
-        }
-
-        try {
-            sendToSocket.run();
-            if (wait != WAIT_NO_WAIT) {
-                releaseLatch.await();
-            }
-        } finally {
-            switch (wait) {
-                case WAIT_ENGINE_TABLE_RELEASE:
-                    engine.setPoolListener(null);
-                    break;
-                case WAIT_ILP_TABLE_RELEASE:
-                    receiver.setSchedulerListener(null);
-                    break;
-            }
-        }
     }
 
     private void send(LineTcpReceiver receiver, String lineData, String tableName) {
@@ -1181,5 +1128,4 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             Os.sleep(20);
         }
     }
-
 }
