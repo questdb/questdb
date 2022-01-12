@@ -88,7 +88,10 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
         long lastCommittedPartitionName = txReader.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
         if (lastCommittedPartitionName > -1) {
             assert hi <= partitionList.size();
-            for (int i = lo + 2, n = hi - 1; i < n; i += 2) {
+            // lo points to the beginning element in partitionList, hi next after last
+            // each partition folder represented by a pair in the partitionList (partition version, partition timestamp)
+            // Skip first pair, start from second and check if it can be deleted.
+            for (int i = lo + 2; i < hi; i += 2) {
                 long nextNameVersion = Math.min(lastCommittedPartitionName + 1, partitionList.get(i));
                 long previousNameVersion = partitionList.get(i - 2);
 
@@ -109,20 +112,21 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                     path.slash$();
 
                     // previousNameVersion can be deleted
-                    LOG.info().
-                            $("purging [path=").$(path)
+                    LOG.info()
+                            .$("purging [path=")
+                            .$(path)
                             .$(", nameTxnToRemove=").$(previousNameVersion - 1)
                             .$(", nameTxnNext=").$(nextNameVersion)
                             .$(", lastCommittedPartitionName=").$(lastCommittedPartitionName)
                             .I$();
                     long errno;
                     if ((errno = ff.rmdir(path)) == 0) {
-                        LOG.info().
-                                $("purged [path=").$(path)
+                        LOG.info()
+                                .$("purged [path=").$(path)
                                 .I$();
                     } else {
-                        LOG.info().
-                                $("partition purge failed [path=").$(path)
+                        LOG.info()
+                                .$("partition purge failed [path=").$(path)
                                 .$(", errno=").$(errno)
                                 .I$();
                     }
@@ -183,7 +187,8 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
             loadLastTx(txReader);
 
             for (int i = 0; i < n; i += 2) {
-                if (partitionList.get(i + 1) != partitionTs) {
+                long currentPartitionTs = partitionList.get(i + 1);
+                if (currentPartitionTs != partitionTs) {
                     if (i > lo + 2) {
                         processPartition(
                                 ff,
@@ -199,7 +204,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                         );
                     }
                     lo = i;
-                    partitionTs = partitionList.get(i + 1);
+                    partitionTs = currentPartitionTs;
                 }
             }
             // Tail
@@ -230,12 +235,13 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
     private void parsePartitionDateVersion(StringSink fileNameSink, DirectLongList partitionList, CharSequence tableName, DateFormat partitionByFormat) {
         int index = Chars.lastIndexOf(fileNameSink, '.');
 
+        int len = fileNameSink.length();
         if (index < 0) {
-            index = fileNameSink.length();
+            index = len;
         }
         try {
-            if (index < fileNameSink.length()) {
-                long partitionVersion = Numbers.parseLong(fileNameSink, index + 1, fileNameSink.length());
+            if (index < len) {
+                long partitionVersion = Numbers.parseLong(fileNameSink, index + 1, len);
                 // When reader locks transaction 100 it opens partition version .99 or lower.
                 // Also when there is no transaction version in the name, it is counted as -1.
                 // By adding +1 here we kill 2 birds in with one stone, partition versions are aligned with
