@@ -570,8 +570,11 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private boolean acquireTxn() {
         if (!txnAcquired) {
-            txnScoreboard.acquireTxn(txn);
-            txnAcquired = true;
+            if (txnScoreboard.acquireTxn(txn)) {
+                txnAcquired = true;
+            } else {
+                return false;
+            }
         }
 
         // We have to be sure last txn is acquired in Scoreboard

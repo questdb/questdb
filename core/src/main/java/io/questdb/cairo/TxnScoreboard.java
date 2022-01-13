@@ -55,9 +55,15 @@ public class TxnScoreboard implements Closeable, Mutable {
         releaseTxn0(pTxnScoreboard, txn);
     }
 
-    public void acquireTxn(long txn) {
-        if (acquireTxn(mem, txn)) {
-            return;
+    public boolean acquireTxn(long txn) {
+        int response = acquireTxn(mem, txn);
+        if (response > -1) {
+            // all good
+            return true;
+        }
+        if (response == -2) {
+            // retry
+            return false;
         }
         throw CairoException.instance(0).put("max txn-inflight limit reached [txn=").put(txn).put(", min=").put(getMin()).put(']');
     }
@@ -90,7 +96,7 @@ public class TxnScoreboard implements Closeable, Mutable {
     }
 
     public boolean isTxnAvailable(long nameTxn) {
-        return isTxnAvailable(mem, nameTxn);
+        return getActiveReaderCount(nameTxn) == 0;
     }
 
     public TxnScoreboard ofRO(@Transient Path root) {
@@ -132,21 +138,19 @@ public class TxnScoreboard implements Closeable, Mutable {
         releaseTxn(mem, txn);
     }
 
-    private static boolean acquireTxn(long pTxnScoreboard, long txn) {
+    private static int acquireTxn(long pTxnScoreboard, long txn) {
         assert pTxnScoreboard > 0;
         LOG.debug().$("acquire [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
         return acquireTxn0(pTxnScoreboard, txn);
     }
 
-    private native static boolean acquireTxn0(long pTxnScoreboard, long txn);
+    private native static int acquireTxn0(long pTxnScoreboard, long txn);
 
     private native static long releaseTxn0(long pTxnScoreboard, long txn);
 
     private static native long getCount(long pTxnScoreboard, long txn);
 
     private static native long getMin(long pTxnScoreboard);
-
-    private static native boolean isTxnAvailable(long pTxnScoreboard, long txn);
 
     private static native void init(long pTxnScoreboard, int entryCount);
 

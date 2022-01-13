@@ -83,6 +83,9 @@ public:
     }
 
     inline T get_count(int64_t offset) {
+        if (offset < get_min()) {
+            return 0;
+        }
         return __atomic_load_n(get_count_ptr(offset), __ATOMIC_RELAXED);
     }
 
@@ -101,28 +104,28 @@ public:
         }
     }
 
-    inline bool txn_acquire(int64_t txn) {
-        if (txn - get_min() >= size) {
+    inline int32_t txn_acquire(int64_t txn) {
+        int64_t _min = get_min();
+        if (txn < _min) {
+            return -2;
+        }
+
+        if (txn - _min >= size) {
             update_min(txn);
         }
 
         if (txn - get_min() < size) {
             atomic_next(get_count_ptr(txn), inc);
-            set_max_atomic(&max, txn);
             update_min(txn);
-            return true;
+            if (txn < get_min()) {
+                // Race lost, someone updated min to higher value. Roll back the increment.
+                atomic_next(get_count_ptr(txn), dec);
+                return -2;
+            }
+            set_max_atomic(&max, txn);
+            return 0;
         }
-        return false;
-    }
-
-    inline bool is_txn_avalable(int64_t txn) {
-        int64_t _min = get_min();
-        if (_min == -1 || get_count(txn) == 0) {
-            return true;
-        }
-        update_min(txn);
-        _min = get_min();
-        return _min == txn && get_count(txn) == 0;
+        return -1;
     }
 
     void init(uint32_t entry_count) {
@@ -133,14 +136,9 @@ public:
 
 extern "C" {
 
-JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_TxnScoreboard_acquireTxn0
+JNIEXPORT jint JNICALL Java_io_questdb_cairo_TxnScoreboard_acquireTxn0
         (JAVA_STATIC, jlong p_txn_scoreboard, jlong txn) {
     return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->txn_acquire(txn);
-}
-
-JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_TxnScoreboard_isTxnAvailable
-        (JAVA_STATIC, jlong p_txn_scoreboard, jlong txn) {
-    return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->is_txn_avalable(txn);
 }
 
 JNIEXPORT void JNICALL Java_io_questdb_cairo_TxnScoreboard_releaseTxn0

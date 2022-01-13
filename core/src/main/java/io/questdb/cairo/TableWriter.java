@@ -1706,8 +1706,9 @@ public class TableWriter implements Closeable {
     private boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
         long lastCommittedTxn = txWriter.getTxn();
         try {
-            txnScoreboard.acquireTxn(lastCommittedTxn);
-            txnScoreboard.releaseTxn(lastCommittedTxn);
+            if (txnScoreboard.acquireTxn(lastCommittedTxn)) {
+                txnScoreboard.releaseTxn(lastCommittedTxn);
+            }
         } catch (CairoException ex) {
             // Scoreboard can be over allocated, don't stall writing because of that.
             // Schedule async purge and continue
