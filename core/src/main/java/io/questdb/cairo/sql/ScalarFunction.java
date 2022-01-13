@@ -36,6 +36,11 @@ public interface ScalarFunction extends Function {
     }
 
     @Override
+    default Record getRecord(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     default CharSequence getStr(Record rec, int arrayIndex) {
         throw new UnsupportedOperationException();
     }
@@ -52,11 +57,6 @@ public interface ScalarFunction extends Function {
 
     @Override
     default int getStrLen(Record rec, int arrayIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    default Record getRecord(Record rec) {
         throw new UnsupportedOperationException();
     }
 }

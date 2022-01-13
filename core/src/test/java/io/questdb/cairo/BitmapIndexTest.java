@@ -324,7 +324,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     Assert.assertTrue(Chars.contains(e.getMessage(), "could not consistently"));
                 }
 
-                // make sure index fails until sequence is not up to date
+                // make sure index fails until sequence is not up-to-date
 
                 try {
                     reader.getCursor(true, 0, 0, Long.MAX_VALUE);
@@ -861,7 +861,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     Assert.assertTrue(Chars.contains(e.getMessage(), "could not consistently"));
                 }
 
-                // make sure index fails until sequence is not up to date
+                // make sure index fails until sequence is not up-to-date
 
                 try {
                     reader.getCursor(true, 0, 0, Long.MAX_VALUE);
@@ -990,7 +990,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             final int N = 1000000;
             final int CUTOFF = 60000;
 
-            // this is an assertion in case somebody change the test
+            // this is an assertion in case somebody changes the test
             //noinspection ConstantConditions
             assert CUTOFF < N;
 

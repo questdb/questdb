@@ -28,8 +28,12 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface WaitProcessorConfiguration {
     MillisecondClock getClock();
-    long getMaxWaitCapMs();
+
     double getExponentialWaitMultiplier();
+
     int getInitialWaitQueueSize();
+
     int getMaxProcessingQueueSize();
+
+    long getMaxWaitCapMs();
 }

@@ -39,6 +39,14 @@ public interface PageFrame {
     int getColumnShiftBits(int columnIndex);
 
     /**
+     * Index page for variable-length column types, such as String and Binary
+     *
+     * @param columnIndex index of variable length column
+     * @return contiguous memory address containing offsets for variable value entries
+     */
+    long getIndexPageAddress(int columnIndex);
+
+    /**
      * Return the address of the start of the page frame or if this page represents
      * a column top (a column that was added to the table when other columns already had data) then return 0
      *
@@ -48,13 +56,6 @@ public interface PageFrame {
     long getPageAddress(int columnIndex);
 
     /**
-     * Index page for variable-length column types, such as String and Binary
-     * @param columnIndex index of variable length column
-     * @return contiguous memory address containing offsets for variable value entries
-     */
-    long getIndexPageAddress(int columnIndex);
-
-    /**
      * Return the size of the page frame column in bytes.
      *
      * @param columnIndex index of column
@@ -62,9 +63,9 @@ public interface PageFrame {
      */
     long getPageSize(int columnIndex);
 
+    long getPartitionHi();
+
     int getPartitionIndex();
 
     long getPartitionLo();
-
-    long getPartitionHi();
 }

@@ -125,12 +125,12 @@ public class InSymbolFunctionFactory implements FunctionFactory {
             }
         }
 
-        private boolean testAsString(Record rec) {
-            return set.contains(arg.getSymbol(rec));
-        }
-
         private boolean testAsInt(Record rec) {
             return intSet.contains(arg.getInt(rec));
+        }
+
+        private boolean testAsString(Record rec) {
+            return set.contains(arg.getSymbol(rec));
         }
     }
 }

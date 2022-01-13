@@ -78,7 +78,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
     }
 
     public void evaluateResults(long lineCount, long errorCount) {
-        // try calculate types counting all rows
+        // try to calculate types counting all rows
         // if all types come up as strings, reduce lineCount by one and retry
         // if some fields come up as non-string after subtracting row - we have a header
         if ((calcTypes(lineCount - errorCount, true) && !calcTypes(lineCount - errorCount - 1, false)) || forceHeader) {
@@ -132,7 +132,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
 
     @Override
     public void onFields(long line, ObjList<DirectByteCharSequence> values, int fieldCount) {
-        // keep first line in case its a header
+        // keep first line in case it's a header
         if (line == 0) {
             seedFields(fieldCount);
             stashPossibleHeader(values, fieldCount);

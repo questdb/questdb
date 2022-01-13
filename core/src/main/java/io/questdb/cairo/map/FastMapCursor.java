@@ -44,11 +44,6 @@ public final class FastMapCursor implements RecordCursor {
     }
 
     @Override
-    public long size() {
-        return map.size();
-    }
-
-    @Override
     public void close() {
         map.restoreInitialCapacity();
     }
@@ -85,6 +80,11 @@ public final class FastMapCursor implements RecordCursor {
     public void toTop() {
         this.address = topAddress;
         this.remaining = count;
+    }
+
+    @Override
+    public long size() {
+        return map.size();
     }
 
     FastMapCursor init(long address, int count) {

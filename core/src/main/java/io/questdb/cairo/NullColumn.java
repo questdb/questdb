@@ -34,6 +34,15 @@ public class NullColumn implements MemoryMR {
     public static final NullColumn INSTANCE = new NullColumn();
 
     @Override
+    public long addressOf(long offset) {
+        return 0;
+    }
+
+    @Override
+    public void extend(long size) {
+    }
+
+    @Override
     public BinarySequence getBin(long offset) {
         return null;
     }
@@ -54,6 +63,11 @@ public class NullColumn implements MemoryMR {
     }
 
     @Override
+    public char getChar(long offset) {
+        return 0;
+    }
+
+    @Override
     public double getDouble(long offset) {
         return Double.NaN;
     }
@@ -64,6 +78,11 @@ public class NullColumn implements MemoryMR {
     }
 
     @Override
+    public long getGrownLength() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public int getInt(long offset) {
         return Numbers.INT_NaN;
     }
@@ -71,6 +90,20 @@ public class NullColumn implements MemoryMR {
     @Override
     public long getLong(long offset) {
         return Numbers.LONG_NaN;
+    }
+
+    @Override
+    public void getLong256(long offset, CharSink sink) {
+    }
+
+    @Override
+    public Long256 getLong256A(long offset) {
+        return Long256Impl.NULL_LONG256;
+    }
+
+    @Override
+    public Long256 getLong256B(long offset) {
+        return Long256Impl.NULL_LONG256;
     }
 
     @Override
@@ -104,41 +137,8 @@ public class NullColumn implements MemoryMR {
     }
 
     @Override
-    public Long256 getLong256A(long offset) {
-        return Long256Impl.NULL_LONG256;
-    }
-
-    @Override
-    public void getLong256(long offset, CharSink sink) {
-    }
-
-    @Override
-    public Long256 getLong256B(long offset) {
-        return Long256Impl.NULL_LONG256;
-    }
-
-    @Override
-    public char getChar(long offset) {
-        return 0;
-    }
-
-    @Override
     public int getStrLen(long offset) {
         return TableUtils.NULL_LEN;
-    }
-
-    @Override
-    public void extend(long size) {
-    }
-
-    @Override
-    public long size() {
-        return 0;
-    }
-
-    @Override
-    public long addressOf(long offset) {
-        return 0;
     }
 
     @Override
@@ -152,13 +152,8 @@ public class NullColumn implements MemoryMR {
     }
 
     @Override
-    public long getGrownLength() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public FilesFacade getFilesFacade() {
-        throw new UnsupportedOperationException();
+    public long size() {
+        return 0;
     }
 
     @Override
@@ -168,6 +163,11 @@ public class NullColumn implements MemoryMR {
     @Override
     public long getFd() {
         return -1;
+    }
+
+    @Override
+    public FilesFacade getFilesFacade() {
+        throw new UnsupportedOperationException();
     }
 
     @Override

@@ -32,30 +32,33 @@ import io.questdb.std.str.CharSink;
 import java.io.Closeable;
 
 /**
- * Factory for creating a SQL execution plan.
+ * Factory for creating SQL execution plan.
  * Queries may be executed more than once without changing execution plan.
- *
+ * <p>
  * Interfaces which extend Closeable are not optionally-closeable.
  * close() method must be called after other calls are complete.
- *
+ * <p>
  * Example:
- *
+ * <p>
  * final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
  * try (SqlCompiler compiler = new SqlCompiler(engine)) {
- *     try (RecordCursorFactory factory = compiler.compile("abc", ctx).getRecordCursorFactory()) {
- *         try (RecordCursor cursor = factory.getCursor(ctx)) {
- *             final Record record = cursor.getRecord();
- *             while (cursor.hasNext()) {
- *                 // access 'record' instance for field values
- *             }
- *         }
- *     }
+ * try (RecordCursorFactory factory = compiler.compile("abc", ctx).getRecordCursorFactory()) {
+ * try (RecordCursor cursor = factory.getCursor(ctx)) {
+ * final Record record = cursor.getRecord();
+ * while (cursor.hasNext()) {
+ * // access 'record' instance for field values
  * }
- *
+ * }
+ * }
+ * }
  */
 public interface RecordCursorFactory extends Closeable, Sinkable {
     @Override
     default void close() {
+    }
+
+    default SingleSymbolFilter convertToSampleByIndexDataFrameCursorFactory() {
+        return null;
     }
 
     default boolean followedOrderByAdvice() {
@@ -65,7 +68,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
     /**
      * Creates an instance of RecordCursor. Factories will typically reuse cursor instances.
      * The calling code must not hold on to copies of the cursor.
-     *
+     * <p>
      * The new cursor will have refreshed its view of the data. If new data was added to table(s)
      * the cursor will pick it up.
      *
@@ -85,22 +88,8 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
         return null;
     }
 
-    boolean recordCursorSupportsRandomAccess();
-
-    default boolean supportPageFrameCursor() {
+    default boolean hasDescendingOrder() {
         return false;
-    }
-
-    default boolean usesCompiledFilter() {
-        return false;
-    }
-
-    default void toSink(CharSink sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    default SingleSymbolFilter convertToSampleByIndexDataFrameCursorFactory() {
-        return null;
     }
 
     /* Returns true if this factory handles limit M , N clause already and false otherwise .
@@ -109,7 +98,17 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
         return false;
     }
 
-    default boolean hasDescendingOrder() {
+    boolean recordCursorSupportsRandomAccess();
+
+    default boolean supportPageFrameCursor() {
+        return false;
+    }
+
+    default void toSink(CharSink sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    default boolean usesCompiledFilter() {
         return false;
     }
 }

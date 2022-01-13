@@ -48,11 +48,6 @@ public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
     }
 
     @Override
-    public void toTop() {
-        this.partitionIndex = this.partitionHi - 1;
-    }
-
-    @Override
     public @Nullable DataFrame skipTo(long rowNumber) {
         int partitionCount = getTableReader().getPartitionCount();
 
@@ -90,5 +85,10 @@ public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
 
     public boolean supportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    public void toTop() {
+        this.partitionIndex = this.partitionHi - 1;
     }
 }

@@ -49,6 +49,19 @@ public class HttpMultipartContentParserTest {
     }
 
     @Test
+    public void testBreaksNearFinalBoundary() throws Exception {
+        for (int i = 0; i < 500; i++) {
+            try {
+                sink.clear();
+                testBreaksCsvImportAt(i, null);
+            } catch (Exception e) {
+                System.out.println("i=" + i);
+                throw e;
+            }
+        }
+    }
+
+    @Test
     public void testEmpty() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (HttpMultipartContentParser multipartContentParser = new HttpMultipartContentParser(new HttpHeaderParser(1024, pool))) {
@@ -108,6 +121,14 @@ public class HttpMultipartContentParserTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testRetriesNearFinalBoundary() throws Exception {
+        for (int i = 0; i < 500; i++) {
+            sink.clear();
+            testBreaksCsvImportAt(i, RetryOperationException.INSTANCE);
+        }
     }
 
     @Test
@@ -208,25 +229,14 @@ public class HttpMultipartContentParserTest {
         });
     }
 
-    @Test
-    public void testBreaksNearFinalBoundary() throws Exception {
-        for (int i = 0; i < 500; i++) {
-            try {
-                sink.clear();
-                testBreaksCsvImportAt(i, null);
-            } catch (Exception e) {
-                System.out.println("i=" + i);
-                throw e;
-            }
+    private boolean parseWithRetry(TestHttpMultipartContentListener listener, HttpMultipartContentParser multipartContentParser, long breakPoint, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        boolean result;
+        try {
+            result = multipartContentParser.parse(breakPoint, hi, listener);
+        } catch (RetryOperationException e) {
+            result = multipartContentParser.parse(multipartContentParser.getResumePtr(), hi, listener);
         }
-    }
-
-    @Test
-    public void testRetriesNearFinalBoundary() throws Exception {
-        for (int i = 0; i < 500; i++) {
-                sink.clear();
-                testBreaksCsvImportAt(i, RetryOperationException.INSTANCE);
-        }
+        return result;
     }
 
     private void testBreaksCsvImportAt(int breakAt, RuntimeException onChunkException) throws Exception {
@@ -272,16 +282,6 @@ public class HttpMultipartContentParserTest {
                 }
             }
         });
-    }
-
-    private boolean parseWithRetry(TestHttpMultipartContentListener listener, HttpMultipartContentParser multipartContentParser, long breakPoint, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        boolean result;
-        try {
-            result = multipartContentParser.parse(breakPoint, hi, listener);
-        } catch (RetryOperationException e) {
-            result = multipartContentParser.parse(multipartContentParser.getResumePtr(), hi, listener);
-        }
-        return result;
     }
 
     private static class TestHttpMultipartContentListener implements HttpMultipartContentListener {

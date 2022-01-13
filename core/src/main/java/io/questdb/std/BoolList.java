@@ -68,17 +68,40 @@ public class BoolList implements Mutable {
         Arrays.fill(buffer, NO_ENTRY_VALUE);
     }
 
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public boolean equals(Object that) {
+        return this == that || that instanceof BoolList && equals((BoolList) that);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public String toString() {
+        CharSink b = Misc.getThreadLocalBuilder();
+
+        b.put('[');
+        for (int i = 0, k = size(); i < k; i++) {
+            if (i > 0) {
+                b.put(',');
+            }
+            b.put(get(i));
+        }
+        b.put(']');
+        return b.toString();
+    }
+
+    public boolean extendAndReplace(int index, boolean value) {
+        extendCapacity(index + 1);
+        return replace0(index, value);
+    }
+
     public void extendAndSet(int index, boolean value) {
         extendCapacity(index + 1);
         buffer[index] = value;
-    }
-
-    private void extendCapacity(int newPos) {
-        if (newPos > pos) {
-            ensureCapacity(newPos);
-            Arrays.fill(buffer, pos, newPos, NO_ENTRY_VALUE);
-            pos = newPos;
-        }
     }
 
     public boolean get(int index) {
@@ -108,32 +131,6 @@ public class BoolList implements Mutable {
         return NO_ENTRY_VALUE;
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public boolean equals(Object that) {
-        return this == that || that instanceof BoolList && equals((BoolList) that);
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public String toString() {
-        CharSink b = Misc.getThreadLocalBuilder();
-
-        b.put('[');
-        for (int i = 0, k = size(); i < k; i++) {
-            if (i > 0) {
-                b.put(',');
-            }
-            b.put(get(i));
-        }
-        b.put(']');
-        return b.toString();
-    }
-
     public void insert(int index, boolean element) {
         ensureCapacity(++pos);
         System.arraycopy(buffer, index, buffer, index + 1, pos - index - 1);
@@ -158,17 +155,6 @@ public class BoolList implements Mutable {
     public boolean replace(int index, boolean value) {
         assert index < pos;
         return replace0(index, value);
-    }
-
-    public boolean extendAndReplace(int index, boolean value) {
-        extendCapacity(index + 1);
-        return replace0(index, value);
-    }
-
-    private boolean replace0(int index, boolean value) {
-        boolean val = buffer[index];
-        buffer[index] = value;
-        return val;
     }
 
     public void set(int index, boolean element) {
@@ -223,5 +209,19 @@ public class BoolList implements Mutable {
             }
         }
         return true;
+    }
+
+    private void extendCapacity(int newPos) {
+        if (newPos > pos) {
+            ensureCapacity(newPos);
+            Arrays.fill(buffer, pos, newPos, NO_ENTRY_VALUE);
+            pos = newPos;
+        }
+    }
+
+    private boolean replace0(int index, boolean value) {
+        boolean val = buffer[index];
+        buffer[index] = value;
+        return val;
     }
 }

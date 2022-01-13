@@ -109,7 +109,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                         prev = key;
                     }
 
-                    // try append first batch - this should return symbol keys starting with 0
+                    // try to append first batch - this should return symbol keys starting with 0
                     rnd.reset();
                     prev = -1;
                     for (int i = 0; i < N; i++) {

@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import org.jetbrains.annotations.Nullable;
@@ -42,9 +42,19 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public void close() {
+        base.close();
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         cursor.of(base.getCursor(executionContext), executionContext);
         return cursor;
+    }
+
+    @Override
+    public boolean implementsLimit() {
+        return true;
     }
 
     @Override
@@ -55,16 +65,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
-    }
-
-    @Override
-    public void close() {
-        base.close();
-    }
-
-    @Override
-    public boolean implementsLimit() {
-        return true;
     }
 
     private static class LimitRecordCursor implements RecordCursor {
@@ -85,16 +85,13 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public long size() {
-            if (size > -1) {
-                return size;
-            }
-            return -1;
+        public Record getRecord() {
+            return base.getRecord();
         }
 
         @Override
-        public Record getRecord() {
-            return base.getRecord();
+        public Record getRecordB() {
+            return base.getRecordB();
         }
 
         @Override
@@ -108,22 +105,20 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public Record getRecordB() {
-            return base.getRecordB();
-        }
-
-        @Override
         public void recordAt(Record record, long atRowId) {
             base.recordAt(record, atRowId);
         }
 
-        public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
-            this.base = base;
-            loFunction.init(base, executionContext);
-            if (hiFunction != null) {
-                hiFunction.init(base, executionContext);
+        @Override
+        public long size() {
+            if (size > -1) {
+                return size;
             }
-            toTop();
+            return -1;
+        }
+
+        public void skipTo(long count) {
+            base.skipTo(count);
         }
 
         @Override
@@ -190,11 +185,10 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                         long baseRowCount = base.size();
                         if (baseRowCount > -1L) {//don't want to cause a pass-through whole data set
                             limit = Math.max(0, Math.min(baseRowCount, hi) - lo);
-                            size = limit;
                         } else {
                             limit = Math.max(0, hi - lo);//doesn't handle hi exceeding number of rows
-                            size = limit;
                         }
+                        size = limit;
                     }
 
                     if (lo > 0 && limit > 0) {
@@ -202,6 +196,15 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                     }
                 }
             }
+        }
+
+        public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
+            this.base = base;
+            loFunction.init(base, executionContext);
+            if (hiFunction != null) {
+                hiFunction.init(base, executionContext);
+            }
+            toTop();
         }
 
         private long countRows() {
@@ -215,10 +218,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 count++;
             }
             return count;
-        }
-
-        public void skipTo(long count) {
-            base.skipTo(count);
         }
     }
 }

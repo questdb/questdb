@@ -32,7 +32,7 @@ public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
 
     @Test
     public void testAddColumn() throws Exception {
-        Record[] expected = new Record[] {
+        Record[] expected = new Record[]{
                 new Record() {
                     @Override
                     public double getDouble(int col) {
@@ -49,7 +49,7 @@ public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
                 false,
                 true);
 
-        Record[] expected2 = new Record[] {
+        Record[] expected2 = new Record[]{
                 new Record() {
                     @Override
                     public double getDouble(int col) {

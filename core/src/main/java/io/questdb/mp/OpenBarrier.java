@@ -31,18 +31,13 @@ public final class OpenBarrier implements Barrier {
     }
 
     @Override
-    public long current() {
-        return -1;
-    }
-
-    @Override
-    public void setCurrent(long value) {
-        // ignored
-    }
-
-    @Override
     public long availableIndex(long lo) {
         return Long.MAX_VALUE - 1;
+    }
+
+    @Override
+    public long current() {
+        return -1;
     }
 
     @Override
@@ -57,6 +52,11 @@ public final class OpenBarrier implements Barrier {
 
     @Override
     public void setBarrier(Barrier barrier) {
+    }
+
+    @Override
+    public void setCurrent(long value) {
+        // ignored
     }
 
     @Override

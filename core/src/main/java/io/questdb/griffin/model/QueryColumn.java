@@ -45,6 +45,10 @@ public class QueryColumn implements Mutable {
         return alias;
     }
 
+    public void setAlias(CharSequence alias) {
+        this.alias = alias;
+    }
+
     public ExpressionNode getAst() {
         return ast;
     }
@@ -57,9 +61,5 @@ public class QueryColumn implements Mutable {
         this.alias = alias;
         this.ast = ast;
         return this;
-    }
-
-    public void setAlias(CharSequence alias) {
-        this.alias = alias;
     }
 }

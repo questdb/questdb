@@ -196,7 +196,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                         for (int i = 0; i < expect; i++) {
                             scoreboard1.acquireTxn(i + 134);
                         }
-                        // scoreboard capacity should be exhausted
+                        // scoreboard capacity should be exhausted,
                         // and we should be refused to acquire any more slots
                         try {
                             scoreboard1.acquireTxn(expect + 134);

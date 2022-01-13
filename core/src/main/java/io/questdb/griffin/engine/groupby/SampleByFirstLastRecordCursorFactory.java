@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
@@ -51,9 +51,9 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
     private final int groupBySymbolColIndex;
     private final int timestampIndex;
     private final SampleByFirstLastRecordCursor sampleByFirstLastRecordCursor;
+    private final LongList crossFrameRow;
     private DirectLongList rowIdOutAddress;
     private DirectLongList samplePeriodAddress;
-    private final LongList crossFrameRow;
     private int groupByTimestampIndex = -1;
 
     public SampleByFirstLastRecordCursorFactory(
@@ -264,17 +264,17 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         }
 
         @Override
+        public long size() {
+            return -1;
+        }
+
+        @Override
         public void toTop() {
             currentRow = rowsFound = 0;
             frameNextRowId = dataFrameLo = dataFrameHi = -1;
             state = STATE_START;
             crossRowState = NONE;
             pageFrameCursor.toTop();
-        }
-
-        @Override
-        public long size() {
-            return -1;
         }
 
         public long startFrom(long timestamp) {
@@ -601,6 +601,26 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             }
 
             @Override
+            public byte getGeoByte(int col) {
+                return currentRecord.getGeoByte(col);
+            }
+
+            @Override
+            public int getGeoInt(int col) {
+                return currentRecord.getGeoInt(col);
+            }
+
+            @Override
+            public long getGeoLong(int col) {
+                return currentRecord.getGeoLong(col);
+            }
+
+            @Override
+            public short getGeoShort(int col) {
+                return currentRecord.getGeoShort(col);
+            }
+
+            @Override
             public int getInt(int col) {
                 return currentRecord.getInt(col);
             }
@@ -625,26 +645,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 return currentRecord.getTimestamp(col);
             }
 
-            @Override
-            public byte getGeoByte(int col) {
-                return currentRecord.getGeoByte(col);
-            }
-
-            @Override
-            public short getGeoShort(int col) {
-                return currentRecord.getGeoShort(col);
-            }
-
-            @Override
-            public int getGeoInt(int col) {
-                return currentRecord.getGeoInt(col);
-            }
-
-            @Override
-            public long getGeoLong(int col) {
-                return currentRecord.getGeoLong(col);
-            }
-
             public void of(long index) {
                 if (index == 0) {
                     currentRecord = crossRecord;
@@ -664,11 +664,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 }
 
                 @Override
-                public byte getGeoByte(int col) {
-                    return getByte(col);
-                }
-
-                @Override
                 public char getChar(int col) {
                     return (char) crossFrameRow.getQuick(col);
                 }
@@ -684,8 +679,8 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 }
 
                 @Override
-                public int getInt(int col) {
-                    return (int) crossFrameRow.getQuick(col);
+                public byte getGeoByte(int col) {
+                    return getByte(col);
                 }
 
                 @Override
@@ -694,23 +689,28 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 }
 
                 @Override
-                public long getLong(int col) {
-                    return crossFrameRow.getQuick(col);
-                }
-
-                @Override
                 public long getGeoLong(int col) {
                     return getLong(col);
                 }
 
                 @Override
-                public short getShort(int col) {
-                    return (short) crossFrameRow.getQuick(col);
+                public short getGeoShort(int col) {
+                    return getShort(col);
                 }
 
                 @Override
-                public short getGeoShort(int col) {
-                    return getShort(col);
+                public int getInt(int col) {
+                    return (int) crossFrameRow.getQuick(col);
+                }
+
+                @Override
+                public long getLong(int col) {
+                    return crossFrameRow.getQuick(col);
+                }
+
+                @Override
+                public short getShort(int col) {
+                    return (short) crossFrameRow.getQuick(col);
                 }
 
                 @Override
@@ -770,6 +770,46 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 }
 
                 @Override
+                public byte getGeoByte(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        return Unsafe.getUnsafe().getByte(pageAddress + getRowId(firstLastIndexByCol[col]));
+                    } else {
+                        return GeoHashes.BYTE_NULL;
+                    }
+                }
+
+                @Override
+                public int getGeoInt(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        return Unsafe.getUnsafe().getInt(pageAddress + (getRowId(firstLastIndexByCol[col]) << 2));
+                    } else {
+                        return GeoHashes.INT_NULL;
+                    }
+                }
+
+                @Override
+                public long getGeoLong(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        return Unsafe.getUnsafe().getLong(pageAddress + (getRowId(firstLastIndexByCol[col]) << 3));
+                    } else {
+                        return GeoHashes.NULL;
+                    }
+                }
+
+                @Override
+                public short getGeoShort(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        return Unsafe.getUnsafe().getShort(pageAddress + (getRowId(firstLastIndexByCol[col]) << 1));
+                    } else {
+                        return GeoHashes.SHORT_NULL;
+                    }
+                }
+
+                @Override
                 public int getInt(int col) {
                     long pageAddress = pageAddresses[col];
                     if (pageAddress > 0) {
@@ -820,46 +860,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                         return samplePeriodAddress.get(getRowId(TIMESTAMP_OUT_INDEX) - prevSamplePeriodOffset);
                     }
                     return getLong(col);
-                }
-
-                @Override
-                public byte getGeoByte(int col) {
-                    long pageAddress = pageAddresses[col];
-                    if (pageAddress > 0) {
-                        return Unsafe.getUnsafe().getByte(pageAddress + getRowId(firstLastIndexByCol[col]));
-                    } else {
-                        return GeoHashes.BYTE_NULL;
-                    }
-                }
-
-                @Override
-                public short getGeoShort(int col) {
-                    long pageAddress = pageAddresses[col];
-                    if (pageAddress > 0) {
-                        return Unsafe.getUnsafe().getShort(pageAddress + (getRowId(firstLastIndexByCol[col]) << 1));
-                    } else {
-                        return GeoHashes.SHORT_NULL;
-                    }
-                }
-
-                @Override
-                public int getGeoInt(int col) {
-                    long pageAddress = pageAddresses[col];
-                    if (pageAddress > 0) {
-                        return Unsafe.getUnsafe().getInt(pageAddress + (getRowId(firstLastIndexByCol[col]) << 2));
-                    } else {
-                        return GeoHashes.INT_NULL;
-                    }
-                }
-
-                @Override
-                public long getGeoLong(int col) {
-                    long pageAddress = pageAddresses[col];
-                    if (pageAddress > 0) {
-                        return Unsafe.getUnsafe().getLong(pageAddress + (getRowId(firstLastIndexByCol[col]) << 3));
-                    } else {
-                        return GeoHashes.NULL;
-                    }
                 }
 
                 public SampleByDataRecord of(long currentRow) {

@@ -97,13 +97,13 @@ public class RndBinCCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            this.sequence.rnd = executionContext.getRandom();
+        public long getBinLen(Record rec) {
+            return sequence.len;
         }
 
         @Override
-        public long getBinLen(Record rec) {
-            return sequence.len;
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.sequence.rnd = executionContext.getRandom();
         }
     }
 

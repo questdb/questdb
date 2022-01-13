@@ -77,20 +77,6 @@ public class PathTest {
     }
 
     @Test
-    public void testSimple() {
-        TestUtils.assertEquals("xyz", path.of("xyz").$());
-    }
-
-    @Test
-    public void testZeroEnd() throws Exception {
-        File dir = temp.newFolder("a", "b", "c");
-        File f = new File(dir, "f.txt");
-        Assert.assertTrue(f.createNewFile());
-
-        Assert.assertTrue(Files.exists(path.of(temp.getRoot().getAbsolutePath()).concat("a").concat("b").concat("c").concat("f.txt").$()));
-    }
-
-    @Test
     public void testPathOfPathUtf8() {
         Os.init();
 
@@ -139,7 +125,21 @@ public class PathTest {
             TestUtils.assertEquals("hello", path);
 
             path.chop$().concat("next");
-            TestUtils.assertEquals("hello" + Files.SEPARATOR  + "next", path);
+            TestUtils.assertEquals("hello" + Files.SEPARATOR + "next", path);
         }
+    }
+
+    @Test
+    public void testSimple() {
+        TestUtils.assertEquals("xyz", path.of("xyz").$());
+    }
+
+    @Test
+    public void testZeroEnd() throws Exception {
+        File dir = temp.newFolder("a", "b", "c");
+        File f = new File(dir, "f.txt");
+        Assert.assertTrue(f.createNewFile());
+
+        Assert.assertTrue(Files.exists(path.of(temp.getRoot().getAbsolutePath()).concat("a").concat("b").concat("c").concat("f.txt").$()));
     }
 }

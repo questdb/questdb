@@ -56,8 +56,8 @@ public class BuildInformationHolder implements BuildInformation, CharSequence {
     }
 
     @Override
-    public CharSequence getQuestDbVersion() {
-        return questDbVersion;
+    public CharSequence getCommitHash() {
+        return commitHash;
     }
 
     @Override
@@ -66,13 +66,8 @@ public class BuildInformationHolder implements BuildInformation, CharSequence {
     }
 
     @Override
-    public CharSequence getCommitHash() {
-        return commitHash;
-    }
-
-    @Override
-    public String toString() {
-        return buildKey;
+    public CharSequence getQuestDbVersion() {
+        return questDbVersion;
     }
 
     @Override
@@ -89,6 +84,11 @@ public class BuildInformationHolder implements BuildInformation, CharSequence {
     @Override
     public CharSequence subSequence(int start, int end) {
         return buildKey.subSequence(start, end);
+    }
+
+    @Override
+    public String toString() {
+        return buildKey;
     }
 
     private static BuildInformationHolder fetchBuildInformation() {

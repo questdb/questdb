@@ -39,6 +39,14 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 
 public class InTimestampTimestampFunctionFactory implements FunctionFactory {
+    public static long tryParseTimestamp(CharSequence seq, int position) throws SqlException {
+        try {
+            return IntervalUtils.parseFloorPartialDate(seq, 0, seq.length());
+        } catch (NumericException e) {
+            throw SqlException.invalidDate(position);
+        }
+    }
+
     @Override
     public String getSignature() {
         return "in(NV)";
@@ -71,7 +79,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
 
         if (args.size() == 2 && ColumnType.isString(args.get(1).getType())) {
-            // special case - one argument and it a string
+            // special case - one argument and it is a string
             return new InTimestampStrFunctionFactory.EqTimestampStrFunction(args.get(0), args.get(1));
         }
 
@@ -103,14 +111,6 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
         res.sort();
         return res;
-    }
-
-    public static long tryParseTimestamp(CharSequence seq, int position) throws SqlException {
-        try {
-            return IntervalUtils.parseFloorPartialDate(seq, 0, seq.length());
-        } catch (NumericException e) {
-            throw SqlException.invalidDate(position);
-        }
     }
 
     private static class InTimestampVarFunction extends NegatableBooleanFunction implements MultiArgFunction {

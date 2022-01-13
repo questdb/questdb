@@ -65,6 +65,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         serializer = new CompiledFilterIRSerializer();
     }
 
+    @AfterClass
+    public static void tearDownStatic2() {
+        irMemory.close();
+    }
+
     @Before
     public void setUp2() throws SqlException {
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
@@ -103,52 +108,9 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         metadata = factory.getMetadata();
     }
 
-    @AfterClass
-    public static void tearDownStatic2() {
-        irMemory.close();
-    }
-
     @After
     public void tearDown2() {
         factory.close();
-    }
-
-    @Test
-    public void testColumnTypes() throws Exception {
-        Map<String, String[]> typeToColumn = new HashMap<>();
-        typeToColumn.put("i8", new String[]{"aboolean", "abyte", "ageobyte"});
-        typeToColumn.put("i16", new String[]{"ashort", "ageoshort", "achar"});
-        typeToColumn.put("i32", new String[]{"anint", "ageoint", "asymbol"});
-        typeToColumn.put("i64", new String[]{"along", "ageolong", "adate", "atimestamp"});
-        typeToColumn.put("f32", new String[]{"afloat"});
-        typeToColumn.put("f64", new String[]{"adouble"});
-
-        for (String type : typeToColumn.keySet()) {
-            for (String col : typeToColumn.get(type)) {
-                serialize(col + " < " + col);
-                assertIR("different results for " + type, "(" + type + " " + col + ")(" + type + " " + col + ")(<)(ret)");
-            }
-        }
-    }
-
-    @Test
-    public void testSingleBooleanColumn() throws Exception {
-        serialize("aboolean or not aboolean");
-        assertIR("(i8 1L)(i8 aboolean)(=)(!)(i8 1L)(i8 aboolean)(=)(||)(ret)");
-    }
-
-    @Test
-    public void testBooleanOperators() throws Exception {
-        serialize("anint = 0 and not (abyte = 0) or along = 0");
-        assertIR("(i64 0L)(i64 along)(=)(i8 0L)(i8 abyte)(=)(!)(i32 0L)(i32 anint)(=)(&&)(||)(ret)");
-    }
-
-    @Test
-    public void testComparisonOperators() throws Exception {
-        for (String op : new String[]{"<", "<=", ">", ">=", "<>", "="}) {
-            serialize("along " + op + " 0");
-            assertIR("(i64 0L)(i64 along)(" + op + ")(ret)");
-        }
     }
 
     @Test
@@ -156,270 +118,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         for (String op : new String[]{"+", "-", "*", "/"}) {
             serialize("along " + op + " 42 != -1");
             assertIR("(i64 -1L)(i64 42L)(i64 along)(" + op + ")(<>)(ret)");
-        }
-    }
-
-    @Test
-    public void testMixedConstantColumn() throws Exception {
-        serialize("anint * 3 + 42.5 + adouble > 1");
-        assertIR("(i32 1L)(f64 adouble)(f64 42.5D)(i32 3L)(i32 anint)(*)(+)(+)(>)(ret)");
-    }
-
-    @Test
-    public void testMixedConstantColumnIntOverflow() throws Exception {
-        serialize("anint * 2147483648 + 42.5 + adouble > 1");
-        assertIR("(i32 1L)(f64 adouble)(f64 42.5D)(i64 2147483648L)(i32 anint)(*)(+)(+)(>)(ret)");
-    }
-
-    @Test
-    public void testMixedConstantColumnFloatConstant() throws Exception {
-        serialize("anint * 3 + 42.5f + adouble > 1");
-        assertIR("(i32 1L)(f64 adouble)(f32 42.5D)(i32 3L)(i32 anint)(*)(+)(+)(>)(ret)");
-    }
-
-    @Test
-    public void testOperationPriority() throws Exception {
-        serialize("(anint + 1) / (3 * anint) - 42.5 > 0.5");
-        assertIR("(f32 0.5D)(f32 42.5D)(i32 anint)(i32 3L)(*)(i32 1L)(i32 anint)(+)(/)(-)(>)(ret)");
-    }
-
-    @Test
-    public void testNullConstantValues() throws Exception {
-        String[][] columns = new String[][]{
-                {"anint", "i32", Numbers.INT_NaN + "L"},
-                {"along", "i64", Numbers.LONG_NaN + "L"},
-                {"ageobyte", "i8", GeoHashes.BYTE_NULL + "L"},
-                {"ageoshort", "i16", GeoHashes.SHORT_NULL + "L"},
-                {"ageoint", "i32", GeoHashes.INT_NULL + "L"},
-                {"ageolong", "i64", GeoHashes.NULL + "L"},
-                {"afloat", "f32", "NaND"},
-                {"adouble", "f64", "NaND"},
-        };
-
-        for (String[] col : columns) {
-            final String name = col[0];
-            final String type = col[1];
-            final String value = col[2];
-            serialize(name + " <> null");
-            assertIR("different results for " + name, "(" + type + " " + value + ")(" + type + " " + name + ")(<>)(ret)");
-        }
-    }
-
-    @Test
-    public void testNullConstantMixedFloatColumns() throws Exception {
-        serialize("afloat + adouble <> null");
-        assertIR("(f64 NaND)(f64 adouble)(f32 afloat)(+)(<>)(ret)");
-    }
-
-    @Test
-    public void testNullConstantMixedIntegerColumns() throws Exception {
-        serialize("anint + along <> null or null <> along + anint");
-        assertIR("(i32 anint)(i64 along)(+)(i64 " + Numbers.LONG_NaN + "L)(<>)" +
-                "(i64 " + Numbers.LONG_NaN + "L)(i64 along)(i32 anint)(+)(<>)" +
-                "(||)(ret)");
-    }
-
-    @Test
-    public void testNullConstantMixedFloatIntegerColumns() throws Exception {
-        serialize("afloat + along <> null and null <> along + afloat");
-        assertIR("(f32 afloat)(i64 along)(+)(f64 NaND)(<>)" +
-                "(f64 NaND)(i64 along)(f32 afloat)(+)(<>)" +
-                "(&&)(ret)");
-    }
-
-    @Test
-    public void testNullConstantMultiplePredicates() throws Exception {
-        serialize("ageoint <> null and along <> null");
-        assertIR("(i64 -9223372036854775808L)(i64 along)(<>)(i32 -1L)(i32 ageoint)(<>)(&&)(ret)");
-    }
-
-    @Test
-    public void testConstantTypes() throws Exception {
-        final String[][] columns = new String[][]{
-                {"abyte", "i8", "1", "1L", "i8"},
-                {"abyte", "i8", "-1", "-1L", "i8"},
-                {"ashort", "i16", "1", "1L", "i16"},
-                {"ashort", "i16", "-1", "-1L", "i16"},
-                {"anint", "i32", "1", "1L", "i32"},
-                {"anint", "i32", "1.5", "1.5D", "f32"},
-                {"anint", "i32", "-1", "-1L", "i32"},
-                {"along", "i64", "1", "1L", "i64"},
-                {"along", "i64", "1.5", "1.5D", "f64"},
-                {"along", "i64", "-1", "-1L", "i64"},
-                {"afloat", "f32", "1", "1L", "i32"},
-                {"afloat", "f32", "1.5", "1.5D", "f32"},
-                {"afloat", "f32", "-1", "-1L", "i32"},
-                {"adouble", "f64", "1", "1L", "i64"},
-                {"adouble", "f64", "1.5", "1.5D", "f64"},
-                {"adouble", "f64", "-1", "-1L", "i64"},
-        };
-
-        for (String[] col : columns) {
-            final String colName = col[0];
-            final String colType = col[1];
-            final String constStr = col[2];
-            final String constValue = col[3];
-            final String constType = col[4];
-            serialize(colName + " > " + constStr);
-            assertIR("different results for " + colName, "(" + constType + " " + constValue + ")(" + colType + " " + colName + ")(>)(ret)");
-        }
-    }
-
-    @Test
-    public void testBooleanConstant() throws Exception {
-        serialize("aboolean = true or not aboolean = not false");
-        assertIR("(i8 0L)(!)(i8 aboolean)(=)(!)(i8 1L)(i8 aboolean)(=)(||)(ret)");
-    }
-
-    @Test
-    public void testCharConstant() throws Exception {
-        serialize("achar = 'a'");
-        assertIR("(i16 97L)(i16 achar)(=)(ret)");
-    }
-
-    @Test
-    public void testKnownSymbolConstant() throws Exception {
-        serialize("asymbol = '" + KNOWN_SYMBOL_1 + "' or anothersymbol = '" + KNOWN_SYMBOL_2 + "'");
-        assertIR("(i32 0L)(i32 anothersymbol)(=)(i32 0L)(i32 asymbol)(=)(||)(ret)");
-    }
-
-    @Test
-    public void testUnknownSymbolConstant() throws Exception {
-        serialize("asymbol = '" + UNKNOWN_SYMBOL + "'");
-        assertIR("(i32 :0)(i32 asymbol)(=)(ret)");
-
-        Assert.assertEquals(1, bindVarFunctions.size());
-        Assert.assertEquals(ColumnType.SYMBOL, bindVarFunctions.get(0).getType());
-        Assert.assertEquals(UNKNOWN_SYMBOL, bindVarFunctions.get(0).getStr(null));
-    }
-
-    @Test
-    public void testNegatedColumn() throws Exception {
-        serialize("-ashort > 0");
-        assertIR("(i16 0L)(i16 ashort)(neg)(>)(ret)");
-    }
-
-    @Test
-    public void testNegatedArithmeticalExpression() throws Exception {
-        serialize("-(anint + 42) = -10");
-        assertIR("(i32 -10L)(i32 42L)(i32 anint)(+)(neg)(=)(ret)");
-    }
-
-    @Test
-    public void testGeoHashConstant() throws Exception {
-        String[][] columns = new String[][]{
-                {"ageobyte", "i8", "##1", "1L"},
-                {"ageobyte", "i8", "#s", "24L"},
-                {"ageoshort", "i16", "##00000001", "1L"},
-                {"ageoshort", "i16", "#sp", "789L"},
-                {"ageoint", "i32", "##0000000000000001", "1L"},
-                {"ageoint", "i32", "#sp05", "807941L"},
-                {"ageolong", "i64", "##00000000000000000000000000000001", "1L"},
-                {"ageolong", "i64", "#sp052w92p1p8", "888340623145993896L"},
-        };
-
-        for (String[] col : columns) {
-            final String name = col[0];
-            final String type = col[1];
-            final String constant = col[2];
-            final String value = col[3];
-            serialize(name + " = " + constant);
-            assertIR("different results for " + name, "(" + type + " " + value + ")(" + type + " " + name + ")(=)(ret)");
-        }
-    }
-
-    @Test
-    public void testOptionsDebugFlag() throws Exception {
-        int options = serialize("abyte = 0", false, true, false);
-        assertOptionsDebug(options, true);
-
-        options = serialize("abyte = 0", false, false, false);
-        assertOptionsDebug(options, false);
-    }
-
-    @Test
-    public void testOptionsNullChecksFlag() throws Exception {
-        int options = serialize("abyte = 0", false, false, true);
-        assertOptionsNullChecks(options, true);
-
-        options = serialize("abyte = 0", false, false, false);
-        assertOptionsNullChecks(options, false);
-    }
-
-    @Test
-    public void testOptionsScalarFlag() throws Exception {
-        int options = serialize("abyte = 0", true, false, false);
-        assertOptionsHint(options, OptionsHint.SCALAR);
-    }
-
-    @Test
-    public void testOptionsSingleSize() throws Exception {
-        Map<String, Integer> filterToOptions = new HashMap<>();
-        // 1B
-        filterToOptions.put("not aboolean", 1);
-        filterToOptions.put("abyte = 0", 1);
-        filterToOptions.put("ageobyte <> null", 1);
-        // 2B
-        filterToOptions.put("ashort = 0", 2);
-        filterToOptions.put("ageoshort <> null", 2);
-        filterToOptions.put("achar = 'a'", 2);
-        // 4B
-        filterToOptions.put("anint = 0", 4);
-        filterToOptions.put("ageoint <> null", 4);
-        filterToOptions.put("afloat = 0", 4);
-        filterToOptions.put("asymbol <> null", 4);
-        filterToOptions.put("anint / anint = 0", 4);
-        filterToOptions.put("afloat = 0 or anint = 0", 4);
-        // 8B
-        filterToOptions.put("along = 0", 8);
-        filterToOptions.put("ageolong <> null", 8);
-        filterToOptions.put("adate <> null", 8);
-        filterToOptions.put("atimestamp <> null", 8);
-        filterToOptions.put("adouble = 0", 8);
-        filterToOptions.put("adouble = 0 and along = 0", 8);
-
-        for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
-            int options = serialize(entry.getKey(), false, false, false);
-            assertOptionsHint(entry.getKey(), options, OptionsHint.SINGLE_SIZE);
-            assertOptionsSize(entry.getKey(), options, entry.getValue());
-        }
-    }
-
-    @Test
-    public void testOptionsMixedSizes() throws Exception {
-        Map<String, Integer> filterToOptions = new HashMap<>();
-        // 2B
-        filterToOptions.put("aboolean or ashort = 0", 2);
-        filterToOptions.put("abyte = 0 or ashort = 0", 2);
-        // 4B
-        filterToOptions.put("anint = 0 or abyte = 0", 4);
-        filterToOptions.put("afloat = 0 or abyte = 0", 4);
-        filterToOptions.put("afloat / abyte = 0", 4);
-        // 8B
-        filterToOptions.put("along = 0 or ashort = 0", 8);
-        filterToOptions.put("adouble = 0 or ashort = 0", 8);
-        filterToOptions.put("afloat = 0 or adouble = 0", 8);
-        filterToOptions.put("anint * along = 0", 8);
-
-        for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
-            int options = serialize(entry.getKey(), false, false, false);
-            assertOptionsHint(entry.getKey(), options, OptionsHint.MIXED_SIZES);
-            assertOptionsSize(entry.getKey(), options, entry.getValue());
-        }
-    }
-
-    @Test
-    public void testOptionsForcedScalarModeForByteOrShortArithmetics() throws Exception {
-        Map<String, Integer> filterToOptions = new HashMap<>();
-        filterToOptions.put("abyte + abyte = 0", 1);
-        filterToOptions.put("ashort - ashort = 0", 2);
-        filterToOptions.put("abyte * ashort = 0", 2);
-        filterToOptions.put("1 * abyte / ashort = 0", 2);
-
-        for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
-            int options = serialize(entry.getKey(), false, false, false);
-            assertOptionsHint(entry.getKey(), options, OptionsHint.SCALAR);
-            assertOptionsSize(entry.getKey(), options, entry.getValue());
         }
     }
 
@@ -475,14 +173,343 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         Assert.assertEquals(ColumnType.INT, bindVarFunctions.get(1).getType());
     }
 
-    @Test(expected = SqlException.class)
-    public void testUnsupportedSingleConstantPredicate() throws Exception {
-        serialize("true");
+    @Test
+    public void testBooleanConstant() throws Exception {
+        serialize("aboolean = true or not aboolean = not false");
+        assertIR("(i8 0L)(!)(i8 aboolean)(=)(!)(i8 1L)(i8 aboolean)(=)(||)(ret)");
+    }
+
+    @Test
+    public void testBooleanOperators() throws Exception {
+        serialize("anint = 0 and not (abyte = 0) or along = 0");
+        assertIR("(i64 0L)(i64 along)(=)(i8 0L)(i8 abyte)(=)(!)(i32 0L)(i32 anint)(=)(&&)(||)(ret)");
+    }
+
+    @Test
+    public void testCharConstant() throws Exception {
+        serialize("achar = 'a'");
+        assertIR("(i16 97L)(i16 achar)(=)(ret)");
+    }
+
+    @Test
+    public void testColumnTypes() throws Exception {
+        Map<String, String[]> typeToColumn = new HashMap<>();
+        typeToColumn.put("i8", new String[]{"aboolean", "abyte", "ageobyte"});
+        typeToColumn.put("i16", new String[]{"ashort", "ageoshort", "achar"});
+        typeToColumn.put("i32", new String[]{"anint", "ageoint", "asymbol"});
+        typeToColumn.put("i64", new String[]{"along", "ageolong", "adate", "atimestamp"});
+        typeToColumn.put("f32", new String[]{"afloat"});
+        typeToColumn.put("f64", new String[]{"adouble"});
+
+        for (String type : typeToColumn.keySet()) {
+            for (String col : typeToColumn.get(type)) {
+                serialize(col + " < " + col);
+                assertIR("different results for " + type, "(" + type + " " + col + ")(" + type + " " + col + ")(<)(ret)");
+            }
+        }
+    }
+
+    @Test
+    public void testComparisonOperators() throws Exception {
+        for (String op : new String[]{"<", "<=", ">", ">=", "<>", "="}) {
+            serialize("along " + op + " 0");
+            assertIR("(i64 0L)(i64 along)(" + op + ")(ret)");
+        }
+    }
+
+    @Test
+    public void testConstantTypes() throws Exception {
+        final String[][] columns = new String[][]{
+                {"abyte", "i8", "1", "1L", "i8"},
+                {"abyte", "i8", "-1", "-1L", "i8"},
+                {"ashort", "i16", "1", "1L", "i16"},
+                {"ashort", "i16", "-1", "-1L", "i16"},
+                {"anint", "i32", "1", "1L", "i32"},
+                {"anint", "i32", "1.5", "1.5D", "f32"},
+                {"anint", "i32", "-1", "-1L", "i32"},
+                {"along", "i64", "1", "1L", "i64"},
+                {"along", "i64", "1.5", "1.5D", "f64"},
+                {"along", "i64", "-1", "-1L", "i64"},
+                {"afloat", "f32", "1", "1L", "i32"},
+                {"afloat", "f32", "1.5", "1.5D", "f32"},
+                {"afloat", "f32", "-1", "-1L", "i32"},
+                {"adouble", "f64", "1", "1L", "i64"},
+                {"adouble", "f64", "1.5", "1.5D", "f64"},
+                {"adouble", "f64", "-1", "-1L", "i64"},
+        };
+
+        for (String[] col : columns) {
+            final String colName = col[0];
+            final String colType = col[1];
+            final String constStr = col[2];
+            final String constValue = col[3];
+            final String constType = col[4];
+            serialize(colName + " > " + constStr);
+            assertIR("different results for " + colName, "(" + constType + " " + constValue + ")(" + colType + " " + colName + ")(>)(ret)");
+        }
+    }
+
+    @Test
+    public void testGeoHashConstant() throws Exception {
+        String[][] columns = new String[][]{
+                {"ageobyte", "i8", "##1", "1L"},
+                {"ageobyte", "i8", "#s", "24L"},
+                {"ageoshort", "i16", "##00000001", "1L"},
+                {"ageoshort", "i16", "#sp", "789L"},
+                {"ageoint", "i32", "##0000000000000001", "1L"},
+                {"ageoint", "i32", "#sp05", "807941L"},
+                {"ageolong", "i64", "##00000000000000000000000000000001", "1L"},
+                {"ageolong", "i64", "#sp052w92p1p8", "888340623145993896L"},
+        };
+
+        for (String[] col : columns) {
+            final String name = col[0];
+            final String type = col[1];
+            final String constant = col[2];
+            final String value = col[3];
+            serialize(name + " = " + constant);
+            assertIR("different results for " + name, "(" + type + " " + value + ")(" + type + " " + name + ")(=)(ret)");
+        }
+    }
+
+    @Test
+    public void testKnownSymbolConstant() throws Exception {
+        serialize("asymbol = '" + KNOWN_SYMBOL_1 + "' or anothersymbol = '" + KNOWN_SYMBOL_2 + "'");
+        assertIR("(i32 0L)(i32 anothersymbol)(=)(i32 0L)(i32 asymbol)(=)(||)(ret)");
+    }
+
+    @Test
+    public void testMixedConstantColumn() throws Exception {
+        serialize("anint * 3 + 42.5 + adouble > 1");
+        assertIR("(i32 1L)(f64 adouble)(f64 42.5D)(i32 3L)(i32 anint)(*)(+)(+)(>)(ret)");
+    }
+
+    @Test
+    public void testMixedConstantColumnFloatConstant() throws Exception {
+        serialize("anint * 3 + 42.5f + adouble > 1");
+        assertIR("(i32 1L)(f64 adouble)(f32 42.5D)(i32 3L)(i32 anint)(*)(+)(+)(>)(ret)");
+    }
+
+    @Test
+    public void testMixedConstantColumnIntOverflow() throws Exception {
+        serialize("anint * 2147483648 + 42.5 + adouble > 1");
+        assertIR("(i32 1L)(f64 adouble)(f64 42.5D)(i64 2147483648L)(i32 anint)(*)(+)(+)(>)(ret)");
+    }
+
+    @Test
+    public void testNegatedArithmeticalExpression() throws Exception {
+        serialize("-(anint + 42) = -10");
+        assertIR("(i32 -10L)(i32 42L)(i32 anint)(+)(neg)(=)(ret)");
+    }
+
+    @Test
+    public void testNegatedColumn() throws Exception {
+        serialize("-ashort > 0");
+        assertIR("(i16 0L)(i16 ashort)(neg)(>)(ret)");
+    }
+
+    @Test
+    public void testNullConstantMixedFloatColumns() throws Exception {
+        serialize("afloat + adouble <> null");
+        assertIR("(f64 NaND)(f64 adouble)(f32 afloat)(+)(<>)(ret)");
+    }
+
+    @Test
+    public void testNullConstantMixedFloatIntegerColumns() throws Exception {
+        serialize("afloat + along <> null and null <> along + afloat");
+        assertIR("(f32 afloat)(i64 along)(+)(f64 NaND)(<>)" +
+                "(f64 NaND)(i64 along)(f32 afloat)(+)(<>)" +
+                "(&&)(ret)");
+    }
+
+    @Test
+    public void testNullConstantMixedIntegerColumns() throws Exception {
+        serialize("anint + along <> null or null <> along + anint");
+        assertIR("(i32 anint)(i64 along)(+)(i64 " + Numbers.LONG_NaN + "L)(<>)" +
+                "(i64 " + Numbers.LONG_NaN + "L)(i64 along)(i32 anint)(+)(<>)" +
+                "(||)(ret)");
+    }
+
+    @Test
+    public void testNullConstantMultiplePredicates() throws Exception {
+        serialize("ageoint <> null and along <> null");
+        assertIR("(i64 -9223372036854775808L)(i64 along)(<>)(i32 -1L)(i32 ageoint)(<>)(&&)(ret)");
+    }
+
+    @Test
+    public void testNullConstantValues() throws Exception {
+        String[][] columns = new String[][]{
+                {"anint", "i32", Numbers.INT_NaN + "L"},
+                {"along", "i64", Numbers.LONG_NaN + "L"},
+                {"ageobyte", "i8", GeoHashes.BYTE_NULL + "L"},
+                {"ageoshort", "i16", GeoHashes.SHORT_NULL + "L"},
+                {"ageoint", "i32", GeoHashes.INT_NULL + "L"},
+                {"ageolong", "i64", GeoHashes.NULL + "L"},
+                {"afloat", "f32", "NaND"},
+                {"adouble", "f64", "NaND"},
+        };
+
+        for (String[] col : columns) {
+            final String name = col[0];
+            final String type = col[1];
+            final String value = col[2];
+            serialize(name + " <> null");
+            assertIR("different results for " + name, "(" + type + " " + value + ")(" + type + " " + name + ")(<>)(ret)");
+        }
+    }
+
+    @Test
+    public void testOperationPriority() throws Exception {
+        serialize("(anint + 1) / (3 * anint) - 42.5 > 0.5");
+        assertIR("(f32 0.5D)(f32 42.5D)(i32 anint)(i32 3L)(*)(i32 1L)(i32 anint)(+)(/)(-)(>)(ret)");
+    }
+
+    @Test
+    public void testOptionsDebugFlag() throws Exception {
+        int options = serialize("abyte = 0", false, true, false);
+        assertOptionsDebug(options, true);
+
+        options = serialize("abyte = 0", false, false, false);
+        assertOptionsDebug(options, false);
+    }
+
+    @Test
+    public void testOptionsForcedScalarModeForByteOrShortArithmetics() throws Exception {
+        Map<String, Integer> filterToOptions = new HashMap<>();
+        filterToOptions.put("abyte + abyte = 0", 1);
+        filterToOptions.put("ashort - ashort = 0", 2);
+        filterToOptions.put("abyte * ashort = 0", 2);
+        filterToOptions.put("1 * abyte / ashort = 0", 2);
+
+        for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
+            int options = serialize(entry.getKey(), false, false, false);
+            assertOptionsHint(entry.getKey(), options, OptionsHint.SCALAR);
+            assertOptionsSize(entry.getKey(), options, entry.getValue());
+        }
+    }
+
+    @Test
+    public void testOptionsMixedSizes() throws Exception {
+        Map<String, Integer> filterToOptions = new HashMap<>();
+        // 2B
+        filterToOptions.put("aboolean or ashort = 0", 2);
+        filterToOptions.put("abyte = 0 or ashort = 0", 2);
+        // 4B
+        filterToOptions.put("anint = 0 or abyte = 0", 4);
+        filterToOptions.put("afloat = 0 or abyte = 0", 4);
+        filterToOptions.put("afloat / abyte = 0", 4);
+        // 8B
+        filterToOptions.put("along = 0 or ashort = 0", 8);
+        filterToOptions.put("adouble = 0 or ashort = 0", 8);
+        filterToOptions.put("afloat = 0 or adouble = 0", 8);
+        filterToOptions.put("anint * along = 0", 8);
+
+        for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
+            int options = serialize(entry.getKey(), false, false, false);
+            assertOptionsHint(entry.getKey(), options, OptionsHint.MIXED_SIZES);
+            assertOptionsSize(entry.getKey(), options, entry.getValue());
+        }
+    }
+
+    @Test
+    public void testOptionsNullChecksFlag() throws Exception {
+        int options = serialize("abyte = 0", false, false, true);
+        assertOptionsNullChecks(options, true);
+
+        options = serialize("abyte = 0", false, false, false);
+        assertOptionsNullChecks(options, false);
+    }
+
+    @Test
+    public void testOptionsScalarFlag() throws Exception {
+        int options = serialize("abyte = 0", true, false, false);
+        assertOptionsHint(options, OptionsHint.SCALAR);
+    }
+
+    @Test
+    public void testOptionsSingleSize() throws Exception {
+        Map<String, Integer> filterToOptions = new HashMap<>();
+        // 1B
+        filterToOptions.put("not aboolean", 1);
+        filterToOptions.put("abyte = 0", 1);
+        filterToOptions.put("ageobyte <> null", 1);
+        // 2B
+        filterToOptions.put("ashort = 0", 2);
+        filterToOptions.put("ageoshort <> null", 2);
+        filterToOptions.put("achar = 'a'", 2);
+        // 4B
+        filterToOptions.put("anint = 0", 4);
+        filterToOptions.put("ageoint <> null", 4);
+        filterToOptions.put("afloat = 0", 4);
+        filterToOptions.put("asymbol <> null", 4);
+        filterToOptions.put("anint / anint = 0", 4);
+        filterToOptions.put("afloat = 0 or anint = 0", 4);
+        // 8B
+        filterToOptions.put("along = 0", 8);
+        filterToOptions.put("ageolong <> null", 8);
+        filterToOptions.put("adate <> null", 8);
+        filterToOptions.put("atimestamp <> null", 8);
+        filterToOptions.put("adouble = 0", 8);
+        filterToOptions.put("adouble = 0 and along = 0", 8);
+
+        for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
+            int options = serialize(entry.getKey(), false, false, false);
+            assertOptionsHint(entry.getKey(), options, OptionsHint.SINGLE_SIZE);
+            assertOptionsSize(entry.getKey(), options, entry.getValue());
+        }
+    }
+
+    @Test
+    public void testSingleBooleanColumn() throws Exception {
+        serialize("aboolean or not aboolean");
+        assertIR("(i8 1L)(i8 aboolean)(=)(!)(i8 1L)(i8 aboolean)(=)(||)(ret)");
+    }
+
+    @Test
+    public void testUnknownSymbolConstant() throws Exception {
+        serialize("asymbol = '" + UNKNOWN_SYMBOL + "'");
+        assertIR("(i32 :0)(i32 asymbol)(=)(ret)");
+
+        Assert.assertEquals(1, bindVarFunctions.size());
+        Assert.assertEquals(ColumnType.SYMBOL, bindVarFunctions.get(0).getType());
+        Assert.assertEquals(UNKNOWN_SYMBOL, bindVarFunctions.get(0).getStr(null));
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedSingleNonBooleanColumnPredicate() throws Exception {
-        serialize("anint");
+    public void testUnsupportedBindVariableType() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("astring", "foobar");
+        serialize("astring = :astring");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedBitwiseOperator() throws Exception {
+        serialize("~abyte <> 0");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedBooleanColumnInNumericContext() throws Exception {
+        serialize("aboolean = 0");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedByteNullConstant() throws Exception {
+        serialize("abyte = null");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedCharColumnInNumericContext() throws Exception {
+        serialize("achar = 0");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedCharConstantInNumericContext() throws Exception {
+        serialize("along = 'x'");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedColumnType() throws Exception {
+        serialize("astring = 'a'");
     }
 
     @Test(expected = SqlException.class)
@@ -496,13 +523,18 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedColumnType() throws Exception {
-        serialize("astring = 'a'");
+    public void testUnsupportedFalseConstantInNumericContext() throws Exception {
+        serialize("along = false");
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedBitwiseOperator() throws Exception {
-        serialize("~abyte <> 0");
+    public void testUnsupportedFloatConstantInByteContext() throws Exception {
+        serialize("abyte > 1.5");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedFloatConstantInShortContext() throws Exception {
+        serialize("ashort > 1.5");
     }
 
     @Test(expected = SqlException.class)
@@ -511,20 +543,23 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedOperatorToken() throws Exception {
-        serialize("asymbol in (select rnd_symbol('A','B','C') from long_sequence(10))");
+    public void testUnsupportedGeoHashColumnInNumericContext() throws Exception {
+        serialize("ageolong = 0");
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedStringConstant() throws Exception {
-        serialize("achar = 'abc'");
+    public void testUnsupportedGeoHashConstantTooFewBits() throws Exception {
+        serialize("ageolong = ##10001");
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedBindVariableType() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr("astring", "foobar");
-        serialize("astring = :astring");
+    public void testUnsupportedGeoHashConstantTooManyChars() throws Exception {
+        serialize("ageolong = #sp052w92p1p8889");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedInvalidGeoHashConstant() throws Exception {
+        serialize("ageolong = ##11211");
     }
 
     @Test(expected = SqlException.class)
@@ -543,23 +578,13 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedMixedSymbolAndNumericColumns() throws Exception {
-        serialize("asymbol = anint");
-    }
-
-    @Test(expected = SqlException.class)
     public void testUnsupportedMixedGeoHashAndNumericColumns() throws Exception {
         serialize("ageoint = along");
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedByteNullConstant() throws Exception {
-        serialize("abyte = null");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedShortNullConstant() throws Exception {
-        serialize("ashort = null");
+    public void testUnsupportedMixedSymbolAndNumericColumns() throws Exception {
+        serialize("asymbol = anint");
     }
 
     @Test(expected = SqlException.class)
@@ -568,74 +593,33 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedFloatConstantInByteContext() throws Exception {
-        serialize("abyte > 1.5");
+    public void testUnsupportedOperatorToken() throws Exception {
+        serialize("asymbol in (select rnd_symbol('A','B','C') from long_sequence(10))");
     }
 
     @Test(expected = SqlException.class)
-    public void testUnsupportedFloatConstantInShortContext() throws Exception {
-        serialize("ashort > 1.5");
+    public void testUnsupportedShortNullConstant() throws Exception {
+        serialize("ashort = null");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedSingleConstantPredicate() throws Exception {
+        serialize("true");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedSingleNonBooleanColumnPredicate() throws Exception {
+        serialize("anint");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedStringConstant() throws Exception {
+        serialize("achar = 'abc'");
     }
 
     @Test(expected = SqlException.class)
     public void testUnsupportedTrueConstantInNumericContext() throws Exception {
         serialize("along = true");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedFalseConstantInNumericContext() throws Exception {
-        serialize("along = false");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedCharConstantInNumericContext() throws Exception {
-        serialize("along = 'x'");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedBooleanColumnInNumericContext() throws Exception {
-        serialize("aboolean = 0");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedCharColumnInNumericContext() throws Exception {
-        serialize("achar = 0");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedGeoHashColumnInNumericContext() throws Exception {
-        serialize("ageolong = 0");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedInvalidGeoHashConstant() throws Exception {
-        serialize("ageolong = ##11211");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedGeoHashConstantTooFewBits() throws Exception {
-        serialize("ageolong = ##10001");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testUnsupportedGeoHashConstantTooManyChars() throws Exception {
-        serialize("ageolong = #sp052w92p1p8889");
-    }
-
-    private void serialize(CharSequence seq) throws SqlException {
-        serialize(seq, false, false, true);
-    }
-
-    private int serialize(CharSequence seq, boolean scalar, boolean debug, boolean nullChecks) throws SqlException {
-        irMemory.truncate();
-        serializer.clear();
-        bindVarFunctions.clear();
-
-        ExpressionNode node = expr(seq);
-        try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext)) {
-            return serializer.of(irMemory, sqlExecutionContext, metadata, cursor, bindVarFunctions)
-                    .serialize(node, scalar, debug, nullChecks);
-        }
     }
 
     private void assertIR(String message, String expectedIR) {
@@ -653,11 +637,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         Assert.assertEquals(expectedFlag ? 1 : 0, f);
     }
 
-    private void assertOptionsNullChecks(int options, boolean expectedFlag) {
-        int f = (options >> 5) & 1;
-        Assert.assertEquals(expectedFlag ? 1 : 0, f);
-    }
-
     private void assertOptionsHint(int options, OptionsHint expectedHint) {
         assertOptionsHint(null, options, expectedHint);
     }
@@ -667,9 +646,30 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         Assert.assertEquals(msg, expectedHint.code, code);
     }
 
+    private void assertOptionsNullChecks(int options, boolean expectedFlag) {
+        int f = (options >> 5) & 1;
+        Assert.assertEquals(expectedFlag ? 1 : 0, f);
+    }
+
     private void assertOptionsSize(String msg, int options, int expectedSize) {
         int size = 1 << ((options >> 1) & 0b11);
         Assert.assertEquals(msg, expectedSize, size);
+    }
+
+    private int serialize(CharSequence seq, boolean scalar, boolean debug, boolean nullChecks) throws SqlException {
+        irMemory.truncate();
+        serializer.clear();
+        bindVarFunctions.clear();
+
+        ExpressionNode node = expr(seq);
+        try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext)) {
+            return serializer.of(irMemory, sqlExecutionContext, metadata, cursor, bindVarFunctions)
+                    .serialize(node, scalar, debug, nullChecks);
+        }
+    }
+
+    private void serialize(CharSequence seq) throws SqlException {
+        serialize(seq, false, false, true);
     }
 
     private enum OptionsHint {
@@ -723,7 +723,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                                 break;
                         }
                     }
-                        break;
+                    break;
                     // Operators
                     default:
                         appendOperator(opcode);
@@ -731,16 +731,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 }
             }
             return sb.toString();
-        }
-
-        private void appendColumn(int type) {
-            long index = irMem.getLong(offset);
-            offset += Long.BYTES;
-            sb.append("(");
-            sb.append(typeName(type));
-            sb.append(" ");
-            sb.append(metadata.getColumnName((int) index));
-            sb.append(")");
         }
 
         private void appendBindVariable(int type) {
@@ -753,14 +743,14 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             sb.append(")");
         }
 
-        private void appendLongConst(int type) {
-            long value = irMem.getLong(offset);
+        private void appendColumn(int type) {
+            long index = irMem.getLong(offset);
             offset += Long.BYTES;
             sb.append("(");
             sb.append(typeName(type));
             sb.append(" ");
-            sb.append(value);
-            sb.append("L)");
+            sb.append(metadata.getColumnName((int) index));
+            sb.append(")");
         }
 
         private void appendDoubleConst(int type) {
@@ -773,31 +763,22 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             sb.append("D)");
         }
 
+        private void appendLongConst(int type) {
+            long value = irMem.getLong(offset);
+            offset += Long.BYTES;
+            sb.append("(");
+            sb.append(typeName(type));
+            sb.append(" ");
+            sb.append(value);
+            sb.append("L)");
+        }
+
         private void appendOperator(int operator) {
             irMem.getLong(offset);
             offset += Long.BYTES;
             sb.append("(");
             sb.append(operatorName(operator));
             sb.append(")");
-        }
-
-        private String typeName(int type) {
-            switch (type) {
-                case I1_TYPE:
-                    return "i8";
-                case I2_TYPE:
-                    return "i16";
-                case I4_TYPE:
-                    return "i32";
-                case I8_TYPE:
-                    return "i64";
-                case F4_TYPE:
-                    return "f32";
-                case F8_TYPE:
-                    return "f64";
-                default:
-                    return "unknown: " + type;
-            }
         }
 
         private String operatorName(int operator) {
@@ -834,6 +815,25 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                     return "ret";
                 default:
                     return "unknown";
+            }
+        }
+
+        private String typeName(int type) {
+            switch (type) {
+                case I1_TYPE:
+                    return "i8";
+                case I2_TYPE:
+                    return "i16";
+                case I4_TYPE:
+                    return "i32";
+                case I8_TYPE:
+                    return "i64";
+                case F4_TYPE:
+                    return "f32";
+                case F8_TYPE:
+                    return "f64";
+                default:
+                    return "unknown: " + type;
             }
         }
     }

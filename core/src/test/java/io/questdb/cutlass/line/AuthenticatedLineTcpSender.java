@@ -32,7 +32,6 @@ import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 
-import java.nio.charset.StandardCharsets;
 import java.security.*;
 import java.util.Base64;
 

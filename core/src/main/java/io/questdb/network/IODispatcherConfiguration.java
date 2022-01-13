@@ -62,11 +62,11 @@ public interface IODispatcherConfiguration {
         return false;
     }
 
+    long getQueuedConnectionTimeout();
+
     int getRcvBufSize();
 
     SelectFacade getSelectFacade();
 
     int getSndBufSize();
-
-    long getQueuedConnectionTimeout();
 }

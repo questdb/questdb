@@ -99,6 +99,11 @@ public class StrArrayFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetChar() {
+        function.getChar(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetDate() {
         function.getDate(null);
     }
@@ -156,10 +161,5 @@ public class StrArrayFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testLong256B() {
         function.getLong256B(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetChar() {
-        function.getChar(null);
     }
 }

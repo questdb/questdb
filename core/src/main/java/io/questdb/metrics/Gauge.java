@@ -26,7 +26,7 @@ package io.questdb.metrics;
 
 public interface Gauge extends Scrapable {
 
-    void inc();
-
     void dec();
+
+    void inc();
 }

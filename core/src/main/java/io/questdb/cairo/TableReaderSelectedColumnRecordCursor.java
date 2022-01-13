@@ -62,6 +62,11 @@ public class TableReaderSelectedColumnRecordCursor implements RecordCursor {
     }
 
     @Override
+    public Record getRecordB() {
+        return recordB;
+    }
+
+    @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         return reader.getSymbolMapReader(columnIndexes.getQuick(columnIndex));
     }
@@ -76,13 +81,13 @@ public class TableReaderSelectedColumnRecordCursor implements RecordCursor {
     }
 
     @Override
-    public Record getRecordB() {
-        return recordB;
+    public void recordAt(Record record, long rowId) {
+        ((TableReaderSelectedColumnRecord) record).jumpTo(Rows.toPartitionIndex(rowId), Rows.toLocalRowID(rowId));
     }
 
     @Override
-    public void recordAt(Record record, long rowId) {
-        ((TableReaderSelectedColumnRecord) record).jumpTo(Rows.toPartitionIndex(rowId), Rows.toLocalRowID(rowId));
+    public long size() {
+        return reader.size();
     }
 
     @Override
@@ -95,11 +100,6 @@ public class TableReaderSelectedColumnRecordCursor implements RecordCursor {
         }
         maxRecordIndex = recordLo - 1;
         recordA.jumpTo(0, maxRecordIndex);
-    }
-
-    @Override
-    public long size() {
-        return reader.size();
     }
 
     public void of(TableReader reader) {

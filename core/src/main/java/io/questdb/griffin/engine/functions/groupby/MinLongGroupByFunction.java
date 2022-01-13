@@ -74,12 +74,12 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
     }
 
     @Override
-    public long getLong(Record rec) {
-        return rec.getLong(valueIndex);
+    public Function getArg() {
+        return arg;
     }
 
     @Override
-    public Function getArg() {
-        return arg;
+    public long getLong(Record rec) {
+        return rec.getLong(valueIndex);
     }
 }

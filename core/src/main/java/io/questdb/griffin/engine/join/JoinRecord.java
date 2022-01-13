@@ -31,8 +31,8 @@ import io.questdb.std.str.CharSink;
 
 public class JoinRecord implements Record {
     private final int split;
-    private Record master;
     protected Record slave;
+    private Record master;
 
     public JoinRecord(int split) {
         this.split = split;
@@ -100,6 +100,38 @@ public class JoinRecord implements Record {
             return master.getFloat(col);
         }
         return slave.getFloat(col - split);
+    }
+
+    @Override
+    public byte getGeoByte(int col) {
+        if (col < split) {
+            return master.getGeoByte(col);
+        }
+        return slave.getGeoByte(col - split);
+    }
+
+    @Override
+    public int getGeoInt(int col) {
+        if (col < split) {
+            return master.getGeoInt(col);
+        }
+        return slave.getGeoInt(col - split);
+    }
+
+    @Override
+    public long getGeoLong(int col) {
+        if (col < split) {
+            return master.getGeoLong(col);
+        }
+        return slave.getGeoLong(col - split);
+    }
+
+    @Override
+    public short getGeoShort(int col) {
+        if (col < split) {
+            return master.getGeoShort(col);
+        }
+        return slave.getGeoShort(col - split);
     }
 
     @Override
@@ -219,38 +251,6 @@ public class JoinRecord implements Record {
             return master.getTimestamp(col);
         }
         return slave.getTimestamp(col - split);
-    }
-
-    @Override
-    public byte getGeoByte(int col) {
-        if (col < split) {
-            return master.getGeoByte(col);
-        }
-        return slave.getGeoByte(col - split);
-    }
-
-    @Override
-    public short getGeoShort(int col) {
-        if (col < split) {
-            return master.getGeoShort(col);
-        }
-        return slave.getGeoShort(col - split);
-    }
-
-    @Override
-    public int getGeoInt(int col) {
-        if (col < split) {
-            return master.getGeoInt(col);
-        }
-        return slave.getGeoInt(col - split);
-    }
-
-    @Override
-    public long getGeoLong(int col) {
-        if (col < split) {
-            return master.getGeoLong(col);
-        }
-        return slave.getGeoLong(col - split);
     }
 
     void of(Record master, Record slave) {

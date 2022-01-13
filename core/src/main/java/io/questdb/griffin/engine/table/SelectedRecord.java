@@ -79,6 +79,26 @@ class SelectedRecord implements Record {
     }
 
     @Override
+    public byte getGeoByte(int col) {
+        return base.getGeoByte(getColumnIndex(col));
+    }
+
+    @Override
+    public int getGeoInt(int col) {
+        return base.getGeoInt(getColumnIndex(col));
+    }
+
+    @Override
+    public long getGeoLong(int col) {
+        return base.getGeoLong(getColumnIndex(col));
+    }
+
+    @Override
+    public short getGeoShort(int col) {
+        return base.getGeoShort(getColumnIndex(col));
+    }
+
+    @Override
     public int getInt(int col) {
         return base.getInt(getColumnIndex(col));
     }
@@ -104,6 +124,11 @@ class SelectedRecord implements Record {
     }
 
     @Override
+    public Record getRecord(int col) {
+        return base.getRecord(getColumnIndex(col));
+    }
+
+    @Override
     public long getRowId() {
         return base.getRowId();
     }
@@ -121,11 +146,6 @@ class SelectedRecord implements Record {
     @Override
     public void getStr(int col, CharSink sink) {
         base.getStr(getColumnIndex(col), sink);
-    }
-
-    @Override
-    public Record getRecord(int col) {
-        return base.getRecord(getColumnIndex(col));
     }
 
     @Override
@@ -151,26 +171,6 @@ class SelectedRecord implements Record {
     @Override
     public long getTimestamp(int col) {
         return base.getTimestamp(getColumnIndex(col));
-    }
-
-    @Override
-    public byte getGeoByte(int col) {
-        return base.getGeoByte(getColumnIndex(col));
-    }
-
-    @Override
-    public short getGeoShort(int col) {
-        return base.getGeoShort(getColumnIndex(col));
-    }
-
-    @Override
-    public int getGeoInt(int col) {
-        return base.getGeoInt(getColumnIndex(col));
-    }
-
-    @Override
-    public long getGeoLong(int col) {
-        return base.getGeoLong(getColumnIndex(col));
     }
 
     Record getBaseRecord() {

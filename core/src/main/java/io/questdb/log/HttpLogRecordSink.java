@@ -32,7 +32,7 @@ import org.jetbrains.annotations.TestOnly;
 public class HttpLogRecordSink extends LogRecordSink {
 
     static final String CRLF = "\r\n";
-    private static final String CL_MARKER = "#########"; // with 9 digits, max content length = 999999999 bytes (953MB)
+    private static final String CL_MARKER = "#########"; // with 9 digits, max content length = 999999999 bytes (953 MB)
     private static final int CL_MARKER_LEN = CL_MARKER.length(); // number of digits available for contentLength
     private static final int MARK_NOT_SET = -1;
 
@@ -49,19 +49,6 @@ public class HttpLogRecordSink extends LogRecordSink {
         super(address, addressSize);
         contentLengthEnd = _wptr;
         bodyStart = _wptr;
-    }
-
-    public HttpLogRecordSink putHeader(CharSequence localHostIp) {
-        clear();
-        put("POST /api/v1/alerts HTTP/1.1").put(CRLF)
-                .put("Host: ").put(localHostIp).put(CRLF)
-                .put("User-Agent: QuestDB/LogAlert").put(CRLF)
-                .put("Accept: */*").put(CRLF)
-                .put("Content-Type: application/json").put(CRLF)
-                .putContentLengthMarker();
-        put(CRLF); // header/body separator
-        bodyStart = _wptr;
-        return this;
     }
 
     public int $() {
@@ -91,20 +78,6 @@ public class HttpLogRecordSink extends LogRecordSink {
         return length(); // length of the http log record
     }
 
-    public HttpLogRecordSink setMark() {
-        mark = _wptr;
-        return this;
-    }
-
-    public long getMark() {
-        return mark;
-    }
-
-    public HttpLogRecordSink rewindToMark() {
-        _wptr = mark == MARK_NOT_SET ? address : mark;
-        return this;
-    }
-
     @Override
     public void clear() {
         super.clear();
@@ -112,6 +85,40 @@ public class HttpLogRecordSink extends LogRecordSink {
         contentLengthEnd = _wptr;
         bodyStart = _wptr;
         hasContentLengthMarker = false;
+    }
+
+    @Override
+    public HttpLogRecordSink put(CharSequence cs) {
+        super.put(cs);
+        return this;
+    }
+
+    @Override
+    public HttpLogRecordSink put(CharSequence cs, int lo, int hi) {
+        super.put(cs, lo, hi);
+        return this;
+    }
+
+    @Override
+    public HttpLogRecordSink put(char c) {
+        super.put(c);
+        return this;
+    }
+
+    @Override
+    public HttpLogRecordSink encodeUtf8(CharSequence cs) {
+        super.encodeUtf8(cs);
+        return this;
+    }
+
+    @Override
+    public HttpLogRecordSink put(Sinkable sinkable) {
+        super.put(sinkable);
+        return this;
+    }
+
+    public long getMark() {
+        return mark;
     }
 
     public HttpLogRecordSink put(LogRecordSink logRecord) {
@@ -146,33 +153,26 @@ public class HttpLogRecordSink extends LogRecordSink {
         return this;
     }
 
-    @Override
-    public HttpLogRecordSink put(CharSequence cs) {
-        super.put(cs);
+    public HttpLogRecordSink putHeader(CharSequence localHostIp) {
+        clear();
+        put("POST /api/v1/alerts HTTP/1.1").put(CRLF)
+                .put("Host: ").put(localHostIp).put(CRLF)
+                .put("User-Agent: QuestDB/LogAlert").put(CRLF)
+                .put("Accept: */*").put(CRLF)
+                .put("Content-Type: application/json").put(CRLF)
+                .putContentLengthMarker();
+        put(CRLF); // header/body separator
+        bodyStart = _wptr;
         return this;
     }
 
-    @Override
-    public HttpLogRecordSink encodeUtf8(CharSequence cs) {
-        super.encodeUtf8(cs);
+    public HttpLogRecordSink rewindToMark() {
+        _wptr = mark == MARK_NOT_SET ? address : mark;
         return this;
     }
 
-    @Override
-    public HttpLogRecordSink put(CharSequence cs, int lo, int hi) {
-        super.put(cs, lo, hi);
-        return this;
-    }
-
-    @Override
-    public HttpLogRecordSink put(Sinkable sinkable) {
-        super.put(sinkable);
-        return this;
-    }
-
-    @Override
-    public HttpLogRecordSink put(char c) {
-        super.put(c);
+    public HttpLogRecordSink setMark() {
+        mark = _wptr;
         return this;
     }
 

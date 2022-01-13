@@ -45,13 +45,13 @@ class StringValueRecordCursor implements RecordCursor {
     }
 
     @Override
-    public boolean hasNext() {
-        return remaining-- > 0;
+    public Record getRecordB() {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public Record getRecordB() {
-        throw new UnsupportedOperationException();
+    public boolean hasNext() {
+        return remaining-- > 0;
     }
 
     @Override
@@ -60,12 +60,12 @@ class StringValueRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void toTop() {
-        remaining = 1;
+    public long size() {
+        return 1;
     }
 
     @Override
-    public long size() {
-        return 1;
+    public void toTop() {
+        remaining = 1;
     }
 }

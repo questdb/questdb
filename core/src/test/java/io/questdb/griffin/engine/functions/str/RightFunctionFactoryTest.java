@@ -29,20 +29,20 @@ import org.junit.Test;
 
 public class RightFunctionFactoryTest extends AbstractGriffinTest {
     @Test
-    public void testSimple() throws Exception {
+    public void testConstLarge() throws Exception {
         assertQuery(
                 "k\tright\n" +
-                        "JWCPSWHYRXPEHNRX\tRX\n" +
-                        "SXUXIBBTGPGWFFYU\tYU\n" +
-                        "YYQEHBHFOWLPDXYSBEO\tEO\n" +
-                        "JSHRUEDRQQUL\tUL\n" +
+                        "JWCPSWHYRXPEHNRX\tJWCPSWHYRXPEHNRX\n" +
+                        "SXUXIBBTGPGWFFYU\tSXUXIBBTGPGWFFYU\n" +
+                        "YYQEHBHFOWLPDXYSBEO\tYYQEHBHFOWLPDXYSBEO\n" +
+                        "JSHRUEDRQQUL\tJSHRUEDRQQUL\n" +
                         "\t\n" +
-                        "GETJRSZSRYRFBVTMHGOO\tOO\n" +
-                        "VDZJMYICCXZOUIC\tIC\n" +
-                        "KGHVUVSDOTSEDYYCTGQO\tQO\n" +
+                        "GETJRSZSRYRFBVTMHGOO\tGETJRSZSRYRFBVTMHGOO\n" +
+                        "VDZJMYICCXZOUIC\tVDZJMYICCXZOUIC\n" +
+                        "KGHVUVSDOTSEDYYCTGQO\tKGHVUVSDOTSEDYYCTGQO\n" +
                         "\t\n" +
-                        "WCKYLSUWDSWUGSH\tSH\n",
-                "select k, right(k,2) from x",
+                        "WCKYLSUWDSWUGSH\tWCKYLSUWDSWUGSH\n",
+                "select k, right(k,50) from x", // 50 > than max string len
                 "create table x as (select rnd_str(10,20,1) k from long_sequence(10))",
                 null,
                 true,
@@ -98,29 +98,6 @@ public class RightFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testConstLarge() throws Exception {
-        assertQuery(
-                "k\tright\n" +
-                        "JWCPSWHYRXPEHNRX\tJWCPSWHYRXPEHNRX\n" +
-                        "SXUXIBBTGPGWFFYU\tSXUXIBBTGPGWFFYU\n" +
-                        "YYQEHBHFOWLPDXYSBEO\tYYQEHBHFOWLPDXYSBEO\n" +
-                        "JSHRUEDRQQUL\tJSHRUEDRQQUL\n" +
-                        "\t\n" +
-                        "GETJRSZSRYRFBVTMHGOO\tGETJRSZSRYRFBVTMHGOO\n" +
-                        "VDZJMYICCXZOUIC\tVDZJMYICCXZOUIC\n" +
-                        "KGHVUVSDOTSEDYYCTGQO\tKGHVUVSDOTSEDYYCTGQO\n" +
-                        "\t\n" +
-                        "WCKYLSUWDSWUGSH\tWCKYLSUWDSWUGSH\n",
-                "select k, right(k,50) from x", // 50 > than max string len
-                "create table x as (select rnd_str(10,20,1) k from long_sequence(10))",
-                null,
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testConstNull() throws Exception {
         assertQuery(
                 "k\tright\n" +
@@ -135,6 +112,29 @@ public class RightFunctionFactoryTest extends AbstractGriffinTest {
                         "\t\n" +
                         "WCKYLSUWDSWUGSH\t\n",
                 "select k, right(k,null) from x",
+                "create table x as (select rnd_str(10,20,1) k from long_sequence(10))",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testSimple() throws Exception {
+        assertQuery(
+                "k\tright\n" +
+                        "JWCPSWHYRXPEHNRX\tRX\n" +
+                        "SXUXIBBTGPGWFFYU\tYU\n" +
+                        "YYQEHBHFOWLPDXYSBEO\tEO\n" +
+                        "JSHRUEDRQQUL\tUL\n" +
+                        "\t\n" +
+                        "GETJRSZSRYRFBVTMHGOO\tOO\n" +
+                        "VDZJMYICCXZOUIC\tIC\n" +
+                        "KGHVUVSDOTSEDYYCTGQO\tQO\n" +
+                        "\t\n" +
+                        "WCKYLSUWDSWUGSH\tSH\n",
+                "select k, right(k,2) from x",
                 "create table x as (select rnd_str(10,20,1) k from long_sequence(10))",
                 null,
                 true,

@@ -58,13 +58,13 @@ public class FirstByteGroupByFunction extends ByteFunction implements GroupByFun
         columnTypes.add(ColumnType.BYTE);
     }
 
+    public void setByte(MapValue mapValue, byte value) {
+        mapValue.putByte(this.valueIndex, value);
+    }
+
     @Override
     public void setNull(MapValue mapValue) {
         setByte(mapValue, (byte) 0);
-    }
-
-    public void setByte(MapValue mapValue, byte value) {
-        mapValue.putByte(this.valueIndex, value);
     }
 
     @Override

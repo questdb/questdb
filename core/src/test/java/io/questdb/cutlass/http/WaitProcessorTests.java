@@ -30,42 +30,9 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class WaitProcessorTests {
+    private final HttpRequestProcessorSelector emptySelector = createEmptySelector();
     private long currentTimeMs;
     private int job1Attempts = 0;
-    private final HttpRequestProcessorSelector emptySelector = createEmptySelector();
-
-    @Test
-    public void testRescheduleNotHappensImmediately() {
-
-        WaitProcessor processor = createProcessor();
-        job1Attempts = 0;
-
-        processor.reschedule(createRetry());
-
-        // Do not move currentTimeMs, all calls happens at same ms
-        for (int i = 0; i < 10; i++) {
-            processor.runReruns(emptySelector);
-            processor.runSerially();
-        }
-        Assert.assertEquals(0, job1Attempts);
-    }
-
-    @Test
-    public void testRescheduleHappensInFirstSecond() {
-        WaitProcessor processor = createProcessor();
-        job1Attempts = 0;
-        processor.reschedule(createRetry());
-
-        // Do not move currentTimeMs, all calls happens at same ms
-        for (int i = 0; i < 5000; i++) {
-            currentTimeMs++;
-            processor.runReruns(emptySelector);
-            processor.runSerially();
-        }
-
-        System.out.println("Rerun attempts: " + job1Attempts);
-        Assert.assertEquals("Job runs expected to be 10 but are: " + job1Attempts, 10, job1Attempts);
-    }
 
     @Test
     public void testMultipleRetriesExecutedSameCountOverSamePeriod() {
@@ -77,16 +44,15 @@ public class WaitProcessorTests {
 
             processor.reschedule(
                     new Retry() {
+                        private final RetryAttemptAttributes attemptAttributes = new RetryAttemptAttributes();
+
                         @Override
                         public void close() {
                         }
 
-                        private final RetryAttemptAttributes attemptAttributes = new RetryAttemptAttributes();
-
                         @Override
-                        public boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
-                            jobAttempts[index]++;
-                            return false;
+                        public void fail(HttpRequestProcessorSelector selector, HttpException e) {
+                            throw new UnsupportedOperationException();
                         }
 
                         @Override
@@ -95,8 +61,9 @@ public class WaitProcessorTests {
                         }
 
                         @Override
-                        public void fail(HttpRequestProcessorSelector selector, HttpException e) {
-                            throw new UnsupportedOperationException();
+                        public boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
+                            jobAttempts[index]++;
+                            return false;
                         }
                     });
         }
@@ -117,29 +84,55 @@ public class WaitProcessorTests {
         }
     }
 
-    @NotNull
-    private Retry createRetry() {
-        return new Retry() {
+    @Test
+    public void testRescheduleHappensInFirstSecond() {
+        WaitProcessor processor = createProcessor();
+        job1Attempts = 0;
+        processor.reschedule(createRetry());
+
+        // Do not move currentTimeMs, all calls happens at same ms
+        for (int i = 0; i < 5000; i++) {
+            currentTimeMs++;
+            processor.runReruns(emptySelector);
+            processor.runSerially();
+        }
+
+        System.out.println("Rerun attempts: " + job1Attempts);
+        Assert.assertEquals("Job runs expected to be 10 but are: " + job1Attempts, 10, job1Attempts);
+    }
+
+    @Test
+    public void testRescheduleNotHappensImmediately() {
+
+        WaitProcessor processor = createProcessor();
+        job1Attempts = 0;
+
+        processor.reschedule(createRetry());
+
+        // Do not move currentTimeMs, all calls happens at same ms
+        for (int i = 0; i < 10; i++) {
+            processor.runReruns(emptySelector);
+            processor.runSerially();
+        }
+        Assert.assertEquals(0, job1Attempts);
+    }
+
+    private static HttpRequestProcessorSelector createEmptySelector() {
+        return new HttpRequestProcessorSelector() {
+
             @Override
             public void close() {
-            }
 
-            private final RetryAttemptAttributes attemptAttributes = new RetryAttemptAttributes();
-
-            @Override
-            public boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
-                job1Attempts++;
-                return false;
             }
 
             @Override
-            public RetryAttemptAttributes getAttemptDetails() {
-                return attemptAttributes;
+            public HttpRequestProcessor getDefaultProcessor() {
+                return null;
             }
 
             @Override
-            public void fail(HttpRequestProcessorSelector selector, HttpException e) {
-                throw new UnsupportedOperationException();
+            public HttpRequestProcessor select(CharSequence url) {
+                return null;
             }
         };
     }
@@ -150,11 +143,6 @@ public class WaitProcessorTests {
             @Override
             public MillisecondClock getClock() {
                 return () -> currentTimeMs;
-            }
-
-            @Override
-            public long getMaxWaitCapMs() {
-                return 1000;
             }
 
             @Override
@@ -171,25 +159,37 @@ public class WaitProcessorTests {
             public int getMaxProcessingQueueSize() {
                 return 4096;
             }
+
+            @Override
+            public long getMaxWaitCapMs() {
+                return 1000;
+            }
         });
     }
 
-    private static HttpRequestProcessorSelector createEmptySelector() {
-        return new HttpRequestProcessorSelector() {
-
-            @Override
-            public HttpRequestProcessor select(CharSequence url) {
-                return null;
-            }
-
-            @Override
-            public HttpRequestProcessor getDefaultProcessor() {
-                return null;
-            }
+    @NotNull
+    private Retry createRetry() {
+        return new Retry() {
+            private final RetryAttemptAttributes attemptAttributes = new RetryAttemptAttributes();
 
             @Override
             public void close() {
+            }
 
+            @Override
+            public void fail(HttpRequestProcessorSelector selector, HttpException e) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public RetryAttemptAttributes getAttemptDetails() {
+                return attemptAttributes;
+            }
+
+            @Override
+            public boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
+                job1Attempts++;
+                return false;
             }
         };
     }

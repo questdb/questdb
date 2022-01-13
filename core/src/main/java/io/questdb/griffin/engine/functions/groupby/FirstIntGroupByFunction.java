@@ -54,19 +54,14 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
     }
 
     @Override
-    public Function getArg() {
-        return this.arg;
-    }
-
-    @Override
-    public int getInt(Record rec) {
-        return rec.getInt(valueIndex);
-    }
-
-    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.INT);
+    }
+
+    @Override
+    public void setInt(MapValue mapValue, int value) {
+        mapValue.putInt(valueIndex, value);
     }
 
     @Override
@@ -75,8 +70,13 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
     }
 
     @Override
-    public void setInt(MapValue mapValue, int value) {
-        mapValue.putInt(valueIndex, value);
+    public Function getArg() {
+        return this.arg;
+    }
+
+    @Override
+    public int getInt(Record rec) {
+        return rec.getInt(valueIndex);
     }
 
     @Override

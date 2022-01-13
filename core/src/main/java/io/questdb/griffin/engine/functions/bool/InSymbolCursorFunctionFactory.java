@@ -26,8 +26,8 @@ package io.questdb.griffin.engine.functions.bool;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -82,16 +82,6 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getLeft() {
-            return valueArg;
-        }
-
-        @Override
-        public Function getRight() {
-            return cursorArg;
-        }
-
-        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             valueArg.init(symbolTableSource, executionContext);
             cursorArg.init(symbolTableSource, executionContext);
@@ -110,6 +100,16 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
                     }
                 }
             }
+        }
+
+        @Override
+        public Function getLeft() {
+            return valueArg;
+        }
+
+        @Override
+        public Function getRight() {
+            return cursorArg;
         }
     }
 

@@ -257,7 +257,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "byte:BYTE\n" +
                 "double:DOUBLE\n" +
                 "float:FLOAT\n" +
-                "long:LONG\n"+
+                "long:LONG\n" +
                 "str1:STRING\n" +
                 "sym:SYMBOL\n" +
                 "bool:BOOLEAN\n" +

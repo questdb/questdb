@@ -41,17 +41,6 @@ public class IntLongAssociativeCacheTest {
     }
 
     @Test
-    public void testMinSize() {
-        IntLongAssociativeCache cache = new IntLongAssociativeCache(1, 1);
-        cache.put(1, 11);
-        cache.put(2, 22);
-        cache.put(3, 33);
-        Assert.assertEquals(IntLongAssociativeCache.NO_VALUE, cache.peek(1));
-        Assert.assertEquals(IntLongAssociativeCache.NO_VALUE, cache.peek(2));
-        Assert.assertEquals(33, cache.peek(3));
-    }
-
-    @Test
     public void testFull() {
         IntLongAssociativeCache cache = new IntLongAssociativeCache(8, 64);
         IntHashSet all = new IntHashSet();
@@ -74,6 +63,17 @@ public class IntLongAssociativeCacheTest {
             }
         }
 //        Assert.assertEquals(512, reject.size());
+    }
+
+    @Test
+    public void testMinSize() {
+        IntLongAssociativeCache cache = new IntLongAssociativeCache(1, 1);
+        cache.put(1, 11);
+        cache.put(2, 22);
+        cache.put(3, 33);
+        Assert.assertEquals(IntLongAssociativeCache.NO_VALUE, cache.peek(1));
+        Assert.assertEquals(IntLongAssociativeCache.NO_VALUE, cache.peek(2));
+        Assert.assertEquals(33, cache.peek(3));
     }
 
 }

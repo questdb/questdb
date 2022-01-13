@@ -102,10 +102,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         lineTcpConfiguration = createNoAuthReceiverConfiguration(provideLineTcpNetworkFacade());
     }
 
-    NetworkFacade provideLineTcpNetworkFacade() {
-        return new LineTcpNetworkFacade();
-    }
-
     private static WorkerPool createWorkerPool(final int workerCount, final boolean haltOnError) {
         return new WorkerPool(new WorkerPoolConfiguration() {
             private final int[] affinityByThread;
@@ -159,18 +155,18 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected LineTcpReceiverConfiguration createReceiverConfiguration(final boolean withAuth, final NetworkFacade nf) {
         return new DefaultLineTcpReceiverConfiguration() {
             @Override
-            public int getNetMsgBufferSize() {
-                return netMsgBufferSize.get();
+            public String getAuthDbPath() {
+                if (withAuth) {
+                    URL u = getClass().getResource("authDb.txt");
+                    assert u != null;
+                    return u.getFile();
+                }
+                return super.getAuthDbPath();
             }
 
             @Override
             public int getMaxMeasurementSize() {
                 return 128;
-            }
-
-            @Override
-            public NetworkFacade getNetworkFacade() {
-                return nf;
             }
 
             @Override
@@ -187,13 +183,13 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public String getAuthDbPath() {
-                if (withAuth) {
-                    URL u = getClass().getResource("authDb.txt");
-                    assert u != null;
-                    return u.getFile();
-                }
-                return super.getAuthDbPath();
+            public int getNetMsgBufferSize() {
+                return netMsgBufferSize.get();
+            }
+
+            @Override
+            public NetworkFacade getNetworkFacade() {
+                return nf;
             }
 
             @Override
@@ -218,6 +214,10 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 break;
         }
         return false;
+    }
+
+    NetworkFacade provideLineTcpNetworkFacade() {
+        return new LineTcpNetworkFacade();
     }
 
     protected void runInAuthContext(Runnable r) throws Exception {
@@ -296,13 +296,13 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean processIOQueue(IORequestProcessor<LineTcpConnectionContext> processor) {
-                return false;
+            public boolean isListening() {
+                return true;
             }
 
             @Override
-            public boolean isListening() {
-                return true;
+            public boolean processIOQueue(IORequestProcessor<LineTcpConnectionContext> processor) {
+                return false;
             }
 
             @Override

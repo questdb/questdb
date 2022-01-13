@@ -129,6 +129,20 @@ public final class Files {
 
     public static native int fsync(long fd);
 
+    /**
+     * Detects if filesystem is supported by QuestDB. The function returns both FS magic and name. Both
+     * can be presented to user even if file system is not supported.
+     *
+     * @param lpszName existing path on the file system. The name of the filesystem is written to this
+     *                 address, therefore name should have at least 128 byte capacity
+     * @return 0 when OS call failed, errno should be checked. Negative number is file system magic that is supported
+     * positive number is magic that is not supported.
+     */
+    public static int getFileSystemStatus(LPSZ lpszName) {
+        assert lpszName.capacity() > 127;
+        return getFileSystemStatus(lpszName.address());
+    }
+
     public static long getLastModified(LPSZ lpsz) {
         return getLastModified(lpsz.address());
     }
@@ -161,20 +175,6 @@ public final class Files {
 
     public static boolean isDots(CharSequence name) {
         return Chars.equals(name, '.') || Chars.equals(name, "..");
-    }
-
-    /**
-     * Detects if filesystem is supported by QuestDB. The function returns both FS magic and name. Both
-     * can be presented to user even if file system is not supported.
-     *
-     * @param lpszName existing path on the file system. The name of the filesystem is written to this
-     *                 address, therefore name should have at least 128 byte capacity
-     * @return 0 when OS call failed, errno should be checked. Negative number is file system magic that is supported
-     * positive number is magic that is not supported.
-     */
-    public static int getFileSystemStatus(LPSZ lpszName) {
-        assert lpszName.capacity() > 127;
-        return getFileSystemStatus(lpszName.address());
     }
 
     public static long length(LPSZ lpsz) {

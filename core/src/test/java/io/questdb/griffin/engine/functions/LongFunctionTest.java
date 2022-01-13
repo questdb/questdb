@@ -88,6 +88,11 @@ public class LongFunctionTest {
         Assert.assertEquals(149, function.getDate(null));
     }
 
+    @Test
+    public void testGetFloat() {
+        Assert.assertEquals(149, function.getFloat(null), 0.00001);
+    }
+
     @Test(expected = UnsupportedOperationException.class)
     public void testGetInt() {
         function.getInt(null);
@@ -151,10 +156,5 @@ public class LongFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testLong256B() {
         function.getLong256B(null);
-    }
-
-    @Test
-    public void testGetFloat() {
-        Assert.assertEquals(149, function.getFloat(null), 0.00001);
     }
 }

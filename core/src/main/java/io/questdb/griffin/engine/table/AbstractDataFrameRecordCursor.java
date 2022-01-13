@@ -39,8 +39,8 @@ import org.jetbrains.annotations.NotNull;
 public abstract class AbstractDataFrameRecordCursor implements RecordCursor {
     protected final TableReaderSelectedColumnRecord recordA;
     protected final TableReaderSelectedColumnRecord recordB;
-    protected DataFrameCursor dataFrameCursor;
     protected final IntList columnIndexes;
+    protected DataFrameCursor dataFrameCursor;
 
     public AbstractDataFrameRecordCursor(@NotNull IntList columnIndexes) {
         this.columnIndexes = columnIndexes;
@@ -59,13 +59,13 @@ public abstract class AbstractDataFrameRecordCursor implements RecordCursor {
     }
 
     @Override
-    public StaticSymbolTable getSymbolTable(int columnIndex) {
-        return dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
+    public Record getRecordB() {
+        return recordB;
     }
 
     @Override
-    public Record getRecordB() {
-        return recordB;
+    public StaticSymbolTable getSymbolTable(int columnIndex) {
+        return dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
     }
 
     @Override

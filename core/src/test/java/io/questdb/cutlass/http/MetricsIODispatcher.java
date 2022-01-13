@@ -117,13 +117,13 @@ public class MetricsIODispatcher {
             this.metricsRegistry = metricsRegistry;
         }
 
+        public void markInsertCancelled() {
+            failedCompiledQueriesCounter.inc(INSERT, QUERY_CANCELLED);
+        }
+
         public void markQueryStart() {
             runningQueries.inc();
             queriesCounter.inc();
-        }
-
-        public void markInsertCancelled() {
-            failedCompiledQueriesCounter.inc(INSERT, QUERY_CANCELLED);
         }
 
         public void markSyntaxError() {

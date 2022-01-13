@@ -24,10 +24,7 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Os;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -119,10 +116,11 @@ public class MimeTypesCacheTest {
             public void run() {
                 try (Path path = new Path()) {
                     String filePath;
+                    final String file = Misc.getResource(this,"/mime.types").getFile();
                     if (Os.type == Os.WINDOWS) {
-                        filePath = this.getClass().getResource("/mime.types").getFile().substring(1);
+                        filePath = file.substring(1);
                     } else {
-                        filePath = this.getClass().getResource("/mime.types").getFile();
+                        filePath = file;
                     }
                     path.of(filePath).$();
                     MimeTypesCache mimeTypes = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
@@ -143,6 +141,12 @@ public class MimeTypesCacheTest {
         AtomicInteger closeCount = new AtomicInteger();
         testFailure(new FilesFacadeImpl() {
             @Override
+            public boolean close(long fd) {
+                closeCount.incrementAndGet();
+                return true;
+            }
+
+            @Override
             public long length(long fd) {
                 return 0;
             }
@@ -150,12 +154,6 @@ public class MimeTypesCacheTest {
             @Override
             public long openRO(LPSZ name) {
                 return 123L;
-            }
-
-            @Override
-            public boolean close(long fd) {
-                closeCount.incrementAndGet();
-                return true;
             }
         }, "wrong file size");
 
@@ -167,6 +165,12 @@ public class MimeTypesCacheTest {
         AtomicInteger closeCount = new AtomicInteger(0);
         testFailure(new FilesFacadeImpl() {
             @Override
+            public boolean close(long fd) {
+                closeCount.incrementAndGet();
+                return true;
+            }
+
+            @Override
             public long length(long fd) {
                 return -1;
             }
@@ -174,12 +178,6 @@ public class MimeTypesCacheTest {
             @Override
             public long openRO(LPSZ name) {
                 return 123L;
-            }
-
-            @Override
-            public boolean close(long fd) {
-                closeCount.incrementAndGet();
-                return true;
             }
 
 
@@ -193,6 +191,12 @@ public class MimeTypesCacheTest {
         AtomicInteger closeCount = new AtomicInteger();
         testFailure(new FilesFacadeImpl() {
             @Override
+            public boolean close(long fd) {
+                closeCount.incrementAndGet();
+                return true;
+            }
+
+            @Override
             public long length(long fd) {
                 return 1024 * 1024 * 2;
             }
@@ -200,12 +204,6 @@ public class MimeTypesCacheTest {
             @Override
             public long openRO(LPSZ name) {
                 return 123L;
-            }
-
-            @Override
-            public boolean close(long fd) {
-                closeCount.incrementAndGet();
-                return true;
             }
         }, "wrong file size");
 

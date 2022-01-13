@@ -52,15 +52,15 @@ public class SCSequence extends AbstractSSequence {
     }
 
     @Override
+    public long current() {
+        return value;
+    }
+
+    @Override
     // The method is final is because we call it from
     // the constructor.
     public final void setCurrent(long value) {
         this.value = value;
-    }
-
-    @Override
-    public long current() {
-        return value;
     }
 
     public <T> boolean consumeAll(RingQueue<T> queue, QueueConsumer<T> consumer) {

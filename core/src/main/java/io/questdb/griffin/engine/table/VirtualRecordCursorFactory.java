@@ -65,11 +65,6 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean usesCompiledFilter() {
-        return baseFactory.usesCompiledFilter();
-    }
-
-    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor cursor = baseFactory.getCursor(executionContext);
         Function.init(functions, cursor, executionContext);
@@ -80,5 +75,10 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return supportsRandomAccess;
+    }
+
+    @Override
+    public boolean usesCompiledFilter() {
+        return baseFactory.usesCompiledFilter();
     }
 }

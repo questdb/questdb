@@ -26,7 +26,6 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.mp.*;
-import io.questdb.std.DirectObjectFactory;
 import io.questdb.std.MemoryTag;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
@@ -273,6 +272,11 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
+    public FanOut getTableWriterCommandFanOut() {
+        return tableWriterCommandSubSeq;
+    }
+
+    @Override
     public MPSequence getTableWriterCommandPubSeq() {
         return tableWriterCommandPubSeq;
     }
@@ -283,8 +287,8 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public FanOut getTableWriterCommandFanOut() {
-        return tableWriterCommandSubSeq;
+    public FanOut getTableWriterEventFanOut() {
+        return tableWriterEventSubSeq;
     }
 
     @Override
@@ -295,11 +299,6 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public RingQueue<TableWriterTask> getTableWriterEventQueue() {
         return tableWriterEventQueue;
-    }
-
-    @Override
-    public FanOut getTableWriterEventFanOut() {
-        return tableWriterEventSubSeq;
     }
 
     @Override

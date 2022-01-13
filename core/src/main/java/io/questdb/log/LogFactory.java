@@ -50,6 +50,7 @@ public class LogFactory implements Closeable {
     private static final String EMPTY_STR = "";
     private static final CharSequenceHashSet reserved = new CharSequenceHashSet();
     private static final LengthDescendingComparator LDC = new LengthDescendingComparator();
+    static boolean envEnabled = true;
     private final CharSequenceObjHashMap<ScopeConfiguration> scopeConfigMap = new CharSequenceObjHashMap<>();
     private final ObjList<ScopeConfiguration> scopeConfigs = new ObjList<>();
     private final ObjHashSet<LogWriter> jobs = new ObjHashSet<>();
@@ -59,7 +60,6 @@ public class LogFactory implements Closeable {
     private boolean configured = false;
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
     private int recordLength = DEFAULT_MSG_SIZE;
-    static boolean envEnabled = true;
 
     public LogFactory() {
         this(MicrosecondClockImpl.INSTANCE);
@@ -263,11 +263,6 @@ public class LogFactory implements Closeable {
         return queueDepth;
     }
 
-    @TestOnly
-    ObjHashSet<LogWriter> getJobs() {
-        return jobs;
-    }
-
     private void setQueueDepth(int queueDepth) {
         this.queueDepth = queueDepth;
     }
@@ -422,7 +417,7 @@ public class LogFactory implements Closeable {
      * Converts fully qualified class name into an abbreviated form:
      * com.questdb.mp.Sequence -> c.n.m.Sequence
      *
-     * @param key typically class name
+     * @param key     typically class name
      * @param builder used for producing the resulting form
      * @return abbreviated form of key
      */
@@ -455,7 +450,7 @@ public class LogFactory implements Closeable {
     }
 
     private void configureDefaultWriter() {
-        int level = LogLevel.INFO | LogLevel.ERROR | LogLevel.CRITICAL |LogLevel.ADVISORY;
+        int level = LogLevel.INFO | LogLevel.ERROR | LogLevel.CRITICAL | LogLevel.ADVISORY;
         if (isForcedDebug()) {
             level = level | LogLevel.DEBUG;
         }
@@ -480,6 +475,11 @@ public class LogFactory implements Closeable {
         }
 
         return scopeConfigMap.get(k);
+    }
+
+    @TestOnly
+    ObjHashSet<LogWriter> getJobs() {
+        return jobs;
     }
 
     private static class ScopeConfiguration implements Closeable {
@@ -510,7 +510,7 @@ public class LogFactory implements Closeable {
             for (int i = 0, n = writerConfigs.size(); i < n; i++) {
                 LogWriterConfig c = writerConfigs.getQuick(i);
                 // the channels array has a guarantee that
-                // all bits in level mask will point to the same queue
+                // all bits in level mask will point to the same queue,
                 // so we just get most significant bit number
                 // and dereference queue on its index
                 Holder h = holderMap.get(channels[Numbers.msb(c.getLevel())]);
@@ -571,12 +571,12 @@ public class LogFactory implements Closeable {
          * <p>
          * channels = {1,1,1}
          * <p>
-         * which means that both consumers will be sharing same queue and they will have to
+         * which means that both consumers will be sharing same queue, and they will have to
          * filter applicable messages as they get them.
          * <p>
          * Algorithm iterates over set of bits in "level" twice. First pass is to establish
          * minimum number of channel[] element out of those entries where bit in level is set.
-         * Additionally this pass will set channel[] elements to current consumer index where
+         * Additionally, this pass will set channel[] elements to current consumer index where
          * channel[] element is zero.
          * <p>
          * Second pass sets channel[] element to min value found on first pass.

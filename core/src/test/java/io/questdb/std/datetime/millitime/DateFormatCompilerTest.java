@@ -50,10 +50,6 @@ public class DateFormatCompilerTest {
         DateFormatUtils.updateReferenceYear(Dates.toMillis(1997, 1, 1, 0, 0));
     }
 
-    private static DateFormat get(CharSequence pattern) {
-        return compiler.compile(pattern, true);
-    }
-
     @Test(expected = NumericException.class)
     public void testBadAmPm() throws Exception {
         assertThat("KaMMy", "", "11 0910 am");
@@ -111,11 +107,6 @@ public class DateFormatCompilerTest {
     public void testEra() throws Exception {
         assertThat("E, dd-MM-yyyy G", "2014-04-03T00:00:00.000Z", "Tuesday, 03-04-2014 AD");
         assertThat("E, dd-MM-yyyy G", "-2013-04-03T00:00:00.000Z", "Tuesday, 03-04-2014 BC");
-    }
-
-    @Test
-    public void testGreedyMillis() throws NumericException {
-        assertThat("y-MM-dd HH:mm:ss.Sz", "2014-04-03T04:32:49.010Z", "2014-04-03 04:32:49.01Z");
     }
 
     @Test
@@ -401,6 +392,11 @@ public class DateFormatCompilerTest {
 
         assertFormat("09, 07", "dd, yy", "0007-04-09T00:00:00.000Z");
         assertFormat("07", "yy", "0007-04-09T00:00:00.000Z");
+    }
+
+    @Test
+    public void testGreedyMillis() throws NumericException {
+        assertThat("y-MM-dd HH:mm:ss.Sz", "2014-04-03T04:32:49.010Z", "2014-04-03 04:32:49.01Z");
     }
 
     @Test
@@ -711,6 +707,10 @@ public class DateFormatCompilerTest {
     public void testWeekdayShort() throws Exception {
         assertThat("E, dd-MM-yyyy", "2014-04-03T00:00:00.000Z", "Fri, 03-04-2014");
         assertThat("EE, dd-MM-yyyy", "2014-04-03T00:00:00.000Z", "Fri, 03-04-2014");
+    }
+
+    private static DateFormat get(CharSequence pattern) {
+        return compiler.compile(pattern, true);
     }
 
     private void assertFormat(String expected, String pattern, String date) throws NumericException {

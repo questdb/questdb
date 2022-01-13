@@ -43,11 +43,6 @@ public class TableModel implements TableStructure, Closeable {
     private final CairoConfiguration configuration;
     private int timestampIndex = -1;
 
-    @Override
-    public long getColumnHash(int columnIndex) {
-        return configuration.getRandom().nextLong();
-    }
-
     public TableModel(CairoConfiguration configuration, String name, int partitionBy) {
         this.configuration = configuration;
         this.name = name;
@@ -57,7 +52,7 @@ public class TableModel implements TableStructure, Closeable {
     public TableModel cached(boolean cached) {
         int last = columnBits.size() - 1;
         assert last > 0;
-        assert (ColumnType.isSymbol((int)columnBits.getQuick(last - 1)));
+        assert (ColumnType.isSymbol((int) columnBits.getQuick(last - 1)));
         long bits = columnBits.getQuick(last);
         if (cached) {
             columnBits.setQuick(last, bits | COLUMN_FLAG_CACHED);
@@ -81,22 +76,13 @@ public class TableModel implements TableStructure, Closeable {
     }
 
     @Override
-    public boolean isSequential(int columnIndex) {
-        return false;
-    }
-
-    @Override
-    public boolean getSymbolCacheFlag(int index) {
-        return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_CACHED) == COLUMN_FLAG_CACHED;
-    }
-
-    public CairoConfiguration getConfiguration() {
-        return configuration;
-    }
-
-    @Override
     public int getColumnCount() {
         return columnNames.size();
+    }
+
+    @Override
+    public long getColumnHash(int columnIndex) {
+        return configuration.getRandom().nextLong();
     }
 
     @Override
@@ -110,13 +96,57 @@ public class TableModel implements TableStructure, Closeable {
     }
 
     @Override
+    public long getCommitLag() {
+        return configuration.getCommitLag();
+    }
+
+    @Override
     public int getIndexBlockCapacity(int index) {
         return (int) (columnBits.getQuick(index * 2 + 1) >> 32);
     }
 
     @Override
+    public int getMaxUncommittedRows() {
+        return configuration.getMaxUncommittedRows();
+    }
+
+    @Override
+    public int getPartitionBy() {
+        return partitionBy;
+    }
+
+    @Override
+    public boolean getSymbolCacheFlag(int index) {
+        return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_CACHED) == COLUMN_FLAG_CACHED;
+    }
+
+    @Override
+    public int getSymbolCapacity(int index) {
+        return (int) (columnBits.getQuick(index * 2) >> 32);
+    }
+
+    @Override
+    public CharSequence getTableName() {
+        return name;
+    }
+
+    @Override
+    public int getTimestampIndex() {
+        return timestampIndex;
+    }
+
+    @Override
     public boolean isIndexed(int index) {
         return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_INDEXED) == COLUMN_FLAG_INDEXED;
+    }
+
+    @Override
+    public boolean isSequential(int columnIndex) {
+        return false;
+    }
+
+    public CairoConfiguration getConfiguration() {
+        return configuration;
     }
 
     public MemoryMARW getMem() {
@@ -127,28 +157,8 @@ public class TableModel implements TableStructure, Closeable {
         return name;
     }
 
-    @Override
-    public int getPartitionBy() {
-        return partitionBy;
-    }
-
     public Path getPath() {
         return path;
-    }
-
-    @Override
-    public CharSequence getTableName() {
-        return name;
-    }
-
-    @Override
-    public int getSymbolCapacity(int index) {
-        return (int) (columnBits.getQuick(index * 2) >> 32);
-    }
-
-    @Override
-    public int getTimestampIndex() {
-        return timestampIndex;
     }
 
     public TableModel indexed(boolean indexFlag, int indexBlockCapacity) {
@@ -183,15 +193,5 @@ public class TableModel implements TableStructure, Closeable {
         timestampIndex = columnNames.size();
         col(name, ColumnType.TIMESTAMP);
         return this;
-    }
-
-    @Override
-    public int getMaxUncommittedRows() {
-        return configuration.getMaxUncommittedRows();
-    }
-
-    @Override
-    public long getCommitLag() {
-        return configuration.getCommitLag();
     }
 }

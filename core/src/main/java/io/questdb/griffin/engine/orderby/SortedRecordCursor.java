@@ -28,8 +28,8 @@ import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.SqlExecutionContext;
 
 class SortedRecordCursor implements DelegatingRecordCursor {
     private final RecordTreeChain chain;
@@ -51,6 +51,11 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
+    public Record getRecordB() {
+        return chainCursor.getRecordB();
+    }
+
+    @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         return chainCursor.getSymbolTable(columnIndex);
     }
@@ -61,23 +66,18 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
-    public Record getRecordB() {
-        return chainCursor.getRecordB();
-    }
-
-    @Override
     public void recordAt(Record record, long atRowId) {
         chainCursor.recordAt(record, atRowId);
     }
 
     @Override
-    public void toTop() {
-        chainCursor.toTop();
+    public long size() {
+        return chainCursor.size();
     }
 
     @Override
-    public long size() {
-        return chainCursor.size();
+    public void toTop() {
+        chainCursor.toTop();
     }
 
     @Override

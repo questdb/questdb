@@ -40,6 +40,42 @@ public class CompactMapValue implements MapValue {
     }
 
     @Override
+    public void addByte(int index, byte value) {
+        final long o = getValueColumnOffset(index);
+        entries.putByte(o, (byte) (entries.getByte(o) + value));
+    }
+
+    @Override
+    public void addDouble(int index, double value) {
+        final long o = getValueColumnOffset(index);
+        entries.putDouble(o, entries.getDouble(o) + value);
+    }
+
+    @Override
+    public void addFloat(int index, float value) {
+        final long o = getValueColumnOffset(index);
+        entries.putFloat(o, entries.getFloat(o) + value);
+    }
+
+    @Override
+    public void addInt(int index, int value) {
+        final long o = getValueColumnOffset(index);
+        entries.putInt(o, entries.getInt(o) + value);
+    }
+
+    @Override
+    public void addLong(int index, long value) {
+        final long o = getValueColumnOffset(index);
+        entries.putLong(o, entries.getLong(o) + value);
+    }
+
+    @Override
+    public void addShort(int index, short value) {
+        final long o = getValueColumnOffset(index);
+        entries.putShort(o, (short) (entries.getShort(o) + value));
+    }
+
+    @Override
     public long getAddress() {
         return currentValueOffset;
     }
@@ -52,6 +88,11 @@ public class CompactMapValue implements MapValue {
     @Override
     public byte getByte(int index) {
         return entries.getByte(getValueColumnOffset(index));
+    }
+
+    @Override
+    public char getChar(int columnIndex) {
+        return entries.getChar(getValueColumnOffset(columnIndex));
     }
 
     @Override
@@ -80,74 +121,13 @@ public class CompactMapValue implements MapValue {
     }
 
     @Override
-    public void addLong(int index, long value) {
-        final long o = getValueColumnOffset(index);
-        entries.putLong(o, entries.getLong(o) + value);
-    }
-
-    @Override
-    public void addByte(int index, byte value) {
-        final long o = getValueColumnOffset(index);
-        entries.putByte(o, (byte) (entries.getByte(o) + value));
-    }
-
-    @Override
-    public void addShort(int index, short value) {
-        final long o = getValueColumnOffset(index);
-        entries.putShort(o, (short) (entries.getShort(o) + value));
-    }
-
-    @Override
-    public void addInt(int index, int value) {
-        final long o = getValueColumnOffset(index);
-        entries.putInt(o, entries.getInt(o) + value);
-    }
-
-    @Override
-    public void addDouble(int index, double value) {
-        final long o = getValueColumnOffset(index);
-        entries.putDouble(o, entries.getDouble(o) + value);
-    }
-
-    @Override
-    public void addFloat(int index, float value) {
-        final long o = getValueColumnOffset(index);
-        entries.putFloat(o, entries.getFloat(o) + value);
-    }
-
-    @Override
     public short getShort(int columnIndex) {
         return entries.getShort(getValueColumnOffset(columnIndex));
     }
 
     @Override
-    public char getChar(int columnIndex) {
-        return entries.getChar(getValueColumnOffset(columnIndex));
-    }
-
-    @Override
     public long getTimestamp(int index) {
         return getLong(index);
-    }
-
-    @Override
-    public byte getGeoByte(int col) {
-        return getByte(col);
-    }
-
-    @Override
-    public short getGeoShort(int col) {
-        return getShort(col);
-    }
-
-    @Override
-    public int getGeoInt(int col) {
-        return getInt(col);
-    }
-
-    @Override
-    public long getGeoLong(int col) {
-        return getLong(col);
     }
 
     @Override
@@ -163,6 +143,11 @@ public class CompactMapValue implements MapValue {
     @Override
     public void putByte(int columnIndex, byte value) {
         entries.putByte(getValueColumnOffset(columnIndex), value);
+    }
+
+    @Override
+    public void putChar(int columnIndex, char value) {
+        entries.putChar(getValueColumnOffset(columnIndex), value);
     }
 
     @Override
@@ -196,11 +181,6 @@ public class CompactMapValue implements MapValue {
     }
 
     @Override
-    public void putChar(int columnIndex, char value) {
-        entries.putChar(getValueColumnOffset(columnIndex), value);
-    }
-
-    @Override
     public void putTimestamp(int index, long value) {
         putLong(index, value);
     }
@@ -208,6 +188,26 @@ public class CompactMapValue implements MapValue {
     @Override
     public void setMapRecordHere() {
         record.of(currentValueOffset);
+    }
+
+    @Override
+    public byte getGeoByte(int col) {
+        return getByte(col);
+    }
+
+    @Override
+    public short getGeoShort(int col) {
+        return getShort(col);
+    }
+
+    @Override
+    public int getGeoInt(int col) {
+        return getInt(col);
+    }
+
+    @Override
+    public long getGeoLong(int col) {
+        return getLong(col);
     }
 
     private long getValueColumnOffset(int columnIndex) {

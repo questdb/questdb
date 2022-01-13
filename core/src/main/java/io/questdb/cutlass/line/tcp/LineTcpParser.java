@@ -69,12 +69,9 @@ public class LineTcpParser implements Closeable {
     private EntityHandler entityHandler;
     private long timestamp;
     private final EntityHandler entityTimestampHandler = this::expectTimestamp;
-    private final EntityHandler entityTableHandler = this::expectTableName;
-    private final EntityHandler entityValueHandler = this::expectEntityValue;
-    private final EntityHandler entityNameHandler = this::expectEntityName;
-    private int nQuoteCharacters;
-    private boolean scape;
-    private boolean nextValueCanBeOpenQuote;
+    private int nQuoteCharacters;    private final EntityHandler entityTableHandler = this::expectTableName;
+    private boolean scape;    private final EntityHandler entityValueHandler = this::expectEntityValue;
+    private boolean nextValueCanBeOpenQuote;    private final EntityHandler entityNameHandler = this::expectEntityName;
     private boolean hasNonAscii;
 
     @Override
@@ -90,6 +87,10 @@ public class LineTcpParser implements Closeable {
         return entityCache.get(n);
     }
 
+    public int getEntityCount() {
+        return nEntities;
+    }
+
     public ErrorCode getErrorCode() {
         return errorCode;
     }
@@ -100,10 +101,6 @@ public class LineTcpParser implements Closeable {
 
     public long getTimestamp() {
         return timestamp;
-    }
-
-    public int getEntityCount() {
-        return nEntities;
     }
 
     public boolean hasNonAsciiChars() {
@@ -656,4 +653,10 @@ public class LineTcpParser implements Closeable {
             return true;
         }
     }
+
+
+
+
+
+
 }

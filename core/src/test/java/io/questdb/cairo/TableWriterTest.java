@@ -773,16 +773,16 @@ public class TableWriterTest extends AbstractCairoTest {
                 boolean fail = false;
 
                 @Override
+                public boolean allocate(long fd, long size) {
+                    return !fail && super.allocate(fd, size);
+                }
+
+                @Override
                 public long read(long fd, long buf, long len, long offset) {
                     if (fail) {
                         return -1;
                     }
                     return super.read(fd, buf, len, offset);
-                }
-
-                @Override
-                public boolean allocate(long fd, long size) {
-                    return !fail && super.allocate(fd, size);
                 }
             }
 
@@ -1335,19 +1335,19 @@ public class TableWriterTest extends AbstractCairoTest {
             long fd;
 
             @Override
-            public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, "productName.i")) {
-                    return fd = super.openRW(name);
-                }
-                return super.openRW(name);
-            }
-
-            @Override
             public boolean allocate(long fd, long size) {
                 if (this.fd == fd) {
                     return false;
                 }
                 return super.allocate(fd, size);
+            }
+
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, "productName.i")) {
+                    return fd = super.openRW(name);
+                }
+                return super.openRW(name);
             }
         }, false);
     }
@@ -1361,26 +1361,26 @@ public class TableWriterTest extends AbstractCairoTest {
             long fd;
 
             @Override
-            public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, "productName.i")) {
-                    return fd = super.openRW(name);
-                }
-                return super.openRW(name);
-            }
-
-            @Override
             public boolean allocate(long fd, long size) {
                 if (this.fd == fd) {
                     return false;
                 }
                 return super.allocate(fd, size);
             }
+
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, "productName.i")) {
+                    return fd = super.openRW(name);
+                }
+                return super.openRW(name);
+            }
         }, false);
     }
 
     @Test
-    // tests scenario where truncate is supported (linux) but fails on close
-    // close is expected not to fail
+    // tests scenario where truncate is supported (linux) but fails on close().
+    // Close() is expected not to fail
     public void testCannotTruncateColumnOnClose() throws Exception {
         int N = 100000;
         create(FF, PartitionBy.NONE, N);
@@ -3662,19 +3662,19 @@ public class TableWriterTest extends AbstractCairoTest {
                 long fd = -1;
 
                 @Override
-                public long openRW(LPSZ name) {
-                    if (Chars.endsWith(name, "bin.i")) {
-                        return fd = super.openRW(name);
-                    }
-                    return super.openRW(name);
-                }
-
-                @Override
                 public boolean allocate(long fd, long size) {
                     if (fd == this.fd) {
                         return false;
                     }
                     return super.allocate(fd, size);
+                }
+
+                @Override
+                public long openRW(LPSZ name) {
+                    if (Chars.endsWith(name, "bin.i")) {
+                        return fd = super.openRW(name);
+                    }
+                    return super.openRW(name);
                 }
             }
             final X ff = new X();

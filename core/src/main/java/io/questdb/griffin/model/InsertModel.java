@@ -50,6 +50,10 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         return false;
     }
 
+    public void addEndOfRowTupleValuesPosition(int endOfValuesPosition) {
+        endOfRowTupleValuesPositions.add(endOfValuesPosition);
+    }
+
     public void addRowTupleValues(ObjList<ExpressionNode> row) {
         rowTupleValues.add(row);
     }
@@ -70,6 +74,14 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         this.commitLag = 0;
     }
 
+    public long getBatchSize() {
+        return batchSize;
+    }
+
+    public void setBatchSize(long batchSize) {
+        this.batchSize = batchSize;
+    }
+
     public int getColumnPosition(int columnIndex) {
         return columnPositions.getQuick(columnIndex);
     }
@@ -78,16 +90,16 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         return columnSet;
     }
 
-    public ObjList<ExpressionNode> getRowTupleValues(int index) {
-        return rowTupleValues.get(index);
+    public long getCommitLag() {
+        return commitLag;
     }
 
-    public int getSelectKeywordPosition() {
-        return selectKeywordPosition;
+    public void setCommitLag(long lag) {
+        this.commitLag = lag;
     }
 
-    public void setSelectKeywordPosition(int selectKeywordPosition) {
-        this.selectKeywordPosition = selectKeywordPosition;
+    public int getEndOfRowTupleValuesPosition(int index) {
+        return endOfRowTupleValuesPositions.get(index);
     }
 
     @Override
@@ -103,23 +115,21 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         this.queryModel = queryModel;
     }
 
-    public long getBatchSize() {
-        return batchSize;
+    public int getRowTupleCount() {
+        return rowTupleValues.size();
     }
 
-    public void setBatchSize(long batchSize) {
-        this.batchSize = batchSize;
+    public ObjList<ExpressionNode> getRowTupleValues(int index) {
+        return rowTupleValues.get(index);
     }
 
-    public long getCommitLag() {
-        return commitLag;
+    public int getSelectKeywordPosition() {
+        return selectKeywordPosition;
     }
 
-    public void setCommitLag(long lag) {
-        this.commitLag = lag;
+    public void setSelectKeywordPosition(int selectKeywordPosition) {
+        this.selectKeywordPosition = selectKeywordPosition;
     }
-
-    public int getRowTupleCount() { return rowTupleValues.size(); }
 
     public ExpressionNode getTableName() {
         return tableName;
@@ -127,14 +137,6 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
 
     public void setTableName(ExpressionNode tableName) {
         this.tableName = tableName;
-    }
-
-    public int getEndOfRowTupleValuesPosition(int index) {
-        return endOfRowTupleValuesPositions.get(index);
-    }
-
-    public void addEndOfRowTupleValuesPosition(int endOfValuesPosition) {
-        endOfRowTupleValuesPositions.add(endOfValuesPosition);
     }
 
     @Override

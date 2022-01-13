@@ -26,11 +26,11 @@ package io.questdb.cairo;
 
 public interface CairoSecurityContext {
 
+    boolean canWrite();
+
     default void checkWritePermission() {
         if (!canWrite()) {
             throw CairoException.instance(0).put("Write permission denied").setCacheable(true);
         }
     }
-
-    boolean canWrite();
 }

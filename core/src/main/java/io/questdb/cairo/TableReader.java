@@ -1252,7 +1252,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                             // 2. Column has been forced out of the reader via closeColumnForRemove(). This is required
                             //    on Windows before column can be deleted. In this case we must check for marker
                             //    instance and the column from disk
-                            // 3. Column hasn't been altered and we can skip to next column.
+                            // 3. Column hasn't been altered, and we can skip to next column.
                             MemoryMR col = columns.getQuick(getPrimaryColumnIndex(base, i));
                             if ((col instanceof MemoryCMRImpl && col.isDeleted()) || col instanceof NullColumn) {
                                 reloadColumnAt(

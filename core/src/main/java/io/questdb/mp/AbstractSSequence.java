@@ -37,6 +37,11 @@ abstract class AbstractSSequence extends AbstractSequence implements Sequence, M
     }
 
     @Override
+    public void clear() {
+        setBarrier(OpenBarrier.INSTANCE);
+    }
+
+    @Override
     public long nextBully() {
         long cursor;
 
@@ -58,12 +63,6 @@ abstract class AbstractSSequence extends AbstractSequence implements Sequence, M
             waitStrategy.await();
         }
         return r;
-    }
-
-
-    @Override
-    public void clear() {
-        setBarrier(OpenBarrier.INSTANCE);
     }
 
     @Override

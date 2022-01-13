@@ -36,7 +36,15 @@ import java.io.Closeable;
  */
 public interface DataFrameCursorFactory extends Sinkable, Closeable {
 
+    int ORDER_ASC = 0;
+    int ORDER_DESC = 1;
+
     DataFrameCursor getCursor(SqlExecutionContext executionContext) throws SqlException;
+
+    /**
+     * Returns 0 for ASC, 1 for DESC
+     */
+    int getOrder();
 
     /**
      * @param sink to print data frame cursor to
@@ -44,12 +52,4 @@ public interface DataFrameCursorFactory extends Sinkable, Closeable {
     default void toSink(CharSink sink) {
         throw new UnsupportedOperationException();
     }
-
-    /**
-     * Returns 0 for ASC, 1 for DESC
-     */
-    int getOrder();
-
-    int ORDER_ASC = 0;
-    int ORDER_DESC = 1;
 }

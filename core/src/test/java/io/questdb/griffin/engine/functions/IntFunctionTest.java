@@ -38,14 +38,29 @@ public class IntFunctionTest {
         }
     };
 
-    @Test
-    public void testGetDate() {
-        Assert.assertEquals(150, function.getDate(null));
+    @Test(expected = UnsupportedOperationException.class)
+    public void testChar() {
+        function.getChar(null);
     }
 
-    @Test
-    public void testGetTimestamp() {
-        Assert.assertEquals(150, function.getTimestamp(null));
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoByte() {
+        function.getGeoByte(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoInt() {
+        function.getGeoInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoLong() {
+        function.getGeoLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoShort() {
+        function.getGeoShort(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -66,6 +81,16 @@ public class IntFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetByte() {
         function.getByte(null);
+    }
+
+    @Test
+    public void testGetDate() {
+        Assert.assertEquals(150, function.getDate(null));
+    }
+
+    @Test
+    public void testGetFloat() {
+        Assert.assertEquals(150, function.getFloat(null), 0.00001);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -104,8 +129,13 @@ public class IntFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testChar() {
-        function.getChar(null);
+    public void testGetSymbolB() {
+        function.getSymbolB(null);
+    }
+
+    @Test
+    public void testGetTimestamp() {
+        Assert.assertEquals(150, function.getTimestamp(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -121,35 +151,5 @@ public class IntFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testLong256B() {
         function.getLong256B(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoLong() {
-        function.getGeoLong(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetSymbolB() {
-        function.getSymbolB(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoInt() {
-        function.getGeoInt(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoByte() {
-        function.getGeoByte(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoShort() {
-        function.getGeoShort(null);
-    }
-
-    @Test
-    public void testGetFloat() {
-        Assert.assertEquals(150, function.getFloat(null), 0.00001);
     }
 }

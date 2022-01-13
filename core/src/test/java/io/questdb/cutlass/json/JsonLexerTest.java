@@ -32,8 +32,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.nio.charset.StandardCharsets;
-
 public class JsonLexerTest {
 
     private static final JsonLexer LEXER = new JsonLexer(4, 1024);
@@ -219,7 +217,7 @@ public class JsonLexerTest {
 
     @Test
     public void testParseLargeFile() throws Exception {
-        String path = JsonLexerTest.class.getResource("/json/test.json").getPath();
+        String path = Misc.getResource(JsonLexerTest.class, "/json/test.json").getPath();
 
         try (Path p = new Path()) {
             if (Os.type == Os.WINDOWS && path.startsWith("/")) {
@@ -730,10 +728,6 @@ public class JsonLexerTest {
             itemCountStack.clear();
         }
 
-        public CharSequence value() {
-            return buffer;
-        }
-
         @Override
         public void onEvent(int code, CharSequence tag, int position) {
             if (recordPositions) {
@@ -790,6 +784,10 @@ public class JsonLexerTest {
                 default:
                     break;
             }
+        }
+
+        public CharSequence value() {
+            return buffer;
         }
     }
 }

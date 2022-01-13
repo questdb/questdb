@@ -30,10 +30,41 @@ import org.junit.Test;
 public class ShowTablesTest extends AbstractGriffinTest {
 
     @Test
-    public void testShowTablesWithSingleTable() throws Exception {
+    public void testShowColumnsWithFunction() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
-            assertQuery("table\nbalances\n", "show tables", null, false, sqlExecutionContext, false);
+            assertQuery(
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
+                            "cust_id\tINT\tfalse\t0\tfalse\t0\tfalse\n" +
+                            "ccy\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\n" +
+                            "balance\tDOUBLE\tfalse\t0\tfalse\t0\tfalse\n",
+                    "select * from table_columns('balances')", null, false, sqlExecutionContext, false);
+        });
+    }
+
+    @Test
+    public void testShowColumnsWithMissingTable() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            try {
+                assertQuery("columnName\tcolumnType\ncust_id\tINT\nccy\tSYMBOL\nbalance\tDOUBLE\n", "show columns from balances2", null, false, sqlExecutionContext, false);
+                Assert.fail();
+            } catch (SqlException ex) {
+                Assert.assertTrue(ex.toString().contains("'balances2' is not a valid table"));
+            }
+        });
+    }
+
+    @Test
+    public void testShowColumnsWithSimpleTable() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
+            assertQuery(
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
+                            "cust_id\tINT\tfalse\t0\tfalse\t0\tfalse\n" +
+                            "ccy\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\n" +
+                            "balance\tDOUBLE\tfalse\t0\tfalse\t0\tfalse\n",
+                    "show columns from balances", null, false, sqlExecutionContext, false);
         });
     }
 
@@ -55,29 +86,31 @@ public class ShowTablesTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testShowColumnsWithSimpleTable() throws Exception {
+    public void testShowTablesWithFunction() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
-            assertQuery(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
-                            "cust_id\tINT\tfalse\t0\tfalse\t0\tfalse\n" +
-                            "ccy\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\n" +
-                            "balance\tDOUBLE\tfalse\t0\tfalse\t0\tfalse\n",
-                    "show columns from balances", null, false, sqlExecutionContext, false);
+            assertQuery("table\nbalances\n", "select * from all_tables()", null, false, sqlExecutionContext, false);
         });
     }
 
     @Test
-    public void testShowColumnsWithMissingTable() throws Exception {
+    public void testShowTablesWithSingleTable() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
-            try {
-                assertQuery("columnName\tcolumnType\ncust_id\tINT\nccy\tSYMBOL\nbalance\tDOUBLE\n", "show columns from balances2", null, false, sqlExecutionContext, false);
-                Assert.fail();
-            } catch (SqlException ex) {
-                Assert.assertTrue(ex.toString().contains("'balances2' is not a valid table"));
-            }
+            assertQuery("table\nbalances\n", "show tables", null, false, sqlExecutionContext, false);
         });
+    }
+
+    @Test
+    public void testShowTimeZone() throws Exception {
+        assertMemoryLeak(() -> assertQuery(
+                "TimeZone\nUTC\n",
+                "show time zone", null, false, sqlExecutionContext, false, true));
+    }
+
+    @Test
+    public void testShowTimeZoneWrongSyntax() throws Exception {
+        assertMemoryLeak(() -> assertFailure("show time", null, 5, "expected 'tables', 'columns' or 'time zone'"));
     }
 
     @Test
@@ -104,38 +137,5 @@ public class ShowTablesTest extends AbstractGriffinTest {
                 Assert.assertTrue(ex.toString().contains("expected 'from'"));
             }
         });
-    }
-
-    @Test
-    public void testShowTablesWithFunction() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
-            assertQuery("table\nbalances\n", "select * from all_tables()", null, false, sqlExecutionContext, false);
-        });
-    }
-
-    @Test
-    public void testShowColumnsWithFunction() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
-            assertQuery(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\n" +
-                            "cust_id\tINT\tfalse\t0\tfalse\t0\tfalse\n" +
-                            "ccy\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\n" +
-                            "balance\tDOUBLE\tfalse\t0\tfalse\t0\tfalse\n",
-                    "select * from table_columns('balances')", null, false, sqlExecutionContext, false);
-        });
-    }
-
-    @Test
-    public void testShowTimeZone() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
-                "TimeZone\nUTC\n",
-                "show time zone", null, false, sqlExecutionContext, false, true));
-    }
-
-    @Test
-    public void testShowTimeZoneWrongSyntax() throws Exception {
-        assertMemoryLeak(() -> assertFailure("show time", null, 5, "expected 'tables', 'columns' or 'time zone'"));
     }
 }

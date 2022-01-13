@@ -24,9 +24,20 @@
 
 package io.questdb.cutlass.line.udp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
 
 public class LineUdpInsertLongGeoHashTest extends LineUdpInsertGeoHashTest {
+    @Override
+    public void testExcessivelyLongGeoHashesAreTruncated() throws Exception {
+        assertType(tableName,
+                targetColumnName,
+                ColumnType.getGeoHashTypeWithBits(57),
+                "geohash\ttimestamp\n" +
+                        "010011101100001110000100010000100110011111100101011001011\t1970-01-01T00:00:01.000000Z\n",
+                sender -> sender.metric(tableName).field(targetColumnName, "9v1s8hm7wpkssv1h").$(1_000_000_000)
+        );
+    }
+
     @Override
     public void testGeoHashes() throws Exception {
         assertGeoHash(60, 12, 7,
@@ -41,6 +52,19 @@ public class LineUdpInsertLongGeoHashTest extends LineUdpInsertGeoHashTest {
     }
 
     @Override
+    public void testGeoHashesNotEnoughPrecision() throws Exception {
+        assertGeoHash(60, 11, 7,
+                "geohash\ttimestamp\n" +
+                        "\t1970-01-01T00:00:01.000000Z\n" +
+                        "\t1970-01-01T00:00:02.000000Z\n" +
+                        "\t1970-01-01T00:00:03.000000Z\n" +
+                        "\t1970-01-01T00:00:04.000000Z\n" +
+                        "\t1970-01-01T00:00:05.000000Z\n" +
+                        "\t1970-01-01T00:00:06.000000Z\n" +
+                        "\t1970-01-01T00:00:07.000000Z\n");
+    }
+
+    @Override
     public void testGeoHashesTruncating() throws Exception {
         assertGeoHash(57, 12, 7,
                 "geohash\ttimestamp\n" +
@@ -51,6 +75,21 @@ public class LineUdpInsertLongGeoHashTest extends LineUdpInsertGeoHashTest {
                         "100001010100100100111101011011001011100101111011110001110\t1970-01-01T00:00:05.000000Z\n" +
                         "111001000000100010100011011011101001100101100101100000101\t1970-01-01T00:00:06.000000Z\n" +
                         "110000001011111000100111011110011001100010001101100010110\t1970-01-01T00:00:07.000000Z\n");
+    }
+
+    @Override
+    public void testNullGeoHash() throws Exception {
+        assertType(tableName,
+                targetColumnName,
+                ColumnType.getGeoHashTypeWithBits(57),
+                "geohash\ttimestamp\n" +
+                        "\t1970-01-01T00:00:01.000000Z\n" +
+                        "\t1970-01-01T00:00:01.000000Z\n",
+                sender -> {
+                    sender.metric(tableName).field(targetColumnName, "").$(1_000_000_000);
+                    sender.metric(tableName).field(targetColumnName, "null").$(1_000_000_000);
+                }
+        );
     }
 
     @Override
@@ -75,30 +114,6 @@ public class LineUdpInsertLongGeoHashTest extends LineUdpInsertGeoHashTest {
     }
 
     @Override
-    public void testExcessivelyLongGeoHashesAreTruncated() throws Exception {
-        assertType(tableName,
-                targetColumnName,
-                ColumnType.getGeoHashTypeWithBits(57),
-                "geohash\ttimestamp\n" +
-                        "010011101100001110000100010000100110011111100101011001011\t1970-01-01T00:00:01.000000Z\n",
-                sender -> sender.metric(tableName).field(targetColumnName, "9v1s8hm7wpkssv1h").$(1_000_000_000)
-        );
-    }
-
-    @Override
-    public void testGeoHashesNotEnoughPrecision() throws Exception {
-        assertGeoHash(60, 11, 7,
-                "geohash\ttimestamp\n" +
-                        "\t1970-01-01T00:00:01.000000Z\n" +
-                        "\t1970-01-01T00:00:02.000000Z\n" +
-                        "\t1970-01-01T00:00:03.000000Z\n" +
-                        "\t1970-01-01T00:00:04.000000Z\n" +
-                        "\t1970-01-01T00:00:05.000000Z\n" +
-                        "\t1970-01-01T00:00:06.000000Z\n" +
-                        "\t1970-01-01T00:00:07.000000Z\n");
-    }
-
-    @Override
     public void testWrongCharGeoHashes() throws Exception {
         assertType(tableName,
                 targetColumnName,
@@ -106,21 +121,6 @@ public class LineUdpInsertLongGeoHashTest extends LineUdpInsertGeoHashTest {
                 "geohash\ttimestamp\n" +
                         "\t1970-01-01T00:00:01.000000Z\n",
                 sender -> sender.metric(tableName).field(targetColumnName, "sp018sp0!18*").$(1_000_000_000)
-        );
-    }
-
-    @Override
-    public void testNullGeoHash() throws Exception {
-        assertType(tableName,
-                targetColumnName,
-                ColumnType.getGeoHashTypeWithBits(57),
-                "geohash\ttimestamp\n" +
-                        "\t1970-01-01T00:00:01.000000Z\n" +
-                        "\t1970-01-01T00:00:01.000000Z\n",
-                sender -> {
-                    sender.metric(tableName).field(targetColumnName, "").$(1_000_000_000);
-                    sender.metric(tableName).field(targetColumnName, "null").$(1_000_000_000);
-                }
         );
     }
 }

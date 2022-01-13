@@ -35,60 +35,10 @@ public class InsertNullGeoHashTest extends AbstractGriffinTest {
     private static final int NULL_INSERTS = 15;
 
     @Test
-    public void testInsertNullGeoHash() throws Exception {
-        assertGeoHashQueryForAllValidBitSizes("", NULL_INSERTS, true);
-    }
-
-    @Test
-    public void testInsertNullGeoHashThenFilterEq1() throws Exception {
-        assertGeoHashQueryForAllValidBitSizes("where geohash = null", NULL_INSERTS, true);
-    }
-
-    @Test
-    public void testInsertNullGeoHashThenFilterEq2() throws Exception {
-        assertGeoHashQueryForAllValidBitSizes("where null = geohash", NULL_INSERTS, true);
-    }
-
-    @Test
-    public void testInsertNullGeoHashThenFilterEq3() throws Exception {
-        assertGeoHashQueryForAllValidBitSizes("where geohash = geohash", NULL_INSERTS, true);
-    }
-
-    @Test
-    public void testInsertNullGeoHashThenFilterNotEq1() throws Exception {
-        assertGeoHashQueryForAllValidBitSizes("where geohash != null", 0, true);
-    }
-
-    @Test
-    public void testInsertNullGeoHashThenFilterNotEq2() throws Exception {
-        assertGeoHashQueryForAllValidBitSizes("where null != geohash", 0, true);
-    }
-
-    @Test
-    public void testInsertNullGeoHashThenFilterNotEq3() throws Exception {
-        assertGeoHashQueryForAllValidBitSizes("where geohash != geohash", 0, false);
-    }
-
-    @Test
     public void testInsertGeoNullByte() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table g(a geohash(4b))", sqlExecutionContext);
             compiler.compile("insert into g values (cast(null as geohash(5b)))", sqlExecutionContext);
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "g",
-                    sink,
-                    "a\n"
-            );
-        });
-    }
-
-    @Test
-    public void testInsertGeoNullShort() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table g(a geohash(12b))", sqlExecutionContext);
-            compiler.compile("insert into g values (cast(null as geohash(14b)))", sqlExecutionContext);
             TestUtils.assertSql(
                     compiler,
                     sqlExecutionContext,
@@ -127,6 +77,56 @@ public class InsertNullGeoHashTest extends AbstractGriffinTest {
                     "a\n"
             );
         });
+    }
+
+    @Test
+    public void testInsertGeoNullShort() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table g(a geohash(12b))", sqlExecutionContext);
+            compiler.compile("insert into g values (cast(null as geohash(14b)))", sqlExecutionContext);
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "g",
+                    sink,
+                    "a\n"
+            );
+        });
+    }
+
+    @Test
+    public void testInsertNullGeoHash() throws Exception {
+        assertGeoHashQueryForAllValidBitSizes("", NULL_INSERTS, true);
+    }
+
+    @Test
+    public void testInsertNullGeoHashThenFilterEq1() throws Exception {
+        assertGeoHashQueryForAllValidBitSizes("where geohash = null", NULL_INSERTS, true);
+    }
+
+    @Test
+    public void testInsertNullGeoHashThenFilterEq2() throws Exception {
+        assertGeoHashQueryForAllValidBitSizes("where null = geohash", NULL_INSERTS, true);
+    }
+
+    @Test
+    public void testInsertNullGeoHashThenFilterEq3() throws Exception {
+        assertGeoHashQueryForAllValidBitSizes("where geohash = geohash", NULL_INSERTS, true);
+    }
+
+    @Test
+    public void testInsertNullGeoHashThenFilterNotEq1() throws Exception {
+        assertGeoHashQueryForAllValidBitSizes("where geohash != null", 0, true);
+    }
+
+    @Test
+    public void testInsertNullGeoHashThenFilterNotEq2() throws Exception {
+        assertGeoHashQueryForAllValidBitSizes("where null != geohash", 0, true);
+    }
+
+    @Test
+    public void testInsertNullGeoHashThenFilterNotEq3() throws Exception {
+        assertGeoHashQueryForAllValidBitSizes("where geohash != geohash", 0, false);
     }
 
     private void assertGeoHashQueryForAllValidBitSizes(String queryExtra,

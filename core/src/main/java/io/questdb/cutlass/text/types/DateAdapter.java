@@ -43,6 +43,11 @@ public class DateAdapter extends AbstractTypeAdapter implements Mutable, Timesta
     }
 
     @Override
+    public long getTimestamp(DirectByteCharSequence value) throws Exception {
+        return parseLong(value) * 1000;
+    }
+
+    @Override
     public int getType() {
         return ColumnType.DATE;
     }
@@ -62,18 +67,13 @@ public class DateAdapter extends AbstractTypeAdapter implements Mutable, Timesta
         row.putDate(column, parseLong(value));
     }
 
-    private long parseLong(DirectByteCharSequence value) throws NumericException {
-        return format.parse(value, locale);
-    }
-
-    @Override
-    public long getTimestamp(DirectByteCharSequence value) throws Exception {
-        return parseLong(value) * 1000;
-    }
-
     public DateAdapter of(DateFormat format, DateLocale locale) {
         this.format = format;
         this.locale = locale;
         return this;
+    }
+
+    private long parseLong(DirectByteCharSequence value) throws NumericException {
+        return format.parse(value, locale);
     }
 }

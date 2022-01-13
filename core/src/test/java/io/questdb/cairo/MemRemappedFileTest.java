@@ -46,18 +46,21 @@ public class MemRemappedFileTest {
     private static final Log LOG = LogFactory.getLog(MemRemappedFileTest.class);
     private static final FilesFacade ff = FilesFacadeImpl.INSTANCE;
     private static final long MAPPING_PAGE_SIZE = ff.getPageSize();
-    private static CharSequence root;
-    private static int nFile = 0;
-
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
+    private static CharSequence root;
+    private static int nFile = 0;
     private final Path path = new Path(1_000_000);
 
-    @Test
-    public void testReadOnlyMemory() {
-        LOG.info().$("ReadOnlyMemory starting").$();
-        double micros = test(new MemoryCMRImpl());
-        LOG.info().$("ReadOnlyMemory took ").$(micros).$("ms").$();
+    @AfterClass
+    public static void afterClass() {
+        LOG.info().$("Finished").$();
+    }
+
+    @BeforeClass
+    public static void beforeClass() throws IOException {
+        LOG.info().$("Starting").$();
+        root = temp.newFolder("root").getAbsolutePath();
     }
 
     @Test
@@ -65,6 +68,13 @@ public class MemRemappedFileTest {
         LOG.info().$("ExtendableOnePageMemory starting").$();
         double micros = test(new MemoryCMRImpl());
         LOG.info().$("ExtendableOnePageMemory took ").$(micros).$("ms").$();
+    }
+
+    @Test
+    public void testReadOnlyMemory() {
+        LOG.info().$("ReadOnlyMemory starting").$();
+        double micros = test(new MemoryCMRImpl());
+        LOG.info().$("ReadOnlyMemory took ").$(micros).$("ms").$();
     }
 
     private double test(MemoryMR readMem) {
@@ -107,16 +117,5 @@ public class MemRemappedFileTest {
             readMem.close();
             return nanos / 1000000.0;
         }
-    }
-
-    @BeforeClass
-    public static void beforeClass() throws IOException {
-        LOG.info().$("Starting").$();
-        root = temp.newFolder("root").getAbsolutePath();
-    }
-
-    @AfterClass
-    public static void afterClass() {
-        LOG.info().$("Finished").$();
     }
 }

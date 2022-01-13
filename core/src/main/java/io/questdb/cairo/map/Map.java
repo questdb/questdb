@@ -37,11 +37,11 @@ public interface Map extends Mutable, Closeable {
 
     MapRecord getRecord();
 
+    void restoreInitialCapacity();
+
     long size();
 
     MapValue valueAt(long address);
 
     MapKey withKey();
-
-    void restoreInitialCapacity();
 }

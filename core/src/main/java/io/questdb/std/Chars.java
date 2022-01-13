@@ -39,6 +39,24 @@ public final class Chars {
     private Chars() {
     }
 
+    public static void asciiCopyTo(char[] chars, int start, int len, long dest) {
+        for (int i = 0; i < len; i++) {
+            Unsafe.getUnsafe().putByte(dest + i, (byte) chars[i + start]);
+        }
+    }
+
+    public static void asciiStrCpy(final CharSequence value, final int len, final long address) {
+        for (int i = 0; i < len; i++) {
+            Unsafe.getUnsafe().putByte(address + i, (byte) value.charAt(i));
+        }
+    }
+
+    public static void asciiStrCpy(final CharSequence value, int lo, final int len, final long address) {
+        for (int i = 0; i < len; i++) {
+            Unsafe.getUnsafe().putByte(address + i, (byte) value.charAt(lo + i));
+        }
+    }
+
     public static void base64Encode(BinarySequence sequence, final int maxLength, CharSink buffer) {
         if (sequence == null) {
             return;
@@ -68,24 +86,6 @@ public final class Chars {
 
         for (int j = 0; j < pad; j++) {
             buffer.put("=");
-        }
-    }
-
-    public static void asciiCopyTo(char[] chars, int start, int len, long dest) {
-        for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putByte(dest + i, (byte) chars[i + start]);
-        }
-    }
-
-    public static void asciiStrCpy(final CharSequence value, final int len, final long address) {
-        for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putByte(address + i, (byte) value.charAt(i));
-        }
-    }
-
-    public static void asciiStrCpy(final CharSequence value, int lo, final int len, final long address) {
-        for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putByte(address + i, (byte) value.charAt(lo + i));
         }
     }
 
@@ -231,7 +231,7 @@ public final class Chars {
 
     /**
      * Compares two char sequences on assumption and right value is always lower case.
-     * Methods converts every char of right sequence before comparing to left sequence.
+     * Method converts every char of right sequence before comparing to left sequence.
      *
      * @param l left sequence
      * @param r right sequence
@@ -367,17 +367,6 @@ public final class Chars {
         return -1;
     }
 
-    public static boolean isOnlyDecimals(CharSequence s) {
-        int len = s.length();
-        for (int i = len - 1; i > -1; i--) {
-            int digit = s.charAt(i);
-            if (digit < '0' || digit > '9') {
-                return false;
-            }
-        }
-        return len > 0;
-    }
-
     public static boolean isMalformed3(int b1, int b2, int b3) {
         return b1 == -32 && (b2 & 224) == 128 || (b2 & 192) != 128 || (b3 & 192) != 128;
     }
@@ -388,6 +377,17 @@ public final class Chars {
 
     public static boolean isNotContinuation(int b) {
         return (b & 192) != 128;
+    }
+
+    public static boolean isOnlyDecimals(CharSequence s) {
+        int len = s.length();
+        for (int i = len - 1; i > -1; i--) {
+            int digit = s.charAt(i);
+            if (digit < '0' || digit > '9') {
+                return false;
+            }
+        }
+        return len > 0;
     }
 
     public static boolean isQuote(char c) {
@@ -507,7 +507,7 @@ public final class Chars {
 
     /**
      * Split character sequence into a list of lpsz strings. This function
-     * uses space as a delimiter and it honours spaces in double quotes. Main
+     * uses space as a delimiter, and it honours spaces in double quotes. Main
      * use for this code is to produce list of C-compatible argument values from
      * command line.
      *

@@ -63,6 +63,11 @@ public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public int getInt(Record rec) {
+            return arg.getInt(rec);
+        }
+
+        @Override
         public CharSequence getSymbol(Record rec) {
             return arg.getSymbol(rec);
         }
@@ -73,8 +78,8 @@ public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence valueOf(int symbolKey) {
-            return symbolKey == 0 ? "true" : "false";
+        public boolean isSymbolTableStatic() {
+            return false;
         }
 
         @Override
@@ -83,13 +88,8 @@ public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getInt(Record rec) {
-            return arg.getInt(rec);
-        }
-
-        @Override
-        public boolean isSymbolTableStatic() {
-            return false;
+        public CharSequence valueOf(int symbolKey) {
+            return symbolKey == 0 ? "true" : "false";
         }
     }
 }

@@ -144,6 +144,26 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAttachFailsInvalidFormat() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel dst = new TableModel(configuration, "dst", PartitionBy.MONTH)) {
+
+                CairoTestUtils.create(dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+
+                String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '202A-01'";
+                try {
+                    compile(alterCommand, sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals("[38] 'YYYY-MM' expected[errno=0]", e.getMessage());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAttachFailsInvalidFormatPartitionsAnnually() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel dst = new TableModel(configuration, "dst", PartitionBy.YEAR)) {
@@ -173,26 +193,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         .col("l", ColumnType.LONG));
 
                 String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '2020-01-01'";
-                try {
-                    compile(alterCommand, sqlExecutionContext);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals("[38] 'YYYY-MM' expected[errno=0]", e.getMessage());
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testAttachFailsInvalidFormat() throws Exception {
-        assertMemoryLeak(() -> {
-            try (TableModel dst = new TableModel(configuration, "dst", PartitionBy.MONTH)) {
-
-                CairoTestUtils.create(dst.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
-
-                String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '202A-01'";
                 try {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
@@ -428,7 +428,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                     Assert.assertTrue(writer.inTransaction());
 
-                    // This commits the append before attaching
+                    // This commits the appended rows before attaching
                     writer.attachPartition(timestamp);
                     Assert.assertEquals(partitionRowCount + 1, writer.size());
 

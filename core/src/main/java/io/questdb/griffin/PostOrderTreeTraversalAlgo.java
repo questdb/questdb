@@ -40,7 +40,7 @@ final public class PostOrderTreeTraversalAlgo {
         int size = stack.size();
         backupDepth.push(size);
         for (int i = 0; i < size; i++) {
-            stackBackup.push(stack.poll());
+            stackBackup.push(stack.pop());
             indexStackBackup.push(indexStack.pop());
         }
     }
@@ -49,7 +49,7 @@ final public class PostOrderTreeTraversalAlgo {
         if (backupDepth.size() > 0) {
             int size = backupDepth.pop();
             for (int i = 0; i < size; i++) {
-                stack.push(stackBackup.poll());
+                stack.push(stackBackup.pop());
                 indexStack.push(indexStackBackup.pop());
             }
         }
@@ -106,17 +106,15 @@ final public class PostOrderTreeTraversalAlgo {
     }
 
     public interface Visitor {
-        void visit(ExpressionNode node) throws SqlException;
-
         /**
          * Called on each node in the top-down, left-right descent order. When
          * this method returns false, the algorithm does not visit the current
          * node, nor its children nodes.
-         *
+         * <p>
          * Example. For the tree like
-         *     A
-         *   /  \
-         *  B   C
+         * A
+         * /  \
+         * B   C
          * the visit order will be:
          * C -> B -> A
          * while the descent order will be:
@@ -125,5 +123,7 @@ final public class PostOrderTreeTraversalAlgo {
         default boolean descend(ExpressionNode node) throws SqlException {
             return true;
         }
+
+        void visit(ExpressionNode node) throws SqlException;
     }
 }

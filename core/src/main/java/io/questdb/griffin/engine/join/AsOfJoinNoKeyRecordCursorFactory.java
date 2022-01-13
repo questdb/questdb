@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
@@ -134,6 +134,20 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactor
             return false;
         }
 
+        @Override
+        public long size() {
+            return masterCursor.size();
+        }
+
+        @Override
+        public void toTop() {
+            slaveTimestamp = Long.MIN_VALUE;
+            latestSlaveRowID = Long.MIN_VALUE;
+            record.hasSlave(false);
+            masterCursor.toTop();
+            slaveCursor.toTop();
+        }
+
         private void nextSlave(long masterTimestamp) {
             if (slaveCursor.hasNext()) {
                 // check where this record falls
@@ -150,16 +164,16 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactor
             }
         }
 
-        private void positionSlaveRecB() {
-            if (this.latestSlaveRowID != Long.MIN_VALUE) {
-                record.hasSlave(true);
-                slaveCursor.recordAt(slaveRecB, latestSlaveRowID);
-            }
-        }
-
-        private void slaveIsDone() {
-            positionSlaveRecB();
-            this.slaveTimestamp = Long.MAX_VALUE;
+        private void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
+            slaveTimestamp = Long.MIN_VALUE;
+            latestSlaveRowID = Long.MIN_VALUE;
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
+            this.masterRecord = masterCursor.getRecord();
+            this.slaveRecA = slaveCursor.getRecord();
+            this.slaveRecB = slaveCursor.getRecordB();
+            record.of(masterRecord, slaveRecB);
+            record.hasSlave(false);
         }
 
         private void overScrollSlave(long masterTimestamp, long slaveTimestamp) {
@@ -189,30 +203,16 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactor
             }
         }
 
-        @Override
-        public void toTop() {
-            slaveTimestamp = Long.MIN_VALUE;
-            latestSlaveRowID = Long.MIN_VALUE;
-            record.hasSlave(false);
-            masterCursor.toTop();
-            slaveCursor.toTop();
+        private void positionSlaveRecB() {
+            if (this.latestSlaveRowID != Long.MIN_VALUE) {
+                record.hasSlave(true);
+                slaveCursor.recordAt(slaveRecB, latestSlaveRowID);
+            }
         }
 
-        @Override
-        public long size() {
-            return masterCursor.size();
-        }
-
-        private void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
-            slaveTimestamp = Long.MIN_VALUE;
-            latestSlaveRowID = Long.MIN_VALUE;
-            this.masterCursor = masterCursor;
-            this.slaveCursor = slaveCursor;
-            this.masterRecord = masterCursor.getRecord();
-            this.slaveRecA = slaveCursor.getRecord();
-            this.slaveRecB = slaveCursor.getRecordB();
-            record.of(masterRecord, slaveRecB);
-            record.hasSlave(false);
+        private void slaveIsDone() {
+            positionSlaveRecB();
+            this.slaveTimestamp = Long.MAX_VALUE;
         }
     }
 }

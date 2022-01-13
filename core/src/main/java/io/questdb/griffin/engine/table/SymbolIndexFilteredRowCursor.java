@@ -37,10 +37,10 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
     private final TableReaderSelectedColumnRecord record;
     private final int columnIndex;
     private final boolean cachedIndexReaderCursor;
+    private final int indexDirection;
     private int symbolKey;
     private RowCursor rowCursor;
     private long rowid;
-    private final int indexDirection;
 
     public SymbolIndexFilteredRowCursor(
             int columnIndex,

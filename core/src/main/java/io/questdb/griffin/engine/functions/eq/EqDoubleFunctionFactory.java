@@ -130,13 +130,13 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            return negated != (arg.getInt(rec) == Numbers.INT_NaN);
+        public Function getArg() {
+            return arg;
         }
 
         @Override
-        public Function getArg() {
-            return arg;
+        public boolean getBool(Record rec) {
+            return negated != (arg.getInt(rec) == Numbers.INT_NaN);
         }
     }
 
@@ -148,13 +148,13 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            return negated != (arg.getLong(rec) == Numbers.LONG_NaN);
+        public Function getArg() {
+            return arg;
         }
 
         @Override
-        public Function getArg() {
-            return arg;
+        public boolean getBool(Record rec) {
+            return negated != (arg.getLong(rec) == Numbers.LONG_NaN);
         }
     }
 
@@ -166,13 +166,13 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            return negated != (arg.getDate(rec) == Numbers.LONG_NaN);
+        public Function getArg() {
+            return arg;
         }
 
         @Override
-        public Function getArg() {
-            return arg;
+        public boolean getBool(Record rec) {
+            return negated != (arg.getDate(rec) == Numbers.LONG_NaN);
         }
     }
 
@@ -184,13 +184,13 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            return negated != (arg.getTimestamp(rec) == Numbers.LONG_NaN);
+        public Function getArg() {
+            return arg;
         }
 
         @Override
-        public Function getArg() {
-            return arg;
+        public boolean getBool(Record rec) {
+            return negated != (arg.getTimestamp(rec) == Numbers.LONG_NaN);
         }
     }
 
@@ -202,13 +202,13 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            return negated != (Float.isNaN(arg.getFloat(rec)));
+        public Function getArg() {
+            return arg;
         }
 
         @Override
-        public Function getArg() {
-            return arg;
+        public boolean getBool(Record rec) {
+            return negated != (Float.isNaN(arg.getFloat(rec)));
         }
     }
 
@@ -220,13 +220,13 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            return negated != (Double.isNaN(arg.getDouble(rec)));
+        public Function getArg() {
+            return arg;
         }
 
         @Override
-        public Function getArg() {
-            return arg;
+        public boolean getBool(Record rec) {
+            return negated != (Double.isNaN(arg.getDouble(rec)));
         }
     }
 }

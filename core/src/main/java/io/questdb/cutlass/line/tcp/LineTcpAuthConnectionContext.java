@@ -39,7 +39,6 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     private static final int CHALLENGE_LEN = 512;
     private static final int MIN_BUF_SIZE = CHALLENGE_LEN + 1;
     private static final ThreadLocal<SecureRandom> tlSrand = new ThreadLocal<>(SecureRandom::new);
-    private final AuthDb authDb;
     private static final ThreadLocal<Signature> tlSigDER = new ThreadLocal<>(() -> {
         try {
             return Signature.getInstance(AuthDb.SIGNATURE_TYPE_DER);
@@ -54,22 +53,11 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
             throw new Error(ex);
         }
     });
+    private final AuthDb authDb;
     private final DirectByteCharSequence charSeq = new DirectByteCharSequence();
     private final byte[] challengeBytes = new byte[CHALLENGE_LEN];
     private PublicKey pubKey;
     private boolean authenticated;
-
-    private enum AuthState {
-        WAITING_FOR_KEY_ID(IOContextResult.NEEDS_READ), SENDING_CHALLENGE(IOContextResult.NEEDS_WRITE), WAITING_FOR_RESPONSE(IOContextResult.NEEDS_READ),
-        COMPLETE(IOContextResult.NEEDS_READ), FAILED(IOContextResult.NEEDS_DISCONNECT);
-
-        private final IOContextResult ioContextResult;
-
-        AuthState(IOContextResult ioContextResult) {
-            this.ioContextResult = ioContextResult;
-        }
-    }
-
     private AuthState authState;
 
     LineTcpAuthConnectionContext(LineTcpReceiverConfiguration configuration, AuthDb authDb, LineTcpMeasurementScheduler scheduler) {
@@ -81,11 +69,49 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     }
 
     @Override
+    public void clear() {
+        authenticated = false;
+        authState = AuthState.WAITING_FOR_KEY_ID;
+        pubKey = null;
+        super.clear();
+    }
+
+    @Override
     IOContextResult handleIO(NetworkIOJob netIoJob) {
         if (authenticated) {
             return super.handleIO(netIoJob);
         }
         return handleAuth();
+    }
+
+    private int findLineEnd() {
+        read();
+        int len = (int) (recvBufPos - recvBufStart);
+        int n = 0;
+        int lineEnd = -1;
+        while (n < len) {
+            byte b = Unsafe.getUnsafe().getByte(recvBufStart + n);
+            if (b == (byte) '\n') {
+                lineEnd = n;
+                break;
+            }
+            n++;
+        }
+        if (lineEnd != -1) {
+            return lineEnd;
+        }
+
+        if (recvBufPos == recvBufEnd) {
+            LOG.info().$('[').$(fd).$("] authentication token is too long").$();
+            authState = AuthState.FAILED;
+            return -1;
+        }
+        if (peerDisconnected) {
+            LOG.info().$('[').$(fd).$("] authentication disconnected by peer when reading token").$();
+            authState = AuthState.FAILED;
+            return -1;
+        }
+        return -1;
     }
 
     private IOContextResult handleAuth() {
@@ -196,41 +222,14 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
         }
     }
 
-    private int findLineEnd() {
-        read();
-        int len = (int) (recvBufPos - recvBufStart);
-        int n = 0;
-        int lineEnd = -1;
-        while (n < len) {
-            byte b = Unsafe.getUnsafe().getByte(recvBufStart + n);
-            if (b == (byte) '\n') {
-                lineEnd = n;
-                break;
-            }
-            n++;
-        }
-        if (lineEnd != -1) {
-            return lineEnd;
-        }
+    private enum AuthState {
+        WAITING_FOR_KEY_ID(IOContextResult.NEEDS_READ), SENDING_CHALLENGE(IOContextResult.NEEDS_WRITE), WAITING_FOR_RESPONSE(IOContextResult.NEEDS_READ),
+        COMPLETE(IOContextResult.NEEDS_READ), FAILED(IOContextResult.NEEDS_DISCONNECT);
 
-        if (recvBufPos == recvBufEnd) {
-            LOG.info().$('[').$(fd).$("] authentication token is too long").$();
-            authState = AuthState.FAILED;
-            return -1;
-        }
-        if (peerDisconnected) {
-            LOG.info().$('[').$(fd).$("] authentication disconnected by peer when reading token").$();
-            authState = AuthState.FAILED;
-            return -1;
-        }
-        return -1;
-    }
+        private final IOContextResult ioContextResult;
 
-    @Override
-    public void clear() {
-        authenticated = false;
-        authState = AuthState.WAITING_FOR_KEY_ID;
-        pubKey = null;
-        super.clear();
+        AuthState(IOContextResult ioContextResult) {
+            this.ioContextResult = ioContextResult;
+        }
     }
 }

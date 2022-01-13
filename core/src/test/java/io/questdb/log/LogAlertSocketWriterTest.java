@@ -48,11 +48,6 @@ import static io.questdb.log.LogAlertSocketWriter.QDB_VERSION_ENV;
 
 public class LogAlertSocketWriterTest {
     private static final FilesFacade ff = FilesFacadeImpl.INSTANCE;
-
-    static {
-        DateLocaleFactory.load();
-    }
-
     private Rnd rand;
     private StringSink sink;
 
@@ -60,6 +55,203 @@ public class LogAlertSocketWriterTest {
     public void setUp() {
         rand = new Rnd();
         sink = new StringSink();
+    }
+
+    @Test
+    public void testBindPropertiesAlertTargetsDefault() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setOutBufferSize(String.valueOf(1024));
+            writer.setAlertTargets("\"\"");
+            writer.bindProperties(LogFactory.INSTANCE);
+            Assert.assertNotNull(LogAlertSocket.localHostIp);
+            Assert.assertEquals("127.0.0.1:9093", writer.getAlertTargets());
+        });
+    }
+
+    @Test
+    public void testBindPropertiesBadTemplateFile() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.bindProperties(LogFactory.INSTANCE);
+            Assert.assertEquals(LogAlertSocket.OUT_BUFFER_SIZE, writer.getOutBufferSize());
+            Assert.assertEquals(LogAlertSocketWriter.DEFAULT_ALERT_TPT_FILE, writer.getLocation());
+            Assert.assertEquals(LogAlertSocket.DEFAULT_HOST + ":" + LogAlertSocket.DEFAULT_PORT, writer.getAlertTargets());
+            writer.close();
+
+            writer.setOutBufferSize("1978");
+            writer.setLocation("/log-file.conf");
+            writer.setAlertTargets("127.0.0.1:8989");
+            try {
+                writer.bindProperties(LogFactory.INSTANCE);
+                Assert.fail();
+            } catch (LogError e) {
+                Assert.assertEquals(
+                        "Bad template, no ${ALERT_MESSAGE} declaration found /log-file.conf",
+                        e.getMessage()
+                );
+            }
+            Assert.assertEquals(1978, writer.getOutBufferSize());
+            Assert.assertEquals("/log-file.conf", writer.getLocation());
+            Assert.assertEquals("127.0.0.1:8989", writer.getAlertTargets());
+        });
+    }
+
+    @Test
+    public void testBindPropertiesDefaultAlertHost() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setDefaultAlertHost("127.0.0.1");
+            writer.setAlertTargets("\"\"");
+            writer.bindProperties(LogFactory.INSTANCE);
+            Assert.assertNotNull(LogAlertSocket.localHostIp);
+            Assert.assertEquals("127.0.0.1", writer.getDefaultAlertHost());
+        });
+    }
+
+    @Test
+    public void testBindPropertiesDefaultAlertHostBadValue() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setDefaultAlertHost("pineapple");
+            writer.setAlertTargets("\"\"");
+            try {
+                writer.bindProperties(LogFactory.INSTANCE);
+            } catch (NetworkError e) {
+                Assert.assertEquals("[0] invalid address [pineapple]", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testBindPropertiesDefaultAlertPort() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setDefaultAlertPort(String.valueOf(12));
+            writer.setAlertTargets("\"\"");
+            writer.bindProperties(LogFactory.INSTANCE);
+            Assert.assertNotNull(LogAlertSocket.localHostIp);
+            Assert.assertEquals(12, writer.getDefaultAlertPort());
+        });
+    }
+
+    @Test
+    public void testBindPropertiesDefaultAlertPortBadValue() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setDefaultAlertPort("pineapple");
+            writer.setAlertTargets("\"\"");
+            try {
+                writer.bindProperties(LogFactory.INSTANCE);
+            } catch (LogError e) {
+                Assert.assertEquals("Invalid value for defaultAlertPort: pineapple", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testBindPropertiesInBufferSize() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setInBufferSize(String.valueOf(12));
+            writer.setAlertTargets("\"\"");
+            writer.bindProperties(LogFactory.INSTANCE);
+            Assert.assertNotNull(LogAlertSocket.localHostIp);
+            Assert.assertEquals(12, writer.getInBufferSize());
+        });
+    }
+
+    @Test
+    public void testBindPropertiesInBufferSizeBadValue() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setInBufferSize("anaconda");
+            writer.setAlertTargets("\"\"");
+            try {
+                writer.bindProperties(LogFactory.INSTANCE);
+            } catch (LogError e) {
+                Assert.assertEquals("Invalid value for inBufferSize: anaconda", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testBindPropertiesLocationDefault() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setAlertTargets("");
+            writer.setLocation("");
+            writer.bindProperties(LogFactory.INSTANCE);
+            Assert.assertEquals("/alert-manager-tpt.json", writer.getLocation());
+        });
+    }
+
+    @Test
+    public void testBindPropertiesOutBufferSize() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setOutBufferSize(String.valueOf(12));
+            writer.setAlertTargets("\"\"");
+            writer.bindProperties(LogFactory.INSTANCE);
+            Assert.assertNotNull(LogAlertSocket.localHostIp);
+            Assert.assertEquals(12, writer.getOutBufferSize());
+        });
+    }
+
+    @Test
+    public void testBindPropertiesOutBufferSize_BadValue() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setOutBufferSize("coconut");
+            writer.setAlertTargets("\"\"");
+            try {
+                writer.bindProperties(LogFactory.INSTANCE);
+            } catch (LogError e) {
+                Assert.assertEquals("Invalid value for outBufferSize: coconut", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testBindPropertiesReconnectDelay() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setReconnectDelay(String.valueOf(50));
+            writer.setAlertTargets("\"\"");
+            writer.bindProperties(LogFactory.INSTANCE);
+            Assert.assertNotNull(LogAlertSocket.localHostIp);
+            Assert.assertEquals(50_000_000, writer.getReconnectDelay());
+        });
+    }
+
+    @Test
+    public void testBindPropertiesReconnectDelayBadValue() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setReconnectDelay("banana");
+            writer.setAlertTargets("\"\"");
+            try {
+                writer.bindProperties(LogFactory.INSTANCE);
+            } catch (LogError e) {
+                Assert.assertEquals("Invalid value for reconnectDelay: banana", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testBindPropertiesTemplateFileDoesNotExist() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setLocation("some-silly-path.conf");
+            try {
+                writer.bindProperties(LogFactory.INSTANCE);
+                Assert.fail();
+            } catch (LogError e) {
+                Assert.assertEquals("Cannot read some-silly-path.conf [errno=2]", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testBindPropertiesTemplateFileDoesNotHaveMessageKey() throws Exception {
+        withLogAlertSocketWriter(writer -> {
+            writer.setLocation("/alert-manager-tpt-test-missing-message-key.json");
+            try {
+                writer.bindProperties(LogFactory.INSTANCE);
+                Assert.fail();
+            } catch (LogError e) {
+                Assert.assertEquals(
+                        "Bad template, no ${ALERT_MESSAGE} declaration found /alert-manager-tpt-test-missing-message-key.json",
+                        e.getMessage()
+                );
+            }
+        });
     }
 
     @Test
@@ -227,7 +419,7 @@ public class LogAlertSocketWriterTest {
                                         "    }\n" +
                                         "  }\n" +
                                         "]\n" +
-                                "\n",
+                                        "\n",
                                 writer.getAlertSink()
                         );
 
@@ -237,203 +429,6 @@ public class LogAlertSocketWriterTest {
                         Unsafe.free(logRecordBuffPtr, logRecordBuffSize, MemoryTag.NATIVE_DEFAULT);
                     }
                 });
-    }
-
-    @Test
-    public void testBindPropertiesBadTemplateFile() throws Exception {
-        withLogAlertSocketWriter(writer -> {
-            writer.bindProperties(LogFactory.INSTANCE);
-            Assert.assertEquals(LogAlertSocket.OUT_BUFFER_SIZE, writer.getOutBufferSize());
-            Assert.assertEquals(LogAlertSocketWriter.DEFAULT_ALERT_TPT_FILE, writer.getLocation());
-            Assert.assertEquals(LogAlertSocket.DEFAULT_HOST + ":" + LogAlertSocket.DEFAULT_PORT, writer.getAlertTargets());
-            writer.close();
-
-            writer.setOutBufferSize("1978");
-            writer.setLocation("/log-file.conf");
-            writer.setAlertTargets("127.0.0.1:8989");
-            try {
-                writer.bindProperties(LogFactory.INSTANCE);
-                Assert.fail();
-            } catch (LogError e) {
-                Assert.assertEquals(
-                        "Bad template, no ${ALERT_MESSAGE} declaration found /log-file.conf",
-                        e.getMessage()
-                );
-            }
-            Assert.assertEquals(1978, writer.getOutBufferSize());
-            Assert.assertEquals("/log-file.conf", writer.getLocation());
-            Assert.assertEquals("127.0.0.1:8989", writer.getAlertTargets());
-        });
-    }
-
-    @Test
-    public void testBindPropertiesTemplateFileDoesNotExist() throws Exception {
-        withLogAlertSocketWriter(writer -> {
-            writer.setLocation("some-silly-path.conf");
-            try {
-                writer.bindProperties(LogFactory.INSTANCE);
-                Assert.fail();
-            } catch (LogError e) {
-                Assert.assertEquals("Cannot read some-silly-path.conf [errno=2]", e.getMessage());
-            }
-        });
-    }
-
-    @Test
-    public void testBindPropertiesTemplateFileDoesNotHaveMessageKey() throws Exception {
-        withLogAlertSocketWriter(writer -> {
-            writer.setLocation("/alert-manager-tpt-test-missing-message-key.json");
-            try {
-                writer.bindProperties(LogFactory.INSTANCE);
-                Assert.fail();
-            } catch (LogError e) {
-                Assert.assertEquals(
-                        "Bad template, no ${ALERT_MESSAGE} declaration found /alert-manager-tpt-test-missing-message-key.json",
-                        e.getMessage()
-                );
-            }
-        });
-    }
-
-    @Test
-    public void testBindPropertiesLocationDefault() throws Exception {
-        withLogAlertSocketWriter(writer -> {
-            writer.setAlertTargets("");
-            writer.setLocation("");
-            writer.bindProperties(LogFactory.INSTANCE);
-            Assert.assertEquals("/alert-manager-tpt.json", writer.getLocation());
-        });
-    }
-
-    @Test
-    public void testBindPropertiesAlertTargetsDefault() throws Exception {
-        withLogAlertSocketWriter(writer -> {
-            writer.setOutBufferSize(String.valueOf(1024));
-            writer.setAlertTargets("\"\"");
-            writer.bindProperties(LogFactory.INSTANCE);
-            Assert.assertNotNull(LogAlertSocket.localHostIp);
-            Assert.assertEquals("127.0.0.1:9093", writer.getAlertTargets());
-        });
-    }
-
-    @Test
-    public void testBindPropertiesReconnectDelay() throws Exception {
-        withLogAlertSocketWriter(writer -> {
-            writer.setReconnectDelay(String.valueOf(50));
-            writer.setAlertTargets("\"\"");
-            writer.bindProperties(LogFactory.INSTANCE);
-            Assert.assertNotNull(LogAlertSocket.localHostIp);
-            Assert.assertEquals(50_000_000, writer.getReconnectDelay());
-        });
-    }
-
-    @Test
-    public void testBindPropertiesReconnectDelayBadValue() throws Exception {
-        withLogAlertSocketWriter(writer -> {
-            writer.setReconnectDelay("banana");
-            writer.setAlertTargets("\"\"");
-            try {
-                writer.bindProperties(LogFactory.INSTANCE);
-            } catch (LogError e) {
-                Assert.assertEquals("Invalid value for reconnectDelay: banana", e.getMessage());
-            }
-        });
-    }
-
-    @Test
-    public void testBindPropertiesInBufferSize() throws Exception {
-        withLogAlertSocketWriter(writer -> {
-            writer.setInBufferSize(String.valueOf(12));
-            writer.setAlertTargets("\"\"");
-            writer.bindProperties(LogFactory.INSTANCE);
-            Assert.assertNotNull(LogAlertSocket.localHostIp);
-            Assert.assertEquals(12, writer.getInBufferSize());
-        });
-    }
-
-    @Test
-    public void testBindPropertiesInBufferSizeBadValue() throws Exception {
-        withLogAlertSocketWriter(writer -> {
-            writer.setInBufferSize("anaconda");
-            writer.setAlertTargets("\"\"");
-            try {
-                writer.bindProperties(LogFactory.INSTANCE);
-            } catch (LogError e) {
-                Assert.assertEquals("Invalid value for inBufferSize: anaconda", e.getMessage());
-            }
-        });
-    }
-
-    @Test
-    public void testBindPropertiesDefaultAlertHost() throws Exception {
-        withLogAlertSocketWriter(writer -> {
-            writer.setDefaultAlertHost("127.0.0.1");
-            writer.setAlertTargets("\"\"");
-            writer.bindProperties(LogFactory.INSTANCE);
-            Assert.assertNotNull(LogAlertSocket.localHostIp);
-            Assert.assertEquals("127.0.0.1", writer.getDefaultAlertHost());
-        });
-    }
-
-    @Test
-    public void testBindPropertiesDefaultAlertHostBadValue() throws Exception {
-        withLogAlertSocketWriter(writer -> {
-            writer.setDefaultAlertHost("pineapple");
-            writer.setAlertTargets("\"\"");
-            try {
-                writer.bindProperties(LogFactory.INSTANCE);
-            } catch (NetworkError e) {
-                Assert.assertEquals("[0] invalid address [pineapple]", e.getMessage());
-            }
-        });
-    }
-
-    @Test
-    public void testBindPropertiesDefaultAlertPort() throws Exception {
-        withLogAlertSocketWriter(writer -> {
-            writer.setDefaultAlertPort(String.valueOf(12));
-            writer.setAlertTargets("\"\"");
-            writer.bindProperties(LogFactory.INSTANCE);
-            Assert.assertNotNull(LogAlertSocket.localHostIp);
-            Assert.assertEquals(12, writer.getDefaultAlertPort());
-        });
-    }
-
-    @Test
-    public void testBindPropertiesDefaultAlertPortBadValue() throws Exception {
-        withLogAlertSocketWriter(writer -> {
-            writer.setDefaultAlertPort("pineapple");
-            writer.setAlertTargets("\"\"");
-            try {
-                writer.bindProperties(LogFactory.INSTANCE);
-            } catch (LogError e) {
-                Assert.assertEquals("Invalid value for defaultAlertPort: pineapple", e.getMessage());
-            }
-        });
-    }
-
-    @Test
-    public void testBindPropertiesOutBufferSize() throws Exception {
-        withLogAlertSocketWriter(writer -> {
-            writer.setOutBufferSize(String.valueOf(12));
-            writer.setAlertTargets("\"\"");
-            writer.bindProperties(LogFactory.INSTANCE);
-            Assert.assertNotNull(LogAlertSocket.localHostIp);
-            Assert.assertEquals(12, writer.getOutBufferSize());
-        });
-    }
-
-    @Test
-    public void testBindPropertiesOutBufferSize_BadValue() throws Exception {
-        withLogAlertSocketWriter(writer -> {
-            writer.setOutBufferSize("coconut");
-            writer.setAlertTargets("\"\"");
-            try {
-                writer.bindProperties(LogFactory.INSTANCE);
-            } catch (LogError e) {
-                Assert.assertEquals("Invalid value for outBufferSize: coconut", e.getMessage());
-            }
-        });
     }
 
     @Test
@@ -581,5 +576,9 @@ public class LogAlertSocketWriterTest {
                 consumer.accept(writer);
             }
         });
+    }
+
+    static {
+        DateLocaleFactory.load();
     }
 }

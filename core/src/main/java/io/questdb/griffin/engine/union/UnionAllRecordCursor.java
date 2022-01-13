@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.engine.union;
 
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.std.Misc;
 
 class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
@@ -39,14 +39,6 @@ class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
     private RecordCursor symbolCursor;
     private final NextMethod nextMaster = this::nextMaster;
 
-    void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
-        this.masterCursor = masterCursor;
-        this.slaveCursor = slaveCursor;
-        this.masterRecord = masterCursor.getRecord();
-        this.slaveRecord = slaveCursor.getRecord();
-        toTop();
-    }
-
     @Override
     public void close() {
         Misc.free(this.masterCursor);
@@ -59,12 +51,13 @@ class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     @Override
-    public boolean hasNext() {
-        return nextMethod.next();
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return symbolCursor.getSymbolTable(columnIndex);
     }
 
-    private boolean nextSlave() {
-        return slaveCursor.hasNext();
+    @Override
+    public boolean hasNext() {
+        return nextMethod.next();
     }
 
     @Override
@@ -78,12 +71,28 @@ class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return symbolCursor.getSymbolTable(columnIndex);
+    public void toTop() {
+        record.of(masterRecord);
+        nextMethod = nextMaster;
+        symbolCursor = masterCursor;
+        masterCursor.toTop();
+        slaveCursor.toTop();
     }
 
     private boolean nextMaster() {
         return masterCursor.hasNext() || switchToSlaveCursor();
+    }
+
+    private boolean nextSlave() {
+        return slaveCursor.hasNext();
+    }
+
+    void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
+        this.masterCursor = masterCursor;
+        this.slaveCursor = slaveCursor;
+        this.masterRecord = masterCursor.getRecord();
+        this.slaveRecord = slaveCursor.getRecord();
+        toTop();
     }
 
     private boolean switchToSlaveCursor() {
@@ -91,15 +100,6 @@ class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
         nextMethod = nextSlave;
         symbolCursor = slaveCursor;
         return nextMethod.next();
-    }
-
-    @Override
-    public void toTop() {
-        record.of(masterRecord);
-        nextMethod = nextMaster;
-        symbolCursor = masterCursor;
-        masterCursor.toTop();
-        slaveCursor.toTop();
     }
 
     interface NextMethod {

@@ -35,6 +35,79 @@ import io.questdb.std.str.Path;
 import static io.questdb.cairo.TableUtils.*;
 
 final class Mig607 {
+    public static void migrate(
+            FilesFacade ff,
+            Path path,
+            MigrationContext migrationContext,
+            MemoryMARW metaMem,
+            int columnCount,
+            long rowCount,
+            long columnNameOffset
+    ) {
+        final int plen2 = path.length();
+        if (rowCount > 0) {
+            long mem = migrationContext.getTempMemory();
+            long currentColumnNameOffset = columnNameOffset;
+            for (int i = 0; i < columnCount; i++) {
+                final int columnType = ColumnType.tagOf(
+                        metaMem.getInt(
+                                MigrationActions.prefixedBlockOffset(MigrationActions.META_OFFSET_COLUMN_TYPES_606, i, MigrationActions.META_COLUMN_DATA_SIZE_606)
+                        )
+                );
+                final CharSequence columnName = metaMem.getStr(currentColumnNameOffset);
+                currentColumnNameOffset += Vm.getStorageLength(columnName);
+                if (columnType == ColumnType.STRING || columnType == ColumnType.BINARY) {
+                    final long columnTop = readColumnTop(
+                            ff,
+                            path.trimTo(plen2),
+                            columnName,
+                            plen2,
+                            false
+                    );
+                    final long columnRowCount = rowCount - columnTop;
+                    long offset = columnRowCount * 8L;
+                    iFile(path.trimTo(plen2), columnName);
+                    long fd = TableUtils.openRW(ff, path, MigrationActions.LOG);
+                    try {
+                        long fileLen = ff.length(fd);
+
+                        if (fileLen < offset) {
+                            throw CairoException.instance(0).put("file is too short [path=").put(path).put("]");
+                        }
+
+                        TableUtils.allocateDiskSpace(ff, fd, offset + 8);
+                        long dataOffset = TableUtils.readLongOrFail(ff, fd, offset - 8L, mem, path);
+                        dFile(path.trimTo(plen2), columnName);
+                        final long fd2 = TableUtils.openRO(ff, path, MigrationActions.LOG);
+                        try {
+                            if (columnType == ColumnType.BINARY) {
+                                long len = TableUtils.readLongOrFail(ff, fd2, dataOffset, mem, path);
+                                if (len == -1) {
+                                    dataOffset += 8;
+                                } else {
+                                    dataOffset += 8 + len;
+                                }
+                            } else {
+                                long len = TableUtils.readIntOrFail(ff, fd2, dataOffset, mem, path);
+                                if (len == -1) {
+                                    dataOffset += 4;
+                                } else {
+                                    dataOffset += MigrationActions.prefixedBlockOffset(4, 2, len);
+                                }
+
+                            }
+                        } finally {
+                            ff.close(fd2);
+                        }
+                        TableUtils.writeLongOrFail(ff, fd, offset, dataOffset, mem, path);
+                    } finally {
+                        Vm.bestEffortClose(ff, MigrationActions.LOG, fd, true, offset + 8);
+                    }
+                }
+            }
+        }
+    }
+
     static void migrate(MigrationContext migrationContext) {
         final FilesFacade ff = migrationContext.getFf();
         Path path = migrationContext.getTablePath();
@@ -163,85 +236,12 @@ final class Mig607 {
     private static void trimFile(FilesFacade ff, Path path, long size) {
         long fd = TableUtils.openFileRWOrFail(ff, path);
         if (!ff.truncate(fd, size)) {
-            // This should never happens on migration but better to be on safe side anyway
+            // This should never happen on migration but better to be on safe side anyway
             throw CairoException.instance(ff.errno()).put("Cannot trim to size [file=").put(path).put(']');
         }
         if (!ff.close(fd)) {
-            // This should never happens on migration but better to be on safe side anyway
+            // This should never happen on migration but better to be on safe side anyway
             throw CairoException.instance(ff.errno()).put("Cannot close [file=").put(path).put(']');
-        }
-    }
-
-    public static void migrate(
-            FilesFacade ff,
-            Path path,
-            MigrationContext migrationContext,
-            MemoryMARW metaMem,
-            int columnCount,
-            long rowCount,
-            long columnNameOffset
-    ) {
-        final int plen2 = path.length();
-        if (rowCount > 0) {
-            long mem = migrationContext.getTempMemory();
-            long currentColumnNameOffset = columnNameOffset;
-            for (int i = 0; i < columnCount; i++) {
-                final int columnType = ColumnType.tagOf(
-                        metaMem.getInt(
-                                MigrationActions.prefixedBlockOffset(MigrationActions.META_OFFSET_COLUMN_TYPES_606, i, MigrationActions.META_COLUMN_DATA_SIZE_606)
-                        )
-                );
-                final CharSequence columnName = metaMem.getStr(currentColumnNameOffset);
-                currentColumnNameOffset += Vm.getStorageLength(columnName);
-                if (columnType == ColumnType.STRING || columnType == ColumnType.BINARY) {
-                    final long columnTop = readColumnTop(
-                            ff,
-                            path.trimTo(plen2),
-                            columnName,
-                            plen2,
-                            false
-                    );
-                    final long columnRowCount = rowCount - columnTop;
-                    long offset = columnRowCount * 8L;
-                    iFile(path.trimTo(plen2), columnName);
-                    long fd = TableUtils.openRW(ff, path, MigrationActions.LOG);
-                    try {
-                        long fileLen = ff.length(fd);
-
-                        if (fileLen < offset) {
-                            throw CairoException.instance(0).put("file is too short [path=").put(path).put("]");
-                        }
-
-                        TableUtils.allocateDiskSpace(ff, fd, offset + 8);
-                        long dataOffset = TableUtils.readLongOrFail(ff, fd, offset - 8L, mem, path);
-                        dFile(path.trimTo(plen2), columnName);
-                        final long fd2 = TableUtils.openRO(ff, path, MigrationActions.LOG);
-                        try {
-                            if (columnType == ColumnType.BINARY) {
-                                long len = TableUtils.readLongOrFail(ff, fd2, dataOffset, mem, path);
-                                if (len == -1) {
-                                    dataOffset += 8;
-                                } else {
-                                    dataOffset += 8 + len;
-                                }
-                            } else {
-                                long len = TableUtils.readIntOrFail(ff, fd2, dataOffset, mem, path);
-                                if (len == -1) {
-                                    dataOffset += 4;
-                                } else {
-                                    dataOffset += MigrationActions.prefixedBlockOffset(4, 2, len);
-                                }
-
-                            }
-                        } finally {
-                            ff.close(fd2);
-                        }
-                        TableUtils.writeLongOrFail(ff, fd, offset, dataOffset, mem, path);
-                    } finally {
-                        Vm.bestEffortClose(ff, MigrationActions.LOG, fd, true, offset + 8);
-                    }
-                }
-            }
         }
     }
 }

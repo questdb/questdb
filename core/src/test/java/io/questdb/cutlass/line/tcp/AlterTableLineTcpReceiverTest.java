@@ -234,15 +234,15 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             Assert.assertNull(exception3);
 
             assertTable("label\troom\twatts\ttimestamp\n" +
-                            "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
-                            "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
-                            "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
-                            "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
-                            "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
-                            "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
-                            "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n" +
-                            "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n" +
-                            "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n"
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n"
             );
 
             engine.releaseAllReaders();

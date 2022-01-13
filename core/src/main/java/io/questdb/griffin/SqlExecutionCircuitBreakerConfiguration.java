@@ -32,12 +32,12 @@ public interface SqlExecutionCircuitBreakerConfiguration {
 
     int getCircuitBreakerThrottle();
 
-    NetworkFacade getNetworkFacade();
-
-    boolean isEnabled();
-
     MicrosecondClock getClock();
 
     // maximum SQL execution time in micros
     long getMaxTime();
+
+    NetworkFacade getNetworkFacade();
+
+    boolean isEnabled();
 }

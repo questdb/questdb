@@ -358,6 +358,31 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLagUnitsDays() throws Exception {
+        assertLagUnits("alter table x1 set param commitLag = 7d", "1\tx1\tts\tDAY\t1000\t604800000000\n");
+    }
+
+    @Test
+    public void testLagUnitsHours() throws Exception {
+        assertLagUnits("alter table x1 set param commitLag = 2h", "1\tx1\tts\tDAY\t1000\t7200000000\n");
+    }
+
+    @Test
+    public void testLagUnitsMinutes() throws Exception {
+        assertLagUnits("alter table x1 set param commitLag = 10m", "1\tx1\tts\tDAY\t1000\t600000000\n");
+    }
+
+    @Test
+    public void testLagUnitsMs() throws Exception {
+        assertLagUnits("alter table x1 set param commitLag = 100ms", "1\tx1\tts\tDAY\t1000\t100000\n");
+    }
+
+    @Test
+    public void testLagUnitsUs() throws Exception {
+        assertLagUnits("alter table x1 set param commitLag = 10us", "1\tx1\tts\tDAY\t1000\t10\n");
+    }
+
+    @Test
     public void testSetMaxUncommitted() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -390,31 +415,6 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                     );
                 }
         );
-    }
-
-    @Test
-    public void testLagUnitsMs() throws Exception {
-        assertLagUnits("alter table x1 set param commitLag = 100ms", "1\tx1\tts\tDAY\t1000\t100000\n");
-    }
-
-    @Test
-    public void testLagUnitsUs() throws Exception {
-        assertLagUnits("alter table x1 set param commitLag = 10us", "1\tx1\tts\tDAY\t1000\t10\n");
-    }
-
-    @Test
-    public void testLagUnitsMinutes() throws Exception {
-        assertLagUnits("alter table x1 set param commitLag = 10m", "1\tx1\tts\tDAY\t1000\t600000000\n");
-    }
-
-    @Test
-    public void testLagUnitsHours() throws Exception {
-        assertLagUnits("alter table x1 set param commitLag = 2h", "1\tx1\tts\tDAY\t1000\t7200000000\n");
-    }
-
-    @Test
-    public void testLagUnitsDays() throws Exception {
-        assertLagUnits("alter table x1 set param commitLag = 7d", "1\tx1\tts\tDAY\t1000\t604800000000\n");
     }
 
     private void assertLagUnits(String sql, String expected) throws Exception {

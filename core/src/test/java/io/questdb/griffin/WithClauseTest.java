@@ -41,7 +41,7 @@ public class WithClauseTest extends AbstractGriffinTest {
                     "timestamp(timestamp)", sqlExecutionContext);
 
             // this is deliberately shuffled column in select to check that correct metadata is used on filtering
-            // latest by queries
+            // the latest by queries
             String expected = select("select groupId, _id, contactid, timestamp, _id from contact_events2 where groupId = 'g1' latest on timestamp partition by _id order by timestamp");
             Assert.assertTrue(expected.length() > 100);
 

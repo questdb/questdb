@@ -25,25 +25,25 @@
 package io.questdb.mp;
 
 public interface WorkerPoolConfiguration {
-    int[] getWorkerAffinity();
-
-    int getWorkerCount();
-
-    boolean haltOnError();
-
-    default boolean isDaemonPool() {
-        return false;
-    }
-
     default String getPoolName() {
         return "worker";
     }
+
+    default long getSleepThreshold() {
+        return 10000;
+    }
+
+    int[] getWorkerAffinity();
+
+    int getWorkerCount();
 
     default long getYieldThreshold() {
         return 10;
     }
 
-    default long getSleepThreshold() {
-        return 10000;
+    boolean haltOnError();
+
+    default boolean isDaemonPool() {
+        return false;
     }
 }

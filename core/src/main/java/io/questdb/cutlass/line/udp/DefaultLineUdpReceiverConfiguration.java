@@ -41,6 +41,16 @@ public class DefaultLineUdpReceiverConfiguration implements LineUdpReceiverConfi
     }
 
     @Override
+    public CairoSecurityContext getCairoSecurityContext() {
+        return AllowAllCairoSecurityContext.INSTANCE;
+    }
+
+    @Override
+    public int getCommitMode() {
+        return CommitMode.NOSYNC;
+    }
+
+    @Override
     public int getCommitRate() {
         return 1024 * 1024;
     }
@@ -71,18 +81,13 @@ public class DefaultLineUdpReceiverConfiguration implements LineUdpReceiverConfi
     }
 
     @Override
-    public LineProtoTimestampAdapter getTimestampAdapter() {
-        return LineProtoNanoTimestampAdapter.INSTANCE;
-    }
-
-    @Override
     public int getReceiveBufferSize() {
         return -1;
     }
 
     @Override
-    public CairoSecurityContext getCairoSecurityContext() {
-        return AllowAllCairoSecurityContext.INSTANCE;
+    public LineProtoTimestampAdapter getTimestampAdapter() {
+        return LineProtoNanoTimestampAdapter.INSTANCE;
     }
 
     @Override
@@ -103,10 +108,5 @@ public class DefaultLineUdpReceiverConfiguration implements LineUdpReceiverConfi
     @Override
     public int ownThreadAffinity() {
         return -1;
-    }
-
-    @Override
-    public int getCommitMode() {
-        return CommitMode.NOSYNC;
     }
 }

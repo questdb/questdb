@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
@@ -50,11 +50,6 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public char getChar(Record rec) {
-        return getBase().getChar(rec);
-    }
-
-    @Override
     public BinarySequence getBin(Record rec) {
         return getBase().getBin(rec);
     }
@@ -75,6 +70,11 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
+    public char getChar(Record rec) {
+        return getBase().getChar(rec);
+    }
+
+    @Override
     public long getDate(Record rec) {
         return getBase().getDate(rec);
     }
@@ -90,6 +90,26 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
+    public byte getGeoByte(Record rec) {
+        return getBase().getGeoByte(rec);
+    }
+
+    @Override
+    public int getGeoInt(Record rec) {
+        return getBase().getGeoInt(rec);
+    }
+
+    @Override
+    public long getGeoLong(Record rec) {
+        return getBase().getGeoLong(rec);
+    }
+
+    @Override
+    public short getGeoShort(Record rec) {
+        return getBase().getGeoShort(rec);
+    }
+
+    @Override
     public int getInt(Record rec) {
         return getBase().getInt(rec);
     }
@@ -97,6 +117,11 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     @Override
     public long getLong(Record rec) {
         return getBase().getLong(rec);
+    }
+
+    @Override
+    public void getLong256(Record rec, CharSink sink) {
+        getBase().getLong256(rec, sink);
     }
 
     @Override
@@ -155,33 +180,8 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public byte getGeoByte(Record rec) {
-        return getBase().getGeoByte(rec);
-    }
-
-    @Override
-    public short getGeoShort(Record rec) {
-        return getBase().getGeoShort(rec);
-    }
-
-    @Override
-    public int getGeoInt(Record rec) {
-        return getBase().getGeoInt(rec);
-    }
-
-    @Override
-    public long getGeoLong(Record rec) {
-        return getBase().getGeoLong(rec);
-    }
-
-    @Override
     public int getType() {
         return type;
-    }
-
-    @Override
-    public void getLong256(Record rec, CharSink sink) {
-        getBase().getLong256(rec, sink);
     }
 
     @Override

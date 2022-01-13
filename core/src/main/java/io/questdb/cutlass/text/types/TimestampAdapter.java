@@ -42,6 +42,10 @@ public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
         this.locale = null;
     }
 
+    public long getTimestamp(DirectByteCharSequence value) throws Exception {
+        return format.parse(value, locale);
+    }
+
     @Override
     public int getType() {
         return ColumnType.TIMESTAMP;
@@ -60,10 +64,6 @@ public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
         row.putDate(column, format.parse(value, locale));
-    }
-
-    public long getTimestamp(DirectByteCharSequence value) throws Exception {
-        return format.parse(value, locale);
     }
 
     public TimestampAdapter of(DateFormat format, DateLocale locale) {

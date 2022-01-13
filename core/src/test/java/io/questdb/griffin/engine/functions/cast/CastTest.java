@@ -55,31 +55,6 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testNullToBinary() throws Exception {
-        assertQuery(
-                "a\n",
-                "select a from tab",
-                "create table tab (a binary)",
-                null,
-                "insert into tab select cast(null as binary) from long_sequence(10)",
-                "a\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n",
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testBooleanToByte() throws Exception {
         assertQuery(
                 "a\n",
@@ -4001,6 +3976,31 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNullToBinary() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a binary)",
+                null,
+                "insert into tab select cast(null as binary) from long_sequence(10)",
+                "a\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testShortToBoolean() throws Exception {
         assertQuery(
                 "a\n",
@@ -4500,6 +4500,31 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testStrConstZeroToChar() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a char)",
+                null,
+                "insert into tab select cast('' as char) from long_sequence(10)",
+                "a\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testStrToByte() throws Exception {
         assertQuery(
                 "a\n",
@@ -4543,31 +4568,6 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "K\n" +
                         "A\n",
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testStrConstZeroToChar() throws Exception {
-        assertQuery(
-                "a\n",
-                "select a from tab",
-                "create table tab (a char)",
-                null,
-                "insert into tab select cast('' as char) from long_sequence(10)",
-                "a\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n",
                 true,
                 true,
                 true
@@ -4834,6 +4834,39 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testStrToSymbolSort() throws Exception {
+        assertQuery(
+                "x\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "a\n" +
+                        "a\n" +
+                        "a\n" +
+                        "a\n" +
+                        "a\n" +
+                        "a\n" +
+                        "b\n" +
+                        "b\n" +
+                        "b\n" +
+                        "b\n" +
+                        "b\n" +
+                        "c\n" +
+                        "c\n" +
+                        "c\n" +
+                        "c\n" +
+                        "c\n",
+                "select cast(a as symbol) x from tt order by x",
+                "create table tt as (select rnd_str('a','b','c', null) a from long_sequence(20))",
+                null,
+                true,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testStrToTimestamp() throws Exception {
         assertQuery(
                 "a\n",
@@ -4854,6 +4887,76 @@ public class CastTest extends AbstractGriffinTest {
                         "2019-03-11T10:20:33.123897Z\n",
                 true,
                 true,
+                true
+        );
+    }
+
+    @Test
+    public void testSymbolNocacheToLong256Sort() throws Exception {
+        assertQuery(
+                "x\n",
+                "select cast(a as long256) x from tt order by x",
+                "create table tt (a symbol nocache)",
+                null,
+                "insert into tt select rnd_symbol('0x00123455', '0x8802ff90', 'z', null, '0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926', '0x880z', '0xhello') a from long_sequence(20)",
+                "x\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
+                        "0x123455\n" +
+                        "0x123455\n" +
+                        "0x123455\n" +
+                        "0x123455\n" +
+                        "0x8802ff90\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testSymbolNocacheToStrSort() throws Exception {
+        assertQuery(
+                "x\n",
+                "select cast(a as string) x from tt order by x",
+                "create table tt (a symbol nocache)",
+                null,
+                "insert into tt select rnd_symbol('1','200','221', null) from long_sequence(20)",
+                "x\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n" +
+                        "200\n" +
+                        "200\n" +
+                        "200\n" +
+                        "200\n" +
+                        "200\n" +
+                        "221\n" +
+                        "221\n" +
+                        "221\n" +
+                        "221\n" +
+                        "221\n",
+                true,
+                false,
                 true
         );
     }
@@ -5077,41 +5180,6 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSymbolNocacheToLong256Sort() throws Exception {
-        assertQuery(
-                "x\n",
-                "select cast(a as long256) x from tt order by x",
-                "create table tt (a symbol nocache)",
-                null,
-                "insert into tt select rnd_symbol('0x00123455', '0x8802ff90', 'z', null, '0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926', '0x880z', '0xhello') a from long_sequence(20)",
-                "x\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
-                        "0x123455\n" +
-                        "0x123455\n" +
-                        "0x123455\n" +
-                        "0x123455\n" +
-                        "0x8802ff90\n",
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testSymbolToShort() throws Exception {
         assertQuery(
                 "a\n",
@@ -5212,74 +5280,6 @@ public class CastTest extends AbstractGriffinTest {
                         "221\n",
                 "select cast(a as string) x from tt order by x",
                 "create table tt as (select rnd_symbol('1','200','221', null) a from long_sequence(20))",
-                null,
-                true,
-                false,
-                true
-        );
-    }
-
-    @Test
-    public void testSymbolNocacheToStrSort() throws Exception {
-        assertQuery(
-                "x\n",
-                "select cast(a as string) x from tt order by x",
-                "create table tt (a symbol nocache)",
-                null,
-                "insert into tt select rnd_symbol('1','200','221', null) from long_sequence(20)",
-                "x\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "1\n" +
-                        "1\n" +
-                        "1\n" +
-                        "1\n" +
-                        "1\n" +
-                        "1\n" +
-                        "200\n" +
-                        "200\n" +
-                        "200\n" +
-                        "200\n" +
-                        "200\n" +
-                        "221\n" +
-                        "221\n" +
-                        "221\n" +
-                        "221\n" +
-                        "221\n",
-                true,
-                false,
-                true
-        );
-    }
-
-    @Test
-    public void testStrToSymbolSort() throws Exception {
-        assertQuery(
-                "x\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "a\n" +
-                        "a\n" +
-                        "a\n" +
-                        "a\n" +
-                        "a\n" +
-                        "a\n" +
-                        "b\n" +
-                        "b\n" +
-                        "b\n" +
-                        "b\n" +
-                        "b\n" +
-                        "c\n" +
-                        "c\n" +
-                        "c\n" +
-                        "c\n" +
-                        "c\n",
-                "select cast(a as symbol) x from tt order by x",
-                "create table tt as (select rnd_str('a','b','c', null) a from long_sequence(20))",
                 null,
                 true,
                 false,

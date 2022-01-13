@@ -31,10 +31,6 @@ import java.util.HashSet;
 
 public class CharSequenceHashSetTest {
 
-    private static CharSequence next(Rnd rnd) {
-        return rnd.nextChars((rnd.nextInt() & 15) + 10);
-    }
-
     @Test
     public void testNullHandling() {
         Rnd rnd = new Rnd();
@@ -100,5 +96,9 @@ public class CharSequenceHashSetTest {
         }
 
         Assert.assertEquals(0, set.size());
+    }
+
+    private static CharSequence next(Rnd rnd) {
+        return rnd.nextChars((rnd.nextInt() & 15) + 10);
     }
 }

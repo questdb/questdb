@@ -41,7 +41,7 @@ public class NotMatchCharFunctionFactoryTest extends AbstractGriffinTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);
-                    Assert.assertEquals(sink.toString().indexOf('H'),-1);
+                    Assert.assertEquals(sink.toString().indexOf('H'), -1);
                 }
             }
         });

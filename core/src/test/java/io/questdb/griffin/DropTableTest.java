@@ -82,7 +82,7 @@ public class DropTableTest extends AbstractGriffinTest {
                 compiler.compile("drop i_am_missing", sqlExecutionContext);
             } catch (SqlException e) {
                 Assert.assertEquals(5, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(),"'table' expected");
+                TestUtils.assertContains(e.getFlyweightMessage(), "'table' expected");
             }
         });
     }
@@ -110,6 +110,17 @@ public class DropTableTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDropUtf8Quoted() throws Exception {
+        assertMemoryLeak(() -> {
+            CompiledQuery cc = compiler.compile("create table 'научный руководитель'(a int)", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.CREATE_TABLE, cc.getType());
+
+            cc = compiler.compile("drop table 'научный руководитель'", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.DROP, cc.getType());
+        });
+    }
+
+    @Test
     public void testDropWithDotFailure() throws Exception {
         assertMemoryLeak(() -> {
             CompiledQuery cc = compiler.compile("create table 'x.csv' (a int)", sqlExecutionContext);
@@ -124,17 +135,6 @@ public class DropTableTest extends AbstractGriffinTest {
             }
 
             cc = compiler.compile("drop table 'x.csv'", sqlExecutionContext);
-            Assert.assertEquals(CompiledQuery.DROP, cc.getType());
-        });
-    }
-
-    @Test
-    public void testDropUtf8Quoted() throws Exception {
-        assertMemoryLeak(() -> {
-            CompiledQuery cc = compiler.compile("create table 'научный руководитель'(a int)", sqlExecutionContext);
-            Assert.assertEquals(CompiledQuery.CREATE_TABLE, cc.getType());
-
-            cc = compiler.compile("drop table 'научный руководитель'", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.DROP, cc.getType());
         });
     }

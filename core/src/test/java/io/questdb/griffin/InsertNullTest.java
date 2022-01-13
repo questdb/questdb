@@ -78,6 +78,50 @@ public class InsertNullTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertNullFromSelectOnDesignatedColumnMustFail() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                assertQuery(
+                        "sym\ty\n",
+                        "xx",
+                        "create table xx (sym symbol, y timestamp) timestamp(y)",
+                        "y",
+                        "insert into xx select 'AA', null from long_sequence(1)",
+                        "y\n",
+                        true,
+                        true,
+                        false
+                );
+                Assert.fail();
+            } catch (CairoException expected) {
+                Assert.assertTrue(expected.getMessage().contains("timestamp before 1970-01-01 is not allowed"));
+            }
+        });
+    }
+
+    @Test
+    public void testInsertNullFromValuesOnDesignatedColumnMustFail() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                assertQuery(
+                        "sym\ty\n",
+                        "xx",
+                        "create table xx (sym symbol, y timestamp) timestamp(y)",
+                        "y",
+                        "insert into xx values('AA', null)",
+                        "y\n",
+                        true,
+                        true,
+                        false
+                );
+                Assert.fail();
+            } catch (SqlException expected) {
+                Assert.assertEquals("[0] insert statement must populate timestamp", expected.getMessage());
+            }
+        });
+    }
+
+    @Test
     public void testInsertNullThenFilterEq() throws Exception {
         for (int i = 0; i < TYPES.length; i++) {
             if (i > 0) {
@@ -125,50 +169,6 @@ public class InsertNullTest extends AbstractGriffinTest {
                 tearDown();
             }
         }
-    }
-
-    @Test
-    public void testInsertNullFromSelectOnDesignatedColumnMustFail() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                assertQuery(
-                        "sym\ty\n",
-                        "xx",
-                        "create table xx (sym symbol, y timestamp) timestamp(y)",
-                        "y",
-                        "insert into xx select 'AA', null from long_sequence(1)",
-                        "y\n",
-                        true,
-                        true,
-                        false
-                );
-                Assert.fail();
-            } catch (CairoException expected) {
-                Assert.assertTrue(expected.getMessage().contains("timestamp before 1970-01-01 is not allowed"));
-            }
-        });
-    }
-
-    @Test
-    public void testInsertNullFromValuesOnDesignatedColumnMustFail() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                assertQuery(
-                        "sym\ty\n",
-                        "xx",
-                        "create table xx (sym symbol, y timestamp) timestamp(y)",
-                        "y",
-                        "insert into xx values('AA', null)",
-                        "y\n",
-                        true,
-                        true,
-                        false
-                );
-                Assert.fail();
-            } catch (SqlException expected) {
-                Assert.assertEquals("[0] insert statement must populate timestamp", expected.getMessage());
-            }
-        });
     }
 
     static String expectedNullInserts(String header, String nullValue, int count) {

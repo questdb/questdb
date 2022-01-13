@@ -31,10 +31,6 @@ import io.questdb.std.str.CharSink;
 public class DelegatingRecordImpl implements Record {
     private Record base;
 
-    public void of(Record base) {
-        this.base = base;
-    }
-
     @Override
     public BinarySequence getBin(int col) {
         return base.getBin(col);
@@ -73,6 +69,26 @@ public class DelegatingRecordImpl implements Record {
     @Override
     public float getFloat(int col) {
         return base.getFloat(col);
+    }
+
+    @Override
+    public byte getGeoByte(int col) {
+        return base.getGeoByte(col);
+    }
+
+    @Override
+    public int getGeoInt(int col) {
+        return base.getGeoInt(col);
+    }
+
+    @Override
+    public long getGeoLong(int col) {
+        return base.getGeoLong(col);
+    }
+
+    @Override
+    public short getGeoShort(int col) {
+        return base.getGeoShort(col);
     }
 
     @Override
@@ -145,23 +161,7 @@ public class DelegatingRecordImpl implements Record {
         return base.getTimestamp(col);
     }
 
-    @Override
-    public byte getGeoByte(int col) {
-        return base.getGeoByte(col);
-    }
-
-    @Override
-    public short getGeoShort(int col) {
-        return base.getGeoShort(col);
-    }
-
-    @Override
-    public int getGeoInt(int col) {
-        return base.getGeoInt(col);
-    }
-
-    @Override
-    public long getGeoLong(int col) {
-        return base.getGeoLong(col);
+    public void of(Record base) {
+        this.base = base;
     }
 }

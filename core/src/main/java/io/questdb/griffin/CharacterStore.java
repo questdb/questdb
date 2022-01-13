@@ -48,6 +48,13 @@ public class CharacterStore extends AbstractCharSink implements CharacterStoreEn
     }
 
     @Override
+    public void clear() {
+        csPool.clear();
+        size = 0;
+        next = null;
+    }
+
+    @Override
     public int length() {
         return size;
     }
@@ -99,13 +106,6 @@ public class CharacterStore extends AbstractCharSink implements CharacterStoreEn
         capacity *= 2;
         chars[size++] = c;
         LOG.info().$("resize [capacity=").$(capacity).$(']').$();
-    }
-
-    @Override
-    public void clear() {
-        csPool.clear();
-        size = 0;
-        next = null;
     }
 
     public class NameAssemblerCharSequence extends AbstractCharSequence implements Mutable {

@@ -63,10 +63,6 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
         setChar(mapValue, (char) 0);
     }
 
-    public void setChar(MapValue mapValue, char value) {
-        mapValue.putChar(this.valueIndex, value);
-    }
-
     @Override
     public Function getArg() {
         return this.arg;
@@ -75,5 +71,9 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
     @Override
     public char getChar(Record rec) {
         return rec.getChar(this.valueIndex);
+    }
+
+    public void setChar(MapValue mapValue, char value) {
+        mapValue.putChar(this.valueIndex, value);
     }
 }

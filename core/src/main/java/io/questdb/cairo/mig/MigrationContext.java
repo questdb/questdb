@@ -42,14 +42,6 @@ class MigrationContext {
     private long metadataFd;
     private Path tablePath2;
 
-    public MemoryMARW getRwMemory() {
-        return rwMemory;
-    }
-
-    public long getTempMemory() {
-        return tempMemory;
-    }
-
     public MigrationContext(
             CairoEngine engine,
             long mem,
@@ -87,12 +79,20 @@ class MigrationContext {
         return (int) engine.getNextTableId();
     }
 
+    public MemoryMARW getRwMemory() {
+        return rwMemory;
+    }
+
     public Path getTablePath() {
         return tablePath;
     }
 
     public Path getTablePath2() {
         return tablePath2;
+    }
+
+    public long getTempMemory() {
+        return tempMemory;
     }
 
     public long getTempMemory(int size) {

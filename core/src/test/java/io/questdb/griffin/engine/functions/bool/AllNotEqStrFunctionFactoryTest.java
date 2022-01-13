@@ -30,6 +30,38 @@ import org.junit.Test;
 public class AllNotEqStrFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
+    public void testConstant() throws Exception {
+        assertQuery(
+                "x\n" +
+                        "1\n",
+                "select * from long_sequence(1) where 'aaa' <> all('{abc,xyz}'::text[])",
+                null,
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testEmptyArray() throws Exception {
+        assertQuery(
+                "a\n" +
+                        "aaa\n" +
+                        "aaa\n" +
+                        "bbb\n" +
+                        "ccc\n" +
+                        "ccc\n",
+                "select * from tab where a <> all('{}'::text[])",
+                "create table tab as (select rnd_str('aaa', 'bbb', 'ccc') a from long_sequence(5));",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testMatch() throws Exception {
         assertQuery(
                 "a\n" +
@@ -61,24 +93,6 @@ public class AllNotEqStrFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testEmptyArray() throws Exception {
-        assertQuery(
-                "a\n" +
-                        "aaa\n" +
-                        "aaa\n" +
-                        "bbb\n" +
-                        "ccc\n" +
-                        "ccc\n",
-                "select * from tab where a <> all('{}'::text[])",
-                "create table tab as (select rnd_str('aaa', 'bbb', 'ccc') a from long_sequence(5));",
-                null,
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testNull() throws Exception {
         assertQuery(
                 "a\n",
@@ -88,20 +102,6 @@ public class AllNotEqStrFunctionFactoryTest extends AbstractGriffinTest {
                 true,
                 true,
                 false
-        );
-    }
-
-    @Test
-    public void testConstant() throws Exception {
-        assertQuery(
-                "x\n" +
-                        "1\n",
-                "select * from long_sequence(1) where 'aaa' <> all('{abc,xyz}'::text[])",
-                null,
-                null,
-                true,
-                true,
-                true
         );
     }
 

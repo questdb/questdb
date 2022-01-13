@@ -38,13 +38,13 @@ class GaugeImpl implements Gauge {
     }
 
     @Override
-    public void inc() {
-        counter.increment();
+    public void dec() {
+        counter.decrement();
     }
 
     @Override
-    public void dec() {
-        counter.decrement();
+    public void inc() {
+        counter.increment();
     }
 
     @Override
@@ -55,14 +55,14 @@ class GaugeImpl implements Gauge {
         PrometheusFormatUtils.appendNewLine(sink);
     }
 
+    private void appendMetricName(CharSink sink) {
+        sink.put(PrometheusFormatUtils.METRIC_NAME_PREFIX);
+        sink.put(name);
+    }
+
     private void appendType(CharSink sink) {
         sink.put(PrometheusFormatUtils.TYPE_PREFIX);
         sink.put(name);
         sink.put(" gauge\n");
-    }
-
-    private void appendMetricName(CharSink sink) {
-        sink.put(PrometheusFormatUtils.METRIC_NAME_PREFIX);
-        sink.put(name);
     }
 }

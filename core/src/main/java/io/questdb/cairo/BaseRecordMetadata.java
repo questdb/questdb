@@ -61,17 +61,17 @@ public abstract class BaseRecordMetadata implements RecordMetadata {
     }
 
     @Override
+    public long getColumnHash(int columnIndex) {
+        return getColumnQuick(columnIndex).getHash();
+    }
+
+    @Override
     public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
         final int index = columnNameIndexMap.keyIndex(columnName, lo, hi);
         if (index < 0) {
             return columnNameIndexMap.valueAt(index);
         }
         return -1;
-    }
-
-    @Override
-    public long getColumnHash(int columnIndex) {
-        return getColumnQuick(columnIndex).getHash();
     }
 
     @Override
@@ -85,13 +85,13 @@ public abstract class BaseRecordMetadata implements RecordMetadata {
     }
 
     @Override
-    public int getTimestampIndex() {
-        return timestampIndex;
+    public RecordMetadata getMetadata(int columnIndex) {
+        return getColumnQuick(columnIndex).getMetadata();
     }
 
     @Override
-    public RecordMetadata getMetadata(int columnIndex) {
-        return getColumnQuick(columnIndex).getMetadata();
+    public int getTimestampIndex() {
+        return timestampIndex;
     }
 
     @Override

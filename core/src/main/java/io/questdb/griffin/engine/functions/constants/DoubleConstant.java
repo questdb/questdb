@@ -37,7 +37,7 @@ public class DoubleConstant extends DoubleFunction implements ConstantFunction {
     }
 
     public static DoubleConstant newInstance(double value) {
-        return  value == value ? new DoubleConstant(value) : DoubleConstant.NULL;
+        return value == value ? new DoubleConstant(value) : DoubleConstant.NULL;
     }
 
     @Override

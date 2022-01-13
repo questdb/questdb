@@ -48,6 +48,11 @@ public class IntervalBwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
     }
 
     @Override
+    public void close() {
+        Misc.free(intervals);
+    }
+
+    @Override
     public DataFrameCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         cursor.of(getReader(executionContext.getCairoSecurityContext()), executionContext);
         return cursor;
@@ -56,11 +61,6 @@ public class IntervalBwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
     @Override
     public int getOrder() {
         return ORDER_DESC;
-    }
-
-    @Override
-    public void close() {
-        Misc.free(intervals);
     }
 
 }

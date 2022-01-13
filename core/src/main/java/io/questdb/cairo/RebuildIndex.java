@@ -47,29 +47,34 @@ import static io.questdb.cairo.TableUtils.lockName;
  */
 public class RebuildIndex implements Closeable, Mutable {
     private static final int ALL = -1;
+    private static final Log LOG = LogFactory.getLog(RebuildIndex.class);
     private final Path path = new Path();
     private final MemoryMAR ddlMem = Vm.getMARInstance();
-
+    private final MemoryMR indexMem = Vm.getMRInstance();
+    private final SymbolColumnIndexer indexer = new SymbolColumnIndexer();
+    private final StringSink tempStringSink = new StringSink();
     private int rootLen;
     private CairoConfiguration configuration;
     private long lockFd;
-    private final MemoryMR indexMem = Vm.getMRInstance();
-    private static final Log LOG = LogFactory.getLog(RebuildIndex.class);
     private TableReaderMetadata metadata;
-    private final SymbolColumnIndexer indexer = new SymbolColumnIndexer();
-    private final StringSink tempStringSink = new StringSink();
+
+    @Override
+    public void clear() {
+        path.trimTo(0);
+        tempStringSink.clear();
+    }
+
+    @Override
+    public void close() {
+        this.path.close();
+        Misc.free(metadata);
+    }
 
     public RebuildIndex of(CharSequence tablePath, CairoConfiguration configuration) {
         this.path.concat(tablePath);
         this.rootLen = tablePath.length();
         this.configuration = configuration;
         return this;
-    }
-
-    @Override
-    public void clear() {
-        path.trimTo(0);
-        tempStringSink.clear();
     }
 
     public void rebuildAll() {
@@ -148,6 +153,54 @@ public class RebuildIndex implements Closeable, Mutable {
         }
     }
 
+    private void createIndexFiles(CharSequence columnName, int indexValueBlockCapacity, int plen, FilesFacade ff) {
+        try {
+            BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
+            try {
+                LOG.info().$("writing ").utf8(path).$();
+                ddlMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WRITER);
+                BitmapIndexWriter.initKeyMemory(ddlMem, indexValueBlockCapacity);
+            } catch (CairoException e) {
+                // looks like we could not create key file properly
+                // lets not leave half-baked file sitting around
+                LOG.error()
+                        .$("could not create index [name=").utf8(path)
+                        .$(", errno=").$(e.getErrno())
+                        .$(']').$();
+                if (!ff.remove(path)) {
+                    LOG.error()
+                            .$("could not remove '").utf8(path).$("'. Please remove MANUALLY.")
+                            .$("[errno=").$(ff.errno())
+                            .$(']').$();
+                }
+                throw e;
+            } finally {
+                ddlMem.close();
+            }
+            if (!ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName))) {
+                LOG.error().$("could not create index [name=").utf8(path).$(']').$();
+                throw CairoException.instance(ff.errno()).put("could not create index [name=").put(path).put(']');
+            }
+            LOG.info().$("writing ").utf8(path).$();
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
+    private void lock(FilesFacade ff) {
+        try {
+            path.trimTo(rootLen);
+            lockName(path);
+            this.lockFd = TableUtils.lock(ff, path);
+        } finally {
+            path.trimTo(rootLen);
+        }
+
+        if (this.lockFd == -1L) {
+            throw CairoException.instance(ff.errno()).put("Cannot lock table: ").put(path.$());
+        }
+    }
+
     private void rebuildIndex(
             int rebuildColumnIndex,
             FilesFacade ff,
@@ -213,47 +266,19 @@ public class RebuildIndex implements Closeable, Mutable {
         }
     }
 
-    private void createIndexFiles(CharSequence columnName, int indexValueBlockCapacity, int plen, FilesFacade ff) {
-        try {
-            BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
+    private void releaseLock(FilesFacade ff) {
+        if (lockFd != -1L) {
+            ff.close(lockFd);
             try {
-                LOG.info().$("writing ").utf8(path).$();
-                ddlMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WRITER);
-                BitmapIndexWriter.initKeyMemory(ddlMem, indexValueBlockCapacity);
-            } catch (CairoException e) {
-                // looks like we could not create key file properly
-                // lets not leave half-baked file sitting around
-                LOG.error()
-                        .$("could not create index [name=").utf8(path)
-                        .$(", errno=").$(e.getErrno())
-                        .$(']').$();
-                if (!ff.remove(path)) {
-                    LOG.error()
-                            .$("could not remove '").utf8(path).$("'. Please remove MANUALLY.")
-                            .$("[errno=").$(ff.errno())
-                            .$(']').$();
+                path.trimTo(rootLen);
+                lockName(path);
+                if (ff.exists(path) && !ff.remove(path)) {
+                    throw CairoException.instance(ff.errno()).put("Cannot remove ").put(path);
                 }
-                throw e;
             } finally {
-                ddlMem.close();
+                path.trimTo(rootLen);
             }
-            if (!ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName))) {
-                LOG.error().$("could not create index [name=").utf8(path).$(']').$();
-                throw CairoException.instance(ff.errno()).put("could not create index [name=").put(path).put(']');
-            }
-            LOG.info().$("writing ").utf8(path).$();
-        } finally {
-            path.trimTo(plen);
         }
-    }
-
-    private void removeIndexFiles(CharSequence columnName, FilesFacade ff) {
-        final int plen = path.length();
-        BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
-        removeFile(path, ff);
-
-        BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName);
-        removeFile(path, ff);
     }
 
     private void removeFile(Path path, FilesFacade ff) {
@@ -268,38 +293,12 @@ public class RebuildIndex implements Closeable, Mutable {
         }
     }
 
-    private void lock(FilesFacade ff) {
-        try {
-            path.trimTo(rootLen);
-            lockName(path);
-            this.lockFd = TableUtils.lock(ff, path);
-        } finally {
-            path.trimTo(rootLen);
-        }
+    private void removeIndexFiles(CharSequence columnName, FilesFacade ff) {
+        final int plen = path.length();
+        BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
+        removeFile(path, ff);
 
-        if (this.lockFd == -1L) {
-            throw CairoException.instance(ff.errno()).put("Cannot lock table: ").put(path.$());
-        }
-    }
-
-    @Override
-    public void close() {
-        this.path.close();
-        Misc.free(metadata);
-    }
-
-    private void releaseLock(FilesFacade ff) {
-        if (lockFd != -1L) {
-            ff.close(lockFd);
-            try {
-                path.trimTo(rootLen);
-                lockName(path);
-                if (ff.exists(path) && !ff.remove(path)) {
-                    throw CairoException.instance(ff.errno()).put("Cannot remove ").put(path);
-                }
-            } finally {
-                path.trimTo(rootLen);
-            }
-        }
+        BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName);
+        removeFile(path, ff);
     }
 }

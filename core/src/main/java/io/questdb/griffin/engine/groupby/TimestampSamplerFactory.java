@@ -80,7 +80,7 @@ public final class TimestampSamplerFactory {
 
             return createTimestampSampler(n, cs.charAt(k), position + k);
         } catch (NumericException ignore) {
-            // we are parsing a pre-validated number
+            // we are parsing a pre-validated number,
             // but we have to deal with checked exception anyway
             assert false;
         }

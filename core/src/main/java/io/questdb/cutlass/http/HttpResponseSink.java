@@ -40,20 +40,7 @@ import java.io.Closeable;
 public class HttpResponseSink implements Closeable, Mutable {
     private final static Log LOG = LogFactory.getLog(HttpResponseSink.class);
     private static final IntObjHashMap<String> httpStatusMap = new IntObjHashMap<>();
-
-    static {
-        httpStatusMap.put(200, "OK");
-        httpStatusMap.put(206, "Partial content");
-        httpStatusMap.put(304, "Not Modified");
-        httpStatusMap.put(400, "Bad request");
-        httpStatusMap.put(404, "Not Found");
-        httpStatusMap.put(416, "Request range not satisfiable");
-        httpStatusMap.put(431, "Headers too large");
-        httpStatusMap.put(500, "Internal server error");
-    }
-
     private final ChunkBuffer buffer;
-    private ChunkBuffer compressOutBuffer;
     private final HttpResponseHeaderImpl headerImpl;
     private final SimpleResponseImpl simple = new SimpleResponseImpl();
     private final ResponseSinkImpl sink = new ResponseSinkImpl();
@@ -63,19 +50,19 @@ public class HttpResponseSink implements Closeable, Mutable {
     private final int responseBufferSize;
     private final boolean dumpNetworkTraffic;
     private final String httpVersion;
+    private final boolean connectionCloseHeader;
+    private ChunkBuffer compressOutBuffer;
     private long fd;
     private long z_streamp = 0;
     private boolean deflateBeforeSend = false;
     private int crc = 0;
     private long total = 0;
     private long totalBytesSent = 0;
-    private final boolean connectionCloseHeader;
     private boolean headersSent;
     private boolean chunkedRequestDone;
     private boolean compressedHeaderDone;
     private boolean compressedOutputReady;
     private boolean compressionComplete;
-
     public HttpResponseSink(HttpContextConfiguration configuration) {
         this.responseBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
         this.nf = configuration.getNetworkFacade();
@@ -84,10 +71,6 @@ public class HttpResponseSink implements Closeable, Mutable {
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.httpVersion = configuration.getHttpVersion();
         this.connectionCloseHeader = !configuration.getServerKeepAlive();
-    }
-
-    public HttpChunkedResponseSocket getChunkedSocket() {
-        return chunkedResponse;
     }
 
     @Override
@@ -110,12 +93,8 @@ public class HttpResponseSink implements Closeable, Mutable {
         buffer.close();
     }
 
-    public void setDeflateBeforeSend(boolean deflateBeforeSend) {
-        this.deflateBeforeSend = deflateBeforeSend;
-        if (z_streamp == 0 && deflateBeforeSend) {
-            z_streamp = Zip.deflateInit();
-            compressOutBuffer = new ChunkBuffer(responseBufferSize);
-        }
+    public HttpChunkedResponseSocket getChunkedSocket() {
+        return chunkedResponse;
     }
 
     public int getCode() {
@@ -149,6 +128,14 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
     }
 
+    public void setDeflateBeforeSend(boolean deflateBeforeSend) {
+        this.deflateBeforeSend = deflateBeforeSend;
+        if (z_streamp == 0 && deflateBeforeSend) {
+            z_streamp = Zip.deflateInit();
+            compressOutBuffer = new ChunkBuffer(responseBufferSize);
+        }
+    }
+
     private void deflate() {
         if (!compressedHeaderDone) {
             int len = Zip.gzipHeaderLen;
@@ -177,7 +164,7 @@ public class HttpResponseSink implements Closeable, Mutable {
             compressOutBuffer.onWrite(len);
             if (ret < 0) {
                 // This is not an error, zlib just couldn't do any work with the input/output buffers it was provided.
-                // This happens often (will depend on output buffer size) when there is no new input and zlib has finished generating
+                // This often happens (will depend on output buffer size) when there is no new input and zlib has finished generating
                 // output from previously provided input
                 if (ret != Zip.Z_BUF_ERROR || len != 0) {
                     throw HttpException.instance("could not deflate [ret=").put(ret);
@@ -223,6 +210,13 @@ public class HttpResponseSink implements Closeable, Mutable {
         compressOutBuffer.prepareToReadFromBuffer(true, finished);
     }
 
+    private void dumpBuffer(long buffer, int size) {
+        if (dumpNetworkTraffic && size > 0) {
+            StdoutSink.INSTANCE.put('<');
+            Net.dump(buffer, size);
+        }
+    }
+
     private void flushSingle() throws PeerDisconnectedException, PeerIsSlowToReadException {
         sendBuffer(buffer);
     }
@@ -233,6 +227,10 @@ public class HttpResponseSink implements Closeable, Mutable {
 
     HttpRawSocket getRawSocket() {
         return rawSocket;
+    }
+
+    long getTotalBytesSent() {
+        return totalBytesSent;
     }
 
     void of(long fd) {
@@ -280,17 +278,6 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
         assert sendBuf.getReadNAvailable() == 0;
         sendBuf.clearAndPrepareToWriteToBuffer();
-    }
-
-    private void dumpBuffer(long buffer, int size) {
-        if (dumpNetworkTraffic && size > 0) {
-            StdoutSink.INSTANCE.put('<');
-            Net.dump(buffer, size);
-        }
-    }
-
-    long getTotalBytesSent() {
-        return totalBytesSent;
     }
 
     public class HttpResponseHeaderImpl extends AbstractCharSink implements Mutable, HttpResponseHeader {
@@ -425,12 +412,6 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public CharSink put(char[] chars, int start, int len) {
-            buffer.put(chars, start, len);
-            return this;
-        }
-
-        @Override
         public CharSink put(float value, int scale) {
             if (Float.isNaN(value) || Float.isInfinite(value)) {
                 put("null");
@@ -446,6 +427,12 @@ public class HttpResponseSink implements Closeable, Mutable {
                 return this;
             }
             return super.put(value, scale);
+        }
+
+        @Override
+        public CharSink put(char[] chars, int start, int len) {
+            buffer.put(chars, start, len);
+            return this;
         }
 
         @Override
@@ -565,24 +552,24 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
+        public void shutdownWrite() {
+            nf.shutdown(fd, Net.SHUT_WR);
+        }
+
+        @Override
         public void status(int status, CharSequence contentType) {
             super.status(status, contentType);
             if (deflateBeforeSend) {
                 headerImpl.put("Content-Encoding: gzip").put(Misc.EOL);
             }
         }
-
-        @Override
-        public void shutdownWrite() {
-            nf.shutdown(fd, Net.SHUT_WR);
-        }
     }
 
     private class ChunkBuffer extends AbstractCharSink implements Closeable {
         private static final int MAX_CHUNK_HEADER_SIZE = 12;
         private static final String EOF_CHUNK = "\r\n00\r\n\r\n";
-        private long bufStart;
         private final long bufStartOfData;
+        private long bufStart;
         private long bufEndOfData;
         private long _wptr;
         private long _rptr;
@@ -602,50 +589,18 @@ public class HttpResponseSink implements Closeable, Mutable {
             }
         }
 
-        void clear() {
-            _wptr = _rptr = bufStartOfData;
-        }
-
-        long getReadAddress() {
-            assert _rptr != 0;
-            return _rptr;
-        }
-
-        long getReadNAvailable() {
-            return _wptr - _rptr;
-        }
-
-        void onRead(int nRead) {
-            assert nRead >= 0 && nRead <= getReadNAvailable();
-            _rptr += nRead;
-        }
-
-        long getWriteAddress(int len) {
-            assert _wptr != 0;
-            if (getWriteNAvailable() >= len) {
-                return _wptr;
-            }
-            throw NoSpaceLeftInResponseBufferException.INSTANCE;
-        }
-
-        long getWriteNAvailable() {
-            return bufEndOfData - _wptr;
-        }
-
-        void onWrite(int nWrite) {
-            assert nWrite >= 0 && nWrite <= getWriteNAvailable();
-            _wptr += nWrite;
-        }
-
-        void write64BitZeroPadding() {
-            Unsafe.getUnsafe().putLong(bufStartOfData - 8, 0);
-            Unsafe.getUnsafe().putLong(_wptr, 0);
-        }
-
         @Override
         public CharSink put(CharSequence cs) {
             int len = cs.length();
             Chars.asciiStrCpy(cs, len, getWriteAddress(len));
+            onWrite(len);
+            return this;
+        }
+
+        @Override
+        public CharSink put(CharSequence cs, int lo, int hi) {
+            int len = hi - lo;
+            Chars.asciiStrCpy(cs, lo, len, getWriteAddress(len));
             onWrite(len);
             return this;
         }
@@ -664,16 +619,43 @@ public class HttpResponseSink implements Closeable, Mutable {
             return this;
         }
 
-        @Override
-        public CharSink put(CharSequence cs, int lo, int hi) {
-            int len = hi - lo;
-            Chars.asciiStrCpy(cs, lo, len, getWriteAddress(len));
-            onWrite(len);
-            return this;
+        void clear() {
+            _wptr = _rptr = bufStartOfData;
         }
 
         void clearAndPrepareToWriteToBuffer() {
             _rptr = _wptr = bufStartOfData;
+        }
+
+        long getReadAddress() {
+            assert _rptr != 0;
+            return _rptr;
+        }
+
+        long getReadNAvailable() {
+            return _wptr - _rptr;
+        }
+
+        long getWriteAddress(int len) {
+            assert _wptr != 0;
+            if (getWriteNAvailable() >= len) {
+                return _wptr;
+            }
+            throw NoSpaceLeftInResponseBufferException.INSTANCE;
+        }
+
+        long getWriteNAvailable() {
+            return bufEndOfData - _wptr;
+        }
+
+        void onRead(int nRead) {
+            assert nRead >= 0 && nRead <= getReadNAvailable();
+            _rptr += nRead;
+        }
+
+        void onWrite(int nWrite) {
+            assert nWrite >= 0 && nWrite <= getWriteNAvailable();
+            _wptr += nWrite;
         }
 
         void prepareToReadFromBuffer(boolean addChunkHeader, boolean addEofChunk) {
@@ -694,5 +676,21 @@ public class HttpResponseSink implements Closeable, Mutable {
                 LOG.debug().$("end chunk sent [fd=").$(fd).$(']').$();
             }
         }
+
+        void write64BitZeroPadding() {
+            Unsafe.getUnsafe().putLong(bufStartOfData - 8, 0);
+            Unsafe.getUnsafe().putLong(_wptr, 0);
+        }
+    }
+
+    static {
+        httpStatusMap.put(200, "OK");
+        httpStatusMap.put(206, "Partial content");
+        httpStatusMap.put(304, "Not Modified");
+        httpStatusMap.put(400, "Bad request");
+        httpStatusMap.put(404, "Not Found");
+        httpStatusMap.put(416, "Request range not satisfiable");
+        httpStatusMap.put(431, "Headers too large");
+        httpStatusMap.put(500, "Internal server error");
     }
 }

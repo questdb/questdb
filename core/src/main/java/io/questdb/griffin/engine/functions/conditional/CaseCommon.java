@@ -43,6 +43,60 @@ public class CaseCommon {
     private static final ThreadLocal<ObjList<Function>> tlArgs = new ThreadLocal<>(ObjList::new);
     private static final ThreadLocal<IntList> tlArgPositions = new ThreadLocal<>(IntList::new);
 
+    static int getCommonType(int commonType, int valueType, int valuePos) throws SqlException {
+        if (commonType == -1 || ColumnType.isNull(commonType)) {
+            return valueType;
+        }
+        if (ColumnType.isNull(valueType)) {
+            return commonType;
+        }
+        final int type = typeEscalationMap.get(Numbers.encodeLowHighInts(commonType, valueType));
+
+        if (type == LongIntHashMap.NO_ENTRY_VALUE) {
+            throw SqlException.$(valuePos, "inconvertible types ").put(ColumnType.nameOf(valueType)).put(" to ").put(ColumnType.nameOf(commonType));
+        }
+        return type;
+    }
+
+    static Function getCastFunction(
+            Function arg,
+            int argPosition,
+            int toType,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        if (ColumnType.isNull(arg.getType())) {
+            return Constants.getNullConstant(toType);
+        }
+        final int keyIndex = castFactories.keyIndex(Numbers.encodeLowHighInts(arg.getType(), toType));
+        if (keyIndex < 0) {
+            FunctionFactory fact = castFactories.valueAt(keyIndex);
+            ObjList<Function> args = tlArgs.get();
+            args.clear();
+            args.add(arg);
+
+            IntList argPositions = tlArgPositions.get();
+            argPositions.clear();
+            argPositions.add(argPosition);
+            return fact.newInstance(0, args, argPositions, configuration, sqlExecutionContext);
+        }
+
+        return arg;
+    }
+
+    @NotNull
+    private static CaseFunctionConstructor getCaseFunctionConstructor(int position, int returnType) throws SqlException {
+        final CaseFunctionConstructor constructor = constructors.getQuick(returnType);
+        if (constructor == null) {
+            throw SqlException.$(position, "not implemented for type '").put(ColumnType.nameOf(returnType)).put('\'');
+        }
+        return constructor;
+    }
+
+    static Function getCaseFunction(int position, int returnType, CaseFunctionPicker picker, ObjList<Function> args) throws SqlException {
+        return getCaseFunctionConstructor(position, returnType).getInstance(position, picker, args);
+    }
+
     static {
         // self for all
         castFactories.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.LONG256), new CastByteToLong256FunctionFactory());
@@ -279,59 +333,5 @@ public class CaseCommon {
         constructors.extendAndSet(ColumnType.DATE, (position, picker, args) -> new DateCaseFunction(picker, args));
         constructors.extendAndSet(ColumnType.TIMESTAMP, (position, picker, args) -> new TimestampCaseFunction(picker, args));
         constructors.extendAndSet(ColumnType.BINARY, (position, picker, args) -> new BinCaseFunction(picker, args));
-    }
-
-    static int getCommonType(int commonType, int valueType, int valuePos) throws SqlException {
-        if (commonType == -1 || ColumnType.isNull(commonType)) {
-            return valueType;
-        }
-        if (ColumnType.isNull(valueType)) {
-            return commonType;
-        }
-        final int type = typeEscalationMap.get(Numbers.encodeLowHighInts(commonType, valueType));
-
-        if (type == LongIntHashMap.NO_ENTRY_VALUE) {
-            throw SqlException.$(valuePos, "inconvertible types ").put(ColumnType.nameOf(valueType)).put(" to ").put(ColumnType.nameOf(commonType));
-        }
-        return type;
-    }
-
-    static Function getCastFunction(
-            Function arg,
-            int argPosition,
-            int toType,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        if (ColumnType.isNull(arg.getType())) {
-            return Constants.getNullConstant(toType);
-        }
-        final int keyIndex = castFactories.keyIndex(Numbers.encodeLowHighInts(arg.getType(), toType));
-        if (keyIndex < 0) {
-            FunctionFactory fact = castFactories.valueAt(keyIndex);
-            ObjList<Function> args = tlArgs.get();
-            args.clear();
-            args.add(arg);
-
-            IntList argPositions = tlArgPositions.get();
-            argPositions.clear();
-            argPositions.add(argPosition);
-            return fact.newInstance(0, args, argPositions, configuration, sqlExecutionContext);
-        }
-
-        return arg;
-    }
-
-    @NotNull
-    private static CaseFunctionConstructor getCaseFunctionConstructor(int position, int returnType) throws SqlException {
-        final CaseFunctionConstructor constructor = constructors.getQuick(returnType);
-        if (constructor == null) {
-            throw SqlException.$(position, "not implemented for type '").put(ColumnType.nameOf(returnType)).put('\'');
-        }
-        return constructor;
-    }
-
-    static Function getCaseFunction(int position, int returnType, CaseFunctionPicker picker, ObjList<Function> args) throws SqlException {
-        return getCaseFunctionConstructor(position, returnType).getInstance(position, picker, args);
     }
 }

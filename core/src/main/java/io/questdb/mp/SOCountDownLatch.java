@@ -33,14 +33,8 @@ import java.util.concurrent.locks.LockSupport;
  */
 public class SOCountDownLatch implements CountDownLatchSPI {
     private static final long VALUE_OFFSET;
-
-    static {
-        VALUE_OFFSET = Unsafe.getFieldOffset(SOCountDownLatch.class, "count");
-    }
-
     private volatile int count = 0;
     private volatile Thread waiter = null;
-
     public SOCountDownLatch(int count) {
         this.count = count;
     }
@@ -108,5 +102,9 @@ public class SOCountDownLatch implements CountDownLatchSPI {
         if (waiter != null) {
             LockSupport.unpark(waiter);
         }
+    }
+
+    static {
+        VALUE_OFFSET = Unsafe.getFieldOffset(SOCountDownLatch.class, "count");
     }
 }

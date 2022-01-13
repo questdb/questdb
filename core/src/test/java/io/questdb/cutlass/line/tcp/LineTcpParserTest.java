@@ -31,8 +31,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.nio.charset.StandardCharsets;
-
 public class LineTcpParserTest extends BaseLineTcpContextTest {
     private final static LineTcpParser lineTcpParser = new LineTcpParser();
 
@@ -98,7 +96,7 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "0x1");
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "0x123a4");
 
-        // in this edge case, type is guessed as best as possible, later the parser would fail, its a feature
+        // in this edge case, type is guessed as good as possible, later the parser would fail, it's a feature
         assertType(LineTcpParser.ENTITY_TYPE_LONG256, "0x123a4i");
     }
 

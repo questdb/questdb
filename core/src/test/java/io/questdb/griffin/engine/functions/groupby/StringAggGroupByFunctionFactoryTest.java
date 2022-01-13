@@ -33,6 +33,34 @@ import org.junit.Test;
 public class StringAggGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
+    public void testConstantNull() throws Exception {
+        assertQuery(
+                "string_agg\n" +
+                        "\n",
+                "select string_agg(null, ',') from x",
+                "create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testConstantString() throws Exception {
+        assertQuery(
+                "string_agg\n" +
+                        "aaa,aaa,aaa,aaa,aaa\n",
+                "select string_agg('aaa', ',') from x",
+                "create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
+                null,
+                false,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testGroupKeyedUnsupported() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (" +
@@ -64,34 +92,6 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 null,
                 false,
                 false,
-                true
-        );
-    }
-
-    @Test
-    public void testConstantString() throws Exception {
-        assertQuery(
-                "string_agg\n" +
-                        "aaa,aaa,aaa,aaa,aaa\n",
-                "select string_agg('aaa', ',') from x",
-                "create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
-                null,
-                false,
-                false,
-                true
-        );
-    }
-
-    @Test
-    public void testConstantNull() throws Exception {
-        assertQuery(
-                "string_agg\n" +
-                        "\n",
-                "select string_agg(null, ',') from x",
-                "create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
-                null,
-                false,
-                true,
                 true
         );
     }

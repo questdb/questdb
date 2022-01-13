@@ -113,6 +113,11 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     @Override
+    public Record getRecordB() {
+        return recordB;
+    }
+
+    @Override
     public boolean hasNext() {
         if (nextRecordOffset != -1) {
             final long offset = nextRecordOffset;
@@ -124,13 +129,13 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     @Override
-    public Record getRecordB() {
-        return recordB;
+    public void recordAt(Record record, long row) {
+        ((RecordChainRecord) record).of(rowToDataOffset(row));
     }
 
     @Override
-    public void recordAt(Record record, long row) {
-        ((RecordChainRecord) record).of(rowToDataOffset(row));
+    public long size() {
+        return -1;
     }
 
     @Override
@@ -140,11 +145,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         } else {
             nextRecordOffset = 0L;
         }
-    }
-
-    @Override
-    public long size() {
-        return -1;
     }
 
     public void of(long nextRecordOffset) {
@@ -313,6 +313,30 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
 
         @Override
+        public byte getGeoByte(int col) {
+            // No column tops, return byte from mem.
+            return mem.getByte(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public int getGeoInt(int col) {
+            // No column tops, return int from mem.
+            return mem.getInt(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public long getGeoLong(int col) {
+            // No column tops, return long from mem.
+            return mem.getLong(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public short getGeoShort(int col) {
+            // No column tops, return short from mem.
+            return mem.getShort(fixedWithColumnOffset(col));
+        }
+
+        @Override
         public int getInt(int col) {
             return mem.getInt(fixedWithColumnOffset(col));
         }
@@ -376,30 +400,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         @Override
         public CharSequence getSymB(int col) {
             return symbolTableResolver.getSymbolTable(col).valueBOf(getInt(col));
-        }
-
-        @Override
-        public byte getGeoByte(int col) {
-            // No column tops, return byte from mem.
-            return mem.getByte(fixedWithColumnOffset(col));
-        }
-
-        @Override
-        public short getGeoShort(int col) {
-            // No column tops, return short from mem.
-            return mem.getShort(fixedWithColumnOffset(col));
-        }
-
-        @Override
-        public int getGeoInt(int col) {
-            // No column tops, return int from mem.
-            return mem.getInt(fixedWithColumnOffset(col));
-        }
-
-        @Override
-        public long getGeoLong(int col) {
-            // No column tops, return long from mem.
-            return mem.getLong(fixedWithColumnOffset(col));
         }
 
         private long fixedWithColumnOffset(int index) {

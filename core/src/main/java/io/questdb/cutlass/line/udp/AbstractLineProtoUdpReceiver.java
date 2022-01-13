@@ -43,6 +43,7 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
     protected final LineUdpLexer lexer;
     protected final LineUdpParserImpl parser;
     protected final NetworkFacade nf;
+    protected final int commitMode;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final SOCountDownLatch started = new SOCountDownLatch(1);
     private final SOCountDownLatch halted = new SOCountDownLatch(1);
@@ -50,7 +51,6 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
     protected long fd;
     protected int commitRate;
     protected long totalCount = 0;
-    protected final int commitMode;
 
     public AbstractLineProtoUdpReceiver(
             LineUdpReceiverConfiguration configuration,
@@ -113,13 +113,6 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
         }
     }
 
-    protected void halt() {
-        if (running.compareAndSet(true, false)) {
-            started.await();
-            halted.await();
-        }
-    }
-
     public void start() {
         if (configuration.ownThread() && running.compareAndSet(false, true)) {
             new Thread(() -> {
@@ -149,6 +142,13 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
             }
         } else {
             throw NetworkError.instance(nf.errno()).couldNotBindSocket("udp-line-server", configuration.getBindIPv4Address(), configuration.getPort());
+        }
+    }
+
+    protected void halt() {
+        if (running.compareAndSet(true, false)) {
+            started.await();
+            halted.await();
         }
     }
 

@@ -50,8 +50,9 @@ public final class AnalyticColumn extends QueryColumn {
         orderByDirection.clear();
     }
 
-    public ObjList<ExpressionNode> getPartitionBy() {
-        return partitionBy;
+    @Override
+    public AnalyticColumn of(CharSequence alias, ExpressionNode ast) {
+        return (AnalyticColumn) super.of(alias, ast);
     }
 
     public ObjList<ExpressionNode> getOrderBy() {
@@ -62,8 +63,7 @@ public final class AnalyticColumn extends QueryColumn {
         return orderByDirection;
     }
 
-    @Override
-    public AnalyticColumn of(CharSequence alias, ExpressionNode ast) {
-        return (AnalyticColumn) super.of(alias, ast);
+    public ObjList<ExpressionNode> getPartitionBy() {
+        return partitionBy;
     }
 }

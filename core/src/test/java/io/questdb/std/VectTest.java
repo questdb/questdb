@@ -39,6 +39,39 @@ public class VectTest {
     }
 
     @Test
+    public void testMemmove() {
+        int maxSize = 1024 * 1024;
+        int[] sizes = {1024, 4096, maxSize};
+        int buffSize = 1024 + 4096 + maxSize;
+        long from = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
+        long to = Unsafe.malloc(maxSize, MemoryTag.NATIVE_DEFAULT);
+
+        try {
+            // initialize from buffer
+            // with 1, 4, 8, 12 ... integers
+            for (int i = 0; i < buffSize; i += Integer.BYTES) {
+                Unsafe.getUnsafe().putInt(from + i, i);
+            }
+
+            int offset = 0;
+            for (int size : sizes) {
+                // move next portion of from into to
+                Vect.memmove(to, from + offset, size);
+
+                for (int i = 0; i < size; i += Integer.BYTES) {
+                    int actual = Unsafe.getUnsafe().getInt(to + i);
+                    Assert.assertEquals(i + offset, actual);
+                }
+
+                offset += size;
+            }
+        } finally {
+            Unsafe.free(from, buffSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(to, maxSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testMergeFourSameSize() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int count = 1_000_000;
@@ -185,53 +218,44 @@ public class VectTest {
     }
 
     @Test
-    public void testSort1M() {
-        testSort(1_000_000);
-    }
+    public void testResuffleInt64() {
+        int[] sizes = new int[]{0, 1, 3, 4, 5, 1024 * 1024 + 2};
+        int typeBytes = Long.BYTES;
+        int maxSize = sizes[sizes.length - 1];
+        long buffSize = maxSize * typeBytes;
 
-    @Test
-    public void testSortFour() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            for (int i = 0; i < 100; i++) {
-                testSort(4);
-            }
-        });
-    }
+        int indexBuffSize = maxSize * Long.BYTES * 2;
+        long index = Unsafe.malloc(indexBuffSize, MemoryTag.NATIVE_DEFAULT);
+        long dst = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
+        long src = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
 
-    @Test
-    public void testSortOne() {
-        final long indexAddr = Unsafe.malloc(2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-        try {
-            seedMem(1, indexAddr);
-            long expected = Unsafe.getUnsafe().getLong(indexAddr);
-            Vect.sortLongIndexAscInPlace(indexAddr, 1);
-            Assert.assertEquals(expected, Unsafe.getUnsafe().getLong(indexAddr));
-        } finally {
-            Unsafe.free(indexAddr, 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        for (int i = 0; i < maxSize; i++) {
+            long offset = (2 * i + 1) * Long.BYTES;
+            long expected = (i % 2 == 0) ? i + 1 : i - 1;
+            Unsafe.getUnsafe().putLong(index + offset, expected);
         }
-    }
 
-    @Test
-    public void testSetMemoryVanillaLong() {
-        int[] sizes = new int[]{0, 1, 3, 4, 5, 7, 9, 15, 20, 1024 * 1024 - 1, 1024 * 1024, 1024 * 1024 + 1, 2_000_000, 10_000_000};
-        long[] values = new long[]{-1, 0, 1, Long.MIN_VALUE, Long.MAX_VALUE, 0xabcd};
-        long buffSize = sizes[sizes.length - 1] * Long.BYTES;
-        long buffer = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
+        for (int i = 0; i < maxSize; i++) {
+            Unsafe.getUnsafe().putLong(src + i * Long.BYTES, i);
+        }
 
         try {
             for (int size : sizes) {
-                for (long val : values) {
-                    Vect.setMemoryLong(buffer, val, size);
-                    for (int i = 0; i < size; i++) {
-                        long actual = Unsafe.getUnsafe().getLong(buffer + i * Long.BYTES);
-                        if (val != actual) {
-                            Assert.assertEquals("Failed to set for size=" + size + ", value=" + val + ", pos=" + i, val, actual);
-                        }
+                Vect.indexReshuffle64Bit(src, dst, index, size);
+
+                for (int i = 0; i < size; i++) {
+                    long actual = Unsafe.getUnsafe().getLong(dst + i * typeBytes);
+                    long expected = (i % 2 == 0) ? i + 1 : i - 1;
+                    if (expected != actual) {
+                        Assert.assertEquals("Failed to init reshuffle size=" + size
+                                + ", expected=" + expected + ", pos=" + i, expected, actual);
                     }
                 }
             }
         } finally {
-            Unsafe.free(buffer, buffSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(index, indexBuffSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(src, buffSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(dst, buffSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -311,8 +335,32 @@ public class VectTest {
     }
 
     @Test
+    public void testSetMemoryVanillaLong() {
+        int[] sizes = new int[]{0, 1, 3, 4, 5, 7, 9, 15, 20, 1024 * 1024 - 1, 1024 * 1024, 1024 * 1024 + 1, 2_000_000, 10_000_000};
+        long[] values = new long[]{-1, 0, 1, Long.MIN_VALUE, Long.MAX_VALUE, 0xabcd};
+        long buffSize = sizes[sizes.length - 1] * Long.BYTES;
+        long buffer = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
+
+        try {
+            for (int size : sizes) {
+                for (long val : values) {
+                    Vect.setMemoryLong(buffer, val, size);
+                    for (int i = 0; i < size; i++) {
+                        long actual = Unsafe.getUnsafe().getLong(buffer + i * Long.BYTES);
+                        if (val != actual) {
+                            Assert.assertEquals("Failed to set for size=" + size + ", value=" + val + ", pos=" + i, val, actual);
+                        }
+                    }
+                }
+            }
+        } finally {
+            Unsafe.free(buffer, buffSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testSetMemoryVanillaShort() {
-        int[] sizes =  new int[]{ 1, 3, 4, 5, 6, 7, 8, 10, 12, 15, 19, 1024 * 1024, 1024 * 1024 + 1, 2_000_000, 10_000_000};
+        int[] sizes = new int[]{1, 3, 4, 5, 6, 7, 8, 10, 12, 15, 19, 1024 * 1024, 1024 * 1024 + 1, 2_000_000, 10_000_000};
         int[] offsetBytes = new int[]{4};
         int maxOffset = 16;
 
@@ -322,7 +370,7 @@ public class VectTest {
         long buffer = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
 
         try {
-            for (int offset: offsetBytes) {
+            for (int offset : offsetBytes) {
                 for (int size : sizes) {
                     for (short val : values) {
                         Vect.setMemoryShort(buffer + offset, val, size);
@@ -341,77 +389,29 @@ public class VectTest {
     }
 
     @Test
-    public void testResuffleInt64() {
-        int[] sizes = new int[]{0, 1, 3, 4, 5, 1024 * 1024 + 2};
-        int typeBytes = Long.BYTES;
-        int maxSize = sizes[sizes.length - 1];
-        long buffSize = maxSize * typeBytes;
-
-        int indexBuffSize = maxSize * Long.BYTES * 2;
-        long index = Unsafe.malloc(indexBuffSize, MemoryTag.NATIVE_DEFAULT);
-        long dst = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
-        long src = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
-
-        for(int i = 0; i < maxSize; i++) {
-            long offset = (2 * i + 1) * Long.BYTES;
-            long expected = (i % 2 == 0) ? i + 1 : i - 1;
-            Unsafe.getUnsafe().putLong(index + offset, expected);
-        }
-
-        for (int i = 0; i < maxSize; i++) {
-            Unsafe.getUnsafe().putLong(src + i * Long.BYTES, i);
-        }
-
-        try {
-            for (int size : sizes) {
-                    Vect.indexReshuffle64Bit(src, dst, index, size);
-
-                    for (int i = 0; i < size; i++) {
-                        long actual = Unsafe.getUnsafe().getLong(dst + i * typeBytes);
-                        long expected = (i % 2 == 0) ? i + 1 : i - 1;
-                        if (expected != actual) {
-                            Assert.assertEquals("Failed to init reshuffle size=" + size
-                                    + ", expected=" + expected + ", pos=" + i, expected, actual);
-                        }
-                    }
-            }
-        } finally {
-            Unsafe.free(index, indexBuffSize, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(src, buffSize, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(dst, buffSize, MemoryTag.NATIVE_DEFAULT);
-        }
+    public void testSort1M() {
+        testSort(1_000_000);
     }
 
     @Test
-    public void testMemmove() {
-        int maxSize = 1024*1024;
-        int[] sizes = {1024, 4096, maxSize};
-        int buffSize = 1024 + 4096 + maxSize;
-        long from = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
-        long to = Unsafe.malloc(maxSize, MemoryTag.NATIVE_DEFAULT);
+    public void testSortFour() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            for (int i = 0; i < 100; i++) {
+                testSort(4);
+            }
+        });
+    }
 
+    @Test
+    public void testSortOne() {
+        final long indexAddr = Unsafe.malloc(2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         try {
-            // initialize from buffer
-            // with 1, 4, 8, 12 ... integers
-            for (int i = 0; i < buffSize; i += Integer.BYTES) {
-                Unsafe.getUnsafe().putInt(from + i, i);
-            }
-
-            int offset = 0;
-            for(int size: sizes) {
-                // move next portion of from into to
-                Vect.memmove(to, from + offset, size);
-
-                for (int i = 0; i < size; i += Integer.BYTES) {
-                    int actual = Unsafe.getUnsafe().getInt(to + i);
-                    Assert.assertEquals(i + offset, actual);
-                }
-
-                offset += size;
-            }
+            seedMem(1, indexAddr);
+            long expected = Unsafe.getUnsafe().getLong(indexAddr);
+            Vect.sortLongIndexAscInPlace(indexAddr, 1);
+            Assert.assertEquals(expected, Unsafe.getUnsafe().getLong(indexAddr));
         } finally {
-            Unsafe.free(from, buffSize, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(to, maxSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(indexAddr, 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

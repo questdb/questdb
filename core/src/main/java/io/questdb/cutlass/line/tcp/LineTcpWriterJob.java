@@ -104,12 +104,6 @@ class LineTcpWriterJob implements Job, Closeable {
         return true;
     }
 
-    private void tickWriters() {
-        for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
-            assignedTables.getQuick(n).tick();
-        }
-    }
-
     private boolean drainQueue() {
         boolean busy = false;
         while (true) {
@@ -167,6 +161,12 @@ class LineTcpWriterJob implements Job, Closeable {
             } else {
                 return false;
             }
+        }
+    }
+
+    private void tickWriters() {
+        for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
+            assignedTables.getQuick(n).tick();
         }
     }
 }

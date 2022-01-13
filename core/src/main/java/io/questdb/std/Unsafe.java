@@ -39,6 +39,7 @@ public final class Unsafe {
     public static final long INT_SCALE;
     public static final long LONG_OFFSET;
     public static final long LONG_SCALE;
+    public static final Module JAVA_BASE_MODULE = System.class.getModule();
     static final AtomicLong MEM_USED = new AtomicLong(0);
     private static final sun.misc.Unsafe UNSAFE;
     private static final AtomicLong MALLOC_COUNT = new AtomicLong(0);
@@ -50,92 +51,15 @@ public final class Unsafe {
     private static final AnonymousClassDefiner anonymousClassDefiner;
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
 
-    static {
-        try {
-            Field theUnsafe = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
-            theUnsafe.setAccessible(true);
-            UNSAFE = (sun.misc.Unsafe) theUnsafe.get(null);
-
-            INT_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(int[].class);
-            INT_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(int[].class));
-
-            LONG_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(long[].class);
-            LONG_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(long[].class));
-            //#if jdk.version!=8
-            OVERRIDE = AccessibleObject_override_fieldOffset();
-            implAddExports = Module.class.getDeclaredMethod("implAddExports", String.class, Module.class);
-            //#endif
-
-            AnonymousClassDefiner classDefiner = UnsafeClassDefiner.newInstance();
-            if (classDefiner == null) {
-                classDefiner = MethodHandlesClassDefiner.newInstance();
-            }
-            if (classDefiner == null) {
-                throw new InstantiationException("failed to initialize class definer");
-            }
-            anonymousClassDefiner = classDefiner;
-        } catch (ReflectiveOperationException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-        //#if jdk.version!=8
-        makeAccessible(implAddExports);
-        //#endif
-
-        for (int i = 0; i < COUNTERS.length; i++) {
-           COUNTERS[i] = new LongAdder();
-        }
-    }
-
-    //#if jdk.version!=8
-    private static long AccessibleObject_override_fieldOffset() {
-        if (isJava8Or11()) {
-            return getFieldOffset(AccessibleObject.class, "override");
-        }
-        // From Java 12 onwards, AccessibleObject#override is protected and cannot be accessed reflectively.
-        boolean is32BitJVM = is32BitJVM();
-        if (is32BitJVM) {
-            return 8L;
-        }
-        if (getOrdinaryObjectPointersCompressionStatus(is32BitJVM)) {
-            return 12L;
-        }
-        return 16L;
-    }
-
-    private static boolean isJava8Or11() {
-        String javaVersion = System.getProperty("java.version");
-        return javaVersion.startsWith("11") || javaVersion.startsWith("1.8");
-    }
-
-    private static boolean is32BitJVM() {
-        String sunArchDataModel = System.getProperty("sun.arch.data.model");
-        return sunArchDataModel.equals("32");
-    }
-
-    private static boolean getOrdinaryObjectPointersCompressionStatus(boolean is32BitJVM) {
-        class Probe {
-            private int intField; // Accessed through reflection
-
-            boolean probe() {
-                long offset = getFieldOffset(Probe.class, "intField");
-                if (offset == 8L) {
-                    assert is32BitJVM;
-                    return false;
-                }
-                if (offset == 12L) {
-                    return true;
-                }
-                if (offset == 16L) {
-                    return false;
-                }
-                throw new AssertionError(offset);
-            }
-        }
-        return new Probe().probe();
-    }
-    //#endif
-
     private Unsafe() {
+    }
+
+    public static void addExports(Module from, Module to, String packageName) {
+        try {
+            implAddExports.invoke(from, packageName, to);
+        } catch (ReflectiveOperationException e) {
+            e.printStackTrace();
+        }
     }
 
     public static long arrayGetVolatile(long[] array, int index) {
@@ -147,6 +71,7 @@ public final class Unsafe {
         assert index > -1 && index < array.length;
         Unsafe.getUnsafe().putOrderedLong(array, LONG_OFFSET + ((long) index << LONG_SCALE), value);
     }
+    //#endif
 
     public static long calloc(long size, int memoryTag) {
         long ptr = malloc(size, memoryTag);
@@ -165,6 +90,20 @@ public final class Unsafe {
     public static boolean cas(long[] array, int index, long expected, long value) {
         assert index > -1 && index < array.length;
         return Unsafe.cas(array, Unsafe.LONG_OFFSET + (((long) index) << Unsafe.LONG_SCALE), expected, value);
+    }
+
+    /**
+     * Defines a class but does not make it known to the class loader or system dictionary.
+     * <p>
+     * Equivalent to {@code Unsafe#defineAnonymousClass} and {@code Lookup#defineHiddenClass}, except that
+     * it does not support constant pool patches.
+     *
+     * @param hostClass context for linkage, access control, protection domain, and class loader
+     * @param data      bytes of a class file
+     */
+    @Nullable
+    public static Class<?> defineAnonymousClass(Class<?> hostClass, byte[] data) {
+        return anonymousClassDefiner.define(hostClass, data);
     }
 
     public static void free(long ptr, long size, int memoryTag) {
@@ -206,6 +145,16 @@ public final class Unsafe {
         return UNSAFE;
     }
 
+    /**
+     * Equivalent to {@link AccessibleObject#setAccessible(boolean) AccessibleObject.setAccessible(true)}, except that
+     * it does not produce an illegal access error or warning.
+     *
+     * @param accessibleObject the instance to make accessible
+     */
+    public static void makeAccessible(AccessibleObject accessibleObject) {
+        UNSAFE.putBooleanVolatile(accessibleObject, OVERRIDE, true);
+    }
+
     public static long malloc(long size, int memoryTag) {
         long ptr = getUnsafe().allocateMemory(size);
         recordMemAlloc(size, memoryTag);
@@ -222,53 +171,68 @@ public final class Unsafe {
     public static void recordMemAlloc(long size, int memoryTag) {
         long mem = MEM_USED.addAndGet(size);
         assert mem >= 0;
-        assert  memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
+        assert memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
         COUNTERS[memoryTag].add(size);
+    }
+
+    //#if jdk.version!=8
+    private static long AccessibleObject_override_fieldOffset() {
+        if (isJava8Or11()) {
+            return getFieldOffset(AccessibleObject.class, "override");
+        }
+        // From Java 12 onwards, AccessibleObject#override is protected and cannot be accessed reflectively.
+        boolean is32BitJVM = is32BitJVM();
+        if (is32BitJVM) {
+            return 8L;
+        }
+        if (getOrdinaryObjectPointersCompressionStatus(is32BitJVM)) {
+            return 12L;
+        }
+        return 16L;
+    }
+
+    private static boolean isJava8Or11() {
+        String javaVersion = System.getProperty("java.version");
+        return javaVersion.startsWith("11") || javaVersion.startsWith("1.8");
+    }
+
+    private static boolean is32BitJVM() {
+        String sunArchDataModel = System.getProperty("sun.arch.data.model");
+        return sunArchDataModel.equals("32");
+    }
+
+    //#if jdk.version!=8
+
+    private static boolean getOrdinaryObjectPointersCompressionStatus(boolean is32BitJVM) {
+        class Probe {
+            private int intField; // Accessed through reflection
+
+            boolean probe() {
+                long offset = getFieldOffset(Probe.class, "intField");
+                if (offset == 8L) {
+                    assert is32BitJVM;
+                    return false;
+                }
+                if (offset == 12L) {
+                    return true;
+                }
+                if (offset == 16L) {
+                    return false;
+                }
+                throw new AssertionError(offset);
+            }
+        }
+        return new Probe().probe();
     }
 
     private static int msb(int value) {
         return 31 - Integer.numberOfLeadingZeros(value);
     }
 
-    /**
-     * Defines a class but does not make it known to the class loader or system dictionary.
-     *
-     * Equivalent to {@code Unsafe#defineAnonymousClass} and {@code Lookup#defineHiddenClass}, except that
-     * it does not support constant pool patches.
-     *
-     * @param hostClass context for linkage, access control, protection domain, and class loader
-     * @param data      bytes of a class file
-     */
-    @Nullable
-    public static Class<?> defineAnonymousClass(Class<?> hostClass, byte[] data) {
-        return anonymousClassDefiner.define(hostClass, data);
-    }
-
-    //#if jdk.version!=8
-    /**
-     * Equivalent to {@link AccessibleObject#setAccessible(boolean) AccessibleObject.setAccessible(true)}, except that
-     * it does not produce an illegal access error or warning.
-     *
-     * @param accessibleObject the instance to make accessible
-     */
-    public static void makeAccessible(AccessibleObject accessibleObject) {
-        UNSAFE.putBooleanVolatile(accessibleObject, OVERRIDE, true);
-    }
-
-    public static void addExports(Module from, Module to, String packageName) {
-        try {
-            implAddExports.invoke(from, packageName, to);
-        } catch (ReflectiveOperationException e) {
-            e.printStackTrace();
-        }
-    }
-
-    public static final Module JAVA_BASE_MODULE = System.class.getModule();
-    //#endif
-
     interface AnonymousClassDefiner {
         Class<?> define(Class<?> hostClass, byte[] data);
     }
+    //#endif
 
     /**
      * Based on {@code Unsafe#defineAnonymousClass}.
@@ -350,6 +314,42 @@ public final class Unsafe {
                 Array.set(classOptions, i, Enum.valueOf(optionClass, options[i]));
             }
             return classOptions;
+        }
+    }
+
+    static {
+        try {
+            Field theUnsafe = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+            theUnsafe.setAccessible(true);
+            UNSAFE = (sun.misc.Unsafe) theUnsafe.get(null);
+
+            INT_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(int[].class);
+            INT_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(int[].class));
+
+            LONG_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(long[].class);
+            LONG_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(long[].class));
+            //#if jdk.version!=8
+            OVERRIDE = AccessibleObject_override_fieldOffset();
+            implAddExports = Module.class.getDeclaredMethod("implAddExports", String.class, Module.class);
+            //#endif
+
+            AnonymousClassDefiner classDefiner = UnsafeClassDefiner.newInstance();
+            if (classDefiner == null) {
+                classDefiner = MethodHandlesClassDefiner.newInstance();
+            }
+            if (classDefiner == null) {
+                throw new InstantiationException("failed to initialize class definer");
+            }
+            anonymousClassDefiner = classDefiner;
+        } catch (ReflectiveOperationException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+        //#if jdk.version!=8
+        makeAccessible(implAddExports);
+        //#endif
+
+        for (int i = 0; i < COUNTERS.length; i++) {
+            COUNTERS[i] = new LongAdder();
         }
     }
 }

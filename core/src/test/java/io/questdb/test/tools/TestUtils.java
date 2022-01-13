@@ -25,8 +25,8 @@
 package io.questdb.test.tools;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -68,14 +68,6 @@ public final class TestUtils {
             if (a.byteAt(i) != b.byteAt(i)) return false;
         }
         return true;
-    }
-
-    public static long connect(long fd, long sockAddr, boolean noLinger) {
-        Assert.assertTrue(fd > -1);
-        if (noLinger) {
-            Net.configureNoLinger(fd);
-        }
-        return Net.connect(fd, sockAddr);
     }
 
     public static void assertConnect(long fd, long sockAddr, boolean noLinger) {
@@ -388,7 +380,6 @@ public final class TestUtils {
     }
 
     public static void assertIndexBlockCapacity(SqlExecutionContext sqlExecutionContext, CairoEngine engine, String tableName, String columnName) {
-
         engine.releaseAllReaders();
         try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
             TableReaderMetadata metadata = rdr.getMetadata();
@@ -507,6 +498,14 @@ public final class TestUtils {
         assertEquals(expected, sink);
     }
 
+    public static long connect(long fd, long sockAddr, boolean noLinger) {
+        Assert.assertTrue(fd > -1);
+        if (noLinger) {
+            Net.configureNoLinger(fd);
+        }
+        return Net.connect(fd, sockAddr);
+    }
+
     public static void copyMimeTypes(String targetDir) throws IOException {
         try (InputStream stream = TestUtils.class.getResourceAsStream("/site/conf/mime.types")) {
             Assert.assertNotNull(stream);
@@ -520,15 +519,6 @@ public final class TestUtils {
                 }
             }
         }
-    }
-
-    public static boolean drainEngineCmdQueue(CairoEngine engine) {
-        boolean useful = false;
-        while (engine.tick()) {
-            useful = true;
-            // drain the engine queue
-        }
-        return useful;
     }
 
     public static void createPopulateTable(
@@ -632,6 +622,15 @@ public final class TestUtils {
             }
             Files.mkdirs(path.of(root).slash$(), 509);
         }
+    }
+
+    public static boolean drainEngineCmdQueue(CairoEngine engine) {
+        boolean useful = false;
+        while (engine.tick()) {
+            useful = true;
+            // drain the engine queue
+        }
+        return useful;
     }
 
     public static int getJavaVersion() {

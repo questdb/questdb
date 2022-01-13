@@ -51,9 +51,9 @@ public interface IODispatcher<C extends IOContext> extends Closeable, Job {
 
     int getConnectionCount();
 
-    boolean processIOQueue(IORequestProcessor<C> processor);
-
     boolean isListening();
+
+    boolean processIOQueue(IORequestProcessor<C> processor);
 
     void registerChannel(C context, int operation);
 }

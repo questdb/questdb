@@ -50,7 +50,7 @@ public class LongSort {
     /**
      * Sorts the specified range of the array.
      *
-     * @param vec vector of long values
+     * @param vec   vector of long values
      * @param left  the index of the first element, inclusive, to be sorted
      * @param right the index of the last element, inclusive, to be sorted
      */
@@ -195,7 +195,7 @@ public class LongSort {
                  * Every element from adjoining part plays the role
                  * of sentinel, therefore this allows us to avoid the
                  * left range check on each iteration. Moreover, we use
-                 * the more optimized algorithm, so called pair insertion
+                 * the more optimized algorithm, so-called pair insertion
                  * sort, which is faster (in the context of Quicksort)
                  * than traditional implementation of insertion sort.
                  */
@@ -381,7 +381,7 @@ public class LongSort {
 
             /*
              * If center part is too large (comprises > 4/7 of the array),
-             * swap internal pivot values to ends.
+             * swap internal pivot values to end.
              */
             if (less < e1 && e5 < great) {
                 /*
@@ -433,7 +433,7 @@ public class LongSort {
                              * Even though a[great] equals to pivot1, the
                              * assignment a[less] = pivot1 may be incorrect,
                              * if a[great] and pivot1 are floating-point zeros
-                             * of different signs. Therefore in float and
+                             * of different signs. Therefore, in float and
                              * double sorting methods we have to use more
                              * accurate assignment a[less] = a[great].
                              */
@@ -500,7 +500,7 @@ public class LongSort {
                          * Even though a[great] equals to pivot, the
                          * assignment a[k] = pivot may be incorrect,
                          * if a[great] and pivot are floating-point
-                         * zeros of different signs. Therefore in float
+                         * zeros of different signs. Therefore, in float
                          * and double sorting methods we have to use
                          * more accurate assignment a[k] = a[great].
                          */

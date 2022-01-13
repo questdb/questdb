@@ -43,7 +43,7 @@ public class SOUnboundedCountDownLatchTest {
         SPSequence pubSeq = new SPSequence(1024);
         SCSequence subSeq = new SCSequence();
 
-        // this latch does not require initial count. Instead it is able to wait
+        // this latch does not require initial count. Instead, it is able to wait
         // for a specific target count. This is useful when it is hard to
         // determine work item count upfront.
 

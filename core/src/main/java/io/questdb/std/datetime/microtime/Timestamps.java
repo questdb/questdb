@@ -168,7 +168,7 @@ final public class Timestamps {
         boolean l;
         return yearMicros(y = getYear(micros), l = isLeapYear(y))
                 + monthOfYearMicros(m = getMonthOfYear(micros, y, l), l)
-                + (getDayOfMonth(micros, y, m, l)) * DAY_MICROS ;
+                + (getDayOfMonth(micros, y, m, l)) * DAY_MICROS;
     }
 
     public static long ceilHH(long micros) {
@@ -185,6 +185,10 @@ final public class Timestamps {
         return yearMicros(y = getYear(micros), l = isLeapYear(y))
                 + monthOfYearMicros(m = getMonthOfYear(micros, y, l), l)
                 + (getDaysPerMonth(m, l)) * DAY_MICROS;
+    }
+
+    public static long ceilMS(long micros) {
+        return floorMS(micros) + MILLI_MICROS;
     }
 
     public static long ceilSS(long micros) {
@@ -222,16 +226,12 @@ final public class Timestamps {
         return yearMicros(y = getYear(micros), l = isLeapYear(y)) + monthOfYearMicros(getMonthOfYear(micros, y, l), l);
     }
 
-    public static long floorSS(long micros) {
-        return micros - micros % SECOND_MICROS;
-    }
-
     public static long floorMS(long micros) {
         return micros - micros % MILLI_MICROS;
     }
 
-    public static long ceilMS(long micros) {
-        return floorMS(micros) + MILLI_MICROS;
+    public static long floorSS(long micros) {
+        return micros - micros % SECOND_MICROS;
     }
 
     public static long floorYYYY(long micros) {
@@ -333,7 +333,7 @@ final public class Timestamps {
      *
      * @param micros micros since 1970
      * @param year   year of month
-     * @param leap   true if year was leap
+     * @param leap   true if year was a leap year
      * @return month of year
      */
     public static int getMonthOfYear(long micros, int year, boolean leap) {
@@ -454,7 +454,7 @@ final public class Timestamps {
      * http://en.wikipedia.org/wiki/Leap_year
      *
      * @param year the year
-     * @return true if year is leap
+     * @return true if year is a leap year
      */
     public static boolean isLeapYear(int year) {
         return ((year & 3) == 0) && ((year % 100) != 0 || (year % 400) == 0);
@@ -711,7 +711,7 @@ final public class Timestamps {
      * equivalent to parsing "2008-01-01T00:00:00.000Z", except this method is faster.
      *
      * @param year the year
-     * @param leap true if give year is leap year
+     * @param leap true if the given year is leap year
      * @return millis for start of year.
      */
     public static long yearMicros(int year, boolean leap) {

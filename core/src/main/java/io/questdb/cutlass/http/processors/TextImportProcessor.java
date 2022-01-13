@@ -67,7 +67,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     private static final CharSequence CONTENT_TYPE_JSON = "application/json; charset=utf-8";
     private static final CharSequenceIntHashMap atomicityParamMap = new CharSequenceIntHashMap();
     // Local value has to be static because each thread will have its own instance of
-    // processor. For different threads to lookup the same value from local value map the key,
+    // processor. For different threads to look up the same value from local value map the key,
     // which is LV, has to be the same between processor instances
     private static final LocalValue<TextImportProcessorState> LV = new LocalValue<>();
     private static final String OVERRIDDEN_FROM_TABLE = "From Table";
@@ -210,7 +210,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     // This processor implements HttpMultipartContentListener, methods of which
     // have neither context nor dispatcher. During "chunk" processing we may need
     // to send something back to client, or disconnect them. To do that we need
-    // these transient references. resumeRecv() will set them and they will remain
+    // these transient references. resumeRecv() will set them, and they will remain
     // valid during multipart events.
 
     @Override
@@ -511,11 +511,10 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         state.errorMessage = message;
         if (state.json) {
             socket.status(200, CONTENT_TYPE_JSON);
-            socket.sendHeader();
         } else {
             socket.status(200, CONTENT_TYPE_TEXT);
-            socket.sendHeader();
         }
+        socket.sendHeader();
         socket.sendChunk(false);
         resumeError(state, socket);
     }

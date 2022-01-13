@@ -51,7 +51,7 @@ public class LowerCaseCharSequenceIntHashMapTest {
         Assert.assertEquals(1, lowerCaseMap.get("A"));
         Assert.assertEquals(2, lowerCaseMap.get("bb"));
 
-        ObjList<CharSequence>  keys =  lowerCaseMap.keys();
+        ObjList<CharSequence> keys = lowerCaseMap.keys();
         Assert.assertEquals(2, keys.size());
         Assert.assertEquals("a", keys.get(0));
         Assert.assertEquals("Bb", keys.get(1));

@@ -110,48 +110,6 @@ public class DateFormatCompiler {
     private static final int LOCAL_HOUR_TYPE = 18;
     private static final int LOCAL_ERA = 19;
     private static final int FORMAT_METHOD_STACK_START = 6;
-
-    static {
-        opMap = new CharSequenceIntHashMap();
-        opList = new ObjList<>();
-
-        addOp("G", OP_ERA);
-        addOp("y", OP_YEAR_ONE_DIGIT);
-        addOp("yy", OP_YEAR_TWO_DIGITS);
-        addOp("yyyy", OP_YEAR_FOUR_DIGITS);
-        addOp("M", OP_MONTH_ONE_DIGIT);
-        addOp("MM", OP_MONTH_TWO_DIGITS);
-        addOp("MMM", OP_MONTH_SHORT_NAME);
-        addOp("MMMM", OP_MONTH_LONG_NAME);
-        addOp("d", OP_DAY_ONE_DIGIT);
-        addOp("dd", OP_DAY_TWO_DIGITS);
-        addOp("E", OP_DAY_NAME_SHORT);
-        addOp("EE", OP_DAY_NAME_LONG);
-        addOp("u", OP_DAY_OF_WEEK);
-        addOp("a", OP_AM_PM);
-        addOp("H", OP_HOUR_24_ONE_DIGIT);
-        addOp("HH", OP_HOUR_24_TWO_DIGITS);
-        addOp("k", OP_HOUR_24_ONE_DIGIT_ONE_BASED);
-        addOp("kk", OP_HOUR_24_TWO_DIGITS_ONE_BASED);
-        addOp("K", OP_HOUR_12_ONE_DIGIT);
-        addOp("KK", OP_HOUR_12_TWO_DIGITS);
-        addOp("h", OP_HOUR_12_ONE_DIGIT_ONE_BASED);
-        addOp("hh", OP_HOUR_12_TWO_DIGITS_ONE_BASED);
-        addOp("m", OP_MINUTE_ONE_DIGIT);
-        addOp("mm", OP_MINUTE_TWO_DIGITS);
-        addOp("s", OP_SECOND_ONE_DIGIT);
-        addOp("ss", OP_SECOND_TWO_DIGITS);
-        addOp("S", OP_MILLIS_ONE_DIGIT);
-        addOp("SSS", OP_MILLIS_THREE_DIGITS);
-        addOp("z", OP_TIME_ZONE_SHORT);
-        addOp("zz", OP_TIME_ZONE_GMT_BASED);
-        addOp("zzz", OP_TIME_ZONE_LONG);
-        addOp("Z", OP_TIME_ZONE_RFC_822);
-        addOp("x", OP_TIME_ZONE_ISO_8601_1);
-        addOp("xx", OP_TIME_ZONE_ISO_8601_2);
-        addOp("merge_copy_var_column", OP_TIME_ZONE_ISO_8601_3);
-    }
-
     private final GenericLexer lexer = new GenericLexer(2048);
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final IntList ops = new IntList();
@@ -159,16 +117,10 @@ public class DateFormatCompiler {
     private final IntList delimiterIndexes = new IntList();
     private final LongList frameOffsets = new LongList();
     private final int[] fmtAttributeIndex = new int[32];
-
     public DateFormatCompiler() {
         for (int i = 0, n = opList.size(); i < n; i++) {
             lexer.defineSymbol(opList.getQuick(i));
         }
-    }
-
-    private static void addOp(String op, int opDayTwoDigits) {
-        opMap.put(op, opDayTwoDigits);
-        opList.add(op);
     }
 
     public DateFormat compile(CharSequence pattern) {
@@ -218,6 +170,11 @@ public class DateFormatCompiler {
         // make last operation "greedy"
         makeLastOpGreedy(ops);
         return generic ? new GenericDateFormat(ops, delimiters) : compile(ops, delimiters);
+    }
+
+    private static void addOp(String op, int opDayTwoDigits) {
+        opMap.put(op, opDayTwoDigits);
+        opList.add(op);
     }
 
     private void addTempToPos(int decodeLenIndex) {
@@ -1731,5 +1688,46 @@ public class DateFormatCompiler {
         int p = asm.position();
         frameOffsets.add(Numbers.encodeLowHighInts(stackState, p));
         asm.setJmp(branch, p);
+    }
+
+    static {
+        opMap = new CharSequenceIntHashMap();
+        opList = new ObjList<>();
+
+        addOp("G", OP_ERA);
+        addOp("y", OP_YEAR_ONE_DIGIT);
+        addOp("yy", OP_YEAR_TWO_DIGITS);
+        addOp("yyyy", OP_YEAR_FOUR_DIGITS);
+        addOp("M", OP_MONTH_ONE_DIGIT);
+        addOp("MM", OP_MONTH_TWO_DIGITS);
+        addOp("MMM", OP_MONTH_SHORT_NAME);
+        addOp("MMMM", OP_MONTH_LONG_NAME);
+        addOp("d", OP_DAY_ONE_DIGIT);
+        addOp("dd", OP_DAY_TWO_DIGITS);
+        addOp("E", OP_DAY_NAME_SHORT);
+        addOp("EE", OP_DAY_NAME_LONG);
+        addOp("u", OP_DAY_OF_WEEK);
+        addOp("a", OP_AM_PM);
+        addOp("H", OP_HOUR_24_ONE_DIGIT);
+        addOp("HH", OP_HOUR_24_TWO_DIGITS);
+        addOp("k", OP_HOUR_24_ONE_DIGIT_ONE_BASED);
+        addOp("kk", OP_HOUR_24_TWO_DIGITS_ONE_BASED);
+        addOp("K", OP_HOUR_12_ONE_DIGIT);
+        addOp("KK", OP_HOUR_12_TWO_DIGITS);
+        addOp("h", OP_HOUR_12_ONE_DIGIT_ONE_BASED);
+        addOp("hh", OP_HOUR_12_TWO_DIGITS_ONE_BASED);
+        addOp("m", OP_MINUTE_ONE_DIGIT);
+        addOp("mm", OP_MINUTE_TWO_DIGITS);
+        addOp("s", OP_SECOND_ONE_DIGIT);
+        addOp("ss", OP_SECOND_TWO_DIGITS);
+        addOp("S", OP_MILLIS_ONE_DIGIT);
+        addOp("SSS", OP_MILLIS_THREE_DIGITS);
+        addOp("z", OP_TIME_ZONE_SHORT);
+        addOp("zz", OP_TIME_ZONE_GMT_BASED);
+        addOp("zzz", OP_TIME_ZONE_LONG);
+        addOp("Z", OP_TIME_ZONE_RFC_822);
+        addOp("x", OP_TIME_ZONE_ISO_8601_1);
+        addOp("xx", OP_TIME_ZONE_ISO_8601_2);
+        addOp("merge_copy_var_column", OP_TIME_ZONE_ISO_8601_3);
     }
 }

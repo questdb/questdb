@@ -44,6 +44,21 @@ public class GeoByteFunctionTest extends AbstractGriffinTest {
         }
     };
 
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoInt() {
+        function.getGeoInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoLong() {
+        function.getGeoLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoShort() {
+        function.getGeoShort(null);
+    }
+
     @Test
     public void testSimple() {
         Assert.assertEquals(29, function.getGeoByte(null));
@@ -61,21 +76,6 @@ public class GeoByteFunctionTest extends AbstractGriffinTest {
         sink.clear();
         GeoHashes.appendBinary(truncatedHash, 3, sink);
         TestUtils.assertEquals("111", sink);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetGeoShort() {
-        function.getGeoShort(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetGeoInt() {
-        function.getGeoInt(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetGeoLong() {
-        function.getGeoLong(null);
     }
 
     static {

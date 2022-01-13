@@ -36,19 +36,6 @@ public class EpollAccessor {
     static final int EPOLLONESHOT;
     static final int EPOLLET;
 
-    static {
-        DATA_OFFSET = getDataOffset();
-        EVENTS_OFFSET = getEventsOffset();
-        SIZEOF_EVENT = getEventSize();
-        EPOLLIN = getEPOLLIN();
-        EPOLLET = getEPOLLET();
-        EPOLLOUT = getEPOLLOUT();
-        EPOLLONESHOT = getEPOLLONESHOT();
-        EPOLL_CTL_ADD = getCtlAdd();
-        EPOLL_CTL_MOD = getCtlMod();
-        EPOLL_CTL_DEL = getCtlDel();
-    }
-
     static native long epollCreate();
 
     static native int epollCtl(long epfd, int op, long fd, long eventPtr);
@@ -74,4 +61,17 @@ public class EpollAccessor {
     static native int getCtlMod();
 
     static native int getCtlDel();
+
+    static {
+        DATA_OFFSET = getDataOffset();
+        EVENTS_OFFSET = getEventsOffset();
+        SIZEOF_EVENT = getEventSize();
+        EPOLLIN = getEPOLLIN();
+        EPOLLET = getEPOLLET();
+        EPOLLOUT = getEPOLLOUT();
+        EPOLLONESHOT = getEPOLLONESHOT();
+        EPOLL_CTL_ADD = getCtlAdd();
+        EPOLL_CTL_MOD = getCtlMod();
+        EPOLL_CTL_DEL = getCtlDel();
+    }
 }

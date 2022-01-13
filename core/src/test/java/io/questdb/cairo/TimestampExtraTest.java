@@ -22,6 +22,7 @@
  *
  ******************************************************************************/
 package io.questdb.cairo;
+
 import org.junit.Assert;
 import org.junit.Test;
 

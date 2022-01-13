@@ -31,10 +31,6 @@ final class FiltersCompiler {
     private FiltersCompiler() {
     }
 
-    public static native long compileFunction(long filterAddress, long filterSize, int options, JitError error);
-
-    public static native long freeFunction(long fnAddress);
-
     public static native long callFunction(long fnAddress,
                                            long colsAddress,
                                            long colsSize,
@@ -44,14 +40,21 @@ final class FiltersCompiler {
                                            long rowsSize,
                                            long rowsStartOffset);
 
+    public static native long compileFunction(long filterAddress, long filterSize, int options, JitError error);
+
+    public static native long freeFunction(long fnAddress);
+
     static class JitError {
 
         private final StringSink message = new StringSink();
         private int errorCode = 0;
 
-        public void reset() {
-            errorCode = 0;
-            message.clear();
+        public int errorCode() {
+            return errorCode;
+        }
+
+        public CharSequence message() {
+            return message.subSequence(0, message.length());
         }
 
         // We are not going to allocate and convert strings,
@@ -60,12 +63,9 @@ final class FiltersCompiler {
             message.put((char) b);
         }
 
-        public CharSequence message() {
-            return message.subSequence(0, message.length());
-        }
-
-        public int errorCode() {
-            return errorCode;
+        public void reset() {
+            errorCode = 0;
+            message.clear();
         }
     }
 

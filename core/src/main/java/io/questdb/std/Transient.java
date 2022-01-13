@@ -31,7 +31,7 @@ import java.lang.annotation.Target;
 
 /**
  * Transient parameters are those logically passed by value. Java passes all
- * non-primitive types by reference and this annotation is handy way to
+ * non-primitive types by reference and this annotation is a handy way to
  * tell caller that reference is not being held on to.
  */
 @Retention(RetentionPolicy.SOURCE)

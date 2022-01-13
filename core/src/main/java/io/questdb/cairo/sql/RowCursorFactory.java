@@ -42,8 +42,8 @@ public interface RowCursorFactory {
 
     RowCursor getCursor(DataFrame dataFrame);
 
+    boolean isEntity();
+
     default void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
     }
-
-    boolean isEntity();
 }

@@ -60,8 +60,8 @@ public final class OperatorExpression {
         add(new OperatorExpression("and", 11, true, BINARY, false));
         add(new OperatorExpression("or", 11, true, BINARY, false));
         add(new OperatorExpression("not", 11, true, UNARY, false));
-        add(new OperatorExpression("like", 7, true, BINARY,false));
-        add(new OperatorExpression("ilike", 7, true, BINARY,false));
+        add(new OperatorExpression("like", 7, true, BINARY, false));
+        add(new OperatorExpression("ilike", 7, true, BINARY, false));
         add(new OperatorExpression("within", 7, true, SET, false));
     }};
 

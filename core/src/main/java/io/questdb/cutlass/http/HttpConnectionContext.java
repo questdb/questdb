@@ -383,7 +383,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
                 // to analyse columns and delimiters correctly. To make sure we
                 // can deliver large data chunk we have to implement mini-Nagle
                 // algorithm by accumulating small data chunks client could be
-                // sending into our receive buffer. To make sure we don't
+                // sending into our "receive" buffer. To make sure we don't
                 // sit around accumulating for too long we have spin limit
                 if (spinsRemaining-- > 0) {
                     continue;
@@ -497,7 +497,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         boolean busyRecv = true;
         try {
             final long fd = this.fd;
-            // this is address of where header ended in our receive buffer
+            // this is address of where header ended in our "receive" buffer
             // we need to being processing request content starting from this address
             long headerEnd = recvBuffer;
             int read = 0;

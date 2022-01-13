@@ -90,6 +90,11 @@ public class CursorDereferenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public int getInt(Record rec) {
+            return cursorFunction.getRecord(rec).getInt(columnIndex);
+        }
+
+        @Override
         public Function getLeft() {
             return cursorFunction;
         }
@@ -97,11 +102,6 @@ public class CursorDereferenceFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return columnNameFunction;
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            return cursorFunction.getRecord(rec).getInt(columnIndex);
         }
     }
 }

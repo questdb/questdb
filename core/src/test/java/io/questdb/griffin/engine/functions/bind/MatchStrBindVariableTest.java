@@ -35,40 +35,6 @@ import org.junit.Test;
 public class MatchStrBindVariableTest extends AbstractGriffinTest {
 
     @Test
-    public void testSimple() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str() s from long_sequence(100))", sqlExecutionContext);
-
-            try (RecordCursorFactory factory = compiler.compile("x where s ~ $1", sqlExecutionContext).getRecordCursorFactory()) {
-                bindVariableService.setStr(0, "GQO");
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
-                }
-
-                TestUtils.assertEquals("s\n" +
-                        "YCTGQO\n", sink);
-
-                bindVariableService.setStr(0, "QTQ");
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
-                }
-
-                TestUtils.assertEquals("s\n" +
-                        "ZWEVQTQO\n", sink);
-
-                bindVariableService.setStr(0, null);
-                try {
-                    factory.getCursor(sqlExecutionContext);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals(12, e.getPosition());
-                    TestUtils.assertContains(e.getFlyweightMessage(), "NULL regex");
-                }
-            }
-        });
-    }
-
-    @Test
     public void testConstant() throws Exception {
         assertMemoryLeak(() -> {
             try (RecordCursorFactory factory = compiler.compile("select x from long_sequence(1) where '1GQO2' ~ $1", sqlExecutionContext).getRecordCursorFactory()) {
@@ -107,5 +73,39 @@ public class MatchStrBindVariableTest extends AbstractGriffinTest {
                 12,
                 "not implemented: dynamic patter would be very slow to execute"
         );
+    }
+
+    @Test
+    public void testSimple() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select rnd_str() s from long_sequence(100))", sqlExecutionContext);
+
+            try (RecordCursorFactory factory = compiler.compile("x where s ~ $1", sqlExecutionContext).getRecordCursorFactory()) {
+                bindVariableService.setStr(0, "GQO");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                }
+
+                TestUtils.assertEquals("s\n" +
+                        "YCTGQO\n", sink);
+
+                bindVariableService.setStr(0, "QTQ");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                }
+
+                TestUtils.assertEquals("s\n" +
+                        "ZWEVQTQO\n", sink);
+
+                bindVariableService.setStr(0, null);
+                try {
+                    factory.getCursor(sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals(12, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "NULL regex");
+                }
+            }
+        });
     }
 }

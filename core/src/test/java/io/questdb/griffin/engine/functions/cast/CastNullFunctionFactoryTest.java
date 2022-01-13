@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.cast;
 
-import io.questdb.griffin.*;
+import io.questdb.griffin.AbstractGriffinTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -32,8 +32,13 @@ import org.junit.Test;
 public class CastNullFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
-    public void testSignature() throws Exception {
-        Assert.assertEquals("cast(oV)", new CastNullFunctionFactory().getSignature());
+    public void testCastNullToNonCastFriendlyTypeShouldFail() {
+        try {
+            assertQuery(null, "cast(null as CURSOR)", null, null);
+            Assert.fail();
+        } catch (Exception expected) {
+            Assert.assertEquals("[13] invalid constant: CURSOR", expected.getMessage());
+        }
     }
 
     @Test
@@ -47,12 +52,7 @@ public class CastNullFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastNullToNonCastFriendlyTypeShouldFail() {
-        try {
-            assertQuery(null, "cast(null as CURSOR)", null, null);
-            Assert.fail();
-        } catch (Exception expected) {
-            Assert.assertEquals("[13] invalid constant: CURSOR", expected.getMessage());
-        }
+    public void testSignature() {
+        Assert.assertEquals("cast(oV)", new CastNullFunctionFactory().getSignature());
     }
 }

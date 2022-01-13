@@ -96,34 +96,6 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testCeilMI() throws Exception {
-        final long micros = TimestampFormatUtils.parseTimestamp("2021-09-09T22:44:56.108872Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.ceilMI(micros));
-        TestUtils.assertEquals("2021-09-09T22:45:00.000Z", sink);
-    }
-
-    @Test
-    public void testCeilMS() throws Exception {
-        final long micros = TimestampFormatUtils.parseTimestamp("2021-09-09T22:44:56.108872Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.ceilMS(micros));
-        TestUtils.assertEquals("2021-09-09T22:44:56.109Z", sink);
-    }
-
-    @Test
-    public void testCeilSS() throws Exception {
-        final long micros = TimestampFormatUtils.parseTimestamp("2021-09-09T22:44:56.789Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.ceilSS(micros));
-        TestUtils.assertEquals("2021-09-09T22:44:57.000Z", sink);
-    }
-
-    @Test
-    public void testCeilHH() throws Exception {
-        final long micros = TimestampFormatUtils.parseTimestamp("2021-09-09T22:44:56.789Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.ceilHH(micros));
-        TestUtils.assertEquals("2021-09-09T23:00:00.000Z", sink);
-    }
-
-    @Test
     public void testCeilDD() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("2008-05-12T23:45:51.045Z");
         TimestampFormatUtils.appendDateTime(sink, Timestamps.ceilDD(micros));
@@ -138,10 +110,38 @@ public class TimestampsTest {
     }
 
     @Test
+    public void testCeilHH() throws Exception {
+        final long micros = TimestampFormatUtils.parseTimestamp("2021-09-09T22:44:56.789Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.ceilHH(micros));
+        TestUtils.assertEquals("2021-09-09T23:00:00.000Z", sink);
+    }
+
+    @Test
+    public void testCeilMI() throws Exception {
+        final long micros = TimestampFormatUtils.parseTimestamp("2021-09-09T22:44:56.108872Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.ceilMI(micros));
+        TestUtils.assertEquals("2021-09-09T22:45:00.000Z", sink);
+    }
+
+    @Test
     public void testCeilMM() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("2008-05-12T23:45:51.045Z");
         TimestampFormatUtils.appendDateTime(sink, Timestamps.ceilMM(micros));
         TestUtils.assertEquals("2008-06-01T00:00:00.000Z", sink);
+    }
+
+    @Test
+    public void testCeilMS() throws Exception {
+        final long micros = TimestampFormatUtils.parseTimestamp("2021-09-09T22:44:56.108872Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.ceilMS(micros));
+        TestUtils.assertEquals("2021-09-09T22:44:56.109Z", sink);
+    }
+
+    @Test
+    public void testCeilSS() throws Exception {
+        final long micros = TimestampFormatUtils.parseTimestamp("2021-09-09T22:44:56.789Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.ceilSS(micros));
+        TestUtils.assertEquals("2021-09-09T22:44:57.000Z", sink);
     }
 
     @Test
@@ -178,27 +178,6 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testFloorMI() throws Exception {
-        final long micros = TimestampFormatUtils.parseTimestamp("2021-09-09T22:44:56.784123Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorMI(micros));
-        TestUtils.assertEquals("2021-09-09T22:44:00.000Z", sink);
-    }
-
-    @Test
-    public void testFloorMS() throws Exception {
-        final long micros = TimestampFormatUtils.parseTimestamp("2021-09-09T22:44:56.784123Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorMS(micros));
-        TestUtils.assertEquals("2021-09-09T22:44:56.784Z", sink);
-    }
-
-    @Test
-    public void testFloorSS() throws Exception {
-        final long micros = TimestampFormatUtils.parseTimestamp("2021-09-09T22:44:56.789Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorSS(micros));
-        TestUtils.assertEquals("2021-09-09T22:44:56.000Z", sink);
-    }
-
-    @Test
     public void testFloorDD() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("2008-05-12T23:45:51.045Z");
         TimestampFormatUtils.appendDateTime(sink, Timestamps.floorDD(micros));
@@ -213,10 +192,31 @@ public class TimestampsTest {
     }
 
     @Test
+    public void testFloorMI() throws Exception {
+        final long micros = TimestampFormatUtils.parseTimestamp("2021-09-09T22:44:56.784123Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorMI(micros));
+        TestUtils.assertEquals("2021-09-09T22:44:00.000Z", sink);
+    }
+
+    @Test
     public void testFloorMM() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("2008-05-12T23:45:51.045Z");
         TimestampFormatUtils.appendDateTime(sink, Timestamps.floorMM(micros));
         TestUtils.assertEquals("2008-05-01T00:00:00.000Z", sink);
+    }
+
+    @Test
+    public void testFloorMS() throws Exception {
+        final long micros = TimestampFormatUtils.parseTimestamp("2021-09-09T22:44:56.784123Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorMS(micros));
+        TestUtils.assertEquals("2021-09-09T22:44:56.784Z", sink);
+    }
+
+    @Test
+    public void testFloorSS() throws Exception {
+        final long micros = TimestampFormatUtils.parseTimestamp("2021-09-09T22:44:56.789Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorSS(micros));
+        TestUtils.assertEquals("2021-09-09T22:44:56.000Z", sink);
     }
 
     @Test
@@ -326,27 +326,15 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testNextDSTRulesAfterLast() throws NumericException {
-        String tz = "Europe/Berlin";
+    public void testNextDSTFixed() throws NumericException {
+        String tz = "GMT";
         TimeZoneRules rules = TimestampFormatUtils.enLocale.getZoneRules(
                 Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length())),
                 RESOLUTION_MICROS
         );
 
-        final long ts = rules.getNextDST(TimestampFormatUtils.parseUTCTimestamp("2021-10-31T01:00:00.000000Z"));
-        Assert.assertEquals("2022-03-27T01:00:00.000Z", Timestamps.toString(ts));
-    }
-
-    @Test
-    public void testNextDSTRulesAfterFirst() throws NumericException {
-        String tz = "Europe/Berlin";
-        TimeZoneRules rules = TimestampFormatUtils.enLocale.getZoneRules(
-                Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length())),
-                RESOLUTION_MICROS
-        );
-
-        final long ts = rules.getNextDST(TimestampFormatUtils.parseUTCTimestamp("2021-07-03T01:00:00.000000Z"));
-        Assert.assertEquals("2021-10-31T01:00:00.000Z", Timestamps.toString(ts));
+        final long ts = rules.getNextDST(TimestampFormatUtils.parseUTCTimestamp("2021-02-10T01:00:00.000000Z"));
+        Assert.assertEquals(Long.MAX_VALUE, ts);
     }
 
     @Test
@@ -374,6 +362,30 @@ public class TimestampsTest {
     }
 
     @Test
+    public void testNextDSTRulesAfterFirst() throws NumericException {
+        String tz = "Europe/Berlin";
+        TimeZoneRules rules = TimestampFormatUtils.enLocale.getZoneRules(
+                Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length())),
+                RESOLUTION_MICROS
+        );
+
+        final long ts = rules.getNextDST(TimestampFormatUtils.parseUTCTimestamp("2021-07-03T01:00:00.000000Z"));
+        Assert.assertEquals("2021-10-31T01:00:00.000Z", Timestamps.toString(ts));
+    }
+
+    @Test
+    public void testNextDSTRulesAfterLast() throws NumericException {
+        String tz = "Europe/Berlin";
+        TimeZoneRules rules = TimestampFormatUtils.enLocale.getZoneRules(
+                Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length())),
+                RESOLUTION_MICROS
+        );
+
+        final long ts = rules.getNextDST(TimestampFormatUtils.parseUTCTimestamp("2021-10-31T01:00:00.000000Z"));
+        Assert.assertEquals("2022-03-27T01:00:00.000Z", Timestamps.toString(ts));
+    }
+
+    @Test
     public void testNextDSTRulesBeforeFirst() throws NumericException {
         String tz = "Europe/Berlin";
         TimeZoneRules rules = TimestampFormatUtils.enLocale.getZoneRules(
@@ -383,18 +395,6 @@ public class TimestampsTest {
 
         final long ts = rules.getNextDST(TimestampFormatUtils.parseUTCTimestamp("2021-02-10T01:00:00.000000Z"));
         Assert.assertEquals("2021-03-28T01:00:00.000Z", Timestamps.toString(ts));
-    }
-
-    @Test
-    public void testNextDSTFixed() throws NumericException {
-        String tz = "GMT";
-        TimeZoneRules rules = TimestampFormatUtils.enLocale.getZoneRules(
-                Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length())),
-                RESOLUTION_MICROS
-        );
-
-        final long ts = rules.getNextDST(TimestampFormatUtils.parseUTCTimestamp("2021-02-10T01:00:00.000000Z"));
-        Assert.assertEquals(Long.MAX_VALUE, ts);
     }
 
     @Test

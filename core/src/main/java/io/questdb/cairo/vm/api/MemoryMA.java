@@ -35,13 +35,13 @@ public interface MemoryMA extends MemoryM, MemoryA {
 
     long getAppendAddressSize();
 
-    void sync(boolean async);
-
     void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag);
 
     default void setSize(long size) {
         jumpTo(size);
     }
+
+    void sync(boolean async);
 
     default void toTop() {
         jumpTo(0);

@@ -26,9 +26,9 @@ package io.questdb.cairo.sql;
 
 public interface StaticSymbolTable extends SymbolTable {
 
+    boolean containsNullValue();
+
     int getSymbolCount();
 
     int keyOf(CharSequence value);
-
-    boolean containsNullValue();
 }

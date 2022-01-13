@@ -19,21 +19,17 @@ public class MemoryTagGauge implements Gauge {
     }
 
     @Override
-    public void inc() {
-        //do nothing as this gauge is RO view of memory tag stats  
+    public void dec() {
+        //do nothing as this gauge is RO view of memory tag stats
     }
 
     @Override
-    public void dec() {
+    public void inc() {
         //do nothing as this gauge is RO view of memory tag stats
     }
 
     public String getName() {
         return MemoryTag.nameOf(memoryTag);
-    }
-
-    private long getValue() {
-        return Unsafe.getMemUsedByTag(memoryTag);
     }
 
     @Override
@@ -44,6 +40,12 @@ public class MemoryTagGauge implements Gauge {
         PrometheusFormatUtils.appendNewLine(sink);
     }
 
+    private void appendMetricName(CharSink sink) {
+        sink.put(PrometheusFormatUtils.METRIC_NAME_PREFIX);
+        sink.put(MEMORY_TAG_PREFIX);
+        sink.put(getName());
+    }
+
     private void appendType(CharSink sink) {
         sink.put(PrometheusFormatUtils.TYPE_PREFIX);
         sink.put(MEMORY_TAG_PREFIX);
@@ -51,9 +53,7 @@ public class MemoryTagGauge implements Gauge {
         sink.put(" gauge\n");
     }
 
-    private void appendMetricName(CharSink sink) {
-        sink.put(PrometheusFormatUtils.METRIC_NAME_PREFIX);
-        sink.put(MEMORY_TAG_PREFIX);
-        sink.put(getName());
+    private long getValue() {
+        return Unsafe.getMemUsedByTag(memoryTag);
     }
 }

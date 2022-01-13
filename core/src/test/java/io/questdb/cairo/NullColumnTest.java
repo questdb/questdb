@@ -37,11 +37,6 @@ public class NullColumnTest {
     }
 
     @Test
-    public void isDeleted() {
-        Assert.assertTrue(NullColumn.INSTANCE.isDeleted());
-    }
-
-    @Test
     public void getBin() {
         Assert.assertNull(NullColumn.INSTANCE.getBin(1234));
     }
@@ -59,6 +54,11 @@ public class NullColumnTest {
     @Test
     public void getByte() {
         Assert.assertEquals(0, NullColumn.INSTANCE.getByte(1234));
+    }
+
+    @Test
+    public void getChar() {
+        Assert.assertEquals(0, NullColumn.INSTANCE.getChar(1234));
     }
 
     @Test
@@ -82,13 +82,18 @@ public class NullColumnTest {
     }
 
     @Test
-    public void getChar() {
-        Assert.assertEquals(0, NullColumn.INSTANCE.getChar(1234));
+    public void getLong() {
+        Assert.assertEquals(Numbers.LONG_NaN, NullColumn.INSTANCE.getLong(1234));
     }
 
     @Test
-    public void getLong() {
-        Assert.assertEquals(Numbers.LONG_NaN, NullColumn.INSTANCE.getLong(1234));
+    public void getLong256A() {
+        Assert.assertEquals(Long256Impl.NULL_LONG256, NullColumn.INSTANCE.getLong256A(1234));
+    }
+
+    @Test
+    public void getLong256B() {
+        Assert.assertEquals(Long256Impl.NULL_LONG256, NullColumn.INSTANCE.getLong256B(1234));
     }
 
     @Test
@@ -107,25 +112,13 @@ public class NullColumnTest {
     }
 
     @Test
-    public void getLong256A() {
-        Assert.assertEquals(Long256Impl.NULL_LONG256, NullColumn.INSTANCE.getLong256A(1234));
-    }
-
-    @Test
-    public void getLong256B() {
-        Assert.assertEquals(Long256Impl.NULL_LONG256, NullColumn.INSTANCE.getLong256B(1234));
-    }
-
-    @Test
     public void getStrLen() {
         Assert.assertEquals(TableUtils.NULL_LEN, NullColumn.INSTANCE.getStrLen(1234));
     }
 
     @Test
-    public void testGrow() {
-        // this method does nothing. Make sure it doesn corrupt state of singleton and
-        // doesn't throw exception
-        NullColumn.INSTANCE.extend(100000);
+    public void isDeleted() {
+        Assert.assertTrue(NullColumn.INSTANCE.isDeleted());
     }
 
     @Test
@@ -136,5 +129,12 @@ public class NullColumnTest {
     @Test
     public void testDeleted() {
         Assert.assertTrue(NullColumn.INSTANCE.isDeleted());
+    }
+
+    @Test
+    public void testGrow() {
+        // this method does nothing. Make sure it doesn't corrupt state of singleton and
+        // doesn't throw exception
+        NullColumn.INSTANCE.extend(100000);
     }
 }

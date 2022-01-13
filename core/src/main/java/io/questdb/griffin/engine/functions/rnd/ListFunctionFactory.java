@@ -66,6 +66,11 @@ public class ListFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public int getInt(Record rec) {
+            return next();
+        }
+
+        @Override
         public CharSequence getSymbol(Record rec) {
             return symbols.getQuick(next());
         }
@@ -75,23 +80,9 @@ public class ListFunctionFactory implements FunctionFactory {
             return getSymbol(rec);
         }
 
-        private int next() {
-            return position++ % count;
-        }
-
         @Override
-        public CharSequence valueOf(int symbolKey) {
-            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
-        }
-
-        @Override
-        public CharSequence valueBOf(int key) {
-            return valueOf(key);
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            return next();
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            position = 0;
         }
 
         @Override
@@ -100,8 +91,17 @@ public class ListFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            position = 0;
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
+        }
+
+        @Override
+        public CharSequence valueOf(int symbolKey) {
+            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
+        }
+
+        private int next() {
+            return position++ % count;
         }
     }
 }

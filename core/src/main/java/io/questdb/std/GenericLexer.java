@@ -58,33 +58,6 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         }
     }
 
-    public CharSequence immutablePairOf(CharSequence value0, CharSequence value1) {
-        return immutablePairOf(value0, FloatingSequencePair.NO_SEPARATOR, value1);
-    }
-
-    public CharSequence immutablePairOf(CharSequence value0, char separator, CharSequence value1) {
-        if (!(value0 instanceof FloatingSequence && value1 instanceof InternalFloatingSequence)) {
-            throw new UnsupportedOperationException("only pairs of floating sequences are allowed");
-        }
-        FloatingSequencePair seqPair = csPairPool.next();
-        seqPair.cs0 = (FloatingSequence) value0;
-        seqPair.cs1 = (FloatingSequence) immutableOf(value1);
-        seqPair.sep = separator;
-        return seqPair;
-    }
-
-    public static CharSequence immutableOf(CharSequence value) {
-        if (value instanceof InternalFloatingSequence) {
-            GenericLexer lexer = ((InternalFloatingSequence) value).getParent();
-            FloatingSequence that = lexer.csPool.next();
-            that.lo = lexer._lo;
-            that.hi = lexer._hi;
-            assert that.lo < that.hi;
-            return that;
-        }
-        return value;
-    }
-
     public static CharSequence assertNoDots(CharSequence value, int position) throws SqlException {
         int len = value.length();
         if (len == 1 && value.charAt(0) == '.') {
@@ -115,11 +88,33 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         return value;
     }
 
+    public static CharSequence immutableOf(CharSequence value) {
+        if (value instanceof InternalFloatingSequence) {
+            GenericLexer lexer = ((InternalFloatingSequence) value).getParent();
+            FloatingSequence that = lexer.csPool.next();
+            that.lo = lexer._lo;
+            that.hi = lexer._hi;
+            assert that.lo < that.hi;
+            return that;
+        }
+        return value;
+    }
+
     public static CharSequence unquote(CharSequence value) {
         if (Chars.isQuoted(value)) {
             return value.subSequence(1, value.length() - 1);
         }
         return immutableOf(value);
+    }
+
+    public void backTo(int position, CharSequence lastSeen) {
+        if (position < 0 || position > _len) {
+            throw new IndexOutOfBoundsException();
+        }
+        _pos = position;
+        last = lastSeen;
+        unparsed = null;
+        next = null;
     }
 
     public final void defineSymbol(String token) {
@@ -138,10 +133,6 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
 
     public CharSequence getContent() {
         return content;
-    }
-
-    public CharSequence peek() {
-        return next;
     }
 
     public int getPosition() {
@@ -277,6 +268,21 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         return that;
     }
 
+    public CharSequence immutablePairOf(CharSequence value0, CharSequence value1) {
+        return immutablePairOf(value0, FloatingSequencePair.NO_SEPARATOR, value1);
+    }
+
+    public CharSequence immutablePairOf(CharSequence value0, char separator, CharSequence value1) {
+        if (!(value0 instanceof FloatingSequence && value1 instanceof InternalFloatingSequence)) {
+            throw new UnsupportedOperationException("only pairs of floating sequences are allowed");
+        }
+        FloatingSequencePair seqPair = csPairPool.next();
+        seqPair.cs0 = (FloatingSequence) value0;
+        seqPair.cs1 = (FloatingSequence) immutableOf(value1);
+        seqPair.sep = separator;
+        return seqPair;
+    }
+
     public int lastTokenPosition() {
         return _lo;
     }
@@ -297,6 +303,10 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         this.last = null;
     }
 
+    public CharSequence peek() {
+        return next;
+    }
+
     public void restart() {
         this.csPool.clear();
         this.csPairPool.clear();
@@ -308,16 +318,6 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
 
     public void unparse() {
         unparsed = last;
-    }
-
-    public void backTo(int position, CharSequence lastSeen) {
-        if (position < 0 || position > _len) {
-            throw new IndexOutOfBoundsException();
-        }
-        _pos = position;
-        last = lastSeen;
-        unparsed = null;
-        next = null;
     }
 
     private static CharSequence findToken0(char c, CharSequence content, int _pos, int _len, IntObjHashMap<ObjList<CharSequence>> symbols) {
@@ -369,6 +369,53 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         }
     }
 
+    public static class FloatingSequencePair extends AbstractCharSequence implements Mutable {
+        public static final char NO_SEPARATOR = (char) 0;
+
+        FloatingSequence cs0;
+        FloatingSequence cs1;
+        char sep = NO_SEPARATOR;
+
+        @Override
+        public void clear() {
+            // no-op
+        }
+
+        @Override
+        public int length() {
+            return cs0.length() + cs1.length() + (sep != NO_SEPARATOR ? 1 : 0);
+        }
+
+        @Override
+        public char charAt(int index) {
+            int cs0Len = cs0.length();
+            if (index < cs0Len) {
+                return cs0.charAt(index);
+            }
+            if (sep == NO_SEPARATOR) {
+                return cs1.charAt(index - cs0Len);
+            }
+            return index == cs0Len ? sep : cs1.charAt(index - cs0Len - 1);
+        }
+
+        @NotNull
+        @Override
+        public String toString() {
+            final CharSink b = Misc.getThreadLocalBuilder();
+            b.put(cs0);
+            if (sep != NO_SEPARATOR) {
+                b.put(sep);
+            }
+            b.put(cs1);
+            return b.toString();
+        }
+
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            throw new UnsupportedOperationException();
+        }
+    }
+
     public class InternalFloatingSequence extends AbstractCharSequence {
 
         @Override
@@ -411,10 +458,6 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             this.hi = hi;
         }
 
-        public void setLo(int lo) {
-            this.lo = lo;
-        }
-
         @Override
         public int length() {
             return hi - lo;
@@ -425,6 +468,10 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             return content.charAt(lo + index);
         }
 
+        public void setLo(int lo) {
+            this.lo = lo;
+        }
+
         @Override
         public CharSequence subSequence(int start, int end) {
             FloatingSequence that = csPool.next();
@@ -432,53 +479,6 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             that.hi = lo + end;
             assert that.lo < that.hi;
             return that;
-        }
-    }
-
-    public static class FloatingSequencePair extends AbstractCharSequence implements Mutable {
-        public static final char NO_SEPARATOR = (char) 0;
-
-        FloatingSequence cs0;
-        FloatingSequence cs1;
-        char sep = NO_SEPARATOR;
-
-        @Override
-        public int length() {
-            return cs0.length() + cs1.length() + (sep != NO_SEPARATOR ? 1 : 0);
-        }
-
-        @Override
-        public char charAt(int index) {
-            int cs0Len = cs0.length();
-            if (index < cs0Len) {
-                return cs0.charAt(index);
-            }
-            if (sep == NO_SEPARATOR) {
-                return cs1.charAt(index - cs0Len);
-            }
-            return index == cs0Len ? sep : cs1.charAt(index - cs0Len - 1);
-        }
-
-        @Override
-        public CharSequence subSequence(int start, int end) {
-            throw new UnsupportedOperationException();
-        }
-
-        @NotNull
-        @Override
-        public String toString() {
-            final CharSink b = Misc.getThreadLocalBuilder();
-            b.put(cs0);
-            if (sep != NO_SEPARATOR) {
-                b.put(sep);
-            }
-            b.put(cs1);
-            return b.toString();
-        }
-
-        @Override
-        public void clear() {
-            // no-op
         }
     }
 

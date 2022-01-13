@@ -33,13 +33,13 @@ class ByteBindVariable extends ByteFunction implements ScalarFunction, Mutable {
     byte value;
 
     @Override
-    public byte getByte(Record rec) {
-        return value;
+    public void clear() {
+        this.value = 0;
     }
 
     @Override
-    public void clear() {
-        this.value = 0;
+    public byte getByte(Record rec) {
+        return value;
     }
 
     @Override

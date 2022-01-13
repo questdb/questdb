@@ -79,16 +79,16 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function getArg() {
+            return left;
+        }
+
+        @Override
         public boolean getBool(Record rec) {
             long timestamp = left.getTimestamp(rec);
             if (timestamp == Numbers.LONG_NaN) return false;
 
             return from <= timestamp && timestamp <= to;
-        }
-
-        @Override
-        public Function getArg() {
-            return left;
         }
     }
 

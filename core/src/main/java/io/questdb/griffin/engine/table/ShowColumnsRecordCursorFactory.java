@@ -44,6 +44,7 @@ public class ShowColumnsRecordCursorFactory implements RecordCursorFactory {
     private static final int N_DESIGNATED_COL = 6;
     private final ShowColumnsCursor cursor = new ShowColumnsCursor();
     private final CharSequence tableName;
+
     public ShowColumnsRecordCursorFactory(CharSequence tableName) {
         this.tableName = tableName.toString();
     }
@@ -82,6 +83,11 @@ public class ShowColumnsRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
+        public Record getRecordB() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public boolean hasNext() {
             columnIndex++;
             if (columnIndex < reader.getMetadata().getColumnCount()) {
@@ -92,23 +98,18 @@ public class ShowColumnsRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
-        public Record getRecordB() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public void recordAt(Record record, long atRowId) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public void toTop() {
-            columnIndex = -1;
+        public long size() {
+            return -1;
         }
 
         @Override
-        public long size() {
-            return -1;
+        public void toTop() {
+            columnIndex = -1;
         }
 
         private ShowColumnsCursor of(SqlExecutionContext executionContext) {

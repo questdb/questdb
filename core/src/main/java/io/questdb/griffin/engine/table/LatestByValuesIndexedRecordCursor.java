@@ -56,6 +56,22 @@ class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
+    public boolean hasNext() {
+        if (index > -1) {
+            final long rowid = rows.get(index);
+            recordA.jumpTo(Rows.toPartitionIndex(rowid), Rows.toLocalRowID(rowid));
+            index--;
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public long size() {
+        return rows.size();
+    }
+
+    @Override
     public void toTop() {
         index = rows.size() - 1;
     }
@@ -94,21 +110,5 @@ class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
         this.recordA.of(dataFrameCursor.getTableReader());
         this.recordB.of(dataFrameCursor.getTableReader());
         buildTreeMap();
-    }
-
-    @Override
-    public boolean hasNext() {
-        if (index > -1) {
-            final long rowid = rows.get(index);
-            recordA.jumpTo(Rows.toPartitionIndex(rowid), Rows.toLocalRowID(rowid));
-            index--;
-            return true;
-        }
-        return false;
-    }
-
-    @Override
-    public long size() {
-        return rows.size();
     }
 }

@@ -46,7 +46,7 @@ public class ColumnIndexerJob extends AbstractQueueConsumerJob<ColumnIndexerTask
         subSeq.done(cursor);
 
         // On the face of it main thread could have consumed same sequence as
-        // child workers. The reason it is undesirable is because all writers
+        // child workers. The reason it is undesirable is that all writers
         // share the same queue and main thread end up indexing content for other writers.
         // Using CAS allows main thread to steal only parts of its own job.
         if (indexer.tryLock(indexSequence)) {

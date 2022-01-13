@@ -77,6 +77,16 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
             timestamp = evaluateConstant(arg, timestampFormat, locale);
         }
 
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return timestamp;
+        }
+
         private long evaluateConstant(Function arg, DateFormat timestampFormat, DateLocale locale) {
             CharSequence value = arg.getStr(null);
             try {
@@ -87,16 +97,6 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
             }
 
             return Numbers.LONG_NaN;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public long getTimestamp(Record rec) {
-            return timestamp;
         }
     }
 

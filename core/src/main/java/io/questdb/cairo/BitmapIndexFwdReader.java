@@ -104,11 +104,11 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
     }
 
     private class Cursor implements RowCursor, IndexFrameCursor {
+        private final IndexFrame indexFrame = new IndexFrame();
         protected long position;
         protected long valueCount;
         protected long next;
         private long valueBlockOffset;
-        private final IndexFrame indexFrame = new IndexFrame();
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
         private long maxValue;
 
@@ -118,7 +118,7 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
                 long cellIndex = getValueCellIndex(position);
                 long address = valueMem.addressOf(valueBlockOffset + cellIndex * Long.BYTES);
 
-                long pageSize = Math.min(valueCount - position, blockValueCountMod - cellIndex + 1) ;
+                long pageSize = Math.min(valueCount - position, blockValueCountMod - cellIndex + 1);
                 position += pageSize;
                 if (position < valueCount) {
                     // we are at edge of block right now, next value will be in next block
@@ -167,8 +167,8 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
         }
 
         private void jumpToNextValueBlock() {
-            // we don't need to extend valueMem because we going from farthest block back to start of file
-            // to closes, e.g. valueBlockOffset is decreasing.
+            // we don't need to extend valueMem because we're going from the farthest block back to start of file
+            // to the closest, e.g. valueBlockOffset is decreasing.
             valueBlockOffset = getNextBlock(valueBlockOffset);
         }
 

@@ -31,11 +31,11 @@ import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.map.FastMap;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
@@ -43,14 +43,14 @@ import org.jetbrains.annotations.NotNull;
 
 public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactory {
 
+    public static final byte COMPUTE_NEXT = 0;
+    public static final byte REUSE_CURRENT = 1;
+    public static final byte NO_ROWS = 2;
     protected final RecordCursorFactory base;
     private final Map dataMap;
     private final DistinctTimeSeriesRecordCursor cursor;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordMetadata metadata;
-    public static final byte COMPUTE_NEXT = 0;
-    public static final byte REUSE_CURRENT = 1;
-    public static final byte NO_ROWS = 2;
 
     public DistinctTimeSeriesRecordCursorFactory(
             CairoConfiguration configuration,
@@ -68,7 +68,7 @@ public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactor
                 configuration.getSqlDistinctTimestampKeyCapacity(),
                 configuration.getSqlDistinctTimestampLoadFactor(),
                 Integer.MAX_VALUE
-        ) ;
+        );
 
         this.base = base;
         this.metadata = metadata;
@@ -130,6 +130,11 @@ public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactor
         }
 
         @Override
+        public Record getRecordB() {
+            return baseCursor.getRecordB();
+        }
+
+        @Override
         public SymbolTable getSymbolTable(int columnIndex) {
             return baseCursor.getSymbolTable(columnIndex);
         }
@@ -158,24 +163,19 @@ public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactor
         }
 
         @Override
-        public Record getRecordB() {
-            return baseCursor.getRecordB();
+        public void recordAt(Record record, long atRowId) {
+            baseCursor.recordAt(record, atRowId);
         }
 
         @Override
-        public void recordAt(Record record, long atRowId) {
-            baseCursor.recordAt(record, atRowId);
+        public long size() {
+            return -1;
         }
 
         @Override
         public void toTop() {
             baseCursor.toTop();
             dataMap.clear();
-        }
-
-        @Override
-        public long size() {
-            return -1;
         }
 
         public RecordCursor of(RecordCursor baseCursor, SqlExecutionContext sqlExecutionContext) {

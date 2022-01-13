@@ -64,6 +64,11 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
     }
 
     @Override
+    public long size() {
+        return -1;
+    }
+
+    @Override
     public void toTop() {
         hasNext = found;
         filter.toTop();
@@ -91,11 +96,6 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
                 }
             }
         }
-    }
-
-    @Override
-    public long size() {
-        return -1;
     }
 
     @Override

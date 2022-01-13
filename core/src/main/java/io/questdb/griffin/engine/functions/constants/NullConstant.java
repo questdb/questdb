@@ -45,21 +45,6 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     }
 
     @Override
-    public int getType() {
-        return type;
-    }
-
-    @Override
-    public boolean isRuntimeConstant() {
-        return true;
-    }
-
-    @Override
-    public boolean supportsRandomAccess() {
-        return true;
-    }
-
-    @Override
     public int getArrayLength() {
         return TableUtils.NULL_LEN;
     }
@@ -90,6 +75,11 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     }
 
     @Override
+    public long getDate(Record rec) {
+        return DateConstant.NULL.getDate(null);
+    }
+
+    @Override
     public double getDouble(Record rec) {
         return DoubleConstant.NULL.getDouble(null);
     }
@@ -100,8 +90,23 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     }
 
     @Override
-    public short getShort(Record rec) {
-        return ShortConstant.ZERO.getShort(null);
+    public byte getGeoByte(Record rec) {
+        return GeoHashes.BYTE_NULL;
+    }
+
+    @Override
+    public int getGeoInt(Record rec) {
+        return GeoHashes.INT_NULL;
+    }
+
+    @Override
+    public long getGeoLong(Record rec) {
+        return GeoHashes.NULL;
+    }
+
+    @Override
+    public short getGeoShort(Record rec) {
+        return GeoHashes.SHORT_NULL;
     }
 
     @Override
@@ -130,18 +135,33 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     }
 
     @Override
+    public Record getRecord(Record rec) {
+        return null;
+    }
+
+    @Override
+    public RecordCursorFactory getRecordCursorFactory() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public short getShort(Record rec) {
+        return ShortConstant.ZERO.getShort(null);
+    }
+
+    @Override
     public CharSequence getStr(Record rec) {
         return StrConstant.NULL.getStr(null);
     }
 
     @Override
-    public void getStr(Record rec, CharSink sink) {
-        // intentionally left empty
+    public CharSequence getStr(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public CharSequence getStr(Record rec, int arrayIndex) {
-        throw new UnsupportedOperationException();
+    public void getStr(Record rec, CharSink sink) {
+        // intentionally left empty
     }
 
     @Override
@@ -185,37 +205,17 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     }
 
     @Override
-    public long getDate(Record rec) {
-        return DateConstant.NULL.getDate(null);
+    public int getType() {
+        return type;
     }
 
     @Override
-    public byte getGeoByte(Record rec) {
-        return GeoHashes.BYTE_NULL;
+    public boolean isRuntimeConstant() {
+        return true;
     }
 
     @Override
-    public short getGeoShort(Record rec) {
-        return GeoHashes.SHORT_NULL;
-    }
-
-    @Override
-    public int getGeoInt(Record rec) {
-        return GeoHashes.INT_NULL;
-    }
-
-    @Override
-    public long getGeoLong(Record rec) {
-        return GeoHashes.NULL;
-    }
-
-    @Override
-    public RecordCursorFactory getRecordCursorFactory() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public Record getRecord(Record rec) {
-        return null;
+    public boolean supportsRandomAccess() {
+        return true;
     }
 }

@@ -66,6 +66,32 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     @Override
+    public boolean containsNullValue() {
+        return nullValue;
+    }
+
+    @Override
+    public int getSymbolCount() {
+        return symbolCount;
+    }
+
+    @Override
+    public int keyOf(CharSequence value) {
+        if (value != null) {
+            int hash = Hash.boundedHash(value, maxHash);
+            final RowCursor cursor = indexReader.getCursor(true, hash, 0, maxOffset - Long.BYTES);
+            while (cursor.hasNext()) {
+                final long offsetOffset = cursor.next();
+                if (Chars.equals(value, charMem.getStr(offsetMem.getLong(offsetOffset)))) {
+                    return SymbolMapWriter.offsetToKey(offsetOffset);
+                }
+            }
+            return SymbolTable.VALUE_NOT_FOUND;
+        }
+        return SymbolTable.VALUE_IS_NULL;
+    }
+
+    @Override
     public int getSymbolCapacity() {
         return symbolCapacity;
     }
@@ -78,6 +104,17 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     @Override
     public boolean isDeleted() {
         return offsetMem.isDeleted();
+    }
+
+    @Override
+    public long symbolCharsAddressOf(int symbolIndex) {
+        if (symbolIndex < symbolCount) {
+            long offset = offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolIndex));
+            return charMem.addressOf(offset);
+        } else if (symbolIndex == symbolCount) {
+            return charMem.addressOf(charMem.getGrownLength());
+        }
+        return -1;
     }
 
     @Override
@@ -94,17 +131,6 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             cache.remove(symbolCount + 1, this.symbolCount);
             this.symbolCount = symbolCount;
         }
-    }
-
-    @Override
-    public long symbolCharsAddressOf(int symbolIndex) {
-        if (symbolIndex < symbolCount) {
-            long offset = offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolIndex));
-            return charMem.addressOf(offset);
-        } else if (symbolIndex == symbolCount) {
-            return charMem.addressOf(charMem.getGrownLength());
-        }
-        return -1;
     }
 
     public void of(CairoConfiguration configuration, Path path, CharSequence columnName, int symbolCount) {
@@ -165,29 +191,14 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     @Override
-    public int getSymbolCount() {
-        return symbolCount;
-    }
-
-    @Override
-    public int keyOf(CharSequence value) {
-        if (value != null) {
-            int hash = Hash.boundedHash(value, maxHash);
-            final RowCursor cursor = indexReader.getCursor(true, hash, 0, maxOffset - Long.BYTES);
-            while (cursor.hasNext()) {
-                final long offsetOffset = cursor.next();
-                if (Chars.equals(value, charMem.getStr(offsetMem.getLong(offsetOffset)))) {
-                    return SymbolMapWriter.offsetToKey(offsetOffset);
-                }
+    public CharSequence valueBOf(int key) {
+        if (key > -1 && key < symbolCount) {
+            if (cached) {
+                return cachedValue(key);
             }
-            return SymbolTable.VALUE_NOT_FOUND;
+            return uncachedValue2(key);
         }
-        return SymbolTable.VALUE_IS_NULL;
-    }
-
-    @Override
-    public boolean containsNullValue() {
-        return nullValue;
+        return null;
     }
 
     @Override
@@ -197,17 +208,6 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
                 return cachedValue(key);
             }
             return uncachedValue(key);
-        }
-        return null;
-    }
-
-    @Override
-    public CharSequence valueBOf(int key) {
-        if (key > -1 && key < symbolCount) {
-            if (cached) {
-                return cachedValue(key);
-            }
-            return uncachedValue2(key);
         }
         return null;
     }

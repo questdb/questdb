@@ -40,12 +40,12 @@ class DoubleCaseFunction extends DoubleFunction implements MultiArgFunction {
     }
 
     @Override
-    public double getDouble(Record rec) {
-        return picker.pick(rec).getDouble(rec);
+    public ObjList<Function> getArgs() {
+        return args;
     }
 
     @Override
-    public ObjList<Function> getArgs() {
-        return args;
+    public double getDouble(Record rec) {
+        return picker.pick(rec).getDouble(rec);
     }
 }

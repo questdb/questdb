@@ -35,6 +35,19 @@ public class Long256FromCharSequenceDecoderTest {
     private long l2;
     private long l3;
 
+    @Before
+    public void before() {
+        decoder = new Long256FromCharSequenceDecoder() {
+            @Override
+            public void setAll(long l0, long l1, long l2, long l3) {
+                Long256FromCharSequenceDecoderTest.this.l0 = l0;
+                Long256FromCharSequenceDecoderTest.this.l1 = l1;
+                Long256FromCharSequenceDecoderTest.this.l2 = l2;
+                Long256FromCharSequenceDecoderTest.this.l3 = l3;
+            }
+        };
+    }
+
     @Test(expected = NumericException.class)
     public void testBadEncoding() throws NumericException {
         assertDecoded("5g9796963abad00001e5f6bbdb38", 0, 0, -3458762426621895880L, 99607112989370L, 0, 0);
@@ -119,19 +132,6 @@ public class Long256FromCharSequenceDecoderTest {
     @Test(expected = NumericException.class)
     public void testTooLong() throws NumericException {
         assertDecoded("10000000000000000000000000000000000000000000000000000000000000000", 0, 0, 0, 0, 0, 0x1000000000000000L);
-    }
-
-    @Before
-    public void before() {
-        decoder = new Long256FromCharSequenceDecoder() {
-            @Override
-            public void setAll(long l0, long l1, long l2, long l3) {
-                Long256FromCharSequenceDecoderTest.this.l0 = l0;
-                Long256FromCharSequenceDecoderTest.this.l1 = l1;
-                Long256FromCharSequenceDecoderTest.this.l2 = l2;
-                Long256FromCharSequenceDecoderTest.this.l3 = l3;
-            }
-        };
     }
 
     private void assertDecoded(String hexString, int prefixSize, int suffixSize, long l0, long l1, long l2, long l3) throws NumericException {

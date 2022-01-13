@@ -37,6 +37,65 @@ import io.questdb.std.NumericException;
 public class LineUdpParserSupport {
     private final static Log LOG = LogFactory.getLog(LineUdpParserSupport.class);
 
+    public static int getValueType(CharSequence value) {
+        // method called for inbound ilp messages on each value.
+        // returning UNDEFINED makes the whole line be skipped.
+        // 0 len values, return null type.
+        // the goal of this method is to guess the potential type,
+        // and then it will be parsed accordingly by 'putValue'.
+        int valueLen = value.length();
+        if (valueLen > 0) {
+            char first = value.charAt(0);
+            char last = value.charAt(valueLen - 1); // see AbstractLineSender.field methods
+            switch (last) {
+                case 'i':
+                    if (valueLen > 3 && value.charAt(0) == '0' && value.charAt(1) == 'x') {
+                        return ColumnType.LONG256;
+                    }
+                    return valueLen == 1 ? ColumnType.SYMBOL : ColumnType.LONG;
+                case 't':
+                    if (valueLen > 1 && ((first >= '0' && first <= '9') || first == '-')) {
+                        return ColumnType.TIMESTAMP;
+                    }
+                    // fall through
+                case 'T':
+                    // t
+                    // T
+                case 'e':
+                case 'E':
+                    // tru(e)
+                    // fals(e)
+                case 'f':
+                case 'F':
+                    // f
+                    // F
+                    if (valueLen == 1) {
+                        return last != 'e' ? ColumnType.BOOLEAN : ColumnType.SYMBOL;
+                    }
+                    return SqlKeywords.isTrueKeyword(value) || SqlKeywords.isFalseKeyword(value) ?
+                            ColumnType.BOOLEAN : ColumnType.SYMBOL;
+                case '"':
+                    if (valueLen < 2 || value.charAt(0) != '\"') {
+                        LOG.error().$("incorrectly quoted string: ").$(value).$();
+                        return ColumnType.UNDEFINED;
+                    }
+                    return ColumnType.STRING;
+                default:
+                    if (last >= '0' && last <= '9' && ((first >= '0' && first <= '9') || first == '-' || first == '.')) {
+                        return ColumnType.DOUBLE;
+                    }
+                    if (SqlKeywords.isNanKeyword(value)) {
+                        return ColumnType.DOUBLE;
+                    }
+                    if (value.charAt(0) == '"') {
+                        return ColumnType.UNDEFINED;
+                    }
+                    return ColumnType.SYMBOL;
+            }
+        }
+        return ColumnType.NULL;
+    }
+
     /**
      * Writes column value to table row. CharSequence value is interpreted depending on
      * column type and written to column, identified by columnIndex. If value cannot be
@@ -48,7 +107,6 @@ public class LineUdpParserSupport {
      *                       and tag size (high short negative), otherwise -1
      * @param columnIndex    index of column to write value to
      * @param value          value characters
-     * @throws BadCastException when value cannot be cast to the give type
      */
     public static void putValue(
             TableWriter.Row row,
@@ -56,7 +114,7 @@ public class LineUdpParserSupport {
             int columnTypeMeta,
             int columnIndex,
             CharSequence value
-    ) throws BadCastException {
+    ) {
         if (value.length() > 0) {
             try {
                 switch (ColumnType.tagOf(columnType)) {
@@ -174,69 +232,6 @@ public class LineUdpParserSupport {
         }
     }
 
-    public static class BadCastException extends Exception {
-        public static final BadCastException INSTANCE = new BadCastException();
-    }
-
-    public static int getValueType(CharSequence value) {
-        // method called for inbound ilp messages on each value.
-        // returning UNDEFINED makes the whole line be skipped.
-        // 0 len values, return null type.
-        // the goal of this method is to guess the potential type
-        // and then it will be parsed accordingly by 'putValue'.
-        int valueLen = value.length();
-        if (valueLen > 0) {
-            char first = value.charAt(0);
-            char last = value.charAt(valueLen - 1); // see AbstractLineSender.field methods
-            switch (last) {
-                case 'i':
-                    if (valueLen > 3 && value.charAt(0) == '0' && value.charAt(1) == 'x') {
-                        return ColumnType.LONG256;
-                    }
-                    return valueLen == 1 ? ColumnType.SYMBOL : ColumnType.LONG;
-                case 't':
-                    if (valueLen > 1 && ((first >= '0' && first <= '9') || first == '-')) {
-                        return ColumnType.TIMESTAMP;
-                    }
-                    // fall through
-                case 'T':
-                    // t
-                    // T
-                case 'e':
-                case 'E':
-                    // tru(e)
-                    // fals(e)
-                case 'f':
-                case 'F':
-                    // f
-                    // F
-                    if (valueLen == 1) {
-                        return last != 'e' ? ColumnType.BOOLEAN : ColumnType.SYMBOL;
-                    }
-                    return SqlKeywords.isTrueKeyword(value) || SqlKeywords.isFalseKeyword(value) ?
-                            ColumnType.BOOLEAN : ColumnType.SYMBOL;
-                case '"':
-                    if (valueLen < 2 || value.charAt(0) != '\"') {
-                        LOG.error().$("incorrectly quoted string: ").$(value).$();
-                        return ColumnType.UNDEFINED;
-                    }
-                    return ColumnType.STRING;
-                default:
-                    if (last >= '0' && last <= '9' && ((first >= '0' && first <= '9') || first == '-' || first == '.')) {
-                        return ColumnType.DOUBLE;
-                    }
-                    if (SqlKeywords.isNanKeyword(value)) {
-                        return ColumnType.DOUBLE;
-                    }
-                    if (value.charAt(0) == '"') {
-                        return ColumnType.UNDEFINED;
-                    }
-                    return ColumnType.SYMBOL;
-            }
-        }
-        return ColumnType.NULL;
-    }
-
     private static boolean isTrue(CharSequence value) {
         return (value.charAt(0) | 32) == 't';
     }
@@ -298,5 +293,9 @@ public class LineUdpParserSupport {
                 // unsupported types are ignored
                 break;
         }
+    }
+
+    public static class BadCastException extends Exception {
+        public static final BadCastException INSTANCE = new BadCastException();
     }
 }

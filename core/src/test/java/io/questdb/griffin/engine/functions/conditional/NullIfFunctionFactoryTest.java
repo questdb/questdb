@@ -30,33 +30,6 @@ import org.junit.Test;
 public class NullIfFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
-    public void testStrSimple() throws Exception {
-        assertQuery(
-                "str1\tstr2\tnullif\n" +
-                        "cat\tcat\t\n" +
-                        "dog\t\t\n" +
-                        "\t\t\n" +
-                        "\tdog\t\n" +
-                        "cat\tdog\tcat\n" +
-                        "dog\t\t\n" +
-                        "dog\tdog\t\n" +
-                        "dog\tcat\tdog\n" +
-                        "cat\tdog\tcat\n" +
-                        "cat\tdog\tcat\n",
-                "select str1,str2,nullif(str1,str2) from x",
-                "create table x as (" +
-                        "select rnd_str('cat','dog',NULL) as str1\n" +
-                        ", rnd_str('cat','dog',NULL) as str2\n" +
-                        "from long_sequence(10)" +
-                        ")",
-                null,
-                true,
-                false,
-                true
-        );
-    }
-
-    @Test
     public void testCharSimple() throws Exception {
         assertQuery(
                 "ch1\tch2\tnullif\n" +
@@ -94,6 +67,20 @@ public class NullIfFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIntConstNull() throws Exception {
+        assertQuery(
+                "nullif1\tnullif2\n" +
+                        "NaN\t5\n",
+                "select nullif(null,5) nullif1, nullif(5,null) nullif2",
+                null,
+                null,
+                true,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testIntSimple() throws Exception {
         assertQuery(
                 "int\tnullif\n" +
@@ -115,12 +102,25 @@ public class NullIfFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIntConstNull() throws Exception {
+    public void testStrSimple() throws Exception {
         assertQuery(
-                "nullif1\tnullif2\n" +
-                        "NaN\t5\n",
-                "select nullif(null,5) nullif1, nullif(5,null) nullif2",
-                null,
+                "str1\tstr2\tnullif\n" +
+                        "cat\tcat\t\n" +
+                        "dog\t\t\n" +
+                        "\t\t\n" +
+                        "\tdog\t\n" +
+                        "cat\tdog\tcat\n" +
+                        "dog\t\t\n" +
+                        "dog\tdog\t\n" +
+                        "dog\tcat\tdog\n" +
+                        "cat\tdog\tcat\n" +
+                        "cat\tdog\tcat\n",
+                "select str1,str2,nullif(str1,str2) from x",
+                "create table x as (" +
+                        "select rnd_str('cat','dog',NULL) as str1\n" +
+                        ", rnd_str('cat','dog',NULL) as str2\n" +
+                        "from long_sequence(10)" +
+                        ")",
                 null,
                 true,
                 false,

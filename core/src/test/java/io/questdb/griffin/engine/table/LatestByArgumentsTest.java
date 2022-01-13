@@ -34,7 +34,7 @@ public class LatestByArgumentsTest {
     public void testLatestByArguments() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             long address = LatestByArguments.allocateMemory();
-            LatestByArguments.setKeyLo(address,1);
+            LatestByArguments.setKeyLo(address, 1);
             LatestByArguments.setKeyHi(address, 2);
             LatestByArguments.setRowsAddress(address, 3);
             LatestByArguments.setRowsCapacity(address, 4);
@@ -58,7 +58,7 @@ public class LatestByArgumentsTest {
         TestUtils.assertMemoryLeak(() -> {
             final int elements = 128;
             long baseAddress = LatestByArguments.allocateMemoryArray(elements);
-            for(int i = 0; i < elements; ++i) {
+            for (int i = 0; i < elements; ++i) {
                 final long address = baseAddress + i * LatestByArguments.MEMORY_SIZE;
                 LatestByArguments.setKeyLo(address, 1);
                 LatestByArguments.setKeyHi(address, 2);
@@ -69,7 +69,7 @@ public class LatestByArgumentsTest {
                 LatestByArguments.setHashesAddress(address, 7);
             }
 
-            for(int i = 0; i < elements; ++i) {
+            for (int i = 0; i < elements; ++i) {
                 final long address = baseAddress + i * LatestByArguments.MEMORY_SIZE;
                 assertEquals(7, LatestByArguments.getHashesAddress(address));
                 assertEquals(6, LatestByArguments.getFilteredSize(address));

@@ -197,6 +197,19 @@ public class FastMap implements Map {
         return record;
     }
 
+    public void restoreInitialCapacity() {
+        this.kStart = kPos = Unsafe.realloc(this.kStart, this.kLimit - this.kStart, this.capacity = initialPageSize, MemoryTag.NATIVE_FAST_MAP);
+        this.kLimit = kStart + this.initialPageSize;
+        this.keyCapacity = (int) (this.initialKeyCapacity / loadFactor);
+        this.keyCapacity = this.keyCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(this.keyCapacity);
+        this.mask = this.keyCapacity - 1;
+        this.free = (int) (this.keyCapacity * loadFactor);
+        this.offsets.extend(this.keyCapacity);
+        this.offsets.setPos(this.keyCapacity);
+        this.offsets.zero(-1);
+        this.nResizes = 0;
+    }
+
     @Override
     public long size() {
         return size;
@@ -210,19 +223,6 @@ public class FastMap implements Map {
     @Override
     public MapKey withKey() {
         return key.init();
-    }
-
-    public void restoreInitialCapacity() {
-        this.kStart = kPos = Unsafe.realloc(this.kStart, this.kLimit - this.kStart, this.capacity = initialPageSize, MemoryTag.NATIVE_FAST_MAP);
-        this.kLimit = kStart + this.initialPageSize;
-        this.keyCapacity = (int) (this.initialKeyCapacity / loadFactor);
-        this.keyCapacity = this.keyCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(this.keyCapacity);
-        this.mask = this.keyCapacity - 1;
-        this.free = (int) (this.keyCapacity * loadFactor);
-        this.offsets.extend(this.keyCapacity);
-        this.offsets.setPos(this.keyCapacity);
-        this.offsets.zero(-1);
-        this.nResizes = 0;
     }
 
     public long getAreaSize() {

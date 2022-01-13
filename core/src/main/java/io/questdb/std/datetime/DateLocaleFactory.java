@@ -47,11 +47,11 @@ public class DateLocaleFactory {
         }
     }
 
-    public DateLocale getLocale(CharSequence id) {
-        return dateLocales.get(id);
-    }
-
     @TestOnly
     public static void load() {
+    }
+
+    public DateLocale getLocale(CharSequence id) {
+        return dateLocales.get(id);
     }
 }

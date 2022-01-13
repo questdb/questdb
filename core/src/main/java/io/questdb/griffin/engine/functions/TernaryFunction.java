@@ -70,9 +70,9 @@ public interface TernaryFunction extends Function {
         getRight().toTop();
     }
 
-    Function getLeft();
-
     Function getCenter();
+
+    Function getLeft();
 
     Function getRight();
 }

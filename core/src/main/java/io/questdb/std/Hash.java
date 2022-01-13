@@ -93,7 +93,7 @@ public final class Hash {
      * always collide. (Among known examples are sets of Float keys
      * holding consecutive whole numbers in small tables.)  So we
      * apply a transform that spreads the impact of higher bits
-     * downward. There is a trade off between speed, utility, and
+     * downward. There is a trade-off between speed, utility, and
      * quality of bit-spreading. Because many common sets of hashes
      * are already reasonably distributed (so don't benefit from
      * spreading), and because we use trees to handle large sets of

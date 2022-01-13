@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
@@ -105,17 +105,6 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public long size() {
-            long sizeA = masterCursor.size();
-            long sizeB = slaveCursor.size();
-            if (sizeA == -1 || sizeB == -1) {
-                return -1;
-            }
-            final long result = sizeA * sizeB;
-            return result < sizeA ? Long.MAX_VALUE : result;
-        }
-
-        @Override
         public boolean hasNext() {
 
             if (slaveCursor.hasNext()) {
@@ -128,6 +117,17 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             return false;
+        }
+
+        @Override
+        public long size() {
+            long sizeA = masterCursor.size();
+            long sizeB = slaveCursor.size();
+            if (sizeA == -1 || sizeB == -1) {
+                return -1;
+            }
+            final long result = sizeA * sizeB;
+            return result < sizeA ? Long.MAX_VALUE : result;
         }
 
         @Override

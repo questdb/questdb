@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
@@ -133,6 +133,11 @@ public class TableMetadataCursorFactory implements FunctionFactory {
             }
 
             @Override
+            public Record getRecordB() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
             public boolean hasNext() {
                 while (true) {
                     if (findPtr == 0) {
@@ -154,23 +159,18 @@ public class TableMetadataCursorFactory implements FunctionFactory {
             }
 
             @Override
-            public Record getRecordB() {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
             public void recordAt(Record record, long atRowId) {
                 throw new UnsupportedOperationException();
             }
 
             @Override
-            public void toTop() {
-                close();
+            public long size() {
+                return -1;
             }
 
             @Override
-            public long size() {
-                return -1;
+            public void toTop() {
+                close();
             }
 
             public TableListRecordCursor of(SqlExecutionContext executionContext) {

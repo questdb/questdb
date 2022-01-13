@@ -149,19 +149,6 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return this;
     }
 
-    public Path seekZ() {
-        int count = 0;
-        while (count < capacity+1) {
-            if (Unsafe.getUnsafe().getByte(ptr + count) == 0) {
-                len = count;
-                wptr = ptr + len;
-                break;
-            }
-            count++;
-        }
-        return this;
-    }
-
     public Path concat(CharSequence str, int from, int to) {
         ensureSeparator();
         copy(str, from, to);
@@ -295,6 +282,19 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         this.wptr = ptr;
         this.len = 0;
         return concat(str, from, to);
+    }
+
+    public Path seekZ() {
+        int count = 0;
+        while (count < capacity + 1) {
+            if (Unsafe.getUnsafe().getByte(ptr + count) == 0) {
+                len = count;
+                wptr = ptr + len;
+                break;
+            }
+            count++;
+        }
+        return this;
     }
 
     public Path slash() {

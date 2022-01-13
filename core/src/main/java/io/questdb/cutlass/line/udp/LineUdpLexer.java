@@ -124,7 +124,7 @@ public class LineUdpLexer implements Mutable, Closeable {
     }
 
     private void fireEvent() throws LineProtoException {
-        // two bytes less between these and one more byte so we don't have to use >=
+        // two bytes less between these and one more byte, so we don't have to use >=
         if (dstTop > dstPos - 3 && state != LineUdpParser.EVT_FIELD_VALUE) { // fields do take empty values, same as null
             errorCode = LineUdpParser.ERROR_EMPTY;
             throw LineProtoException.INSTANCE;

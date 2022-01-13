@@ -135,6 +135,10 @@ public class TextLoader implements Closeable, Mutable {
         return textWriter.getColumnErrorCounts();
     }
 
+    public long getErrorLineCount() {
+        return textLexer.getErrorCount();
+    }
+
     public RecordMetadata getMetadata() {
         return textWriter.getMetadata();
     }
@@ -143,20 +147,8 @@ public class TextLoader implements Closeable, Mutable {
         return textLexer.getLineCount();
     }
 
-    public long getErrorLineCount() {
-        return textLexer.getErrorCount();
-    }
-
     public int getPartitionBy() {
         return textWriter.getPartitionBy();
-    }
-
-    public void setCommitLag(long commitLag) {
-        textWriter.setCommitLag(commitLag);
-    }
-
-    public void setMaxUncommittedRows(int maxUncommittedRows) {
-        textWriter.setMaxUncommittedRows(maxUncommittedRows);
     }
 
     public CharSequence getTableName() {
@@ -183,12 +175,20 @@ public class TextLoader implements Closeable, Mutable {
         this.forceHeaders = forceHeaders;
     }
 
-    public void setSkipRowsWithExtraValues(boolean skipRowsWithExtraValues) {
-        this.textLexer.setSkipLinesWithExtraValues(skipRowsWithExtraValues);
-    }
-
     public void parse(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws TextException {
         parseMethods.getQuick(state).parse(lo, hi, cairoSecurityContext);
+    }
+
+    public void setCommitLag(long commitLag) {
+        textWriter.setCommitLag(commitLag);
+    }
+
+    public void setMaxUncommittedRows(int maxUncommittedRows) {
+        textWriter.setMaxUncommittedRows(maxUncommittedRows);
+    }
+
+    public void setSkipRowsWithExtraValues(boolean skipRowsWithExtraValues) {
+        this.textLexer.setSkipLinesWithExtraValues(skipRowsWithExtraValues);
     }
 
     public void setState(int state) {

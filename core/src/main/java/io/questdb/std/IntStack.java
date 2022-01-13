@@ -50,6 +50,13 @@ public class IntStack implements Mutable {
         }
     }
 
+    public void copyTo(IntStack there, int count) {
+        int n = Math.min(count, size());
+        while (n-- > 0) {
+            there.push(pop());
+        }
+    }
+
     public boolean notEmpty() {
         return head != tail;
     }
@@ -73,13 +80,6 @@ public class IntStack implements Mutable {
         elements[head = (head - 1) & mask] = e;
         if (head == tail) {
             doubleCapacity();
-        }
-    }
-
-    public void copyTo(IntStack there, int count) {
-        int n = Math.min(count, size());
-        while (n-- > 0) {
-            there.push(pop());
         }
     }
 

@@ -26,8 +26,8 @@ package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -201,13 +201,13 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
         }
 
         @Override
-        public void toTop() {
-            countDown = 1;
+        public long size() {
+            return 1;
         }
 
         @Override
-        public long size() {
-            return 1;
+        public void toTop() {
+            countDown = 1;
         }
 
         private GroupByNotKeyedVectorRecordCursor of(PageFrameCursor pageFrameCursor) {

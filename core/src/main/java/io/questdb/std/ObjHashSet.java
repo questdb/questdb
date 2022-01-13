@@ -102,21 +102,6 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
         return addAt(keyIndex(key), key);
     }
 
-    public int keyIndex(T key) {
-        int index = idx(key);
-
-        T kv = keys[index];
-        if (kv == noEntryKey) {
-            return index;
-        }
-
-        if (kv == key || key.equals(kv)) {
-            return -index - 1;
-        }
-
-        return probe(key, index);
-    }
-
     @Override
     @SuppressWarnings("unchecked")
     public boolean remove(Object key) {
@@ -138,6 +123,21 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
     @Override
     public String toString() {
         return list.toString();
+    }
+
+    public int keyIndex(T key) {
+        int index = idx(key);
+
+        T kv = keys[index];
+        if (kv == noEntryKey) {
+            return index;
+        }
+
+        if (kv == key || key.equals(kv)) {
+            return -index - 1;
+        }
+
+        return probe(key, index);
     }
 
     private boolean addAt0(int index, T key) {

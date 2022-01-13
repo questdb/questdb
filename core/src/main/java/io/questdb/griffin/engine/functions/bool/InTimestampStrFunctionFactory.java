@@ -66,6 +66,11 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
         return new EqTimestampStrFunction(args.getQuick(0), rightFn);
     }
 
+    private static void parseAndApplyIntervalEx(CharSequence seq, LongList out, int position) throws SqlException {
+        parseIntervalEx(seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT);
+        applyLastEncodedIntervalEx(out);
+    }
+
     private static class EqTimestampStrConstantFunction extends NegatableBooleanFunction implements UnaryFunction {
         private final Function left;
         private final LongList intervals = new LongList();
@@ -80,13 +85,13 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            return negated != isInIntervals(intervals, left.getTimestamp(rec));
+        public Function getArg() {
+            return left;
         }
 
         @Override
-        public Function getArg() {
-            return left;
+        public boolean getBool(Record rec) {
+            return negated != isInIntervals(intervals, left.getTimestamp(rec));
         }
     }
 
@@ -107,12 +112,12 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
                 return negated;
             }
             CharSequence timestampAsString = right.getStr(rec);
-            if (timestampAsString  == null) {
+            if (timestampAsString == null) {
                 return negated;
             }
             intervals.clear();
             try {
-                // we are ignoring exception contents here, so we do not need exact position
+                // we are ignoring exception contents here, so we do not need the exact position
                 parseAndApplyIntervalEx(timestampAsString, intervals, 0);
             } catch (SqlException e) {
                 return false;
@@ -129,10 +134,5 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
         public Function getRight() {
             return right;
         }
-    }
-
-    private static void parseAndApplyIntervalEx(CharSequence seq, LongList out, int position) throws SqlException {
-        parseIntervalEx(seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT);
-        applyLastEncodedIntervalEx(out);
     }
 }

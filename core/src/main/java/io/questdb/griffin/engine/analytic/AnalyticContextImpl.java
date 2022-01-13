@@ -38,6 +38,16 @@ public class AnalyticContextImpl implements AnalyticContext {
     private boolean baseSupportsRandomAccess;
 
     @Override
+    public boolean baseSupportsRandomAccess() {
+        return baseSupportsRandomAccess;
+    }
+
+    @Override
+    public ColumnTypes getPartitionByKeyTypes() {
+        return partitionByKeyTypes;
+    }
+
+    @Override
     public VirtualRecord getPartitionByRecord() {
         return partitionByRecord;
     }
@@ -48,18 +58,8 @@ public class AnalyticContextImpl implements AnalyticContext {
     }
 
     @Override
-    public ColumnTypes getPartitionByKeyTypes() {
-        return partitionByKeyTypes;
-    }
-
-    @Override
     public boolean isOrdered() {
         return ordered;
-    }
-
-    @Override
-    public boolean baseSupportsRandomAccess() {
-        return baseSupportsRandomAccess;
     }
 
     public void of(

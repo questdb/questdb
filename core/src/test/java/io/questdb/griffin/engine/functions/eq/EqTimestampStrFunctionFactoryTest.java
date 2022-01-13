@@ -44,21 +44,6 @@ import static io.questdb.std.datetime.microtime.TimestampFormatUtils.parseUTCTim
 public class EqTimestampStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
-    public void testTimestampEqualsString() throws SqlException, NumericException {
-        testTimestampAsString("in(NS)");
-    }
-
-    @Test
-    public void testTimestampEqualsStringWithPeriod() throws SqlException, NumericException {
-        testTimestampAsStringWithPeriod("in(NS)");
-    }
-
-    @Test
-    public void testTimestampEqualsStringWithPeriodAndCount() throws SqlException, NumericException {
-        testTimestampAsStringWithPeriodAndCount("in(NS)");
-    }
-
-    @Test
     public void testFailureWhenConstantStringIsNotValidTimestamp() throws NumericException {
         assertFailure(true, 40, "Invalid date", parseUTCTimestamp("2020-12-31T23:59:59.000000Z"), "abc");
     }
@@ -88,6 +73,25 @@ public class EqTimestampStrFunctionFactoryTest extends AbstractFunctionFactoryTe
                 return timestamp;
             }
         }));
+    }
+
+    @Test
+    public void testTimestampEqualsString() throws SqlException, NumericException {
+        testTimestampAsString("in(NS)");
+    }
+
+    @Test
+    public void testTimestampEqualsStringWithPeriod() throws SqlException, NumericException {
+        testTimestampAsStringWithPeriod("in(NS)");
+    }
+
+    @Test
+    public void testTimestampEqualsStringWithPeriodAndCount() throws SqlException, NumericException {
+        testTimestampAsStringWithPeriodAndCount("in(NS)");
+    }
+
+    private void callAndAssert(String signature, long arg1, String arg2, boolean expectedIfEquals) throws SqlException {
+        callBySignature(signature, arg1, arg2).andAssert(expectedIfEquals);
     }
 
     @Override
@@ -134,9 +138,5 @@ public class EqTimestampStrFunctionFactoryTest extends AbstractFunctionFactoryTe
         } catch (SqlException ex) {
             TestUtils.assertContains(ex.getFlyweightMessage(), "Invalid date");
         }
-    }
-
-    private void callAndAssert(String signature, long arg1, String arg2, boolean expectedIfEquals) throws SqlException {
-        callBySignature(signature, arg1, arg2).andAssert(expectedIfEquals);
     }
 }

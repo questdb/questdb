@@ -34,9 +34,8 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Random;
 import java.util.Base64;
+import java.util.Random;
 
 public class CharsTest {
     private static final FileNameExtractorCharSequence extractor = new FileNameExtractorCharSequence();
@@ -45,11 +44,6 @@ public class CharsTest {
     @BeforeClass
     public static void setUp() {
         separator = System.getProperty("file.separator").charAt(0);
-    }
-
-    @Test
-    public void testEmptyString() {
-        TestUtils.assertEquals("", extractor.of(""));
     }
 
     @Test
@@ -68,16 +62,21 @@ public class CharsTest {
 
         // random part
         Random rand = new Random(System.currentTimeMillis());
-        int len = rand.nextInt(100)+1;
+        int len = rand.nextInt(100) + 1;
         byte[] bytes = new byte[len];
         for (int i = 0; i < len; i++) {
-            bytes[i] = (byte)rand.nextInt(0xFF);
+            bytes[i] = (byte) rand.nextInt(0xFF);
         }
         testBinarySequence.of(bytes);
         sink.clear();
-        Chars.base64Encode(testBinarySequence, (int)testBinarySequence.length(), sink);
+        Chars.base64Encode(testBinarySequence, (int) testBinarySequence.length(), sink);
         byte[] decoded = Base64.getDecoder().decode(sink.toString());
         Assert.assertArrayEquals(bytes, decoded);
+    }
+
+    @Test
+    public void testEmptyString() {
+        TestUtils.assertEquals("", extractor.of(""));
     }
 
     @Test
@@ -93,12 +92,31 @@ public class CharsTest {
     }
 
     @Test
+    public void testIsNotQuoted() {
+        Assert.assertFalse(Chars.isQuoted("'banana\""));
+        Assert.assertFalse(Chars.isQuoted("banana\""));
+        Assert.assertFalse(Chars.isQuoted("\"banana"));
+        Assert.assertFalse(Chars.isQuoted("\"banana'"));
+        Assert.assertFalse(Chars.isQuoted("'"));
+        Assert.assertFalse(Chars.isQuoted("\""));
+        Assert.assertFalse(Chars.isQuoted("banana"));
+    }
+
+    @Test
     public void testIsOnlyDecimals() {
         Assert.assertTrue(Chars.isOnlyDecimals("9876543210123456789"));
         Assert.assertFalse(Chars.isOnlyDecimals(""));
         Assert.assertFalse(Chars.isOnlyDecimals(" "));
         Assert.assertFalse(Chars.isOnlyDecimals("99 "));
         Assert.assertFalse(Chars.isOnlyDecimals("987654321a123456789"));
+    }
+
+    @Test
+    public void testIsQuoted() {
+        Assert.assertTrue(Chars.isQuoted("'banana'"));
+        Assert.assertTrue(Chars.isQuoted("''"));
+        Assert.assertTrue(Chars.isQuoted("\"banana\""));
+        Assert.assertTrue(Chars.isQuoted("\"\""));
     }
 
     @Test
@@ -188,25 +206,6 @@ public class CharsTest {
         } finally {
             Unsafe.free(p, 8 * 0xffff, MemoryTag.NATIVE_DEFAULT);
         }
-    }
-
-    @Test
-    public void testIsQuoted() {
-        Assert.assertTrue(Chars.isQuoted("'banana'"));
-        Assert.assertTrue(Chars.isQuoted("''"));
-        Assert.assertTrue(Chars.isQuoted("\"banana\""));
-        Assert.assertTrue(Chars.isQuoted("\"\""));
-    }
-
-    @Test
-    public void testIsNotQuoted() {
-        Assert.assertFalse(Chars.isQuoted("'banana\""));
-        Assert.assertFalse(Chars.isQuoted("banana\""));
-        Assert.assertFalse(Chars.isQuoted("\"banana"));
-        Assert.assertFalse(Chars.isQuoted("\"banana'"));
-        Assert.assertFalse(Chars.isQuoted("'"));
-        Assert.assertFalse(Chars.isQuoted("\""));
-        Assert.assertFalse(Chars.isQuoted("banana"));
     }
 
     private void assertThat(String expected, ObjList<Path> list) {

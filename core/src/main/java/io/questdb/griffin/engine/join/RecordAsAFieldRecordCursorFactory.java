@@ -27,8 +27,8 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
@@ -47,14 +47,14 @@ public class RecordAsAFieldRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(base.getCursor(executionContext), executionContext);
-        return cursor;
+    public void close() {
+        Misc.free(base);
     }
 
     @Override
-    public void close() {
-        Misc.free(base);
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        cursor.of(base.getCursor(executionContext), executionContext);
+        return cursor;
     }
 
     @Override
@@ -99,13 +99,13 @@ public class RecordAsAFieldRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
-        public boolean hasNext() {
-            return base.hasNext();
+        public Record getRecordB() {
+            return recordB;
         }
 
         @Override
-        public Record getRecordB() {
-            return recordB;
+        public boolean hasNext() {
+            return base.hasNext();
         }
 
         @Override
@@ -114,13 +114,13 @@ public class RecordAsAFieldRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
-        public void toTop() {
-            base.toTop();
+        public long size() {
+            return base.size();
         }
 
         @Override
-        public long size() {
-            return base.size();
+        public void toTop() {
+            base.toTop();
         }
 
         @Override

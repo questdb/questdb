@@ -44,13 +44,13 @@ public class RoundDownDoubleFunctionFactoryTest extends AbstractFunctionFactoryT
     }
 
     @Test
-    public void testOKNegScale() throws SqlException {
-        call(14.7778, -13).andAssert(0.0, 0.0000000001);
+    public void testLeftNan() throws SqlException {
+        call(Double.NaN, 5).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
-    public void testOKPosScale() throws SqlException {
-        call(14.7778, 13).andAssert(14.7778, 0.0000000001);
+    public void testNegScaleHigherThanNumber() throws SqlException {
+        call(14.7778, -5).andAssert(0, 0.0000000001);
     }
 
     @Test
@@ -64,18 +64,13 @@ public class RoundDownDoubleFunctionFactoryTest extends AbstractFunctionFactoryT
     }
 
     @Test
-    public void testPosScaleNegValue() throws SqlException {
-        call(-100.999, 1).andAssert(-100.9, 0.0000000001);
+    public void testOKNegScale() throws SqlException {
+        call(14.7778, -13).andAssert(0.0, 0.0000000001);
     }
 
     @Test
-    public void testPosScalePosValue() throws SqlException {
-        call(100.01, 1).andAssert(100, 0.0000000001);
-    }
-
-    @Test
-    public void testNegScaleHigherThanNumber() throws SqlException {
-        call(14.7778, -5).andAssert(0, 0.0000000001);
+    public void testOKPosScale() throws SqlException {
+        call(14.7778, 13).andAssert(14.7778, 0.0000000001);
     }
 
     @Test
@@ -84,8 +79,13 @@ public class RoundDownDoubleFunctionFactoryTest extends AbstractFunctionFactoryT
     }
 
     @Test
-    public void testLeftNan() throws SqlException {
-        call(Double.NaN, 5).andAssert(Double.NaN, 0.0001);
+    public void testPosScaleNegValue() throws SqlException {
+        call(-100.999, 1).andAssert(-100.9, 0.0000000001);
+    }
+
+    @Test
+    public void testPosScalePosValue() throws SqlException {
+        call(100.01, 1).andAssert(100, 0.0000000001);
     }
 
     @Test

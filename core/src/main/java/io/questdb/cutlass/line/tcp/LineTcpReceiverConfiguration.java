@@ -34,6 +34,8 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface LineTcpReceiverConfiguration {
 
+    int getAggressiveReadRetryCount();
+
     String getAuthDbPath();
 
     CairoSecurityContext getCairoSecurityContext();
@@ -58,23 +60,21 @@ public interface LineTcpReceiverConfiguration {
 
     MillisecondClock getMillisecondClock();
 
-    long getWriterIdleTimeout();
-
     IODispatcherConfiguration getNetDispatcherConfiguration();
 
     int getNetMsgBufferSize();
 
     NetworkFacade getNetworkFacade();
 
+    long getSymbolCacheWaitUsBeforeReload();
+
     LineProtoTimestampAdapter getTimestampAdapter();
+
+    long getWriterIdleTimeout();
 
     int getWriterQueueCapacity();
 
     WorkerPoolAwareConfiguration getWriterWorkerPoolConfiguration();
 
     boolean isEnabled();
-
-    int getAggressiveReadRetryCount();
-
-    long getSymbolCacheWaitUsBeforeReload();
 }

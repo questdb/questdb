@@ -46,11 +46,6 @@ class MockAlertTarget extends Thread {
         this.isRunning = new AtomicBoolean();
     }
 
-
-    boolean isRunning() {
-        return isRunning.get();
-    }
-
     @Override
     public void run() {
         if (isRunning.compareAndSet(false, true)) {
@@ -106,5 +101,9 @@ class MockAlertTarget extends Thread {
                 // ignore
             }
         }
+    }
+
+    boolean isRunning() {
+        return isRunning.get();
     }
 }

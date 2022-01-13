@@ -273,40 +273,8 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     @Override
-    public void setGeoHash(CharSequence name, long value, int type) throws SqlException {
-        int index = namedVariables.keyIndex(name);
-        if (index > -1) {
-            final GeoHashBindVariable function;
-            namedVariables.putAt(index, name, function = geoHashVarPool.next());
-            function.value = value;
-            function.setType(type);
-        } else {
-            setGeoHash0(namedVariables.valueAtQuick(index), value, type, -1, name);
-        }
-    }
-
-    @Override
-    public void setGeoHash(int index, long value, int type) throws SqlException {
-        indexedVariables.extendPos(index + 1);
-        // variable exists
-        Function function = indexedVariables.getQuick(index);
-        if (function != null) {
-            setGeoHash0(function, value, type, index, null);
-        } else {
-            indexedVariables.setQuick(index, function = geoHashVarPool.next());
-            ((GeoHashBindVariable) function).value = value;
-            ((GeoHashBindVariable) function).setType(type);
-        }
-    }
-
-    @Override
     public void setByte(int index) throws SqlException {
         setByte(index, (byte) 0);
-    }
-
-    @Override
-    public void setGeoHash(int index, int type) throws SqlException {
-        setGeoHash(index, GeoHashes.NULL, type);
     }
 
     @Override
@@ -427,6 +395,38 @@ public class BindVariableServiceImpl implements BindVariableService {
             indexedVariables.setQuick(index, function = floatVarPool.next());
             ((FloatBindVariable) function).value = value;
         }
+    }
+
+    @Override
+    public void setGeoHash(CharSequence name, long value, int type) throws SqlException {
+        int index = namedVariables.keyIndex(name);
+        if (index > -1) {
+            final GeoHashBindVariable function;
+            namedVariables.putAt(index, name, function = geoHashVarPool.next());
+            function.value = value;
+            function.setType(type);
+        } else {
+            setGeoHash0(namedVariables.valueAtQuick(index), value, type, -1, name);
+        }
+    }
+
+    @Override
+    public void setGeoHash(int index, long value, int type) throws SqlException {
+        indexedVariables.extendPos(index + 1);
+        // variable exists
+        Function function = indexedVariables.getQuick(index);
+        if (function != null) {
+            setGeoHash0(function, value, type, index, null);
+        } else {
+            indexedVariables.setQuick(index, function = geoHashVarPool.next());
+            ((GeoHashBindVariable) function).value = value;
+            ((GeoHashBindVariable) function).setType(type);
+        }
+    }
+
+    @Override
+    public void setGeoHash(int index, int type) throws SqlException {
+        setGeoHash(index, GeoHashes.NULL, type);
     }
 
     @Override

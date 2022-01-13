@@ -36,12 +36,12 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private final NetworkFacade nf;
     private final int throttle;
     private final int bufferSize;
+    private final MicrosecondClock clock;
+    private final long maxTime;
     private long buffer;
     private int testCount;
     private long fd = -1;
     private long powerDownDeadline;
-    private final MicrosecondClock clock;
-    private final long maxTime;
 
     public NetworkSqlExecutionCircuitBreaker(SqlExecutionCircuitBreakerConfiguration configuration) {
         this.nf = configuration.getNetworkFacade();
@@ -53,6 +53,20 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
+    public void close() {
+        Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
+        buffer = 0;
+        fd = -1;
+    }
+
+    public NetworkSqlExecutionCircuitBreaker of(long fd) {
+        assert buffer != 0;
+        testCount = 0;
+        this.fd = fd;
+        return this;
+    }
+
+    @Override
     public void powerUp() {
         final long ticks = clock.getTicks();
         // test for overflow
@@ -60,13 +74,6 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
             powerDownDeadline = Long.MAX_VALUE;
         } else {
             powerDownDeadline = ticks + maxTime;
-        }
-    }
-
-    private void testTimeout() {
-        if (powerDownDeadline < clock.getTicks()) {
-            powerDownDeadline = Long.MIN_VALUE;
-            throw CairoException.instance(0).put("timeout, query aborted [fd=").put(fd).put(']').setInterruption(true);
         }
     }
 
@@ -106,17 +113,10 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         }
     }
 
-    public NetworkSqlExecutionCircuitBreaker of(long fd) {
-        assert buffer != 0;
-        testCount = 0;
-        this.fd = fd;
-        return this;
-    }
-
-    @Override
-    public void close() {
-        Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
-        buffer = 0;
-        fd = -1;
+    private void testTimeout() {
+        if (powerDownDeadline < clock.getTicks()) {
+            powerDownDeadline = Long.MIN_VALUE;
+            throw CairoException.instance(0).put("timeout, query aborted [fd=").put(fd).put(']').setInterruption(true);
+        }
     }
 }

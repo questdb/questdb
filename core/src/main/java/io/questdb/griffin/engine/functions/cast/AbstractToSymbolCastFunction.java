@@ -55,6 +55,35 @@ public abstract class AbstractToSymbolCastFunction extends SymbolFunction implem
         return arg;
     }
 
+    @Override
+    public CharSequence getSymbolB(Record rec) {
+        return getSymbol(rec);
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        arg.init(symbolTableSource, executionContext);
+        symbolTableShortcut.clear();
+        symbols.clear();
+        symbols.add(null);
+        next = 1;
+    }
+
+    @Override
+    public boolean isSymbolTableStatic() {
+        return false;
+    }
+
+    @Override
+    public CharSequence valueBOf(int key) {
+        return valueOf(key);
+    }
+
+    @Override
+    public CharSequence valueOf(int symbolKey) {
+        return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
+    }
+
     protected int getInt0(int value) {
         final int keyIndex = symbolTableShortcut.keyIndex(value);
         if (keyIndex < 0) {
@@ -81,35 +110,5 @@ public abstract class AbstractToSymbolCastFunction extends SymbolFunction implem
         final String str = Chars.toString(sink);
         symbols.add(Chars.toString(sink));
         return str;
-    }
-
-    @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        arg.init(symbolTableSource, executionContext);
-        symbolTableShortcut.clear();
-        symbols.clear();
-        symbols.add(null);
-        next = 1;
-    }
-
-    @Override
-    public boolean isSymbolTableStatic() {
-        return false;
-    }
-
-    @Override
-    public CharSequence getSymbolB(Record rec) {
-        return getSymbol(rec);
-    }
-
-
-    @Override
-    public CharSequence valueOf(int symbolKey) {
-        return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
-    }
-
-    @Override
-    public CharSequence valueBOf(int key) {
-        return valueOf(key);
     }
 }

@@ -115,6 +115,10 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
         }
     }
 
+    protected static TableModel modelOf(String tableName) {
+        return new TableModel(configuration, tableName, PartitionBy.NONE);
+    }
+
     protected void assertColumnNames(String query, String... columns) throws SqlException {
         assertColumnNames(compiler, query, columns);
     }
@@ -169,10 +173,6 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
                 tableModel.close();
             }
         }
-    }
-
-    protected static TableModel modelOf(String tableName) {
-        return new TableModel(configuration, tableName, PartitionBy.NONE);
     }
 
     private void validateTopDownColumns(QueryModel model) {

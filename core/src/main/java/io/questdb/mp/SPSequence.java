@@ -51,14 +51,14 @@ public class SPSequence extends AbstractSSequence {
     }
 
     @Override
-    public void done(long cursor) {
-        value = cursor;
-        barrier.getWaitStrategy().signal();
+    public void setCurrent(long value) {
+        this.value = value;
     }
 
     @Override
-    public void setCurrent(long value) {
-        this.value = value;
+    public void done(long cursor) {
+        value = cursor;
+        barrier.getWaitStrategy().signal();
     }
 
     @Override

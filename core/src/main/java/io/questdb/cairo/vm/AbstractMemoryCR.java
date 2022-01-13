@@ -41,34 +41,32 @@ public abstract class AbstractMemoryCR implements MemoryCR {
     protected long lim;
     protected long grownLength;
 
-    @Override
-    public long offsetInPage(long offset) {
-        return offset;
-    }
-
-    @Override
-    public int pageIndex(long offset) {
-        return 0;
+    public long addressOf(long offset) {
+        assert offset <= size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
+        return pageAddress + offset;
     }
 
     public final BinarySequence getBin(long offset) {
         return getBin(offset, bsview);
     }
 
+    public long getGrownLength() {
+        return grownLength;
+    }
+
+    public Long256 getLong256A(long offset) {
+        getLong256(offset, long256);
+        return long256;
+    }
+
+    public Long256 getLong256B(long offset) {
+        getLong256(offset, long256B);
+        return long256B;
+    }
+
     @Override
     public long getPageAddress(int pageIndex) {
         return pageAddress;
-    }
-
-    @Override
-    public long resize(long size) {
-        extend(size);
-        return pageAddress;
-    }
-
-    public void zero() {
-        long baseLength = lim - pageAddress;
-        Vect.memset(pageAddress, baseLength, 0);
     }
 
     @Override
@@ -84,23 +82,14 @@ public abstract class AbstractMemoryCR implements MemoryCR {
         return getStr(offset, csview2);
     }
 
-    public Long256 getLong256A(long offset) {
-        getLong256(offset, long256);
-        return long256;
+    @Override
+    public long offsetInPage(long offset) {
+        return offset;
     }
 
-    public Long256 getLong256B(long offset) {
-        getLong256(offset, long256B);
-        return long256B;
-    }
-
-    public long size() {
-        return size;
-    }
-
-    public long addressOf(long offset) {
-        assert offset <= size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
-        return pageAddress + offset;
+    @Override
+    public int pageIndex(long offset) {
+        return 0;
     }
 
     public long getFd() {
@@ -111,7 +100,18 @@ public abstract class AbstractMemoryCR implements MemoryCR {
         return ff;
     }
 
-    public long getGrownLength() {
-        return grownLength;
+    @Override
+    public long resize(long size) {
+        extend(size);
+        return pageAddress;
+    }
+
+    public long size() {
+        return size;
+    }
+
+    public void zero() {
+        long baseLength = lim - pageAddress;
+        Vect.memset(pageAddress, baseLength, 0);
     }
 }

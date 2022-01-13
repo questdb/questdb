@@ -24,18 +24,16 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
 /**
  * Access the value of columns of a table record by column index.
- *
+ * <p>
  * Type checking is not performed beforehand, meaning the type of the
  * element being retrieved by the following methods should be known by
  * performing a prior lookup using {@link io.questdb.cairo.sql.RecordMetadata}
- *
  */
 public interface Record {
 
@@ -124,6 +122,46 @@ public interface Record {
     }
 
     /**
+     * Gets the value of a byte GeoHash column by index
+     *
+     * @param col numeric index of the column
+     * @return geohash
+     */
+    default byte getGeoByte(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the value of an int GeoHash column by index
+     *
+     * @param col numeric index of the column
+     * @return geohash
+     */
+    default int getGeoInt(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the value of a long GeoHash column by index
+     *
+     * @param col numeric index of the column
+     * @return geohash
+     */
+    default long getGeoLong(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the value of a short GeoHash column by index
+     *
+     * @param col numeric index of the column
+     * @return geohash
+     */
+    default short getGeoShort(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * Gets the value of an integer column by index
      *
      * @param col numeric index of the column
@@ -146,7 +184,7 @@ public interface Record {
     /**
      * Gets the value of a long256 column by index
      *
-     * @param col numeric index of the column
+     * @param col  numeric index of the column
      * @param sink a character sink
      */
     default void getLong256(int col, CharSink sink) {
@@ -167,6 +205,7 @@ public interface Record {
     /**
      * Gets the value of a long256 column by index
      * getLong256B used for A/B comparison with getLong256A to compare references
+     *
      * @param col numeric index of the column
      * @return unsigned 256-bit integer
      */
@@ -216,7 +255,7 @@ public interface Record {
     /**
      * Gets the value of a string column by index
      *
-     * @param col numeric index of the column
+     * @param col  numeric index of the column
      * @param sink a character sink
      */
     default void getStr(int col, CharSink sink) {
@@ -275,51 +314,11 @@ public interface Record {
         return getLong(col);
     }
 
-    /**
-     * Gets the value of a byte GeoHash column by index
-     *
-     * @param col numeric index of the column
-     * @return geohash
-     */
-    default byte getGeoByte(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * Gets the value of a short GeoHash column by index
-     *
-     * @param col numeric index of the column
-     * @return geohash
-     */
-    default short getGeoShort(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * Gets the value of an int GeoHash column by index
-     *
-     * @param col numeric index of the column
-     * @return geohash
-     */
-    default int getGeoInt(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * Gets the value of a long GeoHash column by index
-     *
-     * @param col numeric index of the column
-     * @return geohash
-     */
-    default long getGeoLong(int col) {
-        throw new UnsupportedOperationException();
-    }
-
     @FunctionalInterface
     interface CharSequenceFunction {
         /**
          * @param record to retrieve CharSequence from
-         * @param col numeric index of the column
+         * @param col    numeric index of the column
          * @return record as a char sequence
          */
         CharSequence get(Record record, int col);

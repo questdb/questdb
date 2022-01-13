@@ -71,9 +71,9 @@ public class MemoryLeakTest extends AbstractGriffinTest {
                     }
                 }
             } finally {
-                Assert.assertEquals(Unsafe.getMemUsed(),  getUsed());
+                Assert.assertEquals(Unsafe.getMemUsed(), getUsed());
                 engine.clear();
-                Assert.assertEquals(Unsafe.getMemUsed(),  getUsed());
+                Assert.assertEquals(Unsafe.getMemUsed(), getUsed());
             }
         });
     }
@@ -81,7 +81,7 @@ public class MemoryLeakTest extends AbstractGriffinTest {
     private long getUsed() {
         long used = 0;
         for (int i = 0; i < MemoryTag.SIZE; i++) {
-           used += Unsafe.getMemUsedByTag(i);
+            used += Unsafe.getMemUsedByTag(i);
         }
         return used;
     }
@@ -101,7 +101,7 @@ public class MemoryLeakTest extends AbstractGriffinTest {
             long buffer = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
             try {
                 try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), "users", "testing")) {
-                    // time can go backwards if asked too quickly, add I to offset the chance (on mac M1 at least)
+                    // time can go backwards if asked too quickly, add I to offset the chance (on Mac M1 at least)
                     long baseTimestamp = Os.currentTimeMicros(); // call_j can yield a lower value than call_i thus resulting in an unordered
                     for (int i = 0; i < n; i++) {                // table, so we add i to make sure the timestamps are ordered
                         long sequence = 20 + i * 2L;

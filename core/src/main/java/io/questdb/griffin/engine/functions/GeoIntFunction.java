@@ -38,12 +38,12 @@ public abstract class GeoIntFunction extends AbstractGeoHashFunction {
     }
 
     @Override
-    public short getGeoShort(Record rec) {
+    public final long getGeoLong(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final long getGeoLong(Record rec) {
+    public short getGeoShort(Record rec) {
         throw new UnsupportedOperationException();
     }
 }

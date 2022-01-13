@@ -29,6 +29,18 @@ import org.junit.Test;
 
 public class DataGripTest extends AbstractGriffinTest {
     @Test
+    public void testLowerCaseCount() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table y as (select x from long_sequence(10))", sqlExecutionContext);
+            assertSql(
+                    "select COUNT(*) from y",
+                    "count\n" +
+                            "10\n"
+            );
+        });
+    }
+
+    @Test
     @Ignore
     public void testStartUpUnknowDBMS() throws SqlException {
         assertQuery(
@@ -79,18 +91,6 @@ public class DataGripTest extends AbstractGriffinTest {
 
     @Test
     public void testUpperCaseCount() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table y as (select x from long_sequence(10))", sqlExecutionContext);
-            assertSql(
-                    "select COUNT(*) from y",
-                    "count\n" +
-                            "10\n"
-            );
-        });
-    }
-
-    @Test
-    public void testLowerCaseCount() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table y as (select x from long_sequence(10))", sqlExecutionContext);
             assertSql(

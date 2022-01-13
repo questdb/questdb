@@ -35,9 +35,28 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import static org.hamcrest.CoreMatchers.*;
+import static org.hamcrest.CoreMatchers.hasItem;
 
 public class MetricsTest {
+
+    @Test
+    public void testLabelNames() {
+        Pattern labelNamePattern = Pattern.compile("[a-zA-Z0-9_]*");
+        SpyingMetricsRegistry metricsRegistry = new SpyingMetricsRegistry();
+        new Metrics(true, metricsRegistry);
+        for (CharSequence name : metricsRegistry.getLabelNames()) {
+            Matcher matcher = labelNamePattern.matcher(name);
+            Assert.assertTrue("Invalid label name: " + name, matcher.matches());
+        }
+    }
+
+    @Test
+    public void testLabelUniqueness() {
+        SpyingMetricsRegistry metricsRegistry = new SpyingMetricsRegistry();
+        new Metrics(true, metricsRegistry);
+        Set<CharSequence> metricsWithNotUniqueLabels = metricsRegistry.getMetricsWithNotUniqueLabels();
+        Assert.assertTrue("Metrics with non-unique labels: " + metricsWithNotUniqueLabels, metricsWithNotUniqueLabels.isEmpty());
+    }
 
     @Test
     public void testMetricNames() {
@@ -66,30 +85,11 @@ public class MetricsTest {
     }
 
     @Test
-    public void testLabelNames() {
-        Pattern labelNamePattern = Pattern.compile("[a-zA-Z0-9_]*");
-        SpyingMetricsRegistry metricsRegistry = new SpyingMetricsRegistry();
-        new Metrics(true, metricsRegistry);
-        for (CharSequence name : metricsRegistry.getLabelNames()) {
-            Matcher matcher = labelNamePattern.matcher(name);
-            Assert.assertTrue("Invalid label name: " + name, matcher.matches());
-        }
-    }
-
-    @Test
     public void testMetricUniqueness() {
         SpyingMetricsRegistry metricsRegistry = new SpyingMetricsRegistry();
         new Metrics(true, metricsRegistry);
         Set<CharSequence> notUniqueMetrics = metricsRegistry.getNotUniqueMetrics();
         Assert.assertTrue("Metrics with non-unique names: " + notUniqueMetrics, notUniqueMetrics.isEmpty());
-    }
-
-    @Test
-    public void testLabelUniqueness() {
-        SpyingMetricsRegistry metricsRegistry = new SpyingMetricsRegistry();
-        new Metrics(true, metricsRegistry);
-        Set<CharSequence> metricsWithNotUniqueLabels = metricsRegistry.getMetricsWithNotUniqueLabels();
-        Assert.assertTrue("Metrics with non-unique labels: " + metricsWithNotUniqueLabels, metricsWithNotUniqueLabels.isEmpty());
     }
 
     private static class SpyingMetricsRegistry implements MetricsRegistry {
@@ -98,6 +98,22 @@ public class MetricsTest {
         private final Set<CharSequence> labelNames = new HashSet<>();
         private final Set<CharSequence> metricsWithNotUniqueLabels = new HashSet<>();
         private final Set<CharSequence> notUniqueMetrics = new HashSet<>();
+
+        public Set<CharSequence> getLabelNames() {
+            return labelNames;
+        }
+
+        public Set<CharSequence> getMetricNames() {
+            return metricNames;
+        }
+
+        public Set<CharSequence> getMetricsWithNotUniqueLabels() {
+            return metricsWithNotUniqueLabels;
+        }
+
+        public Set<CharSequence> getNotUniqueMetrics() {
+            return notUniqueMetrics;
+        }
 
         @Override
         public Counter newCounter(CharSequence name) {
@@ -130,8 +146,7 @@ public class MetricsTest {
         @Override
         public Gauge newGauge(int memoryTag) {
             addMetricName("memory_tag_" + MemoryTag.nameOf(memoryTag));
-            Gauge gauge = delegate.newGauge(memoryTag);
-            return gauge;
+            return delegate.newGauge(memoryTag);
         }
 
         @Override
@@ -145,30 +160,6 @@ public class MetricsTest {
             delegate.scrapeIntoPrometheus(sink);
         }
 
-        public Set<CharSequence> getMetricNames() {
-            return metricNames;
-        }
-
-        public Set<CharSequence> getLabelNames() {
-            return labelNames;
-        }
-
-        public Set<CharSequence> getMetricsWithNotUniqueLabels() {
-            return metricsWithNotUniqueLabels;
-        }
-
-        public Set<CharSequence> getNotUniqueMetrics() {
-            return notUniqueMetrics;
-        }
-
-        private void addMetricName(CharSequence name) {
-            if (metricNames.contains(name)) {
-                notUniqueMetrics.add(name);
-            } else {
-                metricNames.add(name);
-            }
-        }
-
         private void addLabelNames(CharSequence metricName, List<CharSequence> labels) {
             Set<CharSequence> uniqueLabels = new HashSet<>();
             for (CharSequence label : labels) {
@@ -178,6 +169,14 @@ public class MetricsTest {
                     uniqueLabels.add(label);
                 }
                 labelNames.add(label);
+            }
+        }
+
+        private void addMetricName(CharSequence name) {
+            if (metricNames.contains(name)) {
+                notUniqueMetrics.add(name);
+            } else {
+                metricNames.add(name);
             }
         }
     }

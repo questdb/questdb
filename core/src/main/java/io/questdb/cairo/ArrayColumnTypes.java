@@ -40,6 +40,10 @@ public class ArrayColumnTypes implements ColumnTypes, Mutable {
         return this;
     }
 
+    public void clear() {
+        types.clear();
+    }
+
     @Override
     public int getColumnCount() {
         return types.size();
@@ -48,9 +52,5 @@ public class ArrayColumnTypes implements ColumnTypes, Mutable {
     @Override
     public int getColumnType(int columnIndex) {
         return types.getQuick(columnIndex);
-    }
-
-    public void clear() {
-        types.clear();
     }
 }

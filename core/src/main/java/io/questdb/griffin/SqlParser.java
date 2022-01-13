@@ -1582,7 +1582,7 @@ public final class SqlParser {
 
             for (int i = paramCount - 2; i > lim; i--) {
                 if ((i & 1) == 1) {
-                    // this is "then" clause, copy it as as
+                    // this is "then" clause, copy it as is
                     tempExprNodes.add(node.args.getQuick(i));
                     continue;
                 }

@@ -99,6 +99,11 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isConstant() {
+            return value.isConstant() && oldSubStr.isConstant() && newSubStr.isConstant();
+        }
+
+        @Override
         public void getStr(Record rec, CharSink sink) {
             final CharSequence value = this.value.getStrB(rec);
             if (value != null) {
@@ -140,11 +145,6 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
                     sink.put(c);
                 }
             }
-        }
-
-        @Override
-        public boolean isConstant() {
-            return value.isConstant() && oldSubStr.isConstant() && newSubStr.isConstant();
         }
     }
 }

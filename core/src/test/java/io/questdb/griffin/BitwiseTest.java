@@ -30,6 +30,21 @@ import org.junit.Test;
 public class BitwiseTest extends AbstractGriffinTest {
 
     @Test
+    public void testIntAnd() throws Exception {
+        assertBitwiseOp("select 6 & 4", "4\n");
+    }
+
+    @Test
+    public void testIntAndLeftNull() throws Exception {
+        assertBitwiseOp("select NaN & 4", "NaN\n");
+    }
+
+    @Test
+    public void testIntAndRightNull() throws Exception {
+        assertBitwiseOp("select 2 & NaN", "NaN\n");
+    }
+
+    @Test
     public void testIntNot() throws Exception {
         assertBitwiseOp("select ~1024", "-1025\n");
     }
@@ -55,18 +70,18 @@ public class BitwiseTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLongOr() throws Exception {
-        assertBitwiseOp("select 2L | 4", "6\n");
+    public void testIntXor() throws Exception {
+        assertBitwiseOp("select 6 ^ 4", "2\n");
     }
 
     @Test
-    public void testLongOrLeftNull() throws Exception {
-        assertBitwiseOp("select NaN | 4L", "NaN\n");
+    public void testIntXorLeftNull() throws Exception {
+        assertBitwiseOp("select NaN ^ 4", "NaN\n");
     }
 
     @Test
-    public void testLongOrRightNull() throws Exception {
-        assertBitwiseOp("select 2L | NaN", "NaN\n");
+    public void testIntXorRightNull() throws Exception {
+        assertBitwiseOp("select 2 ^ NaN", "NaN\n");
     }
 
     @Test
@@ -85,33 +100,28 @@ public class BitwiseTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIntAnd() throws Exception {
-        assertBitwiseOp("select 6 & 4", "4\n");
+    public void testLongNot() throws Exception {
+        assertBitwiseOp("select ~255L", "-256\n");
     }
 
     @Test
-    public void testIntAndLeftNull() throws Exception {
-        assertBitwiseOp("select NaN & 4", "NaN\n");
+    public void testLongNotNull() throws Exception {
+        assertBitwiseOp("select ~cast(NaN as long)", "NaN\n");
     }
 
     @Test
-    public void testIntAndRightNull() throws Exception {
-        assertBitwiseOp("select 2 & NaN", "NaN\n");
+    public void testLongOr() throws Exception {
+        assertBitwiseOp("select 2L | 4", "6\n");
     }
 
     @Test
-    public void testIntXor() throws Exception {
-        assertBitwiseOp("select 6 ^ 4", "2\n");
+    public void testLongOrLeftNull() throws Exception {
+        assertBitwiseOp("select NaN | 4L", "NaN\n");
     }
 
     @Test
-    public void testIntXorLeftNull() throws Exception {
-        assertBitwiseOp("select NaN ^ 4", "NaN\n");
-    }
-
-    @Test
-    public void testIntXorRightNull() throws Exception {
-        assertBitwiseOp("select 2 ^ NaN", "NaN\n");
+    public void testLongOrRightNull() throws Exception {
+        assertBitwiseOp("select 2L | NaN", "NaN\n");
     }
 
     @Test
@@ -127,16 +137,6 @@ public class BitwiseTest extends AbstractGriffinTest {
     @Test
     public void testLongXorRightNull() throws Exception {
         assertBitwiseOp("select 2L ^ NaN", "NaN\n");
-    }
-
-    @Test
-    public void testLongNot() throws Exception {
-        assertBitwiseOp("select ~255L", "-256\n");
-    }
-
-    @Test
-    public void testLongNotNull() throws Exception {
-        assertBitwiseOp("select ~cast(NaN as long)", "NaN\n");
     }
 
     private void assertBitwiseOp(String sql, String expected) throws Exception {

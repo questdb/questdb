@@ -28,7 +28,7 @@ import java.io.Closeable;
 
 /**
  * A cursor for managing position of operations over multiple records.
- *
+ * <p>
  * Interfaces which extend Closeable are not optionally-closeable.
  * close() method must be called after other calls are complete.
  */
@@ -45,6 +45,13 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
     Record getRecord();
 
     /**
+     * May be used to compare references with getRecord
+     *
+     * @return record at current position
+     */
+    Record getRecordB();
+
+    /**
      * @param columnIndex numeric index of the column
      * @return instance of symbol table or null, when column is not Symbol
      */
@@ -58,23 +65,12 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
     boolean hasNext();
 
     /**
-     * May be used to compare references with getRecord
-     * @return record at current position
-     */
-    Record getRecordB();
-
-    /**
      * Positions record at given rowid. The rowid must have been previously obtained from Record instance.
-     * @param record to position
+     *
+     * @param record  to position
      * @param atRowId rowid of the desired record
      */
     void recordAt(Record record, long atRowId);
-
-    /**
-     * Return the cursor to the beginning of the page frame.
-     * Sets location to first column.
-     */
-    void toTop();
 
     /**
      * Not every record cursor has a size, may return -1, in this case, keep going until hasNext()
@@ -93,4 +89,10 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
         //noinspection StatementWithEmptyBody
         while (rowCount-- > 0 && hasNext()) ;
     }
+
+    /**
+     * Return the cursor to the beginning of the page frame.
+     * Sets location to first column.
+     */
+    void toTop();
 }

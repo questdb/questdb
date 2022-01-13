@@ -32,10 +32,6 @@ import java.nio.charset.StandardCharsets;
 
 public class LineTcpConnectionContextBrokenUTF8Test extends BaseLineTcpContextTest {
 
-    NetworkFacade provideLineTcpNetworkFacade() {
-        return new LineTcpNetworkFacadeBrokenUTF8Enconding();
-    }
-
     @Test
     public void testBrokenUTF8Encoding() throws Exception {
         char nonPrintable = 0x3000;
@@ -56,6 +52,10 @@ public class LineTcpConnectionContextBrokenUTF8Test extends BaseLineTcpContextTe
             Assert.assertTrue(disconnected);
             closeContext();
         });
+    }
+
+    NetworkFacade provideLineTcpNetworkFacade() {
+        return new LineTcpNetworkFacadeBrokenUTF8Enconding();
     }
 
     class LineTcpNetworkFacadeBrokenUTF8Enconding extends LineTcpNetworkFacade {

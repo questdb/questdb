@@ -160,12 +160,6 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord $hex(long value) {
-        Numbers.appendHex(sink(), value, false);
-        return this;
-    }
-
-    @Override
     public LogRecord $(Throwable e) {
         if (e != null) {
             sink().put(Misc.EOL).put(e);
@@ -214,6 +208,12 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord $hex(long value) {
+        Numbers.appendHex(sink(), value, false);
+        return this;
+    }
+
+    @Override
     public boolean isEnabled() {
         return true;
     }
@@ -241,9 +241,23 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord put(char c) {
-        sink().put(c);
-        return this;
+    public LogRecord advisory() {
+        return addTimestamp(xadvisory(), LogLevel.ADVISORY_HEADER);
+    }
+
+    @Override
+    public LogRecord advisoryW() {
+        return addTimestamp(xAdvisoryW(), LogLevel.ADVISORY_HEADER);
+    }
+
+    @Override
+    public LogRecord critical() {
+        return addTimestamp(xcritical(), LogLevel.CRITICAL_HEADER);
+    }
+
+    @Override
+    public LogRecord criticalW() {
+        return addTimestamp(xCriticalW(), LogLevel.CRITICAL_HEADER);
     }
 
     @Override
@@ -252,13 +266,18 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord debugW() {
+        return addTimestamp(xDebugW(), LogLevel.DEBUG_HEADER);
+    }
+
+    @Override
     public LogRecord error() {
         return addTimestamp(xerror(), LogLevel.ERROR_HEADER);
     }
 
     @Override
-    public LogRecord critical() {
-        return addTimestamp(xcritical(), LogLevel.CRITICAL_HEADER);
+    public LogRecord errorW() {
+        return addTimestamp(xErrorW(), LogLevel.ERROR_HEADER);
     }
 
     @Override
@@ -272,45 +291,12 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord errorW() {
-        return addTimestamp(xErrorW(), LogLevel.ERROR_HEADER);
-    }
-
-    @Override
-    public LogRecord criticalW() {
-        return addTimestamp(xCriticalW(), LogLevel.CRITICAL_HEADER);
-    }
-
-    @Override
-    public LogRecord debugW() {
-        return addTimestamp(xDebugW(), LogLevel.DEBUG_HEADER);
-    }
-
-    @Override
-    public LogRecord advisoryW() {
-        return addTimestamp(xAdvisoryW(), LogLevel.ADVISORY_HEADER);
-    }
-
-    @Override
-    public LogRecord advisory() {
-        return addTimestamp(xadvisory(), LogLevel.ADVISORY_HEADER);
-    }
-
-    @Override
     public boolean isDebugEnabled() {
         return debugSeq != null;
     }
 
-    public LogRecord xerror() {
-        return next(errorSeq, errorRing, LogLevel.ERROR);
-    }
-
-    public LogRecord xcritical() {
-        return next(criticalSeq, criticalRing, LogLevel.CRITICAL);
-    }
-
-    public LogRecord xinfo() {
-        return next(infoSeq, infoRing, LogLevel.INFO);
+    public LogRecord xDebugW() {
+        return nextWaiting(infoSeq, infoRing, LogLevel.DEBUG);
     }
 
     /**
@@ -323,29 +309,43 @@ class Logger implements LogRecord, Log {
         return nextWaiting(infoSeq, infoRing, LogLevel.INFO);
     }
 
+    @Override
+    public LogRecord xadvisory() {
+        return next(advisorySeq, advisoryRing, LogLevel.ADVISORY);
+    }
+
+    public LogRecord xcritical() {
+        return next(criticalSeq, criticalRing, LogLevel.CRITICAL);
+    }
+
     public LogRecord xdebug() {
         return next(debugSeq, debugRing, LogLevel.DEBUG);
     }
 
+    public LogRecord xerror() {
+        return next(errorSeq, errorRing, LogLevel.ERROR);
+    }
+
+    public LogRecord xinfo() {
+        return next(infoSeq, infoRing, LogLevel.INFO);
+    }
+
     @Override
-    public LogRecord xadvisory() {
-        return next(advisorySeq, advisoryRing, LogLevel.ADVISORY);
+    public LogRecord put(char c) {
+        sink().put(c);
+        return this;
     }
 
     public LogRecord xAdvisoryW() {
         return nextWaiting(infoSeq, infoRing, LogLevel.ADVISORY);
     }
 
-    public LogRecord xDebugW() {
-        return nextWaiting(infoSeq, infoRing, LogLevel.DEBUG);
+    public LogRecord xCriticalW() {
+        return nextWaiting(infoSeq, infoRing, LogLevel.CRITICAL);
     }
 
     public LogRecord xErrorW() {
         return nextWaiting(infoSeq, infoRing, LogLevel.ERROR);
-    }
-
-    public LogRecord xCriticalW() {
-        return nextWaiting(infoSeq, infoRing, LogLevel.CRITICAL);
     }
 
     private LogRecord addTimestamp(LogRecord rec, String level) {

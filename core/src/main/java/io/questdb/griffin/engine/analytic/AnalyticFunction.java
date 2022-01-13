@@ -36,9 +36,9 @@ public interface AnalyticFunction extends Function {
 
     void pass1(Record record, long recordOffset, AnalyticSPI spi);
 
-    void preparePass2(RecordCursor cursor);
-
     void pass2(Record record);
+
+    void preparePass2(RecordCursor cursor);
 
     void reset();
 

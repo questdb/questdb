@@ -32,9 +32,9 @@ public interface StaticContentProcessorConfiguration {
 
     CharSequence getIndexFileName();
 
+    String getKeepAliveHeader();
+
     MimeTypesCache getMimeTypesCache();
 
     CharSequence getPublicDirectory();
-
-    String getKeepAliveHeader();
 }

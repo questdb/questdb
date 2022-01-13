@@ -79,13 +79,8 @@ public class NullConstantTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetStrWithIndex() {
-        NullConstant.NULL.getStr(null, 0);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetStrLenWithIndex() {
-        NullConstant.NULL.getStrLen(null, 0);
+    public void testGetRecordCursorFactory() {
+        NullConstant.NULL.getRecordCursorFactory();
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -94,12 +89,17 @@ public class NullConstantTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetStrWithSinkAndIndex() {
-        NullConstant.NULL.getStr(null, null, 0);
+    public void testGetStrLenWithIndex() {
+        NullConstant.NULL.getStrLen(null, 0);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetRecordCursorFactory() {
-        NullConstant.NULL.getRecordCursorFactory();
+    public void testGetStrWithIndex() {
+        NullConstant.NULL.getStr(null, 0);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetStrWithSinkAndIndex() {
+        NullConstant.NULL.getStr(null, null, 0);
     }
 }

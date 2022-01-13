@@ -60,10 +60,6 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
         return keyIndex(key) < 0;
     }
 
-    public int get(CharSequence key) {
-        return valueAt(keyIndex(key));
-    }
-
     @Override
     public void removeAt(int index) {
         if (index < 0) {
@@ -85,6 +81,10 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
         keys[to] = keys[from];
         values[to] = values[from];
         erase(from);
+    }
+
+    public int get(CharSequence key) {
+        return valueAt(keyIndex(key));
     }
 
     public void increment(CharSequence key) {

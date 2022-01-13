@@ -33,18 +33,18 @@ public interface HttpServerConfiguration extends WorkerPoolAwareConfiguration, H
 
     HttpContextConfiguration getHttpContextConfiguration();
 
-    JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
+    WaitProcessorConfiguration getWaitProcessorConfiguration();
 
-    boolean isQueryCacheEnabled();
+    JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
 
     int getQueryCacheBlockCount();
 
     int getQueryCacheRowCount();
 
-    WaitProcessorConfiguration getWaitProcessorConfiguration();
-
     StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();
 
     @Override
     boolean isEnabled();
+
+    boolean isQueryCacheEnabled();
 }

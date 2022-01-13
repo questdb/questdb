@@ -24,15 +24,14 @@
 
 package io.questdb.griffin.engine.join;
 
-import org.junit.Assert;
-import org.junit.Test;
-
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Test;
 
 public class LongChainTest {
     @SuppressWarnings("unused")
@@ -56,7 +55,7 @@ public class LongChainTest {
                 }
                 Assert.assertEquals(nChains, expectedValues.size());
 
-                // values are be in reverse order
+                // values are been in reverse order
                 for (int i = 0; i < nChains; i++) {
                     LongChain.TreeCursor cursor = chain.getCursor(heads.getQuick(i));
                     LongList expected = expectedValues.get(i);

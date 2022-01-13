@@ -50,11 +50,6 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
-    public LogRecord $utf8(long lo, long hi) {
-        return this;
-    }
-
-    @Override
     public LogRecord $(int x) {
         return this;
     }
@@ -100,6 +95,16 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
+    public LogRecord $256(long a, long b, long c, long d) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $hex(long value) {
+        return this;
+    }
+
+    @Override
     public LogRecord $ip(long ip) {
         return this;
     }
@@ -110,7 +115,7 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
-    public LogRecord $256(long a, long b, long c, long d) {
+    public LogRecord $utf8(long lo, long hi) {
         return this;
     }
 
@@ -120,12 +125,12 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
-    public LogRecord ts() {
+    public LogRecord microTime(long x) {
         return this;
     }
 
     @Override
-    public LogRecord microTime(long x) {
+    public LogRecord ts() {
         return this;
     }
 
@@ -136,11 +141,6 @@ final class NullLogRecord implements LogRecord {
 
     @Override
     public LogRecord put(char c) {
-        return this;
-    }
-
-    @Override
-    public LogRecord $hex(long value) {
         return this;
     }
 }

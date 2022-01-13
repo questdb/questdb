@@ -179,6 +179,37 @@ public class MemoryCARWImplTest {
     }
 
     @Test
+    public void testByteRandom() {
+        try (MemoryARW mem = new MemoryCARWImpl(128, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            long offset1 = 512;
+            mem.putByte(offset1, (byte) 3);
+            mem.putByte(offset1 + 1, (byte) 4);
+            mem.jumpTo(offset1 + 2);
+            mem.putByte((byte) 5);
+            assertEquals(3, mem.getByte(offset1));
+            assertEquals(4, mem.getByte(offset1 + 1));
+            assertEquals(5, mem.getByte(offset1 + 2));
+        }
+    }
+
+    @Test
+    public void testByteRnd() {
+        try (MemoryARW mem = new MemoryCARWImpl(11, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            int n = 120;
+
+            long o = 0;
+            for (int i = 0; i < n; i++, o++) {
+                mem.putByte(o, (byte) i);
+            }
+
+            o = 0;
+            for (int i = 0; i < n; i++) {
+                assertEquals(i, mem.getByte(o++));
+            }
+        }
+    }
+
+    @Test
     public void testChar() {
         try (MemoryARW mem = new MemoryCARWImpl(7, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             char n = 999;
@@ -216,45 +247,6 @@ public class MemoryCARWImplTest {
     }
 
     @Test
-    public void testLong256() {
-        try (MemoryARW mem = new MemoryCARWImpl(256, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-            mem.putLong256("0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8");
-            mem.putLong256("0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8");
-        }
-    }
-
-    @Test
-    public void testByteRandom() {
-        try (MemoryARW mem = new MemoryCARWImpl(128, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-            long offset1 = 512;
-            mem.putByte(offset1, (byte) 3);
-            mem.putByte(offset1 + 1, (byte) 4);
-            mem.jumpTo(offset1 + 2);
-            mem.putByte((byte) 5);
-            assertEquals(3, mem.getByte(offset1));
-            assertEquals(4, mem.getByte(offset1 + 1));
-            assertEquals(5, mem.getByte(offset1 + 2));
-        }
-    }
-
-    @Test
-    public void testByteRnd() {
-        try (MemoryARW mem = new MemoryCARWImpl(11, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-            int n = 120;
-
-            long o = 0;
-            for (int i = 0; i < n; i++, o++) {
-                mem.putByte(o, (byte) i);
-            }
-
-            o = 0;
-            for (int i = 0; i < n; i++) {
-                assertEquals(i, mem.getByte(o++));
-            }
-        }
-    }
-
-    @Test
     public void testDouble() {
         try (MemoryARW mem = new MemoryCARWImpl(11, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             Rnd rnd = new Rnd();
@@ -274,219 +266,6 @@ public class MemoryCARWImplTest {
             for (int i = 0; i < n; i++) {
                 assertEquals(rnd.nextDouble(), mem.getDouble(o), 0.00001);
                 o += 8;
-            }
-        }
-    }
-
-    @Test
-    public void testLong256Direct() {
-        long pageSize = 64;
-        Rnd rnd = new Rnd();
-        Long256Impl sink = new Long256Impl();
-        try (MemoryARW mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-            for (int i = 0; i < 1000; i++) {
-                mem.putLong256(rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
-            }
-
-            rnd.reset();
-            long offset = 0;
-            for (int i = 0; i < 1000; i++) {
-                mem.getLong256(offset, sink);
-                Assert.assertEquals(rnd.nextLong(), sink.getLong0());
-                Assert.assertEquals(rnd.nextLong(), sink.getLong1());
-                Assert.assertEquals(rnd.nextLong(), sink.getLong2());
-                Assert.assertEquals(rnd.nextLong(), sink.getLong3());
-
-                Long256 long256A = mem.getLong256A(offset);
-                Assert.assertEquals(sink, long256A);
-                Long256 long256B = mem.getLong256B(offset);
-                Assert.assertEquals(sink, long256B);
-
-                offset += Long256.BYTES;
-            }
-        }
-    }
-
-    @Test
-    public void testLong256Obj() {
-        long pageSize = 64;
-        Rnd rnd = new Rnd();
-        Long256Impl long256 = new Long256Impl();
-        try (MemoryARW mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-            for (int i = 0; i < 1000; i++) {
-                long256.fromRnd(rnd);
-                mem.putLong256(long256);
-            }
-
-            rnd.reset();
-            long offset = 0;
-            for (int i = 0; i < 1000; i++) {
-                mem.getLong256(offset, long256);
-                offset += Long256.BYTES;
-                Assert.assertEquals(rnd.nextLong(), long256.getLong0());
-                Assert.assertEquals(rnd.nextLong(), long256.getLong1());
-                Assert.assertEquals(rnd.nextLong(), long256.getLong2());
-                Assert.assertEquals(rnd.nextLong(), long256.getLong3());
-            }
-        }
-    }
-
-    @Test
-    public void testLong256Null() {
-        long pageSize = 64;
-        final int N = 1000;
-        Long256Impl long256 = new Long256Impl();
-        try (MemoryARW mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-            for (int i = 0; i < N; i++) {
-                mem.putLong256((CharSequence) null);
-            }
-
-            StringSink sink = new StringSink();
-            long offset = 0;
-            for (int i = 0; i < N; i++) {
-                mem.getLong256(offset, long256);
-                Assert.assertEquals(Numbers.LONG_NaN, long256.getLong0());
-                Assert.assertEquals(Numbers.LONG_NaN, long256.getLong1());
-                Assert.assertEquals(Numbers.LONG_NaN, long256.getLong2());
-                Assert.assertEquals(Numbers.LONG_NaN, long256.getLong3());
-                mem.getLong256(offset, sink);
-                Assert.assertEquals(0, sink.length());
-                offset += Long256.BYTES;
-            }
-        }
-    }
-
-    @Test
-    public void testLong256ObjExternallySequenced() {
-        long pageSize = 64;
-        Rnd rnd = new Rnd();
-        long offset = 0;
-        Long256Impl long256 = new Long256Impl();
-        try (MemoryARW mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-            for (int i = 0; i < 1000; i++) {
-                long256.fromRnd(rnd);
-                mem.putLong256(offset, long256);
-                offset += Long256.BYTES;
-            }
-
-            rnd.reset();
-            offset = 0;
-            for (int i = 0; i < 1000; i++) {
-                mem.getLong256(offset, long256);
-                offset += Long256.BYTES;
-                Assert.assertEquals(rnd.nextLong(), long256.getLong0());
-                Assert.assertEquals(rnd.nextLong(), long256.getLong1());
-                Assert.assertEquals(rnd.nextLong(), long256.getLong2());
-                Assert.assertEquals(rnd.nextLong(), long256.getLong3());
-            }
-        }
-    }
-
-    @Test
-    public void testLong256FullStr() {
-        String expected = "0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060";
-        long pageSize = 128;
-        Long256Impl long256 = new Long256Impl();
-        Long256Impl long256a = new Long256Impl();
-        try (MemoryARW mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-
-            mem.putLong256(expected);
-            mem.putLong256(expected);
-
-            mem.getLong256(0, long256);
-            String actual = "0x" + Long.toHexString(long256.getLong3()) + Long.toHexString(long256.getLong2()) + Long.toHexString(long256.getLong1()) + Long.toHexString(long256.getLong0());
-
-            Assert.assertEquals(expected, actual);
-            mem.getLong256(Long256.BYTES, long256a);
-
-            String actual2 = "0x" + Long.toHexString(long256a.getLong3()) + Long.toHexString(long256a.getLong2()) + Long.toHexString(long256a.getLong1()) +
-                    Long.toHexString(long256a.getLong0());
-            Assert.assertEquals(expected, actual2);
-        }
-    }
-
-    @Test
-    public void testLong256PartialStr() {
-        final String expected = "0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed";
-        long pageSize = 128;
-        Long256Impl long256 = new Long256Impl();
-        Long256Impl long256a = new Long256Impl();
-        try (MemoryARW mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-            mem.putLong256(expected);
-            mem.putLong256(expected);
-            mem.getLong256(0, long256);
-
-            String actual = "0x";
-            if (long256.getLong3() != 0) {
-                actual += Long.toHexString(long256.getLong3());
-            }
-            if (long256.getLong2() != 0) {
-                actual += Long.toHexString(long256.getLong2());
-            }
-            if (long256.getLong1() != 0) {
-                actual += Long.toHexString(long256.getLong1());
-            }
-            if (long256.getLong0() != 0) {
-                actual += Long.toHexString(long256.getLong0());
-            }
-
-            Assert.assertEquals(expected, actual);
-            mem.getLong256(Long256.BYTES, long256a);
-
-            String actual2 = "0x";
-            if (long256a.getLong3() != 0) {
-                actual2 += Long.toHexString(long256a.getLong3());
-            }
-            if (long256a.getLong2() != 0) {
-                actual2 += Long.toHexString(long256a.getLong2());
-            }
-            if (long256a.getLong1() != 0) {
-                actual2 += Long.toHexString(long256a.getLong1());
-            }
-            if (long256a.getLong0() != 0) {
-                actual2 += Long.toHexString(long256a.getLong0());
-            }
-            Assert.assertEquals(expected, actual2);
-
-            long o = mem.getAppendOffset();
-            mem.putLong256(expected, 2, expected.length());
-            Assert.assertEquals(long256, mem.getLong256A(o));
-            String padded = "JUNK" + expected + "MOREJUNK";
-            mem.putLong256(padded, 6, 4 + expected.length());
-            Assert.assertEquals(long256, mem.getLong256A(o));
-
-            try {
-                mem.putLong256(padded);
-                Assert.fail();
-            } catch (CairoException ex) {
-                Assert.assertTrue(ex.getMessage().contains("invalid long256"));
-                Assert.assertTrue(ex.getMessage().contains(padded));
-            }
-        }
-    }
-
-    @Test
-    public void testLong256DirectExternallySequenced() {
-        long pageSize = 64;
-        Rnd rnd = new Rnd();
-        Long256Impl sink = new Long256Impl();
-        try (MemoryARW mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-            long offset = 0;
-            for (int i = 0; i < 1000; i++) {
-                mem.putLong256(offset, rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
-                offset += Long256.BYTES;
-            }
-
-            rnd.reset();
-            offset = 0;
-
-            for (int i = 0; i < 1000; i++) {
-                mem.getLong256(offset, sink);
-                offset += Long256.BYTES;
-                Assert.assertEquals(rnd.nextLong(), sink.getLong0());
-                Assert.assertEquals(rnd.nextLong(), sink.getLong1());
-                Assert.assertEquals(rnd.nextLong(), sink.getLong2());
-                Assert.assertEquals(rnd.nextLong(), sink.getLong3());
             }
         }
     }
@@ -751,6 +530,227 @@ public class MemoryCARWImplTest {
     }
 
     @Test
+    public void testLong256() {
+        try (MemoryARW mem = new MemoryCARWImpl(256, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            mem.putLong256("0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8");
+            mem.putLong256("0xEA674fdDe714fd979de3EdF0F56AA9716B898ec8");
+        }
+    }
+
+    @Test
+    public void testLong256Direct() {
+        long pageSize = 64;
+        Rnd rnd = new Rnd();
+        Long256Impl sink = new Long256Impl();
+        try (MemoryARW mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            for (int i = 0; i < 1000; i++) {
+                mem.putLong256(rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
+            }
+
+            rnd.reset();
+            long offset = 0;
+            for (int i = 0; i < 1000; i++) {
+                mem.getLong256(offset, sink);
+                Assert.assertEquals(rnd.nextLong(), sink.getLong0());
+                Assert.assertEquals(rnd.nextLong(), sink.getLong1());
+                Assert.assertEquals(rnd.nextLong(), sink.getLong2());
+                Assert.assertEquals(rnd.nextLong(), sink.getLong3());
+
+                Long256 long256A = mem.getLong256A(offset);
+                Assert.assertEquals(sink, long256A);
+                Long256 long256B = mem.getLong256B(offset);
+                Assert.assertEquals(sink, long256B);
+
+                offset += Long256.BYTES;
+            }
+        }
+    }
+
+    @Test
+    public void testLong256DirectExternallySequenced() {
+        long pageSize = 64;
+        Rnd rnd = new Rnd();
+        Long256Impl sink = new Long256Impl();
+        try (MemoryARW mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            long offset = 0;
+            for (int i = 0; i < 1000; i++) {
+                mem.putLong256(offset, rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
+                offset += Long256.BYTES;
+            }
+
+            rnd.reset();
+            offset = 0;
+
+            for (int i = 0; i < 1000; i++) {
+                mem.getLong256(offset, sink);
+                offset += Long256.BYTES;
+                Assert.assertEquals(rnd.nextLong(), sink.getLong0());
+                Assert.assertEquals(rnd.nextLong(), sink.getLong1());
+                Assert.assertEquals(rnd.nextLong(), sink.getLong2());
+                Assert.assertEquals(rnd.nextLong(), sink.getLong3());
+            }
+        }
+    }
+
+    @Test
+    public void testLong256FullStr() {
+        String expected = "0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060";
+        long pageSize = 128;
+        Long256Impl long256 = new Long256Impl();
+        Long256Impl long256a = new Long256Impl();
+        try (MemoryARW mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+
+            mem.putLong256(expected);
+            mem.putLong256(expected);
+
+            mem.getLong256(0, long256);
+            String actual = "0x" + Long.toHexString(long256.getLong3()) + Long.toHexString(long256.getLong2()) + Long.toHexString(long256.getLong1()) + Long.toHexString(long256.getLong0());
+
+            Assert.assertEquals(expected, actual);
+            mem.getLong256(Long256.BYTES, long256a);
+
+            String actual2 = "0x" + Long.toHexString(long256a.getLong3()) + Long.toHexString(long256a.getLong2()) + Long.toHexString(long256a.getLong1()) +
+                    Long.toHexString(long256a.getLong0());
+            Assert.assertEquals(expected, actual2);
+        }
+    }
+
+    @Test
+    public void testLong256Null() {
+        long pageSize = 64;
+        final int N = 1000;
+        Long256Impl long256 = new Long256Impl();
+        try (MemoryARW mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            for (int i = 0; i < N; i++) {
+                mem.putLong256((CharSequence) null);
+            }
+
+            StringSink sink = new StringSink();
+            long offset = 0;
+            for (int i = 0; i < N; i++) {
+                mem.getLong256(offset, long256);
+                Assert.assertEquals(Numbers.LONG_NaN, long256.getLong0());
+                Assert.assertEquals(Numbers.LONG_NaN, long256.getLong1());
+                Assert.assertEquals(Numbers.LONG_NaN, long256.getLong2());
+                Assert.assertEquals(Numbers.LONG_NaN, long256.getLong3());
+                mem.getLong256(offset, sink);
+                Assert.assertEquals(0, sink.length());
+                offset += Long256.BYTES;
+            }
+        }
+    }
+
+    @Test
+    public void testLong256Obj() {
+        long pageSize = 64;
+        Rnd rnd = new Rnd();
+        Long256Impl long256 = new Long256Impl();
+        try (MemoryARW mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            for (int i = 0; i < 1000; i++) {
+                long256.fromRnd(rnd);
+                mem.putLong256(long256);
+            }
+
+            rnd.reset();
+            long offset = 0;
+            for (int i = 0; i < 1000; i++) {
+                mem.getLong256(offset, long256);
+                offset += Long256.BYTES;
+                Assert.assertEquals(rnd.nextLong(), long256.getLong0());
+                Assert.assertEquals(rnd.nextLong(), long256.getLong1());
+                Assert.assertEquals(rnd.nextLong(), long256.getLong2());
+                Assert.assertEquals(rnd.nextLong(), long256.getLong3());
+            }
+        }
+    }
+
+    @Test
+    public void testLong256ObjExternallySequenced() {
+        long pageSize = 64;
+        Rnd rnd = new Rnd();
+        long offset = 0;
+        Long256Impl long256 = new Long256Impl();
+        try (MemoryARW mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            for (int i = 0; i < 1000; i++) {
+                long256.fromRnd(rnd);
+                mem.putLong256(offset, long256);
+                offset += Long256.BYTES;
+            }
+
+            rnd.reset();
+            offset = 0;
+            for (int i = 0; i < 1000; i++) {
+                mem.getLong256(offset, long256);
+                offset += Long256.BYTES;
+                Assert.assertEquals(rnd.nextLong(), long256.getLong0());
+                Assert.assertEquals(rnd.nextLong(), long256.getLong1());
+                Assert.assertEquals(rnd.nextLong(), long256.getLong2());
+                Assert.assertEquals(rnd.nextLong(), long256.getLong3());
+            }
+        }
+    }
+
+    @Test
+    public void testLong256PartialStr() {
+        final String expected = "0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed";
+        long pageSize = 128;
+        Long256Impl long256 = new Long256Impl();
+        Long256Impl long256a = new Long256Impl();
+        try (MemoryARW mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            mem.putLong256(expected);
+            mem.putLong256(expected);
+            mem.getLong256(0, long256);
+
+            String actual = "0x";
+            if (long256.getLong3() != 0) {
+                actual += Long.toHexString(long256.getLong3());
+            }
+            if (long256.getLong2() != 0) {
+                actual += Long.toHexString(long256.getLong2());
+            }
+            if (long256.getLong1() != 0) {
+                actual += Long.toHexString(long256.getLong1());
+            }
+            if (long256.getLong0() != 0) {
+                actual += Long.toHexString(long256.getLong0());
+            }
+
+            Assert.assertEquals(expected, actual);
+            mem.getLong256(Long256.BYTES, long256a);
+
+            String actual2 = "0x";
+            if (long256a.getLong3() != 0) {
+                actual2 += Long.toHexString(long256a.getLong3());
+            }
+            if (long256a.getLong2() != 0) {
+                actual2 += Long.toHexString(long256a.getLong2());
+            }
+            if (long256a.getLong1() != 0) {
+                actual2 += Long.toHexString(long256a.getLong1());
+            }
+            if (long256a.getLong0() != 0) {
+                actual2 += Long.toHexString(long256a.getLong0());
+            }
+            Assert.assertEquals(expected, actual2);
+
+            long o = mem.getAppendOffset();
+            mem.putLong256(expected, 2, expected.length());
+            Assert.assertEquals(long256, mem.getLong256A(o));
+            String padded = "JUNK" + expected + "MOREJUNK";
+            mem.putLong256(padded, 6, 4 + expected.length());
+            Assert.assertEquals(long256, mem.getLong256A(o));
+
+            try {
+                mem.putLong256(padded);
+                Assert.fail();
+            } catch (CairoException ex) {
+                Assert.assertTrue(ex.getMessage().contains("invalid long256"));
+                Assert.assertTrue(ex.getMessage().contains(padded));
+            }
+        }
+    }
+
+    @Test
     public void testLongCompatibility() {
         long pageSize = 64;
         try (MemoryARW mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
@@ -847,27 +847,38 @@ public class MemoryCARWImplTest {
     }
 
     @Test
+    public void testMaxPages() {
+        int pageSize = 256;
+        int maxPages = 3;
+        int sz = 256 * 3;
+        try (MemoryARW mem = new MemoryCARWImpl(pageSize, maxPages, MemoryTag.NATIVE_DEFAULT)) {
+            Assert.assertEquals(0, mem.size());
+            Assert.assertEquals(256, mem.getExtendSegmentSize());
+            Assert.assertEquals(256, mem.getPageSize());
+            int n = 0;
+            try {
+                while (n <= sz) {
+                    mem.putByte((byte) n);
+                    n++;
+                }
+                Assert.fail();
+            } catch (CairoException ex) {
+                Assert.assertTrue(ex.getMessage().contains("breached"));
+            }
+            Assert.assertEquals(sz, n);
+
+            for (n = 0; n < sz; n++) {
+                byte b = mem.getByte(n);
+                Assert.assertEquals((byte) n, b);
+            }
+        }
+    }
+
+    @Test
     public void testNullBin() {
         try (MemoryARW mem = new MemoryCARWImpl(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             testNullBin0(mem);
         }
-    }
-
-    static void testNullBin0(MemoryARW mem) {
-        final TestBinarySequence binarySequence = new TestBinarySequence();
-        final byte[] buf = new byte[0];
-        binarySequence.of(buf);
-        mem.putBin(null);
-        mem.putBin(0, 0);
-        long o1 = mem.putBin(binarySequence);
-        mem.putNullBin();
-
-        assertNull(mem.getBin(0));
-        assertNull(mem.getBin(8));
-        BinarySequence bsview = mem.getBin(16);
-        assertNotNull(bsview);
-        assertEquals(0, bsview.length());
-        assertNull(mem.getBin(o1));
     }
 
     @Test
@@ -991,6 +1002,41 @@ public class MemoryCARWImplTest {
         assertEquals(4, Vm.getStorageLength(null));
     }
 
+    @Test
+    public void testTruncate() {
+        final int pageSize = 256;
+        final int maxPages = 3;
+        final int sz = 256 * 3;
+        try (MemoryARW mem = new MemoryCARWImpl(pageSize, maxPages, MemoryTag.NATIVE_DEFAULT)) {
+            for (int i = 0; i < sz; i++) {
+                mem.putByte(i, (byte) i);
+            }
+            Assert.assertEquals(sz, mem.size());
+
+            mem.truncate();
+
+            Assert.assertEquals(pageSize, mem.size());
+            Assert.assertEquals(0, mem.getAppendOffset());
+        }
+    }
+
+    static void testNullBin0(MemoryARW mem) {
+        final TestBinarySequence binarySequence = new TestBinarySequence();
+        final byte[] buf = new byte[0];
+        binarySequence.of(buf);
+        mem.putBin(null);
+        mem.putBin(0, 0);
+        long o1 = mem.putBin(binarySequence);
+        mem.putNullBin();
+
+        assertNull(mem.getBin(0));
+        assertNull(mem.getBin(8));
+        BinarySequence bsview = mem.getBin(16);
+        assertNotNull(bsview);
+        assertEquals(0, bsview.length());
+        assertNull(mem.getBin(o1));
+    }
+
     static void assertStrings(MemoryARW mem) {
         Assert.assertEquals(10, Vm.getStorageLength("123"));
         Assert.assertEquals(6, Vm.getStorageLength("x"));
@@ -1073,7 +1119,7 @@ public class MemoryCARWImplTest {
                 Assert.assertEquals(offset1 + sz, o);
                 offset1 += 8 + sz;
                 o = mem.putBin(bufAddr, sz);
-                Assert.assertEquals(offset1+sz, o);
+                Assert.assertEquals(offset1 + sz, o);
                 offset1 += 8 + sz;
             }
 
@@ -1165,52 +1211,6 @@ public class MemoryCARWImplTest {
                     o += M * 2 + 4;
                 }
             }
-        }
-    }
-
-    @Test
-    public void testMaxPages() {
-        int pageSize = 256;
-        int maxPages = 3;
-        int sz = 256 * 3;
-        try (MemoryARW mem = new MemoryCARWImpl(pageSize, maxPages, MemoryTag.NATIVE_DEFAULT)) {
-            Assert.assertEquals(0, mem.size());
-            Assert.assertEquals(256, mem.getExtendSegmentSize());
-            Assert.assertEquals(256, mem.getPageSize());
-            int n = 0;
-            try {
-                while (n <= sz) {
-                    mem.putByte((byte) n);
-                    n++;
-                }
-                Assert.fail();
-            } catch (CairoException ex) {
-                Assert.assertTrue(ex.getMessage().contains("breached"));
-            }
-            Assert.assertEquals(sz, n);
-
-            for (n = 0; n < sz; n++) {
-                byte b = mem.getByte(n);
-                Assert.assertEquals((byte) n, b);
-            }
-        }
-    }
-
-    @Test
-    public void testTruncate() {
-        final int pageSize = 256;
-        final int maxPages = 3;
-        final int sz = 256 * 3;
-        try (MemoryARW mem = new MemoryCARWImpl(pageSize, maxPages, MemoryTag.NATIVE_DEFAULT)) {
-            for (int i = 0; i < sz; i++) {
-                mem.putByte(i, (byte) i);
-            }
-            Assert.assertEquals(sz, mem.size());
-
-            mem.truncate();
-
-            Assert.assertEquals(pageSize, mem.size());
-            Assert.assertEquals(0, mem.getAppendOffset());
         }
     }
 }

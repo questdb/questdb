@@ -29,12 +29,12 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
@@ -214,7 +214,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             // Collect map of unique key values.
             // using this values we will fill gaps in main
             // data before jumping to another timestamp.
-            // This will allow to maintain chronological order of
+            // This will allow maintaining chronological order of
             // main data map.
             //
             // At the same time check if cursor has data

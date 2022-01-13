@@ -93,7 +93,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         if (srcDataMax < 1) {
 
-            // this has to be a brand new partition for either of two cases:
+            // this has to be a brand-new partition for either of two cases:
             // - this partition is above min partition of the table
             // - this partition is below max partition of the table
             // - this is last partition that is empty
@@ -180,7 +180,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 } else {
                     srcTimestampSize = srcDataMax * 8L;
                     // out of order data is going into archive partition
-                    // we need to read "low" and "high" boundaries of the partition. "low" being oldest timestamp
+                    // we need to read "low" and "high" boundaries of the partition. "low" being the oldest timestamp
                     // and "high" being newest
 
                     dFile(path.trimTo(plen), metadata.getColumnName(timestampIndex));
@@ -280,7 +280,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             );
 
                             if (mergeDataLo > mergeDataHi) {
-                                // the OO data implodes right between rows of existing data
+                                // the OO data implodes right between rows of existing data,
                                 // so we will have both data prefix and suffix and the middle bit
 
                                 // is the out of order
@@ -540,7 +540,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long cursor,
             Sequence subSeq
     ) {
-        // find "current" partition boundary in the out of order data
+        // find "current" partition boundary in the out-of-order data
         // once we know the boundary we can move on to calculating another one
         // srcOooHi is index inclusive of value
         final Path pathToTable = task.getPathToTable();

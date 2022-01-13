@@ -95,7 +95,7 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
         Assert.assertEquals(ColumnType.UNDEFINED, LineUdpParserSupport.getValueType("aaa\""));
         Assert.assertEquals(ColumnType.UNDEFINED, LineUdpParserSupport.getValueType("\"aaa"));
 
-        // in these edge examples, type is guessed as best as possible, later the parser would fail
+        // in these edge examples, type is guessed as good as possible, later the parser would fail
         // (LineUdpParserSupport.parseFieldValue):
         Assert.assertEquals(ColumnType.LONG256, LineUdpParserSupport.getValueType("0x123a4i"));
 

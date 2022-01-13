@@ -47,6 +47,11 @@ class Long256CaseFunction extends Long256Function implements MultiArgFunction {
     }
 
     @Override
+    public void getLong256(Record rec, CharSink sink) {
+        picker.pick(rec).getLong256(rec, sink);
+    }
+
+    @Override
     public Long256 getLong256A(Record rec) {
         return picker.pick(rec).getLong256A(rec);
     }
@@ -54,10 +59,5 @@ class Long256CaseFunction extends Long256Function implements MultiArgFunction {
     @Override
     public Long256 getLong256B(Record rec) {
         return picker.pick(rec).getLong256B(rec);
-    }
-
-    @Override
-    public void getLong256(Record rec, CharSink sink) {
-        picker.pick(rec).getLong256(rec, sink);
     }
 }

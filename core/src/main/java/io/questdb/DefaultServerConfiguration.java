@@ -57,18 +57,13 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public HttpServerConfiguration getHttpServerConfiguration() {
-        return httpServerConfiguration;
-    }
-
-    @Override
     public HttpMinServerConfiguration getHttpMinServerConfiguration() {
         return null;
     }
 
     @Override
-    public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
-        return lineUdpReceiverConfiguration;
+    public HttpServerConfiguration getHttpServerConfiguration() {
+        return httpServerConfiguration;
     }
 
     @Override
@@ -77,8 +72,13 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getWorkerPoolConfiguration() {
-        return httpServerConfiguration;
+    public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
+        return lineUdpReceiverConfiguration;
+    }
+
+    @Override
+    public MetricsConfiguration getMetricsConfiguration() {
+        return metricsConfiguration;
     }
 
     @Override
@@ -87,7 +87,7 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public MetricsConfiguration getMetricsConfiguration() {
-        return metricsConfiguration;
+    public WorkerPoolConfiguration getWorkerPoolConfiguration() {
+        return httpServerConfiguration;
     }
 }

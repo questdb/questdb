@@ -39,46 +39,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class AuthDb {
-    private static final Pattern TOKEN_PATTERN = Pattern.compile("\\s*(\\S+)(.*)");
     public static final String EC_ALGORITHM = "EC";
     public static final String EC_CURVE = "secp256r1";
     public static final String SIGNATURE_TYPE_DER = "SHA256withECDSA";
     public static final String SIGNATURE_TYPE_P1363 = "SHA256withECDSAinP1363Format";
-
-    public static PrivateKey importPrivateKey(String encodedPrivateKey) {
-        byte[] dBytes = Base64.getUrlDecoder().decode(encodedPrivateKey);
-
-        try {
-            BigInteger privateKeyInt = new BigInteger(dBytes);
-            KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(EC_ALGORITHM);
-            AlgorithmParameterSpec prime256v1ParamSpec = new ECGenParameterSpec(EC_CURVE);
-            keyPairGenerator.initialize(prime256v1ParamSpec);
-            ECParameterSpec parameterSpec = ((ECKey) keyPairGenerator.generateKeyPair().getPrivate()).getParams();
-            ECPrivateKeySpec privateKeySpec = new ECPrivateKeySpec(privateKeyInt, parameterSpec);
-            return KeyFactory.getInstance(EC_ALGORITHM).generatePrivate(privateKeySpec);
-        } catch (NoSuchAlgorithmException | InvalidAlgorithmParameterException | InvalidKeySpecException ex) {
-            throw new IllegalArgumentException("Failed to decode " + encodedPrivateKey, ex);
-        }
-    }
-
-    public static PublicKey importPublicKey(String encodedX, String encodedY) {
-        byte[] xBytes = Base64.getUrlDecoder().decode(encodedX);
-        byte[] yBytes = Base64.getUrlDecoder().decode(encodedY);
-        try {
-            BigInteger x = new BigInteger(xBytes);
-            BigInteger y = new BigInteger(yBytes);
-            ECPoint point = new ECPoint(x, y);
-
-            AlgorithmParameters parameters = AlgorithmParameters.getInstance(EC_ALGORITHM);
-            parameters.init(new ECGenParameterSpec(EC_CURVE));
-            ECParameterSpec ecParameters = parameters.getParameterSpec(ECParameterSpec.class);
-            ECPublicKeySpec pubKeySpec = new ECPublicKeySpec(point, ecParameters);
-            return KeyFactory.getInstance(EC_ALGORITHM).generatePublic(pubKeySpec);
-        } catch (NoSuchAlgorithmException | InvalidKeySpecException | InvalidParameterSpecException ex) {
-            throw new IllegalArgumentException("Failed to decode " + encodedX + "," + encodedY, ex);
-        }
-    }
-
+    private static final Pattern TOKEN_PATTERN = Pattern.compile("\\s*(\\S+)(.*)");
     private final CharSequenceObjHashMap<PublicKey> publicKeyByKeyId = new CharSequenceObjHashMap<>();
 
     AuthDb(LineTcpReceiverConfiguration configuration) {
@@ -129,6 +94,40 @@ public class AuthDb {
             } while (null != line);
         } catch (Exception ex) {
             throw new IllegalArgumentException("IO error, failed to read auth db file " + configuration.getAuthDbPath() + " at line " + nLine, ex);
+        }
+    }
+
+    public static PrivateKey importPrivateKey(String encodedPrivateKey) {
+        byte[] dBytes = Base64.getUrlDecoder().decode(encodedPrivateKey);
+
+        try {
+            BigInteger privateKeyInt = new BigInteger(dBytes);
+            KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(EC_ALGORITHM);
+            AlgorithmParameterSpec prime256v1ParamSpec = new ECGenParameterSpec(EC_CURVE);
+            keyPairGenerator.initialize(prime256v1ParamSpec);
+            ECParameterSpec parameterSpec = ((ECKey) keyPairGenerator.generateKeyPair().getPrivate()).getParams();
+            ECPrivateKeySpec privateKeySpec = new ECPrivateKeySpec(privateKeyInt, parameterSpec);
+            return KeyFactory.getInstance(EC_ALGORITHM).generatePrivate(privateKeySpec);
+        } catch (NoSuchAlgorithmException | InvalidAlgorithmParameterException | InvalidKeySpecException ex) {
+            throw new IllegalArgumentException("Failed to decode " + encodedPrivateKey, ex);
+        }
+    }
+
+    public static PublicKey importPublicKey(String encodedX, String encodedY) {
+        byte[] xBytes = Base64.getUrlDecoder().decode(encodedX);
+        byte[] yBytes = Base64.getUrlDecoder().decode(encodedY);
+        try {
+            BigInteger x = new BigInteger(xBytes);
+            BigInteger y = new BigInteger(yBytes);
+            ECPoint point = new ECPoint(x, y);
+
+            AlgorithmParameters parameters = AlgorithmParameters.getInstance(EC_ALGORITHM);
+            parameters.init(new ECGenParameterSpec(EC_CURVE));
+            ECParameterSpec ecParameters = parameters.getParameterSpec(ECParameterSpec.class);
+            ECPublicKeySpec pubKeySpec = new ECPublicKeySpec(point, ecParameters);
+            return KeyFactory.getInstance(EC_ALGORITHM).generatePublic(pubKeySpec);
+        } catch (NoSuchAlgorithmException | InvalidKeySpecException | InvalidParameterSpecException ex) {
+            throw new IllegalArgumentException("Failed to decode " + encodedX + "," + encodedY, ex);
         }
     }
 

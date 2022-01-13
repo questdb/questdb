@@ -148,6 +148,10 @@ public class O3CopyTask extends AbstractLockable {
         return dstVarSize;
     }
 
+    public int getIndexBlockCapacity() {
+        return indexBlockCapacity;
+    }
+
     public BitmapIndexWriter getIndexWriter() {
         return indexWriter;
     }
@@ -262,10 +266,6 @@ public class O3CopyTask extends AbstractLockable {
 
     public long getTimestampMin() {
         return timestampMin;
-    }
-
-    public int getIndexBlockCapacity() {
-        return indexBlockCapacity;
     }
 
     public boolean isPartitionMutates() {

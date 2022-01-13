@@ -27,7 +27,9 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.WriterSource;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.InsertMethod;
+import io.questdb.cairo.sql.InsertStatement;
+import io.questdb.cairo.sql.WriterOutOfDateException;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
@@ -47,14 +49,15 @@ public class InsertStatementImpl implements InsertStatement {
         this.tableName = tableName;
         this.structureVersion = structureVersion;
     }
+
     @Override
-    public void close() {
-        detachWriter();
+    public void addInsertRow(InsertRowImpl row) {
+        insertRows.add(row);
     }
 
     @Override
-    public InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException {
-        return createMethod(executionContext, engine);
+    public void close() {
+        detachWriter();
     }
 
     @Override
@@ -72,13 +75,8 @@ public class InsertStatementImpl implements InsertStatement {
     }
 
     @Override
-    public long getStructureVersion() {
-        return structureVersion;
-    }
-
-    @Override
-    public String getTableName() {
-        return tableName;
+    public InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException {
+        return createMethod(executionContext, engine);
     }
 
     @Override
@@ -87,8 +85,13 @@ public class InsertStatementImpl implements InsertStatement {
     }
 
     @Override
-    public void addInsertRow(InsertRowImpl row) {
-        insertRows.add(row);
+    public long getStructureVersion() {
+        return structureVersion;
+    }
+
+    @Override
+    public String getTableName() {
+        return tableName;
     }
 
     private void initContext(SqlExecutionContext executionContext) throws SqlException {
@@ -102,6 +105,16 @@ public class InsertStatementImpl implements InsertStatement {
         private TableWriter writer = null;
 
         @Override
+        public void close() {
+            writer = Misc.free(writer);
+        }
+
+        @Override
+        public void commit() {
+            writer.commit();
+        }
+
+        @Override
         public long execute() {
             for (int i = 0, n = insertRows.size(); i < n; i++) {
                 InsertRowImpl row = insertRows.get(i);
@@ -111,20 +124,10 @@ public class InsertStatementImpl implements InsertStatement {
         }
 
         @Override
-        public void commit() {
-            writer.commit();
-        }
-
-        @Override
         public TableWriter popWriter() {
             TableWriter w = writer;
             this.writer = null;
             return w;
-        }
-
-        @Override
-        public void close() {
-            writer = Misc.free(writer);
         }
     }
 }

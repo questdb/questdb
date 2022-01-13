@@ -38,23 +38,23 @@ public class EqLongFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testNotEquals() throws SqlException {
-        call(10L, 20L).andAssert(false);
-    }
-
-    @Test
     public void testLeftNaN() throws SqlException {
         call(Numbers.LONG_NaN, 77L).andAssert(false);
     }
 
     @Test
-    public void testRightNaN() throws SqlException {
-        call(77L, Numbers.LONG_NaN).andAssert(false);
+    public void testNotEquals() throws SqlException {
+        call(10L, 20L).andAssert(false);
     }
 
     @Test
     public void testNullEqualsNull() throws SqlException {
         call(Numbers.LONG_NaN, Numbers.LONG_NaN).andAssert(true);
+    }
+
+    @Test
+    public void testRightNaN() throws SqlException {
+        call(77L, Numbers.LONG_NaN).andAssert(false);
     }
 
     @Override

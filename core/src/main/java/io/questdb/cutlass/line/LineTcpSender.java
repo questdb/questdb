@@ -36,6 +36,11 @@ public class LineTcpSender extends AbstractLineSender {
     }
 
     @Override
+    public void flush() {
+        sendAll();
+    }
+
+    @Override
     protected long createSocket(int interfaceIPv4Address, int ttl, long sockaddr) throws NetworkError {
         long fd = nf.socketTcp(true);
         if (nf.connect(fd, sockaddr) != 0) {
@@ -49,19 +54,14 @@ public class LineTcpSender extends AbstractLineSender {
     }
 
     @Override
+    protected void send00() {
+        sendAll();
+    }
+
+    @Override
     protected void sendToSocket(long fd, long lo, long sockaddr, int len) throws NetworkError {
         if (nf.send(fd, lo, len) != len) {
             throw NetworkError.instance(nf.errno()).put("send error");
         }
-    }
-
-    @Override
-    public void flush() {
-        sendAll();
-    }
-
-    @Override
-    protected void send00() {
-        sendAll();
     }
 }

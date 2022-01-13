@@ -555,6 +555,14 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         private final boolean args0IsSymbol;
         private final boolean arg1IsSymbol;
 
+        public TwoSymStrCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+            this.args0IsSymbol = ColumnType.isSymbol(args0.getType());
+            this.arg1IsSymbol = ColumnType.isSymbol(args1.getType());
+        }
+
         @Override
         public Function getLeft() {
             return args0;
@@ -563,14 +571,6 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return args1;
-        }
-
-        public TwoSymStrCoalesceFunction(ObjList<Function> args) {
-            assert args.size() == 2;
-            this.args0 = args.getQuick(0);
-            this.args1 = args.getQuick(1);
-            this.args0IsSymbol = ColumnType.isSymbol(args0.getType());
-            this.arg1IsSymbol = ColumnType.isSymbol(args1.getType());
         }
 
         @Override
@@ -596,6 +596,12 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         private final Function args0;
         private final Function args1;
 
+        public TwoSymCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
         @Override
         public Function getLeft() {
             return args0;
@@ -604,12 +610,6 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return args1;
-        }
-
-        public TwoSymCoalesceFunction(ObjList<Function> args) {
-            assert args.size() == 2;
-            this.args0 = args.getQuick(0);
-            this.args1 = args.getQuick(1);
         }
 
         @Override
@@ -635,6 +635,12 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         private final Function args0;
         private final Function args1;
 
+        public TwoStrCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
         @Override
         public Function getLeft() {
             return args0;
@@ -643,12 +649,6 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return args1;
-        }
-
-        public TwoStrCoalesceFunction(ObjList<Function> args) {
-            assert args.size() == 2;
-            this.args0 = args.getQuick(0);
-            this.args1 = args.getQuick(1);
         }
 
         @Override

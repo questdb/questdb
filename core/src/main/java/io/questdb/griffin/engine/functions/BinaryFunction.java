@@ -48,6 +48,12 @@ public interface BinaryFunction extends Function {
         return getLeft().isConstant() && getRight().isConstant();
     }
 
+    default boolean isRuntimeConstant() {
+        final Function l = getLeft();
+        final Function r = getRight();
+        return (l.isConstant() && r.isRuntimeConstant()) || (r.isConstant() && l.isRuntimeConstant()) || (l.isRuntimeConstant() && r.isRuntimeConstant());
+    }
+
     @Override
     default void toTop() {
         getLeft().toTop();
@@ -57,10 +63,4 @@ public interface BinaryFunction extends Function {
     Function getLeft();
 
     Function getRight();
-
-    default boolean isRuntimeConstant() {
-        final Function l = getLeft();
-        final Function r = getRight();
-        return (l.isConstant() && r.isRuntimeConstant()) || (r.isConstant() && l.isRuntimeConstant()) || (l.isRuntimeConstant() && r.isRuntimeConstant());
-    }
 }

@@ -28,10 +28,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.Constants;
-import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryColumn;
-import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 
 public final class GeoHashUtil {
 

@@ -30,19 +30,19 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface JsonQueryProcessorConfiguration {
 
+    SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
+
     MillisecondClock getClock();
 
     int getConnectionCheckFrequency();
+
+    int getDoubleScale();
 
     FilesFacade getFilesFacade();
 
     int getFloatScale();
 
-    int getDoubleScale();
-
     CharSequence getKeepAliveHeader();
 
     long getMaxQueryResponseRowLimit();
-
-    SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 }

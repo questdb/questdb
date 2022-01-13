@@ -51,6 +51,6 @@ public final class CharAdapter extends AbstractTypeAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) {
-        row.putChar(column, SqlKeywords.isNullKeyword(value) ?  (char) 0 : value.charAt(0));
+        row.putChar(column, SqlKeywords.isNullKeyword(value) ? (char) 0 : value.charAt(0));
     }
 }

@@ -29,8 +29,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -148,11 +148,6 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public long size() {
-            return masterCursor.size();
-        }
-
-        @Override
         public boolean hasNext() {
 
             if (masterCursor.hasNext()) {
@@ -198,6 +193,11 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 return true;
             }
             return false;
+        }
+
+        @Override
+        public long size() {
+            return masterCursor.size();
         }
 
         @Override

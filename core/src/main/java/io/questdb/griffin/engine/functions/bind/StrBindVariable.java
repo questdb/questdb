@@ -34,8 +34,8 @@ import io.questdb.std.str.StringSink;
 
 class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
     private final StringSink sink = new StringSink();
-    private boolean isNull = true;
     private final int floatScale;
+    private boolean isNull = true;
 
     public StrBindVariable(int floatScale) {
         this.floatScale = floatScale;
@@ -72,6 +72,11 @@ class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
     @Override
     public CharSequence getStrB(Record rec) {
         return isNull ? null : sink;
+    }
+
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
     }
 
     public void setValue(char value) {
@@ -121,6 +126,7 @@ class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
             sink.put(value);
         }
     }
+
     public void setValue(float value) {
         isNull = value == Numbers.LONG_NaN;
         if (!isNull) {
@@ -137,10 +143,5 @@ class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
             sink.clear();
             sink.put(value);
         }
-    }
-
-    @Override
-    public boolean isRuntimeConstant() {
-        return true;
     }
 }

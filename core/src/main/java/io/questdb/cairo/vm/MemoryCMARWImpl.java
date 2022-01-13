@@ -59,33 +59,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public long getAppendOffset() {
-        return appendAddress - pageAddress;
-    }
-
-    @Override
-    public long getExtendSegmentSize() {
-        return extendSegmentMsb;
-    }
-
-    @Override
-    public void jumpTo(long offset) {
-        checkAndExtend(pageAddress + offset);
-        appendAddress = pageAddress + offset;
-    }
-
-    @Override
-    public void putLong256(@NotNull CharSequence hexString, int start, int end) {
-        putLong256(hexString, start, end, long256Acceptor);
-    }
-
-    @Override
-    public void skip(long bytes) {
-        checkAndExtend(appendAddress + bytes);
-        appendAddress += bytes;
-    }
-
-    @Override
     public long appendAddressFor(long offset, long bytes) {
         checkAndExtend(pageAddress + offset + bytes);
         return pageAddress + offset;
@@ -201,6 +174,33 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         if (newSize > size) {
             extend0(newSize);
         }
+    }
+
+    @Override
+    public long getAppendOffset() {
+        return appendAddress - pageAddress;
+    }
+
+    @Override
+    public long getExtendSegmentSize() {
+        return extendSegmentMsb;
+    }
+
+    @Override
+    public void jumpTo(long offset) {
+        checkAndExtend(pageAddress + offset);
+        appendAddress = pageAddress + offset;
+    }
+
+    @Override
+    public void putLong256(@NotNull CharSequence hexString, int start, int end) {
+        putLong256(hexString, start, end, long256Acceptor);
+    }
+
+    @Override
+    public void skip(long bytes) {
+        checkAndExtend(appendAddress + bytes);
+        appendAddress += bytes;
     }
 
     @Override

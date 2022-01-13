@@ -44,8 +44,6 @@ public interface CairoConfiguration {
 
     int getAnalyticColumnPoolCapacity();
 
-    long getDataAppendPageSize();
-
     DateFormat getBackupDirTimestampFormat();
 
     int getBackupMkDirMode();
@@ -82,6 +80,8 @@ public interface CairoConfiguration {
     int getCreateAsSelectRetryCount();
 
     int getCreateTableModelPoolCapacity();
+
+    long getDataAppendPageSize();
 
     long getDataIndexKeyAppendPageSize();
 
@@ -138,6 +138,8 @@ public interface CairoConfiguration {
 
     MillisecondClock getMillisecondClock();
 
+    long getMiscAppendPageSize();
+
     int getMkDirMode();
 
     default NanosecondClock getNanosecondClock() {
@@ -181,8 +183,6 @@ public interface CairoConfiguration {
 
     int getSampleByIndexSearchPageSize();
 
-    long getMiscAppendPageSize();
-
     long getSpinLockTimeoutUs();
 
     int getSqlAnalyticRowIdMaxPages();
@@ -223,6 +223,20 @@ public interface CairoConfiguration {
 
     int getSqlHashJoinValuePageSize();
 
+    int getSqlJitBindVarsMemoryMaxPages();
+
+    int getSqlJitBindVarsMemoryPageSize();
+
+    int getSqlJitIRMemoryMaxPages();
+
+    int getSqlJitIRMemoryPageSize();
+
+    int getSqlJitMode();
+
+    int getSqlJitPageAddressCacheThreshold();
+
+    int getSqlJitRowsThreshold();
+
     int getSqlJoinContextPoolCapacity();
 
     int getSqlJoinMetadataMaxResizes();
@@ -248,6 +262,8 @@ public interface CairoConfiguration {
 
     int getSqlModelPoolCapacity();
 
+    int getSqlPageFrameMaxSize();
+
     int getSqlSortKeyMaxPages();
 
     long getSqlSortKeyPageSize();
@@ -259,24 +275,6 @@ public interface CairoConfiguration {
     int getSqlSortValueMaxPages();
 
     int getSqlSortValuePageSize();
-
-    int getSqlPageFrameMaxSize();
-
-    int getSqlJitMode();
-
-    int getSqlJitIRMemoryPageSize();
-
-    int getSqlJitIRMemoryMaxPages();
-
-    int getSqlJitBindVarsMemoryPageSize();
-
-    int getSqlJitBindVarsMemoryMaxPages();
-
-    int getSqlJitRowsThreshold();
-
-    int getSqlJitPageAddressCacheThreshold();
-
-    boolean isSqlJitDebugEnabled();
 
     int getTableBlockWriterQueueCapacity();
 
@@ -303,4 +301,6 @@ public interface CairoConfiguration {
     boolean isO3QuickSortEnabled();
 
     boolean isParallelIndexingEnabled();
+
+    boolean isSqlJitDebugEnabled();
 }

@@ -64,6 +64,16 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         pending.set(index, M_OPERATION, initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE);
     }
 
+    @Override
+    protected void registerListenerFd() {
+        listenerRegistered = true;
+    }
+
+    @Override
+    protected void unregisterListenerFd() {
+        listenerRegistered = false;
+    }
+
     private boolean processRegistrations(long timestamp) {
         long cursor;
         boolean useful = false;
@@ -146,7 +156,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             final long fd = pending.get(i, M_FD);
             final int _new_op = fds.get(fd);
             assert fd != serverFd;
-            
+
             if (_new_op == -1) {
 
                 // check if expired
@@ -184,11 +194,11 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         }
 
         if (listenerRegistered) {
-             assert serverFd >= 0;
-             readFdSet.add(serverFd);
-             readFdCount++;
+            assert serverFd >= 0;
+            readFdSet.add(serverFd);
+            readFdCount++;
         }
-        
+
         readFdSet.setCount(readFdCount);
         writeFdSet.setCount(writeFdCount);
         return useful;
@@ -252,16 +262,6 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             _wptr = _addr + (_wptr - address);
             address = _addr;
         }
-    }
-
-    @Override
-    protected void registerListenerFd() {
-        listenerRegistered = true;
-    }
-
-    @Override
-    protected void unregisterListenerFd() {
-        listenerRegistered = false;
     }
 }
 

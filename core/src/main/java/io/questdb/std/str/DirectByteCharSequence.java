@@ -45,6 +45,10 @@ public class DirectByteCharSequence extends AbstractCharSequence implements Muta
         this.lo = this.hi = 0;
     }
 
+    public void decHi() {
+        this.hi--;
+    }
+
     public long getHi() {
         return hi;
     }
@@ -63,19 +67,15 @@ public class DirectByteCharSequence extends AbstractCharSequence implements Muta
         return (char) byteAt(index);
     }
 
-    public void shl(long delta) {
-        this.lo -= delta;
-        this.hi -= delta;
-    }
-
     public DirectByteCharSequence of(long lo, long hi) {
         this.lo = lo;
         this.hi = hi;
         return this;
     }
 
-    public void decHi() {
-        this.hi--;
+    public void shl(long delta) {
+        this.lo -= delta;
+        this.hi -= delta;
     }
 
     public void squeeze() {

@@ -31,26 +31,11 @@ import java.io.Closeable;
 
 /**
  * A cursor for managing position of operations within data frames
- *
+ * <p>
  * Interfaces which extend Closeable are not optionally-closeable.
  * close() method must be called after other calls are complete.
  */
-public interface DataFrameCursor extends Closeable, SymbolTableSource  {
-
-    // same TableReader is available on each data frame
-    TableReader getTableReader();
-
-    /**
-     * Reload the data frame and return the cursor to the beginning of
-     * the data frame
-     * @return true when reload data has changed, false otherwise
-     */
-    boolean reload();
-
-    /**
-     * @return the next element in the data frame
-     */
-    @Nullable DataFrame next();
+public interface DataFrameCursor extends Closeable, SymbolTableSource {
 
     /**
      * Must be closed after other calls are complete
@@ -58,17 +43,35 @@ public interface DataFrameCursor extends Closeable, SymbolTableSource  {
     @Override
     void close();
 
+    StaticSymbolTable getSymbolTable(int columnIndex);
+
+    // same TableReader is available on each data frame
+    TableReader getTableReader();
+
     /**
-     * Return the cursor to the beginning of the data frame
+     * @return the next element in the data frame
      */
-    void toTop();
+    @Nullable DataFrame next();
+
+    /**
+     * Reload the data frame and return the cursor to the beginning of
+     * the data frame
+     *
+     * @return true when reload data has changed, false otherwise
+     */
+    boolean reload();
 
     /**
      * @return number of items in the data frame
      */
     long size();
 
-    StaticSymbolTable getSymbolTable(int columnIndex);
+    /**
+     * Returns data frame and position (lo) of given rowNumber (according to cursor order) .
+     */
+    default @Nullable DataFrame skipTo(long rowNumber) {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * Returns true if cursor supports random record access (without having to iterate through all results).
@@ -78,9 +81,7 @@ public interface DataFrameCursor extends Closeable, SymbolTableSource  {
     }
 
     /**
-     * Returns data frame and position (lo) of given rowNumber (according to cursor order) .
+     * Return the cursor to the beginning of the data frame
      */
-    default @Nullable DataFrame skipTo(long rowNumber) {
-        throw new UnsupportedOperationException();
-    }
+    void toTop();
 }

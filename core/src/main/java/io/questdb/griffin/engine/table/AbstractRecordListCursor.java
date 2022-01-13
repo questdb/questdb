@@ -54,13 +54,13 @@ abstract class AbstractRecordListCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
-    public void toTop() {
-        index = 0;
+    public long size() {
+        return lim;
     }
 
     @Override
-    public long size() {
-        return lim;
+    public void toTop() {
+        index = 0;
     }
 
     abstract protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException;

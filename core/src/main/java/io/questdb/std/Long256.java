@@ -25,7 +25,7 @@
 package io.questdb.std;
 
 /**
- * A 256 bit hash with string representation up to 64 hex digits following a prefix '0x'.
+ * A 256-bit hash with string representation up to 64 hex digits following a prefix '0x'.
  * (e.g. 0xaba86bf575ba7fde98b6673bb7d85bf489fd71a619cddaecba5de0378e3d22ed)
  */
 public interface Long256 {

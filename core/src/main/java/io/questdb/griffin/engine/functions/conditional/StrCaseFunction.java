@@ -41,13 +41,8 @@ class StrCaseFunction extends StrFunction implements MultiArgFunction {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return picker.pick(rec).getStr(rec);
-    }
-
-    @Override
-    public CharSequence getStrB(Record rec) {
-        return picker.pick(rec).getStrB(rec);
+    public ObjList<Function> getArgs() {
+        return args;
     }
 
     @Override
@@ -61,7 +56,12 @@ class StrCaseFunction extends StrFunction implements MultiArgFunction {
     }
 
     @Override
-    public ObjList<Function> getArgs() {
-        return args;
+    public CharSequence getStr(Record rec) {
+        return picker.pick(rec).getStr(rec);
+    }
+
+    @Override
+    public CharSequence getStrB(Record rec) {
+        return picker.pick(rec).getStrB(rec);
     }
 }

@@ -33,28 +33,6 @@ import org.junit.Test;
 public class Base64FunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
-    public void testRandomBinSeq() throws Exception {
-        assertQuery("x\ty\n" +
-                        "00000000 ee 41 1d 15 55 8a\t7kEdFVWK\n" +
-                        "\t\n" +
-                        "00000000 d8 cc 14 ce f1 59\t2MwUzvFZ\n" +
-                        "00000000 c4 91 3b 72 db f3\txJE7ctvz\n" +
-                        "00000000 1b c7 88 de a0 79\tG8eI3qB5\n" +
-                        "00000000 77 15 68 61 26 af\tdxVoYSav\n" +
-                        "\t\n" +
-                        "00000000 95 94 36 53 49 b4\tlZQ2U0m0\n" +
-                        "\t\n" +
-                        "00000000 3b 08 a1 1e 38 8d\tOwihHjiN\n",
-                "select x, base64(x, 100) y from t",
-                "create table t as (select rnd_bin(6,6,1) x from long_sequence(10))",
-                null,
-                true,
-                true,
-                true
-                );
-    }
-
-    @Test
     public void testInvalidLength() {
         try {
             assertQuery("", "select base64(rnd_bin(6,6,0), 0)", null);
@@ -84,6 +62,28 @@ public class Base64FunctionFactoryTest extends AbstractFunctionFactoryTest {
         } finally {
             binaryEncodingMaxLength = tmp;
         }
+    }
+
+    @Test
+    public void testRandomBinSeq() throws Exception {
+        assertQuery("x\ty\n" +
+                        "00000000 ee 41 1d 15 55 8a\t7kEdFVWK\n" +
+                        "\t\n" +
+                        "00000000 d8 cc 14 ce f1 59\t2MwUzvFZ\n" +
+                        "00000000 c4 91 3b 72 db f3\txJE7ctvz\n" +
+                        "00000000 1b c7 88 de a0 79\tG8eI3qB5\n" +
+                        "00000000 77 15 68 61 26 af\tdxVoYSav\n" +
+                        "\t\n" +
+                        "00000000 95 94 36 53 49 b4\tlZQ2U0m0\n" +
+                        "\t\n" +
+                        "00000000 3b 08 a1 1e 38 8d\tOwihHjiN\n",
+                "select x, base64(x, 100) y from t",
+                "create table t as (select rnd_bin(6,6,1) x from long_sequence(10))",
+                null,
+                true,
+                true,
+                true
+        );
     }
 
     @Override

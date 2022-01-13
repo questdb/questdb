@@ -32,8 +32,8 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
@@ -115,11 +115,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void preparePass2(RecordCursor cursor) {
+        public void pass2(Record record) {
         }
 
         @Override
-        public void pass2(Record record) {
+        public void preparePass2(RecordCursor cursor) {
         }
 
         @Override

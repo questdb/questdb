@@ -45,6 +45,18 @@ public class CastSymbolToLong256FunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
+    static void appendLong256(CharSequence value, Long256Impl long256Builder, CharSink sink) {
+        if (Numbers.extractLong256(value, value.length(), long256Builder)) {
+            Numbers.appendLong256(
+                    long256Builder.getLong0(),
+                    long256Builder.getLong1(),
+                    long256Builder.getLong2(),
+                    long256Builder.getLong3(),
+                    sink
+            );
+        }
+    }
+
     private static class Func extends Long256Function implements UnaryFunction {
         private final Function arg;
         private final Long256Impl long256builder = new Long256Impl();
@@ -58,6 +70,14 @@ public class CastSymbolToLong256FunctionFactory implements FunctionFactory {
         @Override
         public Function getArg() {
             return arg;
+        }
+
+        @Override
+        public void getLong256(Record rec, CharSink sink) {
+            final CharSequence value = arg.getSymbol(rec);
+            if (value != null) {
+                appendLong256(value, long256builder, sink);
+            }
         }
 
         @Override
@@ -76,26 +96,6 @@ public class CastSymbolToLong256FunctionFactory implements FunctionFactory {
                 return Long256Impl.NULL_LONG256;
             }
             return Numbers.parseLong256(value, value.length(), long256b);
-        }
-
-        @Override
-        public void getLong256(Record rec, CharSink sink) {
-            final CharSequence value = arg.getSymbol(rec);
-            if (value != null) {
-                appendLong256(value, long256builder, sink);
-            }
-        }
-    }
-
-    static void appendLong256(CharSequence value, Long256Impl long256Builder, CharSink sink) {
-        if (Numbers.extractLong256(value, value.length(), long256Builder)) {
-            Numbers.appendLong256(
-                    long256Builder.getLong0(),
-                    long256Builder.getLong1(),
-                    long256Builder.getLong2(),
-                    long256Builder.getLong3(),
-                    sink
-            );
         }
     }
 }

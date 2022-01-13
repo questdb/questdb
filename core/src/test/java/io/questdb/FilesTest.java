@@ -86,7 +86,7 @@ public class FilesTest {
                 long M50 = 100 * 1024L * 1024L;
                 try {
                     // If allocate tries to allocate by the given size
-                    // instead of to the size this will allocate 2TB and suppose to fail
+                    // instead of to the size this will allocate 2 TB and suppose to fail
                     for (int i = 0; i < 20000; i++) {
                         Files.allocate(fd, M50 + i);
                         Assert.assertEquals(M50 + i, Files.length(path));

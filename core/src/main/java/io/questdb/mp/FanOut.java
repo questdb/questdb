@@ -45,11 +45,6 @@ public class FanOut implements Barrier {
         holder = h;
     }
 
-    @Override
-    public long current() {
-        return barrier.current();
-    }
-
     public static FanOut to(Barrier barrier) {
         return new FanOut().and(barrier);
     }
@@ -106,6 +101,19 @@ public class FanOut implements Barrier {
     }
 
     @Override
+    public long current() {
+        return barrier.current();
+    }
+
+    @Override
+    public void setCurrent(long value) {
+        ObjList<Barrier> barriers = holder.barriers;
+        for (int i = 0, n = barriers.size(); i < n; i++) {
+            barriers.getQuick(i).setCurrent(value);
+        }
+    }
+
+    @Override
     public WaitStrategy getWaitStrategy() {
         return holder.waitStrategy;
     }
@@ -120,14 +128,6 @@ public class FanOut implements Barrier {
         ObjList<Barrier> barriers = holder.barriers;
         for (int i = 0, n = barriers.size(); i < n; i++) {
             barriers.getQuick(i).root().setBarrier(barrier);
-        }
-    }
-
-    @Override
-    public void setCurrent(long value) {
-        ObjList<Barrier> barriers = holder.barriers;
-        for (int i = 0, n = barriers.size(); i < n; i++) {
-            barriers.getQuick(i).setCurrent(value);
         }
     }
 

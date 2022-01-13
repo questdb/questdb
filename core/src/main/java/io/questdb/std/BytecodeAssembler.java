@@ -469,6 +469,14 @@ public class BytecodeAssembler {
         return classCache.valueAt(index);
     }
 
+    public int poolDoubleConst(double value) {
+        putByte(0x06);
+        putDouble(value);
+        int index = poolCount;
+        poolCount += 2;
+        return index;
+    }
+
     public int poolField(int classIndex, int nameAndTypeIndex) {
         return poolRef(0x09, classIndex, nameAndTypeIndex);
     }
@@ -479,14 +487,6 @@ public class BytecodeAssembler {
 
     public int poolInterfaceMethod(int classIndex, String name, String sig) {
         return poolInterfaceMethod(classIndex, poolNameAndType(poolUtf8(name), poolUtf8(sig)));
-    }
-
-    public int poolDoubleConst(double value) {
-        putByte(0x06);
-        putDouble(value);
-        int index = poolCount;
-        poolCount += 2;
-        return index;
     }
 
     public int poolLongConst(long value) {
@@ -574,6 +574,13 @@ public class BytecodeAssembler {
         buf.put((byte) b);
     }
 
+    public void putDouble(double value) {
+        if (buf.remaining() < 4) {
+            resize();
+        }
+        buf.putDouble(value);
+    }
+
     public void putITEM_Integer() {
         putByte(0x01);
     }
@@ -589,13 +596,6 @@ public class BytecodeAssembler {
 
     public void putITEM_Top() {
         putByte(0);
-    }
-
-    public void putDouble(double value) {
-        if (buf.remaining() < 4) {
-            resize();
-        }
-        buf.putDouble(value);
     }
 
     public void putLong(long value) {

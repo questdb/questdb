@@ -66,23 +66,6 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         clear();
     }
 
-    private static DirectByteCharSequence unquote(CharSequence key, DirectByteCharSequence that) {
-        int len = that.length();
-        if (len == 0) {
-            throw HttpException.instance("missing value [key=").put(key).put(']');
-        }
-
-        if (that.charAt(0) == '"') {
-            if (that.charAt(len - 1) == '"') {
-                return that.of(that.getLo() + 1, that.getHi() - 1);
-            } else {
-                throw HttpException.instance("unclosed quote [key=").put(key).put(']');
-            }
-        } else {
-            return that;
-        }
-    }
-
     @Override
     public final void clear() {
         this.needMethod = true;
@@ -230,6 +213,23 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
 
     public int size() {
         return headers.size();
+    }
+
+    private static DirectByteCharSequence unquote(CharSequence key, DirectByteCharSequence that) {
+        int len = that.length();
+        if (len == 0) {
+            throw HttpException.instance("missing value [key=").put(key).put(']');
+        }
+
+        if (that.charAt(0) == '"') {
+            if (that.charAt(len - 1) == '"') {
+                return that.of(that.getLo() + 1, that.getHi() - 1);
+            } else {
+                throw HttpException.instance("unclosed quote [key=").put(key).put(']');
+            }
+        } else {
+            return that;
+        }
     }
 
     private void parseContentDisposition() {

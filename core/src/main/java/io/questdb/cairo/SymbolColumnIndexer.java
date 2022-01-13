@@ -57,45 +57,8 @@ public class SymbolColumnIndexer implements ColumnIndexer, Closeable, Mutable {
     }
 
     @Override
-    public void distress() {
-        distressed = true;
-    }
-
-    @Override
-    public long getFd() {
-        return mem.getFd();
-    }
-
-    @Override
-    public long getSequence() {
-        return sequence;
-    }
-
-    @Override
-    public void refreshSourceAndIndex(long loRow, long hiRow) {
-        mem.updateSize();
-        index(mem, loRow, hiRow);
-    }
-
-    @Override
-    public void index(MemoryR mem, long loRow, long hiRow) {
-        // while we may have to read column starting with zero offset
-        // index values have to be adjusted to partition-level row id
-        writer.rollbackConditionally(loRow);
-        for (long lo = loRow; lo < hiRow; lo++) {
-            writer.add(TableUtils.toIndexKey(mem.getInt((lo - columnTop) * Integer.BYTES)), lo);
-        }
-        writer.setMaxValue(hiRow - 1);
-    }
-
-    @Override
-    public BitmapIndexWriter getWriter() {
-        return writer;
-    }
-
-    @Override
-    public boolean isDistressed() {
-        return distressed;
+    public void closeSlider() {
+        mem.close();
     }
 
     @Override
@@ -140,8 +103,45 @@ public class SymbolColumnIndexer implements ColumnIndexer, Closeable, Mutable {
     }
 
     @Override
-    public void closeSlider() {
-        mem.close();
+    public void distress() {
+        distressed = true;
+    }
+
+    @Override
+    public long getFd() {
+        return mem.getFd();
+    }
+
+    @Override
+    public long getSequence() {
+        return sequence;
+    }
+
+    @Override
+    public BitmapIndexWriter getWriter() {
+        return writer;
+    }
+
+    @Override
+    public void index(MemoryR mem, long loRow, long hiRow) {
+        // while we may have to read column starting with zero offset
+        // index values have to be adjusted to partition-level row id
+        writer.rollbackConditionally(loRow);
+        for (long lo = loRow; lo < hiRow; lo++) {
+            writer.add(TableUtils.toIndexKey(mem.getInt((lo - columnTop) * Integer.BYTES)), lo);
+        }
+        writer.setMaxValue(hiRow - 1);
+    }
+
+    @Override
+    public boolean isDistressed() {
+        return distressed;
+    }
+
+    @Override
+    public void refreshSourceAndIndex(long loRow, long hiRow) {
+        mem.updateSize();
+        index(mem, loRow, hiRow);
     }
 
     @Override

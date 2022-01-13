@@ -30,14 +30,14 @@ public class SelectAccessor {
     static final int FD_READ = 1;
     static final int FD_WRITE = 2;
 
-    static {
-        ARRAY_OFFSET = SelectAccessor.arrayOffset();
-        COUNT_OFFSET = SelectAccessor.countOffset();
-    }
-
     public static native int select(long readfds, long writefds, long exceptfds);
 
     private static native int countOffset();
 
     private static native int arrayOffset();
+
+    static {
+        ARRAY_OFFSET = SelectAccessor.arrayOffset();
+        COUNT_OFFSET = SelectAccessor.countOffset();
+    }
 }

@@ -80,6 +80,72 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testCrossingSymbolBoundary() throws Exception {
+        String tableName = "punk";
+        int count = 2100;
+        int startSymbolCount = 2040;
+        int writeIterations = 4;
+        runInContext((receiver) -> {
+            int symbolCount = startSymbolCount;
+            for (int it = 0; it < writeIterations; it++) {
+                final int iteration = it;
+                final int maxIds = symbolCount++;
+                send(receiver, tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
+                    try (LineTcpSender sender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                        for (int i = 0; i < count; i++) {
+                            String id = String.valueOf(i % maxIds);
+                            sender.metric(tableName)
+                                    .tag("id", id)
+                                    .$((iteration * count + i) * 10_000_000L);
+                        }
+                        sender.flush();
+                    }
+                });
+            }
+        });
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            Assert.assertEquals(count * writeIterations, reader.size());
+        }
+    }
+
+    @Test
+    public void testFieldValuesHasEqualsChar() throws Exception {
+        maxMeasurementSize = 250;
+        String lineData =
+                "tab ts_nsec=1111111111111111111i,raw_msg=\"_________________________________________________________________________________________________________ ____________\" 1619509249714000000\n"
+                        + "tab ts_nsec=2222222222222222222i,raw_msg=\"_________________________________________________________________________________________________________ ____________\" 1619509249714000000\n"
+                        + "tab ts_nsec=3333333333333333333i,raw_msg=\"_________________________________________________________________________________________________________ ____________\" 1619509249714000000\n"
+                        + "tab ts_nsec=4444444444444444444i,raw_msg=\"_________________________________________________________________________________________________________ ____________\" 1619509249714000000\n"
+                        + "tab ts_nsec=5555555555555555555i,raw_msg=\"_________________________________________________________________________________________________________ ____________\" 1619509249714000000\n"
+                        + "tab ts_nsec=6666666666666666666i,raw_msg=\"_________________________________________________________________________________________________________ ____________\" 1619509249714000000\n";
+        runInContext((receiver) -> {
+            sendLinger(receiver, lineData, "tab");
+
+            String expected = "ts_nsec\traw_msg\ttimestamp\n" +
+                    "1111111111111111111\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z\n" +
+                    "2222222222222222222\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z\n" +
+                    "3333333333333333333\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z\n" +
+                    "4444444444444444444\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z\n" +
+                    "5555555555555555555\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z\n" +
+                    "6666666666666666666\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z\n";
+            assertTable(expected, "tab");
+        });
+    }
+
+    @Test
+    public void testFieldWithUnquotedString() throws Exception {
+        runInContext((receiver) -> {
+            sendLinger(receiver, "tab raw\\ msg=____ 1619509249714000000\n", "tab");
+            sendLinger(receiver, "tab raw\\ msg=__\"_ 1619509249714000000\n", "tab");
+
+            String expected = "raw msg\ttimestamp\n" +
+                    "____\t2021-04-27T07:40:49.714000Z\n" +
+                    "__\"_\t2021-04-27T07:40:49.714000Z\n";
+            assertTable(expected, "tab");
+        });
+    }
+
+    @Test
     public void testFieldsReducedNonPartitioned() throws Exception {
         try (TableModel m = new TableModel(configuration, "weather", PartitionBy.NONE)) {
             m.col("windspeed", ColumnType.DOUBLE).timestamp();
@@ -145,6 +211,40 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         });
     }
 
+    @Test
+    public void testFirstRowIsCancelled() throws Exception {
+        runInContext((receiver) -> {
+            send(receiver, "table", WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag/2", "value=\2") // Invalid column name, line is not saved
+                            .$(0);
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag1", "value 1")
+                            .tag("tag=2", "значение 2")
+                            .field("поле=3", "{\"ключ\": \"число\"}")
+                            .$(0);
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag1", "value 2")
+                            .$(0);
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag=2", "value=\\2")
+                            .$(Timestamps.DAY_MICROS * 1000L);
+                    lineTcpSender.flush();
+                }
+            });
+
+            String expected = "tag1\ttag=2\tполе=3\ttimestamp\n" +
+                    "value 1\tзначение 2\t{\"ключ\": \"число\"}\t1970-01-01T00:00:00.000000Z\n" +
+                    "value 2\t\t\t1970-01-01T00:00:00.000000Z\n" +
+                    "\tvalue=\\2\t\t1970-01-02T00:00:00.000000Z\n";
+            assertTable(expected, "table");
+        });
+    }
 
     @Test
     public void testGoodAuthenticated() throws Exception {
@@ -159,6 +259,41 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test(expected = NetworkError.class)
     public void testInvalidUser() throws Exception {
         test(AUTH_KEY_ID2, AUTH_PRIVATE_KEY2, 768, 6_000, true);
+    }
+
+    @Test
+    public void testNewPartitionRowCancelledTwice() throws Exception {
+        runInContext((receiver) -> {
+            send(receiver, "table", WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag1", "value 1")
+                            .tag("tag=2", "значение 2")
+                            .field("поле=3", "{\"ключ\": \"число\"}")
+                            .$(0);
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag1", "value 2")
+                            .$(0);
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag/2", "value=\2") // Invalid column name, last line is not saved
+                            .$(Timestamps.DAY_MICROS * 1000L);
+                    // Repeat
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag/2", "value=\2") // Invalid column name, last line is not saved
+                            .$(Timestamps.DAY_MICROS * 1000L);
+                    lineTcpSender.flush();
+                }
+            });
+
+            String expected = "tag1\ttag=2\tполе=3\ttimestamp\n" +
+                    "value 1\tзначение 2\t{\"ключ\": \"число\"}\t1970-01-01T00:00:00.000000Z\n" +
+                    "value 2\t\t\t1970-01-01T00:00:00.000000Z\n";
+            assertTable(expected, "table");
+        });
     }
 
     @Test
@@ -257,6 +392,29 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 });
             }
+        });
+    }
+
+    @Test
+    public void testStringsWithTcpSenderWithNewLineChars() throws Exception {
+        runInContext((receiver) -> {
+            send(receiver, "table", WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag1", "value 1")
+                            .tag("tag=2", "значение 2")
+                            .field("поле=3", "{\"ключ\": \n \"число\", \r\n \"key2\": \"value2\"}\n")
+                            .$(0);
+                    lineTcpSender.flush();
+                }
+            });
+
+            String expected = "tag1\ttag=2\tполе=3\ttimestamp\n" +
+                    "value 1\tзначение 2\t{\"ключ\": \n" +
+                    " \"число\", \r\n" +
+                    " \"key2\": \"value2\"}\n\t1970-01-01T00:00:00.000000Z\n";
+            assertTable(expected, "table");
         });
     }
 
@@ -361,6 +519,123 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testTcpSenderManyLinesToForceBufferFlush() throws Exception {
+        int rowCount = 100;
+        maxMeasurementSize = 100;
+        runInContext((receiver) -> {
+            String tableName = "table";
+            send(receiver, tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, 64)) {
+                    for (int i = 0; i < rowCount; i++) {
+                        lineTcpSender
+                                .metric(tableName)
+                                .tag("tag1", "value 1")
+                                .field("tag2", Chars.repeat("value 2", 10))
+                                .$(0);
+                    }
+                    lineTcpSender.flush();
+                }
+            });
+
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                Assert.assertEquals(rowCount, reader.size());
+            }
+        });
+    }
+
+    @Test
+    public void testTcpSenderQuotedTagValue() throws Exception {
+        runInContext((receiver) -> {
+            send(receiver, "table", WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag1", "\"value 1\"")
+                            .$(0);
+                    lineTcpSender.flush();
+                }
+            });
+
+            String expected = "tag1\ttimestamp\n" +
+                    "\"value 1\"\t1970-01-01T00:00:00.000000Z\n";
+            assertTable(expected, "table");
+        });
+    }
+
+    @Test
+    public void testTcpSenderWithNewLineCharsInFieldName() throws Exception {
+        if (engine.getConfiguration().getFilesFacade().isRestrictedFileSystem()) {
+            // Windows (NTFS) cannot crate files with new line in file name.
+            return;
+        }
+        runInContext((receiver) -> {
+            String tableName = "table";
+            send(receiver, tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    lineTcpSender
+                            .metric(tableName)
+                            .tag("tag\n1", "value 1")
+                            .field("tag\n2", "value 2")
+                            .$(0);
+                    lineTcpSender.flush();
+                }
+            });
+
+            String expected = "tag\n" +
+                    "1\ttag\n" +
+                    "2\ttimestamp\n" +
+                    "value 1\tvalue 2\t1970-01-01T00:00:00.000000Z\n";
+            assertTable(expected, tableName);
+        });
+    }
+
+    @Test
+    public void testTcpSenderWithNewLineInTableName() throws Exception {
+        if (engine.getConfiguration().getFilesFacade().isRestrictedFileSystem()) {
+            // Windows (NTFS) cannot crate files with new line in file name.
+            return;
+        }
+        runInContext((receiver) -> {
+            String tableName = "ta\nble";
+            send(receiver, tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    lineTcpSender
+                            .metric(tableName)
+                            .tag("tag1", "value 1")
+                            .field("tag2", "value 2")
+                            .$(0);
+                    lineTcpSender.flush();
+                }
+            });
+
+            String expected = "tag1\ttag2\ttimestamp\n" +
+                    "value 1\tvalue 2\t1970-01-01T00:00:00.000000Z\n";
+            assertTable(expected, tableName);
+        });
+    }
+
+    @Test
+    public void testTcpSenderWithSpaceInTableName() throws Exception {
+        runInContext((receiver) -> {
+            String tableName = "ta ble";
+            send(receiver, tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    lineTcpSender
+                            .metric(tableName)
+                            .tag("tag1", "value 1")
+                            .field("tag2", "value 2")
+                            .$(0);
+                    lineTcpSender.flush();
+                }
+            });
+
+            String expected = "tag1\ttag2\ttimestamp\n" +
+                    "value 1\tvalue 2\t1970-01-01T00:00:00.000000Z\n";
+            assertTable(expected, tableName);
+        });
+    }
+
+    @Test
     // flapping test
     public void testUnauthenticated() throws Exception {
         test(null, null, 200, 1_000, false);
@@ -370,6 +645,47 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testUnauthenticatedAggressive() throws Exception {
         aggressiveReadRetryCount = 1;
         test(null, null, 200, 1_000, false);
+    }
+
+    @Test
+    public void testUnicodeTableName() throws Exception {
+        byte[] utf8Bytes = "ल".getBytes(Files.UTF_8);
+        Assert.assertEquals(3, utf8Bytes.length);
+
+        try (TableModel m = new TableModel(configuration, "लаблअца", PartitionBy.DAY)) {
+            m.col("символ", ColumnType.SYMBOL).indexed(true, 256)
+                    .col("поле", ColumnType.STRING)
+                    .timestamp("время");
+            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
+        }
+
+        runInContext((receiver) -> {
+            String lineData = "लаблअца поле=\"значение\" 1619509249714000000\n";
+            sendLinger(receiver, lineData, "लаблअца");
+
+            String lineData2 = "लаблअца,символ=значение2 поле=\"значение3\" 1619509249714000000\n";
+            sendLinger(receiver, lineData2, "लаблअца");
+
+            assertTable("символ\tполе\tвремя\n" +
+                    "\tзначение\t2021-04-27T07:40:49.714000Z\n" +
+                    "значение2\tзначение3\t2021-04-27T07:40:49.714000Z\n", "लаблअца");
+        });
+    }
+
+    @Test
+    public void testUnicodeTableNameExistingTable() throws Exception {
+        runInContext((receiver) -> {
+            String lineData = "लаблअца поле=значение 1619509249714000000\n";
+            sendLinger(receiver, lineData, "लаблअца");
+
+            String lineData2 = "लаблअца,символ=значение2  1619509249714000000\n";
+            sendLinger(receiver, lineData2, "लаблअца");
+
+            String expected = "поле\ttimestamp\tсимвол\n" +
+                    "значение\t2021-04-27T07:40:49.714000Z\t\n" +
+                    "\t2021-04-27T07:40:49.714000Z\tзначение2\n";
+            assertTable(expected, "लаблअца");
+        });
     }
 
     @Test
@@ -428,6 +744,36 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testWithTcpSender() throws Exception {
+        runInContext((receiver) -> {
+            send(receiver, "table", WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag1", "value 1")
+                            .tag("tag=2", "значение 2")
+                            .field("поле=3", "{\"ключ\": \"число\"}")
+                            .$(0);
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag1", "value 2")
+                            .$(0);
+                    lineTcpSender
+                            .metric("table")
+                            .tag("tag/2", "value=\2") // Invalid column name, last line is not saved
+                            .$(Timestamps.DAY_MICROS * 1000L);
+                    lineTcpSender.flush();
+                }
+            });
+
+            String expected = "tag1\ttag=2\tполе=3\ttimestamp\n" +
+                    "value 1\tзначение 2\t{\"ключ\": \"число\"}\t1970-01-01T00:00:00.000000Z\n" +
+                    "value 2\t\t\t1970-01-01T00:00:00.000000Z\n";
+            assertTable(expected, "table");
+        });
+    }
+
+    @Test
     public void testWriter17Fields() throws Exception {
         maxMeasurementSize = 1024;
         String lineData = "tableCRASH,tag_n_1=1,tag_n_2=2,tag_n_3=3,tag_n_4=4,tag_n_5=5,tag_n_6=6," +
@@ -439,84 +785,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             String expected = "tag_n_1\ttag_n_2\ttag_n_3\ttag_n_4\ttag_n_5\ttag_n_6\ttag_n_7\ttag_n_8\ttag_n_9\ttag_n_10\ttag_n_11\ttag_n_12\ttag_n_13\ttag_n_14\ttag_n_15\ttag_n_16\ttag_n_17\tvalue\ttimestamp\n" +
                     "1\t2\t3\t4\t5\t6\t7\t8\t9\t10\t11\t12\t13\t14\t15\t16\t17\t42.400000000000006\t2021-04-27T07:40:49.714000Z\n";
             assertTable(expected, "tableCRASH");
-        });
-    }
-
-    @Test
-    public void testFieldValuesHasEqualsChar() throws Exception {
-        maxMeasurementSize = 250;
-        String lineData =
-                  "tab ts_nsec=1111111111111111111i,raw_msg=\"_________________________________________________________________________________________________________ ____________\" 1619509249714000000\n"
-                + "tab ts_nsec=2222222222222222222i,raw_msg=\"_________________________________________________________________________________________________________ ____________\" 1619509249714000000\n"
-                + "tab ts_nsec=3333333333333333333i,raw_msg=\"_________________________________________________________________________________________________________ ____________\" 1619509249714000000\n"
-                + "tab ts_nsec=4444444444444444444i,raw_msg=\"_________________________________________________________________________________________________________ ____________\" 1619509249714000000\n"
-                + "tab ts_nsec=5555555555555555555i,raw_msg=\"_________________________________________________________________________________________________________ ____________\" 1619509249714000000\n"
-                + "tab ts_nsec=6666666666666666666i,raw_msg=\"_________________________________________________________________________________________________________ ____________\" 1619509249714000000\n";
-        runInContext((receiver) -> {
-            sendLinger(receiver, lineData, "tab");
-
-            String expected = "ts_nsec\traw_msg\ttimestamp\n" +
-                    "1111111111111111111\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z\n" +
-                    "2222222222222222222\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z\n" +
-                    "3333333333333333333\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z\n" +
-                    "4444444444444444444\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z\n" +
-                    "5555555555555555555\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z\n" +
-                    "6666666666666666666\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z\n";
-            assertTable(expected, "tab");
-        });
-    }
-
-    @Test
-    public void testFieldWithUnquotedString() throws Exception {
-        runInContext((receiver) -> {
-            sendLinger(receiver,  "tab raw\\ msg=____ 1619509249714000000\n", "tab");
-            sendLinger(receiver,  "tab raw\\ msg=__\"_ 1619509249714000000\n", "tab");
-
-            String expected = "raw msg\ttimestamp\n" +
-                    "____\t2021-04-27T07:40:49.714000Z\n" +
-                    "__\"_\t2021-04-27T07:40:49.714000Z\n";
-            assertTable(expected, "tab");
-        });
-    }
-
-    @Test
-    public void testUnicodeTableName() throws Exception {
-        byte[] utf8Bytes = "ल".getBytes(Files.UTF_8);
-        Assert.assertEquals(3, utf8Bytes.length);
-
-        try (TableModel m = new TableModel(configuration, "लаблअца", PartitionBy.DAY)) {
-            m.col("символ", ColumnType.SYMBOL).indexed(true, 256)
-                    .col("поле", ColumnType.STRING)
-                    .timestamp("время");
-            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
-        }
-
-        runInContext((receiver) -> {
-            String lineData = "लаблअца поле=\"значение\" 1619509249714000000\n";
-            sendLinger(receiver, lineData, "लаблअца");
-
-            String lineData2 = "लаблअца,символ=значение2 поле=\"значение3\" 1619509249714000000\n";
-            sendLinger(receiver, lineData2, "लаблअца");
-
-            assertTable("символ\tполе\tвремя\n" +
-                    "\tзначение\t2021-04-27T07:40:49.714000Z\n" +
-                    "значение2\tзначение3\t2021-04-27T07:40:49.714000Z\n", "लаблअца");
-        });
-    }
-
-    @Test
-    public void testUnicodeTableNameExistingTable() throws Exception {
-        runInContext((receiver) -> {
-            String lineData = "लаблअца поле=значение 1619509249714000000\n";
-            sendLinger(receiver, lineData, "लаблअца");
-
-            String lineData2 = "लаблअца,символ=значение2  1619509249714000000\n";
-            sendLinger(receiver, lineData2, "लаблअца");
-
-            String expected = "поле\ttimestamp\tсимвол\n" +
-                    "значение\t2021-04-27T07:40:49.714000Z\t\n" +
-                    "\t2021-04-27T07:40:49.714000Z\tзначение2\n";
-            assertTable(expected, "लаблअца");
         });
     }
 
@@ -539,6 +807,32 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             String expected = "ts\tid\tauthor\tguild\tchannel\tflags\n" +
                     "1970-01-01T00:00:00.000001Z\t843530699759026177\t820703963477180437\t820704412095479830\t820704412095479833\t6\n";
             assertTable(expected, "messages");
+        });
+    }
+
+    @Test
+    public void testWriterCommitFails() throws Exception {
+        try (TableModel m = new TableModel(configuration, "table_a", PartitionBy.DAY)) {
+            m.timestamp("ReceiveTime")
+                    .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
+                    .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
+                    .col("Length", ColumnType.INT);
+            CairoTestUtils.createTable(m, ColumnType.VERSION);
+        }
+
+        runInContext((receiver) -> {
+            ff = new FilesFacadeImpl() {
+                @Override
+                public int rmdir(Path path) {
+                    return 5;
+                }
+            };
+
+            String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
+            sendLinger(receiver, lineData, "table_a");
+
+            String expected = "ReceiveTime\tSequenceNumber\tMessageType\tLength\n";
+            assertTable(expected, "table_a");
         });
     }
 
@@ -660,308 +954,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         });
     }
 
-    @Test
-    public void testWriterCommitFails() throws Exception {
-        try (TableModel m = new TableModel(configuration, "table_a", PartitionBy.DAY)) {
-            m.timestamp("ReceiveTime")
-                    .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
-                    .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
-                    .col("Length", ColumnType.INT);
-            CairoTestUtils.createTable(m, ColumnType.VERSION);
-        }
-
-        runInContext((receiver) -> {
-            ff = new FilesFacadeImpl() {
-                @Override
-                public int rmdir(Path path) {
-                    return 5;
-                }
-            };
-
-            String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
-            sendLinger(receiver, lineData, "table_a");
-
-            String expected = "ReceiveTime\tSequenceNumber\tMessageType\tLength\n";
-            assertTable(expected, "table_a");
-        });
-    }
-
-    @Test
-    public void testWithTcpSender() throws Exception {
-        runInContext((receiver) -> {
-            send(receiver,  "table", WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
-                    lineTcpSender
-                            .metric("table")
-                            .tag("tag1", "value 1")
-                            .tag("tag=2", "значение 2")
-                            .field("поле=3", "{\"ключ\": \"число\"}")
-                            .$(0);
-                    lineTcpSender
-                            .metric("table")
-                            .tag("tag1", "value 2")
-                            .$(0);
-                    lineTcpSender
-                            .metric("table")
-                            .tag("tag/2", "value=\2") // Invalid column name, last line is not saved
-                            .$(Timestamps.DAY_MICROS * 1000L);
-                    lineTcpSender.flush();
-                }
-            });
-
-            String expected = "tag1\ttag=2\tполе=3\ttimestamp\n" +
-                    "value 1\tзначение 2\t{\"ключ\": \"число\"}\t1970-01-01T00:00:00.000000Z\n" +
-                    "value 2\t\t\t1970-01-01T00:00:00.000000Z\n";
-            assertTable(expected, "table");
-        });
-    }
-
-    @Test
-    public void testStringsWithTcpSenderWithNewLineChars() throws Exception {
-        runInContext((receiver) -> {
-            send(receiver,  "table", WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
-                    lineTcpSender
-                            .metric("table")
-                            .tag("tag1", "value 1")
-                            .tag("tag=2", "значение 2")
-                            .field("поле=3", "{\"ключ\": \n \"число\", \r\n \"key2\": \"value2\"}\n")
-                            .$(0);
-                    lineTcpSender.flush();
-                }
-            });
-
-            String expected = "tag1\ttag=2\tполе=3\ttimestamp\n" +
-                    "value 1\tзначение 2\t{\"ключ\": \n" +
-                    " \"число\", \r\n" +
-                    " \"key2\": \"value2\"}\n\t1970-01-01T00:00:00.000000Z\n";
-            assertTable(expected, "table");
-        });
-    }
-
-    @Test
-    public void testTcpSenderWithNewLineCharsInFieldName() throws Exception {
-        if (engine.getConfiguration().getFilesFacade().isRestrictedFileSystem()) {
-            // Windows (NTFS) cannot crate files with new line in file name.
-            return;
-        }
-        runInContext((receiver) -> {
-            String tableName = "table";
-            send(receiver,  tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
-                    lineTcpSender
-                            .metric(tableName)
-                            .tag("tag\n1", "value 1")
-                            .field("tag\n2", "value 2")
-                            .$(0);
-                    lineTcpSender.flush();
-                }
-            });
-
-            String expected = "tag\n" +
-                    "1\ttag\n" +
-                    "2\ttimestamp\n" +
-                    "value 1\tvalue 2\t1970-01-01T00:00:00.000000Z\n";
-            assertTable(expected, tableName);
-        });
-    }
-
-    @Test
-    public void testTcpSenderWithSpaceInTableName() throws Exception {
-        runInContext((receiver) -> {
-            String tableName = "ta ble";
-            send(receiver,  tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
-                    lineTcpSender
-                            .metric(tableName)
-                            .tag("tag1", "value 1")
-                            .field("tag2", "value 2")
-                            .$(0);
-                    lineTcpSender.flush();
-                }
-            });
-
-            String expected = "tag1\ttag2\ttimestamp\n" +
-                    "value 1\tvalue 2\t1970-01-01T00:00:00.000000Z\n";
-            assertTable(expected, tableName);
-        });
-    }
-
-    @Test
-    public void testTcpSenderWithNewLineInTableName() throws Exception {
-        if (engine.getConfiguration().getFilesFacade().isRestrictedFileSystem()) {
-            // Windows (NTFS) cannot crate files with new line in file name.
-            return;
-        }
-        runInContext((receiver) -> {
-            String tableName = "ta\nble";
-            send(receiver, tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
-                    lineTcpSender
-                            .metric(tableName)
-                            .tag("tag1", "value 1")
-                            .field("tag2", "value 2")
-                            .$(0);
-                    lineTcpSender.flush();
-                }
-            });
-
-            String expected = "tag1\ttag2\ttimestamp\n" +
-                    "value 1\tvalue 2\t1970-01-01T00:00:00.000000Z\n";
-            assertTable(expected, tableName);
-        });
-    }
-
-    @Test
-    public void testTcpSenderManyLinesToForceBufferFlush() throws Exception {
-        int rowCount = 100;
-        maxMeasurementSize = 100;
-        runInContext((receiver) -> {
-            String tableName = "table";
-            send(receiver,  tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, 64)) {
-                    for(int i = 0; i < rowCount; i++) {
-                        lineTcpSender
-                                .metric(tableName)
-                                .tag("tag1", "value 1")
-                                .field("tag2", Chars.repeat("value 2", 10))
-                                .$(0);
-                    }
-                    lineTcpSender.flush();
-                }
-            });
-
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                Assert.assertEquals(rowCount, reader.size());
-            }
-        });
-    }
-
-
-    @Test
-    public void testNewPartitionRowCancelledTwice() throws Exception {
-        runInContext((receiver) -> {
-            send(receiver,  "table", WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
-                    lineTcpSender
-                            .metric("table")
-                            .tag("tag1", "value 1")
-                            .tag("tag=2", "значение 2")
-                            .field("поле=3", "{\"ключ\": \"число\"}")
-                            .$(0);
-                    lineTcpSender
-                            .metric("table")
-                            .tag("tag1", "value 2")
-                            .$(0);
-                    lineTcpSender
-                            .metric("table")
-                            .tag("tag/2", "value=\2") // Invalid column name, last line is not saved
-                            .$(Timestamps.DAY_MICROS * 1000L);
-                    // Repeat
-                    lineTcpSender
-                            .metric("table")
-                            .tag("tag/2", "value=\2") // Invalid column name, last line is not saved
-                            .$(Timestamps.DAY_MICROS * 1000L);
-                    lineTcpSender.flush();
-                }
-            });
-
-            String expected = "tag1\ttag=2\tполе=3\ttimestamp\n" +
-                    "value 1\tзначение 2\t{\"ключ\": \"число\"}\t1970-01-01T00:00:00.000000Z\n" +
-                    "value 2\t\t\t1970-01-01T00:00:00.000000Z\n";
-            assertTable(expected, "table");
-        });
-    }
-
-    @Test
-    public void testTcpSenderQuotedTagValue() throws Exception {
-        runInContext((receiver) -> {
-            send(receiver,  "table", WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
-                    lineTcpSender
-                            .metric("table")
-                            .tag("tag1", "\"value 1\"")
-                            .$(0);
-                    lineTcpSender.flush();
-                }
-            });
-
-            String expected = "tag1\ttimestamp\n" +
-                    "\"value 1\"\t1970-01-01T00:00:00.000000Z\n";
-            assertTable(expected, "table");
-        });
-    }
-
-    @Test
-    public void testFirstRowIsCancelled() throws Exception {
-        runInContext((receiver) -> {
-            send(receiver,  "table", WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
-                    lineTcpSender
-                            .metric("table")
-                            .tag("tag/2", "value=\2") // Invalid column name, line is not saved
-                            .$(0);
-                    lineTcpSender
-                            .metric("table")
-                            .tag("tag1", "value 1")
-                            .tag("tag=2", "значение 2")
-                            .field("поле=3", "{\"ключ\": \"число\"}")
-                            .$(0);
-                    lineTcpSender
-                            .metric("table")
-                            .tag("tag1", "value 2")
-                            .$(0);
-                    lineTcpSender
-                            .metric("table")
-                            .tag("tag=2", "value=\\2")
-                            .$(Timestamps.DAY_MICROS * 1000L);
-                    lineTcpSender.flush();
-                }
-            });
-
-            String expected = "tag1\ttag=2\tполе=3\ttimestamp\n" +
-                    "value 1\tзначение 2\t{\"ключ\": \"число\"}\t1970-01-01T00:00:00.000000Z\n" +
-                    "value 2\t\t\t1970-01-01T00:00:00.000000Z\n" +
-                    "\tvalue=\\2\t\t1970-01-02T00:00:00.000000Z\n";
-            assertTable(expected, "table");
-        });
-    }
-
-    @Test
-    public void testCrossingSymbolBoundary() throws Exception {
-        String tableName = "punk";
-        int count = 2100;
-        int startSymbolCount = 2040;
-        int writeIterations = 4;
-        runInContext((receiver) -> {
-            int symbolCount = startSymbolCount;
-            for(int it = 0; it < writeIterations; it++) {
-                final int iteration = it;
-                final int maxIds = symbolCount++;
-                send(receiver, tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
-                    try (LineTcpSender sender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
-                        for (int i = 0; i < count; i++) {
-                            String id = String.valueOf(i % maxIds);
-                            sender.metric(tableName)
-                                    .tag("id", id)
-                                    .$((iteration * count + i) * 10_000_000L);
-                        }
-                        sender.flush();
-                    }
-                });
-            }
-        });
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-            Assert.assertEquals(count * writeIterations, reader.size());
-        }
-    }
-
     private void send(LineTcpReceiver receiver, String lineData, String tableName, int wait) {
         send(receiver, tableName, wait, () -> sendToSocket(lineData, true));
-    }
-
-    private void sendLinger(LineTcpReceiver receiver, String lineData, String tableName) {
-        send(receiver, tableName, LineTcpReceiverTest.WAIT_ENGINE_TABLE_RELEASE, () -> sendToSocket(lineData, false));
     }
 
     private void send(LineTcpReceiver receiver, String lineData, String tableName) {
@@ -976,6 +970,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     ) {
         send(receiver, lineData, "weather", WAIT_NO_WAIT);
         tableIndex.get("weather").await(expectedReleaseCount);
+    }
+
+    private void sendLinger(LineTcpReceiver receiver, String lineData, String tableName) {
+        send(receiver, tableName, LineTcpReceiverTest.WAIT_ENGINE_TABLE_RELEASE, () -> sendToSocket(lineData, false));
     }
 
     private void sendNoWait(LineTcpReceiver receiver, String threadTable, String lineDataThread) {

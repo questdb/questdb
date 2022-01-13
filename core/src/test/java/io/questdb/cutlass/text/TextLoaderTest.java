@@ -1662,29 +1662,6 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSingleRowImport() throws Exception {
-        assertNoLeak(textLoader -> {
-            String text = "value1,value2,value3\n";
-            configureLoaderDefaults(textLoader);
-            try {
-                playText0(textLoader, text, 512, ENTITY_MANIPULATOR);
-            } catch (NotEnoughLinesException e) {
-                return;
-            }
-            Assert.fail();
-        });
-    }
-
-    @Test
-    public void testSingleRowImportWithSpecifiedDelimiter() throws Exception {
-        assertNoLeak(textLoader -> {
-            String text = "value1,value2,value3\n";
-            configureLoaderDefaults(textLoader, (byte) ',');
-            playText0(textLoader, text, 512, ENTITY_MANIPULATOR);
-        });
-    }
-
-    @Test
     public void testOverrideDoubleWithFloat() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
@@ -2244,6 +2221,29 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     11,
                     11
             );
+        });
+    }
+
+    @Test
+    public void testSingleRowImport() throws Exception {
+        assertNoLeak(textLoader -> {
+            String text = "value1,value2,value3\n";
+            configureLoaderDefaults(textLoader);
+            try {
+                playText0(textLoader, text, 512, ENTITY_MANIPULATOR);
+            } catch (NotEnoughLinesException e) {
+                return;
+            }
+            Assert.fail();
+        });
+    }
+
+    @Test
+    public void testSingleRowImportWithSpecifiedDelimiter() throws Exception {
+        assertNoLeak(textLoader -> {
+            String text = "value1,value2,value3\n";
+            configureLoaderDefaults(textLoader, (byte) ',');
+            playText0(textLoader, text, 512, ENTITY_MANIPULATOR);
         });
     }
 
@@ -3152,8 +3152,18 @@ public class TextLoaderTest extends AbstractGriffinTest {
         };
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
+            public long getCommitLag() {
+                return commitLag;
+            }
+
+            @Override
             public FilesFacade getFilesFacade() {
                 return ff;
+            }
+
+            @Override
+            public int getMaxUncommittedRows() {
+                return maxUncommittedRows;
             }
 
             @Override
@@ -3164,16 +3174,6 @@ public class TextLoaderTest extends AbstractGriffinTest {
                         return 1;
                     }
                 };
-            }
-
-            @Override
-            public int getMaxUncommittedRows() {
-                return maxUncommittedRows;
-            }
-
-            @Override
-            public long getCommitLag() {
-                return commitLag;
             }
         };
         try (CairoEngine engine = new CairoEngine(configuration)) {

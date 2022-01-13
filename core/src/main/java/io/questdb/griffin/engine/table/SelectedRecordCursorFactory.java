@@ -44,19 +44,23 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean followedOrderByAdvice() {
-        return base.followedOrderByAdvice();
+    public void close() {
+        base.close();
     }
 
     @Override
-    public void close() {
-        base.close();
+    public boolean followedOrderByAdvice() {
+        return base.followedOrderByAdvice();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         this.cursor.of(base.getCursor(executionContext));
         return cursor;
+    }
+
+    public boolean hasDescendingOrder() {
+        return base.hasDescendingOrder();
     }
 
     @Override
@@ -67,9 +71,5 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
-    }
-
-    public boolean hasDescendingOrder() {
-        return base.hasDescendingOrder();
     }
 }

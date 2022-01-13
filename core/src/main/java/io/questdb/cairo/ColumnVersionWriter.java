@@ -57,53 +57,6 @@ public class ColumnVersionWriter implements Closeable {
         this.size = size;
     }
 
-    /**
-     * Adds or updates column version entry in the cached list. Entries from the cache are committed to disk via
-     * commit() call. In cache and on disk entries are maintained in ascending chronological order of partition
-     * timestamps and ascending column index order within each timestamp.
-     *
-     * @param timestamp     partition timestamp
-     * @param columnIndex   column index
-     * @param columnVersion column version.
-     */
-    public void upsert(long timestamp, int columnIndex, long columnVersion) {
-        final int sz = cachedList.size();
-        int index = cachedList.binarySearchBlock(BLOCK_SIZE_MSB, timestamp, BinarySearch.SCAN_UP);
-        boolean insert = true;
-        if (index > -1) {
-            // brute force columns for this timestamp
-            while (index < sz && cachedList.getQuick(index) == timestamp) {
-                final long thisIndex = cachedList.getQuick(index + 1);
-
-                if (thisIndex == columnIndex) {
-                    cachedList.setQuick(index + 2, columnVersion);
-                    insert = false;
-                    break;
-                }
-
-                if (thisIndex > columnIndex) {
-                    break;
-                }
-
-                index += BLOCK_SIZE;
-            }
-        } else {
-            index = -index - 1;
-        }
-
-
-        if (insert) {
-            if (index < sz) {
-                cachedList.insert(index, BLOCK_SIZE);
-            } else {
-                cachedList.setPos(Math.max(index + BLOCK_SIZE, sz + BLOCK_SIZE));
-            }
-            cachedList.setQuick(index, timestamp);
-            cachedList.setQuick(index + 1, columnIndex);
-            cachedList.setQuick(index + 2, columnVersion);
-        }
-    }
-
     @Override
     public void close() {
         mem.close();
@@ -210,6 +163,53 @@ public class ColumnVersionWriter implements Closeable {
 
     public boolean isB() {
         return (char) mem.getByte(OFFSET_AREA) == 'B';
+    }
+
+    /**
+     * Adds or updates column version entry in the cached list. Entries from the cache are committed to disk via
+     * commit() call. In cache and on disk entries are maintained in ascending chronological order of partition
+     * timestamps and ascending column index order within each timestamp.
+     *
+     * @param timestamp     partition timestamp
+     * @param columnIndex   column index
+     * @param columnVersion column version.
+     */
+    public void upsert(long timestamp, int columnIndex, long columnVersion) {
+        final int sz = cachedList.size();
+        int index = cachedList.binarySearchBlock(BLOCK_SIZE_MSB, timestamp, BinarySearch.SCAN_UP);
+        boolean insert = true;
+        if (index > -1) {
+            // brute force columns for this timestamp
+            while (index < sz && cachedList.getQuick(index) == timestamp) {
+                final long thisIndex = cachedList.getQuick(index + 1);
+
+                if (thisIndex == columnIndex) {
+                    cachedList.setQuick(index + 2, columnVersion);
+                    insert = false;
+                    break;
+                }
+
+                if (thisIndex > columnIndex) {
+                    break;
+                }
+
+                index += BLOCK_SIZE;
+            }
+        } else {
+            index = -index - 1;
+        }
+
+
+        if (insert) {
+            if (index < sz) {
+                cachedList.insert(index, BLOCK_SIZE);
+            } else {
+                cachedList.setPos(Math.max(index + BLOCK_SIZE, sz + BLOCK_SIZE));
+            }
+            cachedList.setQuick(index, timestamp);
+            cachedList.setQuick(index + 1, columnIndex);
+            cachedList.setQuick(index + 2, columnVersion);
+        }
     }
 
     private void bumpFileSize(long size) {

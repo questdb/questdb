@@ -40,11 +40,15 @@ public class IntrinsicModel implements Mutable {
     public final CharSequenceHashSet keyExcludedValues = new CharSequenceHashSet();
     public final IntList keyValuePositions = new IntList();
     public final IntList keyExcludedValuePositions = new IntList();
+    private final RuntimeIntervalModelBuilder runtimeIntervalBuilder = new RuntimeIntervalModelBuilder();
     public CharSequence keyColumn;
     public ExpressionNode filter;
     public int intrinsicValue = UNDEFINED;
     public QueryModel keySubQuery;
-    private final RuntimeIntervalModelBuilder runtimeIntervalBuilder = new RuntimeIntervalModelBuilder();
+
+    public RuntimeIntrinsicIntervalModel buildIntervalModel() {
+        return runtimeIntervalBuilder.build();
+    }
 
     @Override
     public void clear() {
@@ -57,6 +61,10 @@ public class IntrinsicModel implements Mutable {
         filter = null;
         intrinsicValue = UNDEFINED;
         keySubQuery = null;
+    }
+
+    public void clearBetweenTempParsing() {
+        runtimeIntervalBuilder.clearBetweenParsing();
     }
 
     public void excludeValue(ExpressionNode val) {
@@ -86,10 +94,6 @@ public class IntrinsicModel implements Mutable {
         }
     }
 
-    public RuntimeIntrinsicIntervalModel buildIntervalModel() {
-        return runtimeIntervalBuilder.build();
-    }
-
     public boolean hasIntervalFilters() {
         return runtimeIntervalBuilder.hasIntervalFilters();
     }
@@ -108,41 +112,6 @@ public class IntrinsicModel implements Mutable {
         runtimeIntervalBuilder.intersect(lo, hi);
     }
 
-    public void intersectRuntimeIntervals(Function intervalStrFunction) {
-        runtimeIntervalBuilder.intersectDynamicInterval(intervalStrFunction);
-        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
-    }
-
-    public void setBetweenBoundary(long timestamp) {
-        runtimeIntervalBuilder.setBetweenBoundary(timestamp);
-    }
-
-    public void setBetweenBoundary(Function timestamp) {
-        runtimeIntervalBuilder.setBetweenBoundary(timestamp);
-    }
-
-    public void setBetweenNegated(boolean isNegated) {
-        runtimeIntervalBuilder.setBetweenNegated(isNegated);
-    }
-
-    public void clearBetweenTempParsing() {
-        runtimeIntervalBuilder.clearBetweenParsing();
-    }
-
-    public void subtractRuntimeIntervals(Function intervalStrFunction) {
-        runtimeIntervalBuilder.subtractRuntimeInterval(intervalStrFunction);
-        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
-    }
-
-    public void unionIntervals(long lo, long hi) {
-        runtimeIntervalBuilder.union(lo, hi);
-    }
-
-    public void intersectTimestamp(CharSequence seq, int lo, int lim, int position) throws SqlException {
-        runtimeIntervalBuilder.intersectTimestamp(seq, lo, lim, position);
-        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
-    }
-
     public void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
         runtimeIntervalBuilder.intersectIntervals(seq, lo, lim, position);
         if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
@@ -158,6 +127,28 @@ public class IntrinsicModel implements Mutable {
         if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
     }
 
+    public void intersectRuntimeIntervals(Function intervalStrFunction) {
+        runtimeIntervalBuilder.intersectDynamicInterval(intervalStrFunction);
+        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
+    }
+
+    public void intersectTimestamp(CharSequence seq, int lo, int lim, int position) throws SqlException {
+        runtimeIntervalBuilder.intersectTimestamp(seq, lo, lim, position);
+        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
+    }
+
+    public void setBetweenBoundary(long timestamp) {
+        runtimeIntervalBuilder.setBetweenBoundary(timestamp);
+    }
+
+    public void setBetweenBoundary(Function timestamp) {
+        runtimeIntervalBuilder.setBetweenBoundary(timestamp);
+    }
+
+    public void setBetweenNegated(boolean isNegated) {
+        runtimeIntervalBuilder.setBetweenNegated(isNegated);
+    }
+
     public void subtractIntervals(long lo, long hi) {
         runtimeIntervalBuilder.subtractInterval(lo, hi);
         if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
@@ -168,6 +159,11 @@ public class IntrinsicModel implements Mutable {
         if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
     }
 
+    public void subtractRuntimeIntervals(Function intervalStrFunction) {
+        runtimeIntervalBuilder.subtractRuntimeInterval(intervalStrFunction);
+        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
+    }
+
     @Override
     public String toString() {
         return "IntrinsicModel{" +
@@ -175,6 +171,10 @@ public class IntrinsicModel implements Mutable {
                 ", keyColumn='" + keyColumn + '\'' +
                 ", filter=" + filter +
                 '}';
+    }
+
+    public void unionIntervals(long lo, long hi) {
+        runtimeIntervalBuilder.union(lo, hi);
     }
 
     static {

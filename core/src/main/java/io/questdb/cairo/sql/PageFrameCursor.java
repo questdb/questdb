@@ -34,18 +34,18 @@ public interface PageFrameCursor extends Closeable {
     @Override
     void close(); // we don't throw IOException
 
-    @Nullable PageFrame next();
+    SymbolMapReader getSymbolMapReader(int columnIndex);
 
-    /**
-     * Return the cursor to the beginning of the page frame.
-     * Sets page address to first column.
-     */
-    void toTop();
+    @Nullable PageFrame next();
 
     /**
      * @return size of page in bytes
      */
     long size();
 
-    SymbolMapReader getSymbolMapReader(int columnIndex);
+    /**
+     * Return the cursor to the beginning of the page frame.
+     * Sets page address to first column.
+     */
+    void toTop();
 }

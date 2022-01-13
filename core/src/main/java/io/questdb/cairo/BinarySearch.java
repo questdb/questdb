@@ -39,7 +39,7 @@ public class BinarySearch {
      * @param value         the search value
      * @param low           the low boundary of the search, inclusive of value
      * @param high          the high boundary of the search inclusive of value
-     * @param scanDirection logical direction in which column is searched. UP means we are looking for
+     * @param scanDirection logical direction in which column is searched. UP means, we are looking for
      *                      the bottom boundary of the values that are lower or equal the search value. DOWN means
      *                      we are looking for upper boundary of the values that are greater or equal the search
      *                      value.

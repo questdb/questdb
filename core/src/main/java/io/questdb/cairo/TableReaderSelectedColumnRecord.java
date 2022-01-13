@@ -91,6 +91,15 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
+    public char getChar(int columnIndex) {
+        final int col = deferenceColumn(columnIndex);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * Character.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        return reader.getColumn(absoluteColumnIndex).getChar(offset);
+    }
+
+    @Override
     public double getDouble(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
@@ -109,6 +118,38 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
+    public byte getGeoByte(int columnIndex) {
+        final int col = deferenceColumn(columnIndex);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col);
+        return offset < 0 ? GeoHashes.BYTE_NULL : reader.getColumn(index).getByte(offset);
+    }
+
+    @Override
+    public int getGeoInt(int columnIndex) {
+        final int col = deferenceColumn(columnIndex);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * Integer.BYTES;
+        return offset < 0 ? GeoHashes.INT_NULL : reader.getColumn(index).getInt(offset);
+    }
+
+    @Override
+    public long getGeoLong(int columnIndex) {
+        final int col = deferenceColumn(columnIndex);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * Long.BYTES;
+        return offset < 0 ? GeoHashes.NULL : reader.getColumn(index).getLong(offset);
+    }
+
+    @Override
+    public short getGeoShort(int columnIndex) {
+        final int col = deferenceColumn(columnIndex);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * Short.BYTES;
+        return offset < 0 ? GeoHashes.SHORT_NULL : reader.getColumn(index).getShort(offset);
+    }
+
+    @Override
     public int getInt(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
@@ -118,48 +159,12 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
-    public long getRowId() {
-        return Rows.toRowID(reader.getPartitionIndex(columnBase), recordIndex);
-    }
-
-    @Override
     public long getLong(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
         final long offset = getAdjustedRecordIndex(col) * Long.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
         return reader.getColumn(absoluteColumnIndex).getLong(offset);
-    }
-
-    @Override
-    public short getShort(int columnIndex) {
-        final int col = deferenceColumn(columnIndex);
-        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
-        final long offset = getAdjustedRecordIndex(col) * Short.BYTES;
-        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
-        return reader.getColumn(absoluteColumnIndex).getShort(offset);
-    }
-
-    @Override
-    public char getChar(int columnIndex) {
-        final int col = deferenceColumn(columnIndex);
-        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
-        final long offset = getAdjustedRecordIndex(col) * Character.BYTES;
-        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
-        return reader.getColumn(absoluteColumnIndex).getChar(offset);
-    }
-
-    @Override
-    public CharSequence getStr(int columnIndex) {
-        final int col = deferenceColumn(columnIndex);
-        final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
-        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
-                recordIndex,
-                TableReader.getPrimaryColumnIndex(columnBase, col)
-        );
-        long offset = reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex);
-        assert recordIndex != 0 || (offset == 0 || offset == Numbers.LONG_NaN);
-        return reader.getColumn(absoluteColumnIndex).getStr(offset);
     }
 
     @Override
@@ -187,6 +192,33 @@ public class TableReaderSelectedColumnRecord implements Record {
         final long offset = getAdjustedRecordIndex(col) * Long256.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
         return reader.getColumn(absoluteColumnIndex).getLong256B(offset);
+    }
+
+    @Override
+    public long getRowId() {
+        return Rows.toRowID(reader.getPartitionIndex(columnBase), recordIndex);
+    }
+
+    @Override
+    public short getShort(int columnIndex) {
+        final int col = deferenceColumn(columnIndex);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * Short.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        return reader.getColumn(absoluteColumnIndex).getShort(offset);
+    }
+
+    @Override
+    public CharSequence getStr(int columnIndex) {
+        final int col = deferenceColumn(columnIndex);
+        final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(
+                recordIndex,
+                TableReader.getPrimaryColumnIndex(columnBase, col)
+        );
+        long offset = reader.getColumn(absoluteColumnIndex + 1).getLong(recordIndex);
+        assert recordIndex != 0 || (offset == 0 || offset == Numbers.LONG_NaN);
+        return reader.getColumn(absoluteColumnIndex).getStr(offset);
     }
 
     @Override
@@ -237,42 +269,6 @@ public class TableReaderSelectedColumnRecord implements Record {
         return reader.getSymbolMapReader(col).valueBOf(reader.getColumn(absoluteColumnIndex).getInt(offset));
     }
 
-    @Override
-    public byte getGeoByte(int columnIndex) {
-        final int col = deferenceColumn(columnIndex);
-        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
-        final long offset = getAdjustedRecordIndex(col);
-        return offset < 0 ? GeoHashes.BYTE_NULL : reader.getColumn(index).getByte(offset);
-    }
-
-    @Override
-    public short getGeoShort(int columnIndex) {
-        final int col = deferenceColumn(columnIndex);
-        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
-        final long offset = getAdjustedRecordIndex(col) * Short.BYTES;
-        return offset < 0 ? GeoHashes.SHORT_NULL : reader.getColumn(index).getShort(offset);
-    }
-
-    @Override
-    public int getGeoInt(int columnIndex) {
-        final int col = deferenceColumn(columnIndex);
-        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
-        final long offset = getAdjustedRecordIndex(col) * Integer.BYTES;
-        return offset < 0 ? GeoHashes.INT_NULL : reader.getColumn(index).getInt(offset);
-    }
-
-    @Override
-    public long getGeoLong(int columnIndex) {
-        final int col = deferenceColumn(columnIndex);
-        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
-        final long offset = getAdjustedRecordIndex(col) * Long.BYTES;
-        return offset < 0 ? GeoHashes.NULL : reader.getColumn(index).getLong(offset);
-    }
-
-    public void setRecordIndex(long recordIndex) {
-        this.recordIndex = recordIndex;
-    }
-
     public void incrementRecordIndex() {
         recordIndex++;
     }
@@ -284,6 +280,10 @@ public class TableReaderSelectedColumnRecord implements Record {
 
     public void of(TableReader reader) {
         this.reader = reader;
+    }
+
+    public void setRecordIndex(long recordIndex) {
+        this.recordIndex = recordIndex;
     }
 
     private int deferenceColumn(int columnIndex) {

@@ -61,13 +61,13 @@ public class SymbolIndexFilteredRowCursorFactory implements FunctionBasedRowCurs
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
-        this.cursor.prepare(tableReader);
+    public boolean isEntity() {
+        return false;
     }
 
     @Override
-    public boolean isEntity() {
-        return false;
+    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
+        this.cursor.prepare(tableReader);
     }
 
     @Override

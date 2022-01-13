@@ -25,7 +25,7 @@
 package io.questdb.cutlass.http;
 
 public interface HttpRequestProcessorFactory {
-    HttpRequestProcessor newInstance();
-
     String getUrl();
+
+    HttpRequestProcessor newInstance();
 }

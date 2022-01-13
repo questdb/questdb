@@ -80,6 +80,11 @@ public class CountStringGroupByFunction extends LongFunction implements GroupByF
     }
 
     @Override
+    public void setEmpty(MapValue mapValue) {
+        mapValue.putLong(valueIndex, 0L);
+    }
+
+    @Override
     public void setLong(MapValue mapValue, long value) {
         mapValue.putLong(valueIndex, value);
     }
@@ -87,11 +92,6 @@ public class CountStringGroupByFunction extends LongFunction implements GroupByF
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public void setEmpty(MapValue mapValue) {
-        mapValue.putLong(valueIndex, 0L);
     }
 
     @Override

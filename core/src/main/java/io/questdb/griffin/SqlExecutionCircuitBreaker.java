@@ -35,7 +35,7 @@ public interface SqlExecutionCircuitBreaker {
         }
     };
 
-    void test();
-
     void powerUp();
+
+    void test();
 }

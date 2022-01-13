@@ -763,7 +763,7 @@ class ExpressionParser {
                             thisBranch = BRANCH_LITERAL;
                             final ExpressionNode en = opStack.peek();
                             if (en != null && en.type != ExpressionNode.CONTROL) {
-                                // leverage the fact '*' is dedicated token and it returned from cache
+                                // leverage the fact '*' is dedicated token, and it returned from cache
                                 // therefore lexer.tokenHi does not move when * follows dot without whitespace
                                 // e.g. 'a.*'
                                 GenericLexer.FloatingSequence fs = (GenericLexer.FloatingSequence) en.token;
@@ -1024,7 +1024,7 @@ class ExpressionParser {
                                     tok = SqlUtil.fetchNext(lexer);
                                     // Next token is string literal, or we are in 'as' part of cast function
                                     boolean isInActiveCastAs = (castBraceCountStack.size() > 0 && (castBraceCountStack.size() == castAsCount));
-                                    if (tok != null && (isInActiveCastAs|| tok.charAt(0) == '\'')) {
+                                    if (tok != null && (isInActiveCastAs || tok.charAt(0) == '\'')) {
                                         lexer.backTo(zoneTokPosition, zoneTok);
                                         continue;
                                     }

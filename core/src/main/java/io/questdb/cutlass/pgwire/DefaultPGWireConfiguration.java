@@ -67,8 +67,18 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
+    public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+        return circuitBreakerConfiguration;
+    }
+
+    @Override
     public int getConnectionPoolInitialCapacity() {
         return 64;
+    }
+
+    @Override
+    public DateLocale getDefaultDateLocale() {
+        return DateFormatUtils.enLocale;
     }
 
     @Override
@@ -87,21 +97,6 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
-    public boolean isSelectCacheEnabled() {
-        return true;
-    }
-
-    @Override
-    public int getSelectCacheBlockCount() {
-        return 16;
-    }
-
-    @Override
-    public int getSelectCacheRowCount() {
-        return 16;
-    }
-
-    @Override
     public int getIdleRecvCountBeforeGivingUp() {
         return 10_000;
     }
@@ -109,11 +104,6 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     @Override
     public int getIdleSendCountBeforeGivingUp() {
         return 10_000;
-    }
-
-    @Override
-    public boolean isInsertCacheEnabled() {
-        return true;
     }
 
     @Override
@@ -163,6 +153,16 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
+    public int getSelectCacheBlockCount() {
+        return 16;
+    }
+
+    @Override
+    public int getSelectCacheRowCount() {
+        return 16;
+    }
+
+    @Override
     public int getSendBufferSize() {
         return 1024 * 1024;
     }
@@ -173,13 +173,13 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
-    public DateLocale getDefaultDateLocale() {
-        return DateFormatUtils.enLocale;
+    public boolean isInsertCacheEnabled() {
+        return true;
     }
 
     @Override
-    public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
-        return circuitBreakerConfiguration;
+    public boolean isSelectCacheEnabled() {
+        return true;
     }
 
     @Override

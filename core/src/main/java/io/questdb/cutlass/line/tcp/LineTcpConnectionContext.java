@@ -108,13 +108,13 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     }
 
     /**
-     * Moves incompletely received measurement to start of the receive buffer. Also updates the state of the
+     * Moves incompletely received measurement to start of the "receive" buffer. Also updates the state of the
      * context and protocol parser such that all pointers that point to the incomplete measurement will remain
      * valid. This allows protocol parser to resume execution from the point of where measurement ended abruptly
      *
      * @param recvBufStartOfMeasurement the address in receive buffer where incomplete measurement starts. Everything from
-     *                                  this address to end of the receive buffer will be copied to the start of the
-     *                                  receive buffer
+     *                                  this address to end of the "receive" buffer will be copied to the start of the
+     *                                  "receive" buffer
      * @return true if there was an incomplete measurement in the first place
      */
     protected final boolean compactBuffer(long recvBufStartOfMeasurement) {
@@ -225,16 +225,6 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private void startNewMeasurement() {
-        parser.startNextMeasurement();
-        recvBufStartOfMeasurement = parser.getBufferAddress();
-        // we ran out of buffer, move to start and start parsing new data from socket
-        if (recvBufStartOfMeasurement == recvBufPos) {
-            recvBufPos = recvBufStart;
-            parser.of(recvBufStart);
-        }
-    }
-
     protected boolean read() {
         int bufferRemaining = (int) (recvBufEnd - recvBufPos);
         final int orig = bufferRemaining;
@@ -255,6 +245,16 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         parser.of(recvBufStart);
         goodMeasurement = true;
         recvBufStartOfMeasurement = recvBufStart;
+    }
+
+    private void startNewMeasurement() {
+        parser.startNextMeasurement();
+        recvBufStartOfMeasurement = parser.getBufferAddress();
+        // we ran out of buffer, move to start and start parsing new data from socket
+        if (recvBufStartOfMeasurement == recvBufPos) {
+            recvBufPos = recvBufStart;
+            parser.of(recvBufStart);
+        }
     }
 
     enum IOContextResult {

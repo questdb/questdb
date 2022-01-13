@@ -32,11 +32,11 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
@@ -159,17 +159,6 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         }
 
         @Override
-        public long size() {
-            return -1;
-        }
-
-        @Override
-        public void toTop() {
-            masterCursor.toTop();
-            slaveChainCursor = null;
-        }
-
-        @Override
         public boolean hasNext() {
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
@@ -190,6 +179,17 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
                 }
             }
             return false;
+        }
+
+        @Override
+        public long size() {
+            return -1;
+        }
+
+        @Override
+        public void toTop() {
+            masterCursor.toTop();
+            slaveChainCursor = null;
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor) {

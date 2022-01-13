@@ -91,6 +91,10 @@ public class O3OpenColumnTask {
         return columnType;
     }
 
+    public int getIndexBlockCapacity() {
+        return indexBlockCapacity;
+    }
+
     public BitmapIndexWriter getIndexWriter() {
         return indexWriter;
     }
@@ -221,10 +225,6 @@ public class O3OpenColumnTask {
 
     public long getTxn() {
         return txn;
-    }
-
-    public int getIndexBlockCapacity() {
-        return indexBlockCapacity;
     }
 
     public void of(

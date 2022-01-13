@@ -44,13 +44,13 @@ public class RoundUpDoubleFunctionFactoryTest extends AbstractFunctionFactoryTes
     }
 
     @Test
-    public void testOKNegScale() throws SqlException {
-        call(14.7778, -13).andAssert(1.0E13, 0.0000000001);
+    public void testLeftNan() throws SqlException {
+        call(Double.NaN, 5).andAssert(Double.NaN, 0.0001);
     }
 
     @Test
-    public void testOKPosScale() throws SqlException {
-        call(14.7778, 13).andAssert(14.7778, 0.0000000001);
+    public void testNegScaleHigherThanNumber() throws SqlException {
+        call(14.7778, -5).andAssert(100000, 0.0000000001);
     }
 
     @Test
@@ -64,18 +64,13 @@ public class RoundUpDoubleFunctionFactoryTest extends AbstractFunctionFactoryTes
     }
 
     @Test
-    public void testPosScaleNegValue() throws SqlException {
-        call(-100.999, 1).andAssert(-101.0, 0.0000000001);
+    public void testOKNegScale() throws SqlException {
+        call(14.7778, -13).andAssert(1.0E13, 0.0000000001);
     }
 
     @Test
-    public void testPosScalePosValue() throws SqlException {
-        call(100.01, 1).andAssert(100.1, 0.0000000001);
-    }
-
-    @Test
-    public void testNegScaleHigherThanNumber() throws SqlException {
-        call(14.7778, -5).andAssert(100000, 0.0000000001);
+    public void testOKPosScale() throws SqlException {
+        call(14.7778, 13).andAssert(14.7778, 0.0000000001);
     }
 
     @Test
@@ -84,8 +79,13 @@ public class RoundUpDoubleFunctionFactoryTest extends AbstractFunctionFactoryTes
     }
 
     @Test
-    public void testLeftNan() throws SqlException {
-        call(Double.NaN, 5).andAssert(Double.NaN, 0.0001);
+    public void testPosScaleNegValue() throws SqlException {
+        call(-100.999, 1).andAssert(-101.0, 0.0000000001);
+    }
+
+    @Test
+    public void testPosScalePosValue() throws SqlException {
+        call(100.01, 1).andAssert(100.1, 0.0000000001);
     }
 
     @Test
@@ -99,13 +99,13 @@ public class RoundUpDoubleFunctionFactoryTest extends AbstractFunctionFactoryTes
     }
 
     @Test
-    public void testSimpleTwo() throws SqlException {
-        call(100.999, 1).andAssert(101.0, 0.0000000001);
+    public void testSimpleThree() throws SqlException {
+        call(100.109, 2).andAssert(100.11, 0.0000000001);
     }
 
     @Test
-    public void testSimpleThree() throws SqlException {
-        call(100.109, 2).andAssert(100.11, 0.0000000001);
+    public void testSimpleTwo() throws SqlException {
+        call(100.999, 1).andAssert(101.0, 0.0000000001);
     }
 
     @Override

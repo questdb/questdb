@@ -65,6 +65,106 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBoolean() throws Exception {
+        final String query = "select * from x where bool1 or bool2 = false";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_boolean() bool1," +
+                " rnd_boolean() bool2" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testBooleanOperators() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_byte() i8," +
+                " rnd_short() i16," +
+                " rnd_int() i32," +
+                " rnd_long() i64," +
+                " rnd_float() f32," +
+                " rnd_double() f64 " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withOptionalNot().withAnyOf("i8 / 2 = 4")
+                .withBooleanOperator()
+                .withOptionalNot().withAnyOf("i16 < 0")
+                .withBooleanOperator()
+                .withOptionalNot().withAnyOf("i32 > 0")
+                .withBooleanOperator()
+                .withOptionalNot().withAnyOf("i64 <= 0")
+                .withBooleanOperator()
+                .withOptionalNot().withAnyOf("f32 <= 0.34")
+                .withBooleanOperator()
+                .withOptionalNot().withAnyOf("f64 > 7.5");
+        assertGeneratedQueryNotNull("select * from x", ddl, gen);
+    }
+
+    @Test
+    public void testChar() throws Exception {
+        final String query = "select * from x where ch > 'A' and ch < 'Z'";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_char() ch" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testColumnArithmetics() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_byte() i8," +
+                " rnd_short() i16," +
+                " rnd_int() i32," +
+                " rnd_long() i64," +
+                " rnd_float() f32," +
+                " rnd_double() f64 " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
+                .withArithmeticOperator()
+                .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
+                .withAnyOf(" = 1");
+        assertGeneratedQueryNotNull("select * from x", ddl, gen);
+    }
+
+    @Test
+    public void testColumnArithmeticsNullComparison() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int(-10, 10, 10) i32," +
+                " rnd_long(-10, 10, 10) i64," +
+                " rnd_float(10) f32," +
+                " rnd_double(10) f64 " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withOptionalNegation().withAnyOf("i32", "i64", "f32", "f64")
+                .withArithmeticOperator()
+                .withOptionalNegation().withAnyOf("i32", "i64", "f32", "f64")
+                .withAnyOf(" = ", " <> ")
+                .withAnyOf("null");
+        assertGeneratedQueryNullable("select * from x", ddl, gen);
+    }
+
+    @Test
+    public void testColumnFloatConstantComparison() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int() i32," +
+                " rnd_long() i64," +
+                " rnd_float() f32," +
+                " rnd_double() f64 " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withOptionalNegation().withAnyOf("i32", "i64", "f32", "f64")
+                .withComparisonOperator()
+                .withAnyOf("-42.5", "0.0", "0.000", "42.5");
+        assertGeneratedQueryNotNull("select * from x", ddl, gen);
+    }
+
+    @Test
     public void testColumnIntConstantComparison() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -103,79 +203,6 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIntConstantColumnComparisonBoundaryMatch() throws Exception {
-        final int boundary = 101;
-        Assert.assertTrue("boundary should be within the range", N_SIMD_WITH_SCALAR_TAIL > boundary);
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " cast(x as byte) i8," +
-                " cast(x as short) i16," +
-                " cast(x as int) i32," +
-                " x i64," +
-                " cast(x as float) f32," +
-                " cast(x as double) f64 " +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        FilterGenerator gen = new FilterGenerator()
-                .withAnyOf(String.valueOf(boundary))
-                .withComparisonOperator()
-                .withAnyOf("i8", "i16", "i32", "i64", "f32", "f64");
-        assertGeneratedQueryNotNull("select * from x", ddl, gen);
-    }
-
-    @Test
-    public void testColumnFloatConstantComparison() throws Exception {
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_int() i32," +
-                " rnd_long() i64," +
-                " rnd_float() f32," +
-                " rnd_double() f64 " +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        FilterGenerator gen = new FilterGenerator()
-                .withOptionalNegation().withAnyOf("i32", "i64", "f32", "f64")
-                .withComparisonOperator()
-                .withAnyOf("-42.5", "0.0", "0.000", "42.5");
-        assertGeneratedQueryNotNull("select * from x", ddl, gen);
-    }
-
-    @Test
-    public void testIntFloatColumnsComparison() throws Exception {
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_byte() i8," +
-                " rnd_short() i16," +
-                " rnd_int() i32," +
-                " rnd_long() i64," +
-                " rnd_float() f32," +
-                " rnd_double() f64 " +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        FilterGenerator gen = new FilterGenerator()
-                .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64")
-                .withComparisonOperator()
-                .withOptionalNegation().withAnyOf("f32", "f64");
-        assertGeneratedQueryNotNull("select * from x", ddl, gen);
-    }
-
-    @Test
-    public void testColumnArithmetics() throws Exception {
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_byte() i8," +
-                " rnd_short() i16," +
-                " rnd_int() i32," +
-                " rnd_long() i64," +
-                " rnd_float() f32," +
-                " rnd_double() f64 " +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        FilterGenerator gen = new FilterGenerator()
-                .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
-                .withArithmeticOperator()
-                .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
-                .withAnyOf(" = 1");
-        assertGeneratedQueryNotNull("select * from x", ddl, gen);
-    }
-
-    @Test
     public void testConstantColumnArithmetics() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -199,7 +226,126 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testBooleanOperators() throws Exception {
+    public void testCount() throws Exception {
+        final String query = "select count() from x where price > 0 and sym = 'HBC'";
+        final String ddl = "create table x as " +
+                "(select rnd_symbol('ABB','HBC','DXR') sym, \n" +
+                " rnd_double() price, \n" +
+                " timestamp_sequence(172800000000, 360000000) ts \n" +
+                "from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp (ts)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testDate() throws Exception {
+        final String query = "select * from x where d1 != d2";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_date(to_date('2020', 'yyyy'), to_date('2021', 'yyyy'), 0) d1," +
+                " rnd_date(to_date('2020', 'yyyy'), to_date('2021', 'yyyy'), 0) d2" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testDateNull() throws Exception {
+        final String query = "select * from x where d <> null";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_date(to_date('2020', 'yyyy'), to_date('2021', 'yyyy'), 5) d" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNullable(query, ddl);
+    }
+
+    @Test
+    public void testGeoHashConstant() throws Exception {
+        final String query = "select * from x " +
+                "where geo8 != ##1001 and geo16 != ##100110011001 and geo32 != ##1001100110011001 and geo64 != ##10011001100110011001100110011001";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_geohash(4) geo8," +
+                " rnd_geohash(12) geo16," +
+                " rnd_geohash(16) geo32," +
+                " rnd_geohash(32) geo64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testGeoHashNull() throws Exception {
+        final String query = "select * from x where geo8 <> null or geo16 <> null or geo32 <> null or geo64 <> null";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_geohash(4) geo8," +
+                " rnd_geohash(15) geo16," +
+                " rnd_geohash(16) geo32," +
+                " rnd_geohash(40) geo64" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testGeoHashValue() throws Exception {
+        final String query = "select * from x where geo8a = geo8b";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_geohash(4) geo8a," +
+                " rnd_geohash(4) geo8b" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testGroupBy() throws Exception {
+        final String query = "select sum(price)/count() from x where price > 0";
+        final String ddl = "create table x as " +
+                "(select rnd_symbol('ABB','HBC','DXR') sym, \n" +
+                " rnd_double() price, \n" +
+                " timestamp_sequence(172800000000, 360000000) ts \n" +
+                "from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp (ts)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testHugeFilter() throws Exception {
+        final int N = 1024;
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_long() i64 " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+
+        FilterGenerator gen = new FilterGenerator();
+        for (int i = 0; i < N; i++) {
+            if (i > 0) {
+                gen.withAnyOf(" and ");
+            }
+            gen.withAnyOf("i64 != 0");
+        }
+        assertGeneratedQueryNotNull("select * from x", ddl, gen);
+    }
+
+    @Test
+    public void testIntConstantColumnComparisonBoundaryMatch() throws Exception {
+        final int boundary = 101;
+        Assert.assertTrue("boundary should be within the range", N_SIMD_WITH_SCALAR_TAIL > boundary);
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " cast(x as byte) i8," +
+                " cast(x as short) i16," +
+                " cast(x as int) i32," +
+                " x i64," +
+                " cast(x as float) f32," +
+                " cast(x as double) f64 " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf(String.valueOf(boundary))
+                .withComparisonOperator()
+                .withAnyOf("i8", "i16", "i32", "i64", "f32", "f64");
+        assertGeneratedQueryNotNull("select * from x", ddl, gen);
+    }
+
+    @Test
+    public void testIntFloatColumnsComparison() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_byte() i8," +
@@ -210,18 +356,36 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
                 " rnd_double() f64 " +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         FilterGenerator gen = new FilterGenerator()
-                .withOptionalNot().withAnyOf("i8 / 2 = 4")
-                .withBooleanOperator()
-                .withOptionalNot().withAnyOf("i16 < 0")
-                .withBooleanOperator()
-                .withOptionalNot().withAnyOf("i32 > 0")
-                .withBooleanOperator()
-                .withOptionalNot().withAnyOf("i64 <= 0")
-                .withBooleanOperator()
-                .withOptionalNot().withAnyOf("f32 <= 0.34")
-                .withBooleanOperator()
-                .withOptionalNot().withAnyOf("f64 > 7.5");
+                .withOptionalNegation().withAnyOf("i8", "i16", "i32", "i64")
+                .withComparisonOperator()
+                .withOptionalNegation().withAnyOf("f32", "f64");
         assertGeneratedQueryNotNull("select * from x", ddl, gen);
+    }
+
+    @Test
+    public void testIntFloatColumnsComparisonFilterOutNulls() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int(-10, 10, 10) i32," +
+                " rnd_long(-10, 10, 10) i64," +
+                " rnd_float(10) f32," +
+                " rnd_double(10) f64 " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withOptionalNegation().withAnyOf("i32", "i64")
+                .withComparisonOperator()
+                .withOptionalNegation().withAnyOf("f32", "f64");
+        assertGeneratedQueryNullable("select * from x", ddl, gen);
+    }
+
+    @Test
+    public void testInterval() throws Exception {
+        final String query = "select * from x where k in '2021-11-29' and i32 > 0";
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(to_timestamp('2021-11-29T10:00:00', 'yyyy-MM-ddTHH:mm:ss'), 500000000) as k," +
+                " rnd_int() i32" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        assertQueryNotNull(query, ddl);
     }
 
     @Test
@@ -261,99 +425,6 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testColumnArithmeticsNullComparison() throws Exception {
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_int(-10, 10, 10) i32," +
-                " rnd_long(-10, 10, 10) i64," +
-                " rnd_float(10) f32," +
-                " rnd_double(10) f64 " +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        FilterGenerator gen = new FilterGenerator()
-                .withOptionalNegation().withAnyOf("i32", "i64", "f32", "f64")
-                .withArithmeticOperator()
-                .withOptionalNegation().withAnyOf("i32", "i64", "f32", "f64")
-                .withAnyOf(" = ", " <> ")
-                .withAnyOf("null");
-        assertGeneratedQueryNullable("select * from x", ddl, gen);
-    }
-
-    @Test
-    public void testIntFloatColumnsComparisonFilterOutNulls() throws Exception {
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_int(-10, 10, 10) i32," +
-                " rnd_long(-10, 10, 10) i64," +
-                " rnd_float(10) f32," +
-                " rnd_double(10) f64 " +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        FilterGenerator gen = new FilterGenerator()
-                .withOptionalNegation().withAnyOf("i32", "i64")
-                .withComparisonOperator()
-                .withOptionalNegation().withAnyOf("f32", "f64");
-        assertGeneratedQueryNullable("select * from x", ddl, gen);
-    }
-
-    @Test
-    public void testGeoHashValue() throws Exception {
-        final String query = "select * from x where geo8a = geo8b";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_geohash(4) geo8a," +
-                " rnd_geohash(4) geo8b" +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQueryNotNull(query, ddl);
-    }
-
-    @Test
-    public void testGeoHashConstant() throws Exception {
-        final String query = "select * from x " +
-                "where geo8 != ##1001 and geo16 != ##100110011001 and geo32 != ##1001100110011001 and geo64 != ##10011001100110011001100110011001";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_geohash(4) geo8," +
-                " rnd_geohash(12) geo16," +
-                " rnd_geohash(16) geo32," +
-                " rnd_geohash(32) geo64" +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQueryNotNull(query, ddl);
-    }
-
-    @Test
-    public void testGeoHashNull() throws Exception {
-        final String query = "select * from x where geo8 <> null or geo16 <> null or geo32 <> null or geo64 <> null";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_geohash(4) geo8," +
-                " rnd_geohash(15) geo16," +
-                " rnd_geohash(16) geo32," +
-                " rnd_geohash(40) geo64" +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQueryNotNull(query, ddl);
-    }
-
-    @Test
-    public void testBoolean() throws Exception {
-        final String query = "select * from x where bool1 or bool2 = false";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_boolean() bool1," +
-                " rnd_boolean() bool2" +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQueryNotNull(query, ddl);
-    }
-
-    @Test
-    public void testChar() throws Exception {
-        final String query = "select * from x where ch > 'A' and ch < 'Z'";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_char() ch" +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQueryNotNull(query, ddl);
-    }
-
-    @Test
     public void testSymbolKnownConstant() throws Exception {
         // The column order is important here, since we want
         // query and table column indexes to be different.
@@ -372,27 +443,6 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_symbol(10,1,3,5) sym" +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQueryNullable(query, ddl);
-    }
-
-    @Test
-    public void testDate() throws Exception {
-        final String query = "select * from x where d1 != d2";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_date(to_date('2020', 'yyyy'), to_date('2021', 'yyyy'), 0) d1," +
-                " rnd_date(to_date('2020', 'yyyy'), to_date('2021', 'yyyy'), 0) d2" +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQueryNotNull(query, ddl);
-    }
-
-    @Test
-    public void testDateNull() throws Exception {
-        final String query = "select * from x where d <> null";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_date(to_date('2020', 'yyyy'), to_date('2021', 'yyyy'), 5) d" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertQueryNullable(query, ddl);
     }
@@ -427,64 +477,6 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
         assertQueryNullable(query, ddl);
     }
 
-    @Test
-    public void testInterval() throws Exception {
-        final String query = "select * from x where k in '2021-11-29' and i32 > 0";
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(to_timestamp('2021-11-29T10:00:00', 'yyyy-MM-ddTHH:mm:ss'), 500000000) as k," +
-                " rnd_int() i32" +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQueryNotNull(query, ddl);
-    }
-
-    @Test
-    public void testGroupBy() throws Exception {
-        final String query = "select sum(price)/count() from x where price > 0";
-        final String ddl = "create table x as " +
-                "(select rnd_symbol('ABB','HBC','DXR') sym, \n" +
-                " rnd_double() price, \n" +
-                " timestamp_sequence(172800000000, 360000000) ts \n" +
-                "from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp (ts)";
-        assertQueryNotNull(query, ddl);
-    }
-
-    @Test
-    public void testCount() throws Exception {
-        final String query = "select count() from x where price > 0 and sym = 'HBC'";
-        final String ddl = "create table x as " +
-                "(select rnd_symbol('ABB','HBC','DXR') sym, \n" +
-                " rnd_double() price, \n" +
-                " timestamp_sequence(172800000000, 360000000) ts \n" +
-                "from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp (ts)";
-        assertQueryNotNull(query, ddl);
-    }
-
-    @Test
-    public void testHugeFilter() throws Exception {
-        final int N = 1024;
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_long() i64 " +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-
-        FilterGenerator gen = new FilterGenerator();
-        for (int i = 0; i < N; i++) {
-            if (i > 0) {
-                gen.withAnyOf(" and ");
-            }
-            gen.withAnyOf("i64 != 0");
-        }
-        assertGeneratedQueryNotNull("select * from x", ddl, gen);
-    }
-
-    private void assertGeneratedQueryNotNull(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen) throws Exception {
-        assertGeneratedQuery(baseQuery, ddl, gen, true);
-    }
-
-    private void assertGeneratedQueryNullable(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen) throws Exception {
-        assertGeneratedQuery(baseQuery, ddl, gen, false);
-    }
-
     private void assertGeneratedQuery(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen, boolean notNull) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
@@ -505,25 +497,12 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
         });
     }
 
-    private void assertQueryNotNull(CharSequence query, CharSequence ddl) throws Exception {
-        assertQuery(query, ddl, false);
+    private void assertGeneratedQueryNotNull(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen) throws Exception {
+        assertGeneratedQuery(baseQuery, ddl, gen, true);
     }
 
-    private void assertQueryNullable(CharSequence query, CharSequence ddl) throws Exception {
-        assertQuery(query, ddl, true);
-    }
-
-    private void assertQuery(CharSequence query, CharSequence ddl, boolean notNull) throws Exception {
-        assertMemoryLeak(() -> {
-            if (ddl != null) {
-                compiler.compile(ddl, sqlExecutionContext);
-            }
-
-            long size = runQuery(query);
-            Assert.assertTrue("query is expected to return rows", size > 0);
-
-            assertJitQuery(query, notNull);
-        });
+    private void assertGeneratedQueryNullable(CharSequence baseQuery, CharSequence ddl, FilterGenerator gen) throws Exception {
+        assertGeneratedQuery(baseQuery, ddl, gen, false);
     }
 
     private void assertJitQuery(CharSequence query, boolean notNull) throws SqlException {
@@ -552,6 +531,38 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
         }
     }
 
+    private void assertQuery(CharSequence query, CharSequence ddl, boolean notNull) throws Exception {
+        assertMemoryLeak(() -> {
+            if (ddl != null) {
+                compiler.compile(ddl, sqlExecutionContext);
+            }
+
+            long size = runQuery(query);
+            Assert.assertTrue("query is expected to return rows", size > 0);
+
+            assertJitQuery(query, notNull);
+        });
+    }
+
+    private void assertQueryNotNull(CharSequence query, CharSequence ddl) throws Exception {
+        assertQuery(query, ddl, false);
+    }
+
+    private void assertQueryNullable(CharSequence query, CharSequence ddl) throws Exception {
+        assertQuery(query, ddl, true);
+    }
+
+    private void runJitQuery(CharSequence query) throws SqlException {
+        final CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
+        final RecordCursorFactory factory = cc.getRecordCursorFactory();
+        Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            TestUtils.printCursor(cursor, factory.getMetadata(), true, jitSink, printer);
+        } finally {
+            Misc.free(factory);
+        }
+    }
+
     private long runQuery(CharSequence query) throws SqlException {
         long resultSize;
 
@@ -569,17 +580,6 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
         return resultSize;
     }
 
-    private void runJitQuery(CharSequence query) throws SqlException {
-        final CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
-        final RecordCursorFactory factory = cc.getRecordCursorFactory();
-        Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            TestUtils.printCursor(cursor, factory.getMetadata(), true, jitSink, printer);
-        } finally {
-            Misc.free(factory);
-        }
-    }
-
     private static class FilterGenerator {
 
         private static final String[] OPTIONAL_NEGATION = new String[]{"", "-"};
@@ -590,39 +590,9 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
 
         private final List<String[]> filterParts = new ArrayList<>();
 
-        public FilterGenerator withAnyOf(String... parts) {
-            filterParts.add(parts);
-            return this;
-        }
-
-        public FilterGenerator withOptionalNegation() {
-            filterParts.add(OPTIONAL_NEGATION);
-            return this;
-        }
-
-        public FilterGenerator withOptionalNot() {
-            filterParts.add(OPTIONAL_NOT);
-            return this;
-        }
-
-        public FilterGenerator withComparisonOperator() {
-            filterParts.add(COMPARISON_OPERATORS);
-            return this;
-        }
-
-        public FilterGenerator withArithmeticOperator() {
-            filterParts.add(ARITHMETIC_OPERATORS);
-            return this;
-        }
-
-        public FilterGenerator withBooleanOperator() {
-            filterParts.add(BOOLEAN_OPERATORS);
-            return this;
-        }
-
         /**
          * Generates a simple cartesian product of the given filter expression parts.
-         *
+         * <p>
          * The algorithm originates from Generating All n-tuple, of The Art Of Computer
          * Programming by Knuth.
          */
@@ -650,6 +620,36 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
             }
             return filters;
         }
+
+        public FilterGenerator withAnyOf(String... parts) {
+            filterParts.add(parts);
+            return this;
+        }
+
+        public FilterGenerator withArithmeticOperator() {
+            filterParts.add(ARITHMETIC_OPERATORS);
+            return this;
+        }
+
+        public FilterGenerator withBooleanOperator() {
+            filterParts.add(BOOLEAN_OPERATORS);
+            return this;
+        }
+
+        public FilterGenerator withComparisonOperator() {
+            filterParts.add(COMPARISON_OPERATORS);
+            return this;
+        }
+
+        public FilterGenerator withOptionalNegation() {
+            filterParts.add(OPTIONAL_NEGATION);
+            return this;
+        }
+
+        public FilterGenerator withOptionalNot() {
+            filterParts.add(OPTIONAL_NOT);
+            return this;
+        }
     }
 
     private static class CountingRecordCursor implements RecordCursor {
@@ -661,10 +661,6 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
             this.delegate = delegate;
         }
 
-        public long count() {
-            return count;
-        }
-
         @Override
         public void close() {
             delegate.close();
@@ -673,6 +669,11 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
         @Override
         public Record getRecord() {
             return delegate.getRecord();
+        }
+
+        @Override
+        public Record getRecordB() {
+            return delegate.getRecordB();
         }
 
         @Override
@@ -690,13 +691,13 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
         }
 
         @Override
-        public Record getRecordB() {
-            return delegate.getRecordB();
+        public void recordAt(Record record, long atRowId) {
+            delegate.recordAt(record, atRowId);
         }
 
         @Override
-        public void recordAt(Record record, long atRowId) {
-            delegate.recordAt(record, atRowId);
+        public long size() {
+            return delegate.size();
         }
 
         @Override
@@ -704,9 +705,8 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
             delegate.toTop();
         }
 
-        @Override
-        public long size() {
-            return delegate.size();
+        public long count() {
+            return count;
         }
     }
 }

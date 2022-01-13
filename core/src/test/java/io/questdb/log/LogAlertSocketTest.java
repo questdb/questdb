@@ -45,73 +45,28 @@ public class LogAlertSocketTest {
 
     private static final Log LOG = LogFactory.getLog(LogAlertSocketTest.class);
 
-    @Test
-    public void testParseAlertTargetsEmpty() throws Exception {
-        String[] expectedHosts = {LogAlertSocket.DEFAULT_HOST};
-        int[] expectedPorts = {LogAlertSocket.DEFAULT_PORT};
-        assertAlertTargets("", expectedHosts, expectedPorts);
-        assertAlertTargets(":", expectedHosts, expectedPorts);
-        assertAlertTargets(":    ", expectedHosts, expectedPorts);
-        assertAlertTargets("  :  ", expectedHosts, expectedPorts);
-        assertAlertTargets("    :", expectedHosts, expectedPorts);
-        assertAlertTargets("     ", expectedHosts, expectedPorts);
-        assertAlertTargets("\"\"", expectedHosts, expectedPorts);
-        assertAlertTargets("\":\"", expectedHosts, expectedPorts);
-        assertAlertTargets("\"     \"", expectedHosts, expectedPorts);
-        assertAlertTargets("\":     \"", expectedHosts, expectedPorts);
-        assertAlertTargets("\"  :  \"", expectedHosts, expectedPorts);
-        assertAlertTargets("\"     :\"", expectedHosts, expectedPorts);
-    }
+    public void assertAlertTargets(
+            String alertTargets,
+            String[] expectedHosts,
+            int[] expectedPorts
+    ) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            NetworkFacade nf = new NetworkFacadeImpl() {
+                @Override
+                public long connect(long fd, long sockaddr) {
+                    return -1;
+                }
+            };
 
-    @Test
-    public void testParseAlertTargetsMultipleEmpty0() throws Exception {
-        String[] expectedHosts = {LogAlertSocket.DEFAULT_HOST, LogAlertSocket.DEFAULT_HOST};
-        int[] expectedPorts = {LogAlertSocket.DEFAULT_PORT, LogAlertSocket.DEFAULT_PORT};
-        assertAlertTargets(",    ", expectedHosts, expectedPorts);
-        assertAlertTargets("  ,  ", expectedHosts, expectedPorts);
-        assertAlertTargets("    ,", expectedHosts, expectedPorts);
-        assertAlertTargets(":,    ", expectedHosts, expectedPorts);
-        assertAlertTargets("  ,:  ", expectedHosts, expectedPorts);
-        assertAlertTargets(",", expectedHosts, expectedPorts);
-        assertAlertTargets("\",    \"", expectedHosts, expectedPorts);
-        assertAlertTargets("\"  ,  \"", expectedHosts, expectedPorts);
-        assertAlertTargets("\"    ,\"", expectedHosts, expectedPorts);
-        assertAlertTargets("\",\"", expectedHosts, expectedPorts);
-    }
-
-    @Test
-    public void testParseAlertTargetsMultipleEmpty1() throws Exception {
-        String[] expectedHosts = new String[9];
-        int[] expectedPorts = new int[9];
-        Arrays.fill(expectedHosts, LogAlertSocket.DEFAULT_HOST);
-        Arrays.fill(expectedPorts, LogAlertSocket.DEFAULT_PORT);
-        assertAlertTargets(",,, :,:,,,    :,", expectedHosts, expectedPorts);
-    }
-
-    @Test
-    public void testParseAlertTargets() throws Exception {
-        String[] expectedHosts = new String[3];
-        int[] expectedPorts = new int[3];
-        Arrays.fill(expectedHosts, LogAlertSocket.DEFAULT_HOST);
-        Arrays.fill(expectedPorts, LogAlertSocket.DEFAULT_PORT);
-        expectedPorts[1] = 1234;
-        assertAlertTargets("localhost,127.0.0.1:1234,localhost:", expectedHosts, expectedPorts);
-    }
-
-    @Test
-    public void testParseAlertTargetsNull() throws Exception {
-        String[] expectedHosts = {LogAlertSocket.DEFAULT_HOST};
-        int[] expectedPorts = {LogAlertSocket.DEFAULT_PORT};
-        assertAlertTargets(null, expectedHosts, expectedPorts);
-    }
-
-    @Test
-    public void testParseAlertTargetsBad() throws Exception {
-        assertLogError("::", "Unexpected ':' found at position 1: ::");
-        assertLogError("does not exist", "Invalid host value [does not exist] at position 0 for alertTargets: does not exist");
-        assertLogError("localhost:banana", "Invalid port value [banana] at position 10 for alertTargets: localhost:banana");
-        assertLogError(",:si", "Invalid port value [si] at position 2 for alertTargets: ,:si");
-        assertLogError("  :  ,", "Invalid port value [  ] at position 3 for alertTargets:   :  ,");
+            try (LogAlertSocket socket = new LogAlertSocket(nf, alertTargets, LOG)) {
+                Assert.assertEquals(expectedHosts.length, socket.getAlertHostsCount());
+                Assert.assertEquals(expectedPorts.length, socket.getAlertHostsCount());
+                for (int i = 0; i < expectedHosts.length; i++) {
+                    Assert.assertEquals(expectedHosts[i], socket.getAlertHosts()[i]);
+                    Assert.assertEquals(expectedPorts[i], socket.getAlertPorts()[i]);
+                }
+            }
+        });
     }
 
     @Test
@@ -162,6 +117,33 @@ public class LogAlertSocketTest {
     }
 
     @Test
+    public void testFailOverNoServers() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final NetworkFacade nf = new NetworkFacadeImpl() {
+                @Override
+                public long connect(long fd, long sockaddr) {
+                    return -1;
+                }
+            };
+            try (LogAlertSocket alertSkt = new LogAlertSocket(nf, "localhost:1234,localhost:1243", LOG)) {
+                final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
+                        .putHeader("localhost")
+                        .setMark();
+                final int numHosts = alertSkt.getAlertHostsCount();
+                Assert.assertEquals(2, numHosts);
+                Assert.assertFalse(
+                        alertSkt.send(builder
+                                .rewindToMark()
+                                .put("Something")
+                                .put(CRLF)
+                                .put(MockAlertTarget.DEATH_PILL)
+                                .put(CRLF)
+                                .$()));
+            }
+        });
+    }
+
+    @Test
     public void testFailOverSingleHost() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String host = "127.0.0.1";
@@ -202,68 +184,72 @@ public class LogAlertSocketTest {
     }
 
     @Test
-    public void testFailOverNoServers() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final NetworkFacade nf = new NetworkFacadeImpl() {
-                @Override
-                public long connect(long fd, long sockaddr) {
-                    return -1;
-                }
-            };
-            try (LogAlertSocket alertSkt = new LogAlertSocket(nf, "localhost:1234,localhost:1243", LOG)) {
-                final HttpLogRecordSink builder = new HttpLogRecordSink(alertSkt)
-                        .putHeader("localhost")
-                        .setMark();
-                final int numHosts = alertSkt.getAlertHostsCount();
-                Assert.assertEquals(2, numHosts);
-                Assert.assertFalse(
-                        alertSkt.send(builder
-                                .rewindToMark()
-                                .put("Something")
-                                .put(CRLF)
-                                .put(MockAlertTarget.DEATH_PILL)
-                                .put(CRLF)
-                                .$()));
-            }
-        });
+    public void testParseAlertTargets() throws Exception {
+        String[] expectedHosts = new String[3];
+        int[] expectedPorts = new int[3];
+        Arrays.fill(expectedHosts, LogAlertSocket.DEFAULT_HOST);
+        Arrays.fill(expectedPorts, LogAlertSocket.DEFAULT_PORT);
+        expectedPorts[1] = 1234;
+        assertAlertTargets("localhost,127.0.0.1:1234,localhost:", expectedHosts, expectedPorts);
     }
 
     @Test
-    public void testParseStatusSuccessResponse() throws Exception {
-        testParseStatusResponse(
-                "HTTP/1.1 200 OK\r\n" +
-                        "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
-                        "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
-                        "Access-Control-Allow-Origin: *\r\n" +
-                        "Access-Control-Expose-Headers: Date\r\n" +
-                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
-                        "Content-Type: application/json\r\n" +
-                        "Date: Thu, 09 Dec 2021 09:37:22 GMT\r\n" +
-                        "Content-Length: 20\r\n" +
-                        "\r\n" +
-                        "{\"status\":\"success\"}",
-                "Added default alert manager [0] 127.0.0.1:9093\r\n" +
-                        "Received [0] 127.0.0.1:9093: {\"status\":\"success\"}\r\n"
-        );
+    public void testParseAlertTargetsBad() throws Exception {
+        assertLogError("::", "Unexpected ':' found at position 1: ::");
+        assertLogError("does not exist", "Invalid host value [does not exist] at position 0 for alertTargets: does not exist");
+        assertLogError("localhost:banana", "Invalid port value [banana] at position 10 for alertTargets: localhost:banana");
+        assertLogError(",:si", "Invalid port value [si] at position 2 for alertTargets: ,:si");
+        assertLogError("  :  ,", "Invalid port value [  ] at position 3 for alertTargets:   :  ,");
     }
 
     @Test
-    public void testParseStatusErrorResponse() throws Exception {
-        testParseStatusResponse(
-                "HTTP/1.1 400 Bad Request\r\n" +
-                        "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
-                        "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
-                        "Access-Control-Allow-Origin: *\r\n" +
-                        "Access-Control-Expose-Headers: Date\r\n" +
-                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
-                        "Content-Type: application/json\r\n" +
-                        "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
-                        "Content-Length: 66\r\n" +
-                        "\r\n" +
-                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}",
-                "Added default alert manager [0] 127.0.0.1:9093\r\n" +
-                        "Received [0] 127.0.0.1:9093: {\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n"
-        );
+    public void testParseAlertTargetsEmpty() throws Exception {
+        String[] expectedHosts = {LogAlertSocket.DEFAULT_HOST};
+        int[] expectedPorts = {LogAlertSocket.DEFAULT_PORT};
+        assertAlertTargets("", expectedHosts, expectedPorts);
+        assertAlertTargets(":", expectedHosts, expectedPorts);
+        assertAlertTargets(":    ", expectedHosts, expectedPorts);
+        assertAlertTargets("  :  ", expectedHosts, expectedPorts);
+        assertAlertTargets("    :", expectedHosts, expectedPorts);
+        assertAlertTargets("     ", expectedHosts, expectedPorts);
+        assertAlertTargets("\"\"", expectedHosts, expectedPorts);
+        assertAlertTargets("\":\"", expectedHosts, expectedPorts);
+        assertAlertTargets("\"     \"", expectedHosts, expectedPorts);
+        assertAlertTargets("\":     \"", expectedHosts, expectedPorts);
+        assertAlertTargets("\"  :  \"", expectedHosts, expectedPorts);
+        assertAlertTargets("\"     :\"", expectedHosts, expectedPorts);
+    }
+
+    @Test
+    public void testParseAlertTargetsMultipleEmpty0() throws Exception {
+        String[] expectedHosts = {LogAlertSocket.DEFAULT_HOST, LogAlertSocket.DEFAULT_HOST};
+        int[] expectedPorts = {LogAlertSocket.DEFAULT_PORT, LogAlertSocket.DEFAULT_PORT};
+        assertAlertTargets(",    ", expectedHosts, expectedPorts);
+        assertAlertTargets("  ,  ", expectedHosts, expectedPorts);
+        assertAlertTargets("    ,", expectedHosts, expectedPorts);
+        assertAlertTargets(":,    ", expectedHosts, expectedPorts);
+        assertAlertTargets("  ,:  ", expectedHosts, expectedPorts);
+        assertAlertTargets(",", expectedHosts, expectedPorts);
+        assertAlertTargets("\",    \"", expectedHosts, expectedPorts);
+        assertAlertTargets("\"  ,  \"", expectedHosts, expectedPorts);
+        assertAlertTargets("\"    ,\"", expectedHosts, expectedPorts);
+        assertAlertTargets("\",\"", expectedHosts, expectedPorts);
+    }
+
+    @Test
+    public void testParseAlertTargetsMultipleEmpty1() throws Exception {
+        String[] expectedHosts = new String[9];
+        int[] expectedPorts = new int[9];
+        Arrays.fill(expectedHosts, LogAlertSocket.DEFAULT_HOST);
+        Arrays.fill(expectedPorts, LogAlertSocket.DEFAULT_PORT);
+        assertAlertTargets(",,, :,:,,,    :,", expectedHosts, expectedPorts);
+    }
+
+    @Test
+    public void testParseAlertTargetsNull() throws Exception {
+        String[] expectedHosts = {LogAlertSocket.DEFAULT_HOST};
+        int[] expectedPorts = {LogAlertSocket.DEFAULT_PORT};
+        assertAlertTargets(null, expectedHosts, expectedPorts);
     }
 
     @Test
@@ -372,22 +358,42 @@ public class LogAlertSocketTest {
                         "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n");
     }
 
-    private void testParseStatusResponse(CharSequence httpMessage, CharSequence expected) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            NetworkFacade nf = new NetworkFacadeImpl() {
-                @Override
-                public long connect(long fd, long sockaddr) {
-                    return -1;
-                }
-            };
-            MockLog log = new MockLog();
-            try (LogAlertSocket alertSkt = new LogAlertSocket(nf, "", log)) {
-                LogRecordSink logRecord = new LogRecordSink(alertSkt.getInBufferPtr(), alertSkt.getInBufferSize());
-                logRecord.put(httpMessage);
-                alertSkt.logResponse(logRecord.length());
-                TestUtils.assertEquals(expected, log.logRecord.sink);
-            }
-        });
+    @Test
+    public void testParseStatusErrorResponse() throws Exception {
+        testParseStatusResponse(
+                "HTTP/1.1 400 Bad Request\r\n" +
+                        "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                        "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                        "Access-Control-Allow-Origin: *\r\n" +
+                        "Access-Control-Expose-Headers: Date\r\n" +
+                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Date: Thu, 09 Dec 2021 10:01:28 GMT\r\n" +
+                        "Content-Length: 66\r\n" +
+                        "\r\n" +
+                        "{\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}",
+                "Added default alert manager [0] 127.0.0.1:9093\r\n" +
+                        "Received [0] 127.0.0.1:9093: {\"status\":\"error\",\"errorType\":\"bad_data\",\"error\":\"unexpected EOF\"}\r\n"
+        );
+    }
+
+    @Test
+    public void testParseStatusSuccessResponse() throws Exception {
+        testParseStatusResponse(
+                "HTTP/1.1 200 OK\r\n" +
+                        "Access-Control-Allow-Headers: Accept, Authorization, Content-Type, Origin\r\n" +
+                        "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" +
+                        "Access-Control-Allow-Origin: *\r\n" +
+                        "Access-Control-Expose-Headers: Date\r\n" +
+                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                        "Content-Type: application/json\r\n" +
+                        "Date: Thu, 09 Dec 2021 09:37:22 GMT\r\n" +
+                        "Content-Length: 20\r\n" +
+                        "\r\n" +
+                        "{\"status\":\"success\"}",
+                "Added default alert manager [0] 127.0.0.1:9093\r\n" +
+                        "Received [0] 127.0.0.1:9093: {\"status\":\"success\"}\r\n"
+        );
     }
 
     private void assertLogError(String socketAddress, String expected) throws Exception {
@@ -406,11 +412,7 @@ public class LogAlertSocketTest {
         });
     }
 
-    public void assertAlertTargets(
-            String alertTargets,
-            String[] expectedHosts,
-            int[] expectedPorts
-    ) throws Exception {
+    private void testParseStatusResponse(CharSequence httpMessage, CharSequence expected) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
@@ -418,14 +420,12 @@ public class LogAlertSocketTest {
                     return -1;
                 }
             };
-
-            try (LogAlertSocket socket = new LogAlertSocket(nf, alertTargets, LOG)) {
-                Assert.assertEquals(expectedHosts.length, socket.getAlertHostsCount());
-                Assert.assertEquals(expectedPorts.length, socket.getAlertHostsCount());
-                for (int i = 0; i < expectedHosts.length; i++) {
-                    Assert.assertEquals(expectedHosts[i], socket.getAlertHosts()[i]);
-                    Assert.assertEquals(expectedPorts[i], socket.getAlertPorts()[i]);
-                }
+            MockLog log = new MockLog();
+            try (LogAlertSocket alertSkt = new LogAlertSocket(nf, "", log)) {
+                LogRecordSink logRecord = new LogRecordSink(alertSkt.getInBufferPtr(), alertSkt.getInBufferSize());
+                logRecord.put(httpMessage);
+                alertSkt.logResponse(logRecord.length());
+                TestUtils.assertEquals(expected, log.logRecord.sink);
             }
         });
     }
@@ -434,8 +434,23 @@ public class LogAlertSocketTest {
         final MockLogRecord logRecord = new MockLogRecord();
 
         @Override
-        public LogRecord info() {
-            return logRecord;
+        public LogRecord advisory() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord advisoryW() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord critical() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord criticalW() {
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -459,27 +474,12 @@ public class LogAlertSocketTest {
         }
 
         @Override
-        public LogRecord critical() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public LogRecord criticalW() {
-            throw new UnsupportedOperationException();
+        public LogRecord info() {
+            return logRecord;
         }
 
         @Override
         public LogRecord infoW() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public LogRecord advisory() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public LogRecord advisoryW() {
             throw new UnsupportedOperationException();
         }
 
@@ -489,17 +489,7 @@ public class LogAlertSocketTest {
         }
 
         @Override
-        public LogRecord xerror() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public LogRecord xcritical() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public LogRecord xinfo() {
+        public LogRecord xDebugW() {
             throw new UnsupportedOperationException();
         }
 
@@ -509,17 +499,27 @@ public class LogAlertSocketTest {
         }
 
         @Override
+        public LogRecord xadvisory() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord xcritical() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public LogRecord xdebug() {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public LogRecord xDebugW() {
+        public LogRecord xerror() {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public LogRecord xadvisory() {
+        public LogRecord xinfo() {
             throw new UnsupportedOperationException();
         }
     }
@@ -545,37 +545,9 @@ public class LogAlertSocketTest {
         }
 
         @Override
-        public CharSinkBase put(char c) {
-            sink.put(c);
-            return this;
-        }
-
-        @Override
         public LogRecord $(int x) {
             sink.put(x);
             return this;
-        }
-
-        @Override
-        public LogRecord $(char c) {
-            sink.put(c);
-            return this;
-        }
-
-        @Override
-        public LogRecord $hex(long value) {
-            Numbers.appendHex(sink, value, false);
-            return this;
-        }
-
-        @Override
-        public boolean isEnabled() {
-            return true;
-        }
-
-        @Override
-        public LogRecord $utf8(long lo, long hi) {
-            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -591,6 +563,12 @@ public class LogAlertSocketTest {
         @Override
         public LogRecord $(boolean x) {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord $(char c) {
+            sink.put(c);
+            return this;
         }
 
         @Override
@@ -614,6 +592,17 @@ public class LogAlertSocketTest {
         }
 
         @Override
+        public LogRecord $256(long a, long b, long c, long d) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord $hex(long value) {
+            Numbers.appendHex(sink, value, false);
+            return this;
+        }
+
+        @Override
         public LogRecord $ip(long ip) {
             throw new UnsupportedOperationException();
         }
@@ -624,7 +613,17 @@ public class LogAlertSocketTest {
         }
 
         @Override
-        public LogRecord $256(long a, long b, long c, long d) {
+        public LogRecord $utf8(long lo, long hi) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return true;
+        }
+
+        @Override
+        public LogRecord microTime(long x) {
             throw new UnsupportedOperationException();
         }
 
@@ -634,13 +633,14 @@ public class LogAlertSocketTest {
         }
 
         @Override
-        public LogRecord microTime(long x) {
+        public LogRecord utf8(CharSequence sequence) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public LogRecord utf8(CharSequence sequence) {
-            throw new UnsupportedOperationException();
+        public CharSinkBase put(char c) {
+            sink.put(c);
+            return this;
         }
     }
 }

@@ -80,11 +80,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     }
 
     @Override
-    public long getColumnHash(int columnIndex) {
-        return columnHashes.get(columnIndex);
-    }
-
-    @Override
     public void clear() {
         columnCastModels.clear();
         queryModel = null;
@@ -108,6 +103,11 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     }
 
     @Override
+    public long getColumnHash(int columnIndex) {
+        return columnHashes.get(columnIndex);
+    }
+
+    @Override
     public CharSequence getColumnName(int index) {
         return columnNames.getQuick(index);
     }
@@ -118,19 +118,18 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     }
 
     @Override
+    public long getCommitLag() {
+        return commitLag;
+    }
+
+    @Override
     public int getIndexBlockCapacity(int index) {
         return getHighAt(index * 2 + 1);
     }
 
     @Override
-    public boolean isIndexed(int index) {
-        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_INDEXED) != 0;
-    }
-
-    @Override
-    public boolean isSequential(int columnIndex) {
-        // todo: expose this flag on CREATE TABLE statement
-        return false;
+    public int getMaxUncommittedRows() {
+        return maxUncommittedRows;
     }
 
     @Override
@@ -162,6 +161,25 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     @Override
     public int getTimestampIndex() {
         return timestamp == null ? -1 : getColumnIndex(timestamp.token);
+    }
+
+    @Override
+    public boolean isIndexed(int index) {
+        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_INDEXED) != 0;
+    }
+
+    @Override
+    public boolean isSequential(int columnIndex) {
+        // todo: expose this flag on CREATE TABLE statement
+        return false;
+    }
+
+    public void setMaxUncommittedRows(int maxUncommittedRows) {
+        this.maxUncommittedRows = maxUncommittedRows;
+    }
+
+    public void setCommitLag(long micros) {
+        this.commitLag = micros;
     }
 
     public int getColumnIndex(CharSequence columnName) {
@@ -322,23 +340,5 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         } else {
             columnBits.setQuick(index, Numbers.encodeLowHighInts(flags & ~COLUMN_FLAG_INDEXED, Numbers.ceilPow2(indexValueBlockSize)));
         }
-    }
-
-    @Override
-    public int getMaxUncommittedRows() {
-        return maxUncommittedRows;
-    }
-
-    public void setMaxUncommittedRows(int maxUncommittedRows) {
-        this.maxUncommittedRows = maxUncommittedRows;
-    }
-
-    @Override
-    public long getCommitLag() {
-        return commitLag;
-    }
-
-    public void setCommitLag(long micros) {
-        this.commitLag = micros;
     }
 }

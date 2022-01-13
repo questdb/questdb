@@ -35,6 +35,76 @@ import java.util.Random;
 public class IntervalUtilsTest {
     private final StringSink sink = new StringSink();
 
+    public static long getIntervalHi(LongList intervals, int pos) {
+        return intervals.getQuick((pos << 1) + 1);
+    }
+
+    public static long getIntervalLo(LongList intervals, int pos) {
+        return intervals.getQuick(pos << 1);
+    }
+
+    /**
+     * This is alternative intersect implementation used to be in main code base
+     * but not used anymore and refactored to the tests code for comparison with in place intersect method.
+     * <p>
+     * Intersects two lists of intervals and returns result list. Both lists are expected
+     * to be chronologically ordered and result list will be ordered as well.
+     *
+     * @param a   list of intervals
+     * @param b   list of intervals
+     * @param out intersection target
+     */
+    public static void intersect(LongList a, LongList b, LongList out) {
+        final int sizeA = a.size() / 2;
+        final int sizeB = b.size() / 2;
+        int intervalA = 0;
+        int intervalB = 0;
+
+        while (intervalA != sizeA && intervalB != sizeB) {
+
+            long aLo = getIntervalLo(a, intervalA);
+            long aHi = getIntervalHi(a, intervalA);
+
+            long bLo = getIntervalLo(b, intervalB);
+            long bHi = getIntervalHi(b, intervalB);
+
+            // a fully above b
+            if (aHi < bLo) {
+                // a loses
+                intervalA++;
+            } else if (getIntervalLo(a, intervalA) > getIntervalHi(b, intervalB)) {
+                // a fully below b
+                // b loses
+                intervalB++;
+            } else {
+
+                append(out, Math.max(aLo, bLo), Math.min(aHi, bHi));
+
+                if (aHi < bHi) {
+                    // b hanging lower than "a",
+                    // a loses
+                    intervalA++;
+                } else {
+                    // otherwise, a lower than b
+                    // a loses
+                    intervalB++;
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testIntersectEmpty() {
+        LongList intervals = new LongList();
+        // A
+
+        // B
+        add(intervals, -20, -2);
+        add(intervals, 1, 2);
+
+        runTestIntersectInplace(intervals, 0, "");
+    }
+
     @Test
     public void testIntersectInplace() {
         LongList intervals = new LongList();
@@ -49,84 +119,6 @@ public class IntervalUtilsTest {
     }
 
     @Test
-    public void testUnionInplaceSimple1() {
-        LongList intervals = new LongList();
-        // A
-        add(intervals, -1, 10);
-
-        // B
-        add(intervals, 1, 2);
-        add(intervals, 3, 4);
-        add(intervals, 15, 16);
-
-        runTestUnionInplace(intervals, 2, "[-1,10], [15,16]");
-    }
-
-    @Test
-    public void testUnionInplaceSimple2() {
-        LongList intervals = new LongList();
-        // A
-        add(intervals, -1, 1);
-        add(intervals, 2, 3);
-
-        // B
-        add(intervals, 1, 2);
-        add(intervals, 3, 4);
-        add(intervals, 6, 7);
-
-        runTestUnionInplace(intervals, 4, "[-1,4], [6,7]");
-    }
-
-    @Test
-    public void testUnionEmpty1() {
-        LongList intervals = new LongList();
-        // A
-        add(intervals, -1, 1);
-        add(intervals, 2, 3);
-
-        runTestUnionInplace(intervals, 4, "[-1,1], [2,3]");
-    }
-
-    @Test
-    public void testUnionEmpty2() {
-        LongList intervals = new LongList();
-        // A
-        runTestUnionInplace(intervals, 0, "");
-    }
-
-    @Test
-    public void testUnionAllAfterB() {
-        LongList intervals = new LongList();
-        // A
-        add(intervals, 100, 101);
-        add(intervals, 200, 201);
-        add(intervals, 205, 206);
-
-        // B
-        add(intervals, 1, 2);
-        add(intervals, 3, 4);
-        add(intervals, 6, 7);
-
-        runTestUnionInplace(intervals, 6, "[1,2], [3,4], [6,7], [100,101], [200,201], [205,206]");
-    }
-
-    @Test
-    public void testLastAContainsWhoelBUnionAllAfterB() {
-        LongList intervals = new LongList();
-        // A
-        add(intervals, 1, 2);
-        add(intervals, 3, 4);
-        add(intervals, 50, 250);
-
-        // B
-        add(intervals, 100, 101);
-        add(intervals, 200, 201);
-        add(intervals, 205, 206);
-
-        runTestUnionInplace(intervals, 6, "[1,2], [3,4], [50,250]");
-    }
-
-    @Test
     public void testIntersectInplace2() {
         LongList intervals = new LongList();
         // A
@@ -137,22 +129,6 @@ public class IntervalUtilsTest {
         add(intervals, 4, 5);
 
         runTestIntersectInplace(intervals, 2, "[1,2], [4,5]");
-    }
-
-    @Test
-    public void testIntersectInplaceLong() {
-        LongList intervals = new LongList();
-        // A
-        add(intervals, -1, 10);
-        add(intervals, 12, 13);
-
-        // B
-        add(intervals, 1, 2);
-        add(intervals, 4, 5);
-        add(intervals, 7, 7);
-        add(intervals, 9, 12);
-
-        runTestIntersectInplace(intervals, 4, "[1,2], [4,5], [7,7], [9,10], [12,12]");
     }
 
     @Test
@@ -192,15 +168,19 @@ public class IntervalUtilsTest {
     }
 
     @Test
-    public void testIntersectEmpty() {
+    public void testIntersectInplaceLong() {
         LongList intervals = new LongList();
         // A
+        add(intervals, -1, 10);
+        add(intervals, 12, 13);
 
         // B
-        add(intervals, -20, -2);
         add(intervals, 1, 2);
+        add(intervals, 4, 5);
+        add(intervals, 7, 7);
+        add(intervals, 9, 12);
 
-        runTestIntersectInplace(intervals, 0, "");
+        runTestIntersectInplace(intervals, 4, "[1,2], [4,5], [7,7], [9,10], [12,12]");
     }
 
     @Test
@@ -249,18 +229,6 @@ public class IntervalUtilsTest {
     }
 
     @Test
-    public void testInvertWithPositiveInfinity() {
-        LongList intervals = new LongList();
-        // A
-
-        // B
-        add(intervals, Long.MIN_VALUE, 2);
-        add(intervals, 100, 200);
-
-        runTestInvertInplace(intervals, 0, "[3,99], [201,9223372036854775807]");
-    }
-
-    @Test
     public void testInvertWithNegativeInfinity() {
         LongList intervals = new LongList();
         // A
@@ -274,20 +242,21 @@ public class IntervalUtilsTest {
     }
 
     @Test
-    public void testIsInEmptyIntervalList() {
+    public void testInvertWithPositiveInfinity() {
         LongList intervals = new LongList();
-        Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 123));
+        // A
+
+        // B
+        add(intervals, Long.MIN_VALUE, 2);
+        add(intervals, 100, 200);
+
+        runTestInvertInplace(intervals, 0, "[3,99], [201,9223372036854775807]");
     }
 
     @Test
-    public void testIsInListWithOneInterval() {
+    public void testIsInEmptyIntervalList() {
         LongList intervals = new LongList();
-        add(intervals, 100, 102);
-        Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 99));
-        Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 100));
-        Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 101));
-        Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 102));
-        Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 103));
+        Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 123));
     }
 
     @Test
@@ -317,6 +286,114 @@ public class IntervalUtilsTest {
         Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 156));
     }
 
+    @Test
+    public void testIsInListWithOneInterval() {
+        LongList intervals = new LongList();
+        add(intervals, 100, 102);
+        Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 99));
+        Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 100));
+        Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 101));
+        Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 102));
+        Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 103));
+    }
+
+    @Test
+    public void testLastAContainsWhoelBUnionAllAfterB() {
+        LongList intervals = new LongList();
+        // A
+        add(intervals, 1, 2);
+        add(intervals, 3, 4);
+        add(intervals, 50, 250);
+
+        // B
+        add(intervals, 100, 101);
+        add(intervals, 200, 201);
+        add(intervals, 205, 206);
+
+        runTestUnionInplace(intervals, 6, "[1,2], [3,4], [50,250]");
+    }
+
+    @Test
+    public void testUnionAllAfterB() {
+        LongList intervals = new LongList();
+        // A
+        add(intervals, 100, 101);
+        add(intervals, 200, 201);
+        add(intervals, 205, 206);
+
+        // B
+        add(intervals, 1, 2);
+        add(intervals, 3, 4);
+        add(intervals, 6, 7);
+
+        runTestUnionInplace(intervals, 6, "[1,2], [3,4], [6,7], [100,101], [200,201], [205,206]");
+    }
+
+    @Test
+    public void testUnionEmpty1() {
+        LongList intervals = new LongList();
+        // A
+        add(intervals, -1, 1);
+        add(intervals, 2, 3);
+
+        runTestUnionInplace(intervals, 4, "[-1,1], [2,3]");
+    }
+
+    @Test
+    public void testUnionEmpty2() {
+        LongList intervals = new LongList();
+        // A
+        runTestUnionInplace(intervals, 0, "");
+    }
+
+    @Test
+    public void testUnionInplaceSimple1() {
+        LongList intervals = new LongList();
+        // A
+        add(intervals, -1, 10);
+
+        // B
+        add(intervals, 1, 2);
+        add(intervals, 3, 4);
+        add(intervals, 15, 16);
+
+        runTestUnionInplace(intervals, 2, "[-1,10], [15,16]");
+    }
+
+    @Test
+    public void testUnionInplaceSimple2() {
+        LongList intervals = new LongList();
+        // A
+        add(intervals, -1, 1);
+        add(intervals, 2, 3);
+
+        // B
+        add(intervals, 1, 2);
+        add(intervals, 3, 4);
+        add(intervals, 6, 7);
+
+        runTestUnionInplace(intervals, 4, "[-1,4], [6,7]");
+    }
+
+    static void append(LongList list, long lo, long hi) {
+        int n = list.size();
+        if (n > 0) {
+            long prevHi = list.getQuick(n - 1) + 1;
+            if (prevHi >= lo) {
+                list.setQuick(n - 1, hi);
+                return;
+            }
+        }
+
+        list.add(lo);
+        list.add(hi);
+    }
+
+    private void add(LongList intervals, long lo, long hi) {
+        intervals.add(lo);
+        intervals.add(hi);
+    }
+
     private void runTestIntersectInplace(LongList intervals, int divider, String expected) {
         LongList copy = new LongList();
         copy.add(intervals, divider, intervals.size());
@@ -326,18 +403,6 @@ public class IntervalUtilsTest {
         TestUtils.assertEquals(expected, toIntervalString(intervals, 0));
 
         IntervalUtils.intersectInplace(copy, copy.size() - divider);
-        TestUtils.assertEquals(expected, toIntervalString(copy, 0));
-    }
-
-    private void runTestUnionInplace(LongList intervals, int divider, String expected) {
-        LongList copy = new LongList();
-        copy.add(intervals, divider, intervals.size());
-        copy.add(intervals, 0, divider);
-
-        IntervalUtils.unionInplace(intervals, divider);
-        TestUtils.assertEquals(expected, toIntervalString(intervals, 0));
-
-        IntervalUtils.unionInplace(copy, copy.size() - divider);
         TestUtils.assertEquals(expected, toIntervalString(copy, 0));
     }
 
@@ -356,6 +421,17 @@ public class IntervalUtilsTest {
         TestUtils.assertEquals(toIntervalString(toInvertExtracted, divider), toIntervalString(copy1, divider));
     }
 
+    private void runTestUnionInplace(LongList intervals, int divider, String expected) {
+        LongList copy = new LongList();
+        copy.add(intervals, divider, intervals.size());
+        copy.add(intervals, 0, divider);
+
+        IntervalUtils.unionInplace(intervals, divider);
+        TestUtils.assertEquals(expected, toIntervalString(intervals, 0));
+
+        IntervalUtils.unionInplace(copy, copy.size() - divider);
+        TestUtils.assertEquals(expected, toIntervalString(copy, 0));
+    }
 
     private String toIntervalString(LongList intervals, int divider) {
         sink.clear();
@@ -366,84 +442,5 @@ public class IntervalUtilsTest {
             sink.put('[').put(intervals.get(i++)).put(',').put(intervals.get(i++)).put(']');
         }
         return sink.toString();
-    }
-
-    private void add(LongList intervals, long lo, long hi) {
-        intervals.add(lo);
-        intervals.add(hi);
-    }
-
-
-    public static long getIntervalHi(LongList intervals, int pos) {
-        return intervals.getQuick((pos << 1) + 1);
-    }
-
-    public static long getIntervalLo(LongList intervals, int pos) {
-        return intervals.getQuick(pos << 1);
-    }
-
-    static void append(LongList list, long lo, long hi) {
-        int n = list.size();
-        if (n > 0) {
-            long prevHi = list.getQuick(n - 1) + 1;
-            if (prevHi >= lo) {
-                list.setQuick(n - 1, hi);
-                return;
-            }
-        }
-
-        list.add(lo);
-        list.add(hi);
-    }
-
-
-    /**
-     * This is alternative intersect implementation used to be in main code base
-     * but not used anymore and refactored to the tests code for comparison with in place intersect method.
-     * <p>
-     * Intersects two lists of intervals and returns result list. Both lists are expected
-     * to be chronologically ordered and result list will be ordered as well.
-     *
-     * @param a   list of intervals
-     * @param b   list of intervals
-     * @param out intersection target
-     */
-    public static void intersect(LongList a, LongList b, LongList out) {
-        final int sizeA = a.size() / 2;
-        final int sizeB = b.size() / 2;
-        int intervalA = 0;
-        int intervalB = 0;
-
-        while (intervalA != sizeA && intervalB != sizeB) {
-
-            long aLo = getIntervalLo(a, intervalA);
-            long aHi = getIntervalHi(a, intervalA);
-
-            long bLo = getIntervalLo(b, intervalB);
-            long bHi = getIntervalHi(b, intervalB);
-
-            // a fully above b
-            if (aHi < bLo) {
-                // a loses
-                intervalA++;
-            } else if (getIntervalLo(a, intervalA) > getIntervalHi(b, intervalB)) {
-                // a fully below b
-                // b loses
-                intervalB++;
-            } else {
-
-                append(out, Math.max(aLo, bLo), Math.min(aHi, bHi));
-
-                if (aHi < bHi) {
-                    // b hanging lower than a
-                    // a loses
-                    intervalA++;
-                } else {
-                    // otherwise a lower than b
-                    // a loses
-                    intervalB++;
-                }
-            }
-        }
     }
 }

@@ -41,6 +41,10 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
     }
 
     @Override
+    public void close() {
+    }
+
+    @Override
     public void toSink(CharSink sink) {
         sink.put("{\"name\":\"").put(this.getClass().getSimpleName()).put("\", \"table\":\"").put(tableName).put("\"}");
     }
@@ -52,9 +56,5 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
                 tableId,
                 tableVersion
         );
-    }
-
-    @Override
-    public void close() {
     }
 }

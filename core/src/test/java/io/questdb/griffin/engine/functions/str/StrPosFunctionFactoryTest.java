@@ -30,59 +30,6 @@ import org.junit.Test;
 public class StrPosFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
-    public void testStrVar() throws Exception {
-        assertQuery(
-                "substr\tstr\tstrpos\n" +
-                        "XYZ\tABC XYZ XYZ\t5\n" +
-                        "\tXYZ\tNaN\n" +
-                        "\tXYZ\tNaN\n" +
-                        "C\tXYW\t0\n" +
-                        "C\tXYW\t0\n" +
-                        "\tABC XYZ XYZ\tNaN\n" +
-                        "C\tXYW\t0\n" +
-                        "XYZ\tXYZ\t1\n" +
-                        "C\tABC XYZ XYZ\t3\n" +
-                        "C\tXYZ\t0\n" +
-                        "XYZ\t\tNaN\n" +
-                        "\tABC XYZ XYZ\tNaN\n" +
-                        "C\t\tNaN\n" +
-                        "C\tXYW\t0\n" +
-                        "XYZ\t\tNaN\n",
-                "select substr,str,strpos(str,substr) from x",
-                "create table x as (" +
-                        "select rnd_str('ABC XYZ XYZ','XYZ','XYW',NULL) as str\n" +
-                        ", rnd_str('XYZ','C',NULL) as substr\n" +
-                        "from long_sequence(15)" +
-                        ")",
-                null,
-                true,
-                false,
-                true
-        );
-    }
-
-    @Test
-    public void testStrVarConst() throws Exception {
-        assertQuery(
-                "str\tstrpos\n" +
-                        "ABC XYZ XYZ\t5\n" +
-                        "ABC XYZ XYZ\t5\n" +
-                        "XYZ\t1\n" +
-                        "XYW\t0\n" +
-                        "XYW\t0\n",
-                "select str,strpos(str,'XYZ') from x",
-                "create table x as (" +
-                        "select rnd_str('ABC XYZ XYZ','XYZ','XYW') as str\n" +
-                        "from long_sequence(5)" +
-                        ")",
-                null,
-                true,
-                false,
-                true
-        );
-    }
-
-    @Test
     public void testCharVar() throws Exception {
         assertQuery(
                 "substr\tstr\tstrpos\n" +
@@ -136,11 +83,11 @@ public class StrPosFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testConstantNull() throws Exception {
+    public void testConstantEmptyString() throws Exception {
         assertQuery(
                 "pos1\tpos2\tpos3\n" +
-                        "NaN\tNaN\tNaN\n",
-                "select strpos(null,'a') pos1, strpos(null,'abc') pos2, strpos('a',null) pos3",
+                        "0\t1\t1\n",
+                "select strpos('','a') pos1, strpos('a',cast('' as string)) pos2, strpos('','') pos3",
                 null,
                 null,
                 true,
@@ -150,11 +97,11 @@ public class StrPosFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testConstantEmptyString() throws Exception {
+    public void testConstantNull() throws Exception {
         assertQuery(
                 "pos1\tpos2\tpos3\n" +
-                        "0\t1\t1\n",
-                "select strpos('','a') pos1, strpos('a',cast('' as string)) pos2, strpos('','') pos3",
+                        "NaN\tNaN\tNaN\n",
+                "select strpos(null,'a') pos1, strpos(null,'abc') pos2, strpos('a',null) pos3",
                 null,
                 null,
                 true,
@@ -177,6 +124,59 @@ public class StrPosFunctionFactoryTest extends AbstractGriffinTest {
                 "create table x as (" +
                         "select rnd_str('dog,cat','apple,pear') as str\n" +
                         "from long_sequence(3)" +
+                        ")",
+                null,
+                true,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testStrVar() throws Exception {
+        assertQuery(
+                "substr\tstr\tstrpos\n" +
+                        "XYZ\tABC XYZ XYZ\t5\n" +
+                        "\tXYZ\tNaN\n" +
+                        "\tXYZ\tNaN\n" +
+                        "C\tXYW\t0\n" +
+                        "C\tXYW\t0\n" +
+                        "\tABC XYZ XYZ\tNaN\n" +
+                        "C\tXYW\t0\n" +
+                        "XYZ\tXYZ\t1\n" +
+                        "C\tABC XYZ XYZ\t3\n" +
+                        "C\tXYZ\t0\n" +
+                        "XYZ\t\tNaN\n" +
+                        "\tABC XYZ XYZ\tNaN\n" +
+                        "C\t\tNaN\n" +
+                        "C\tXYW\t0\n" +
+                        "XYZ\t\tNaN\n",
+                "select substr,str,strpos(str,substr) from x",
+                "create table x as (" +
+                        "select rnd_str('ABC XYZ XYZ','XYZ','XYW',NULL) as str\n" +
+                        ", rnd_str('XYZ','C',NULL) as substr\n" +
+                        "from long_sequence(15)" +
+                        ")",
+                null,
+                true,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testStrVarConst() throws Exception {
+        assertQuery(
+                "str\tstrpos\n" +
+                        "ABC XYZ XYZ\t5\n" +
+                        "ABC XYZ XYZ\t5\n" +
+                        "XYZ\t1\n" +
+                        "XYW\t0\n" +
+                        "XYW\t0\n",
+                "select str,strpos(str,'XYZ') from x",
+                "create table x as (" +
+                        "select rnd_str('ABC XYZ XYZ','XYZ','XYW') as str\n" +
+                        "from long_sequence(5)" +
                         ")",
                 null,
                 true,

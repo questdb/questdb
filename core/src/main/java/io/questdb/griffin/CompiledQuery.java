@@ -46,16 +46,6 @@ public interface CompiledQuery {
     short LOCK = 14;
     short UNLOCK = 14;
 
-    RecordCursorFactory getRecordCursorFactory();
-
-    InsertStatement getInsertStatement();
-
-    TextLoader getTextLoader();
-
-    AlterStatement getAlterStatement();
-
-    short getType();
-
     /***
      * Executes the query.
      * If execution is done in sync returns an instance of QueryFuture where isDone() is true.
@@ -65,6 +55,16 @@ public interface CompiledQuery {
      * @throws SqlException - throws exception if command execution fails
      */
     QueryFuture execute(SCSequence eventSubSeq) throws SqlException;
+
+    AlterStatement getAlterStatement();
+
+    InsertStatement getInsertStatement();
+
+    RecordCursorFactory getRecordCursorFactory();
+
+    TextLoader getTextLoader();
+
+    short getType();
 }
 
 

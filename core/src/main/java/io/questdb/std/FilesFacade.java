@@ -30,6 +30,8 @@ import io.questdb.std.str.Path;
 public interface FilesFacade {
     long MAP_FAILED = -1;
 
+    boolean allocate(long fd, long size);
+
     long append(long fd, long buf, int len);
 
     boolean close(long fd);
@@ -52,11 +54,9 @@ public interface FilesFacade {
 
     int findType(long findPtr);
 
-    long getLastModified(LPSZ path);
-
-    int msync(long addr, long len, boolean async);
-
     int fsync(long fd);
+
+    long getLastModified(LPSZ path);
 
     long getMapPageSize();
 
@@ -84,15 +84,17 @@ public interface FilesFacade {
 
     long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag);
 
+    int msync(long addr, long len, boolean async);
+
     void munmap(long address, long size, int memoryTag);
 
     long openAppend(LPSZ name);
 
+    long openCleanRW(LPSZ name, long size);
+
     long openRO(LPSZ name);
 
     long openRW(LPSZ name);
-
-    long openCleanRW(LPSZ name, long size);
 
     long read(long fd, long buf, long size, long offset);
 
@@ -107,8 +109,6 @@ public interface FilesFacade {
     boolean touch(LPSZ path);
 
     boolean truncate(long fd, long size);
-
-    boolean allocate(long fd, long size);
 
     long write(long fd, long address, long len, long offset);
 }

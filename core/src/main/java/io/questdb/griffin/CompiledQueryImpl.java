@@ -59,31 +59,6 @@ public class CompiledQueryImpl implements CompiledQuery {
     }
 
     @Override
-    public RecordCursorFactory getRecordCursorFactory() {
-        return recordCursorFactory;
-    }
-
-    @Override
-    public InsertStatement getInsertStatement() {
-        return insertStatement;
-    }
-
-    @Override
-    public TextLoader getTextLoader() {
-        return textLoader;
-    }
-
-    @Override
-    public AlterStatement getAlterStatement() {
-        return alterStatement;
-    }
-
-    @Override
-    public short getType() {
-        return type;
-    }
-
-    @Override
     public QueryFuture execute(SCSequence eventSubSeq) throws SqlException {
         if (type == INSERT) {
             executeInsert();
@@ -112,6 +87,31 @@ public class CompiledQueryImpl implements CompiledQuery {
         }
 
         return QueryFuture.DONE;
+    }
+
+    @Override
+    public AlterStatement getAlterStatement() {
+        return alterStatement;
+    }
+
+    @Override
+    public InsertStatement getInsertStatement() {
+        return insertStatement;
+    }
+
+    @Override
+    public RecordCursorFactory getRecordCursorFactory() {
+        return recordCursorFactory;
+    }
+
+    @Override
+    public TextLoader getTextLoader() {
+        return textLoader;
+    }
+
+    @Override
+    public short getType() {
+        return type;
     }
 
     public CompiledQuery of(short type) {
@@ -228,11 +228,6 @@ public class CompiledQueryImpl implements CompiledQuery {
         }
 
         @Override
-        public int getStatus() {
-            return status;
-        }
-
-        @Override
         public void close() {
             if (eventSubSeq != null) {
                 engine.getMessageBus().getTableWriterEventFanOut().remove(eventSubSeq);
@@ -240,6 +235,11 @@ public class CompiledQueryImpl implements CompiledQuery {
                 eventSubSeq = null;
                 commandId = -1;
             }
+        }
+
+        @Override
+        public int getStatus() {
+            return status;
         }
 
         /***
@@ -256,7 +256,7 @@ public class CompiledQueryImpl implements CompiledQuery {
             this.eventSubSeq = eventSubSeq;
 
             try {
-                // Publish new command and get published Command Id
+                // Publish new command and get published Command ID
                 commandId = engine.publishTableWriterCommand(alterStatement);
                 queryFutureUpdateListener.reportStart(alterStatement.getTableName(), commandId);
                 status = QUERY_NO_RESPONSE;

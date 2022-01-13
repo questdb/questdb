@@ -29,11 +29,16 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.DirectByteCharSequence;
 
-public final class BadTimestampAdapter  extends TimestampAdapter {
+public final class BadTimestampAdapter extends TimestampAdapter {
 
     public static final BadTimestampAdapter INSTANCE = new BadTimestampAdapter();
 
     private BadTimestampAdapter() {
+    }
+
+    @Override
+    public long getTimestamp(DirectByteCharSequence value) {
+        return Numbers.LONG_NaN;
     }
 
     @Override
@@ -49,10 +54,5 @@ public final class BadTimestampAdapter  extends TimestampAdapter {
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) {
         row.putTimestamp(column, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public long getTimestamp(DirectByteCharSequence value) {
-        return Numbers.LONG_NaN;
     }
 }

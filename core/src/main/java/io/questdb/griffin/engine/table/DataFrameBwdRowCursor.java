@@ -40,6 +40,11 @@ public class DataFrameBwdRowCursor implements RowCursor {
     }
 
     @Override
+    public void jumpTo(long position) {
+        this.current = position;
+    }
+
+    @Override
     public long next() {
         return current--;
     }
@@ -47,10 +52,5 @@ public class DataFrameBwdRowCursor implements RowCursor {
     void of(DataFrame frame) {
         this.current = frame.getRowHi() - 1;
         this.lo = frame.getRowLo();
-    }
-
-    @Override
-    public void jumpTo(long position) {
-        this.current = position;
     }
 }

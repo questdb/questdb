@@ -45,16 +45,6 @@ public class HttpMinTestBuilder {
     private TemporaryFolder temp;
     private Scrapable metrics;
 
-    public HttpMinTestBuilder withTempFolder(TemporaryFolder temp) {
-        this.temp = temp;
-        return this;
-    }
-
-    public HttpMinTestBuilder withMetrics(Scrapable metrics) {
-        this.metrics = metrics;
-        return this;
-    }
-
     public void run(HttpQueryTestBuilder.HttpClientCode code) throws Exception {
         final int[] workerAffinity = new int[1];
         Arrays.fill(workerAffinity, -1);
@@ -90,13 +80,13 @@ public class HttpMinTestBuilder {
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new PrometheusMetricsProcessor(metrics);
+                    public String getUrl() {
+                        return "/metrics";
                     }
 
                     @Override
-                    public String getUrl() {
-                        return "/metrics";
+                    public HttpRequestProcessor newInstance() {
+                        return new PrometheusMetricsProcessor(metrics);
                     }
                 });
 
@@ -111,5 +101,15 @@ public class HttpMinTestBuilder {
                 }
             }
         });
+    }
+
+    public HttpMinTestBuilder withMetrics(Scrapable metrics) {
+        this.metrics = metrics;
+        return this;
+    }
+
+    public HttpMinTestBuilder withTempFolder(TemporaryFolder temp) {
+        this.temp = temp;
+        return this;
     }
 }

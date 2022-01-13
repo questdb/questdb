@@ -59,9 +59,18 @@ public class InsertRowImpl {
         }
     }
 
-    private TableWriter.Row getRowWithTimestamp(TableWriter tableWriter) {
-        long timestamp = timestampFunction.getTimestamp(null);
-        return tableWriter.newRow(timestamp);
+    public void append(TableWriter writer) {
+        final TableWriter.Row row = rowFactory.getRow(writer);
+        copier.copy(virtualRecord, row);
+        row.append();
+    }
+
+    public void initContext(SqlExecutionContext executionContext) throws SqlException {
+        final ObjList<? extends Function> functions = virtualRecord.getFunctions();
+        Function.init(functions, null, executionContext);
+        if (timestampFunction != null) {
+            timestampFunction.init(null, executionContext);
+        }
     }
 
     private TableWriter.Row getRowWithStringTimestamp(TableWriter tableWriter) {
@@ -74,22 +83,13 @@ public class InsertRowImpl {
         }
     }
 
+    private TableWriter.Row getRowWithTimestamp(TableWriter tableWriter) {
+        long timestamp = timestampFunction.getTimestamp(null);
+        return tableWriter.newRow(timestamp);
+    }
+
     private TableWriter.Row getRowWithoutTimestamp(TableWriter tableWriter) {
         return tableWriter.newRow();
-    }
-
-    public void initContext(SqlExecutionContext executionContext) throws SqlException {
-        final ObjList<? extends Function> functions = virtualRecord.getFunctions();
-        Function.init(functions, null, executionContext);
-        if (timestampFunction != null) {
-            timestampFunction.init(null, executionContext);
-        }
-    }
-
-    public void append(TableWriter writer) {
-        final TableWriter.Row row = rowFactory.getRow(writer);
-        copier.copy(virtualRecord, row);
-        row.append();
     }
 
     @FunctionalInterface

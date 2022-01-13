@@ -54,6 +54,11 @@ public interface MemoryCR extends MemoryC, MemoryR {
         return Unsafe.getUnsafe().getByte(addressOf(offset));
     }
 
+    default char getChar(long offset) {
+        assert addressOf(offset + Character.BYTES) > 0;
+        return Unsafe.getUnsafe().getChar(addressOf(offset));
+    }
+
     default double getDouble(long offset) {
         assert addressOf(offset + Double.BYTES) > 0;
         return Unsafe.getUnsafe().getDouble(addressOf(offset));
@@ -74,14 +79,6 @@ public interface MemoryCR extends MemoryC, MemoryR {
         return Unsafe.getUnsafe().getLong(addressOf(offset));
     }
 
-    default long getPageSize() {
-        return size();
-    }
-
-    default short getShort(long offset) {
-        return Unsafe.getUnsafe().getShort(addressOf(offset));
-    }
-
     default void getLong256(long offset, CharSink sink) {
         final long addr = addressOf(offset + Long256.BYTES);
         final long a, b, c, d;
@@ -92,9 +89,12 @@ public interface MemoryCR extends MemoryC, MemoryR {
         Numbers.appendLong256(a, b, c, d, sink);
     }
 
-    default char getChar(long offset) {
-        assert addressOf(offset + Character.BYTES) > 0;
-        return Unsafe.getUnsafe().getChar(addressOf(offset));
+    default long getPageSize() {
+        return size();
+    }
+
+    default short getShort(long offset) {
+        return Unsafe.getUnsafe().getShort(addressOf(offset));
     }
 
     default int getStrLen(long offset) {

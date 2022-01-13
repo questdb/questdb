@@ -73,12 +73,12 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
-    public float getFloat(Record rec) {
-        return rec.getFloat(valueIndex);
+    public Function getArg() {
+        return arg;
     }
 
     @Override
-    public Function getArg() {
-        return arg;
+    public float getFloat(Record rec) {
+        return rec.getFloat(valueIndex);
     }
 }

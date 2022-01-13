@@ -30,8 +30,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.ObjList;
@@ -44,7 +44,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     protected Record baseRecord;
     protected long sampleLocalEpoch;
     // this epoch is generally the same as `sampleLocalEpoch` except for cases where
-    // sampler passed thru Daytime Savings Transition date
+    // sampler passed through Daytime Savings Transition date
     // diverging values tell `filling` implementations not to fill this gap
     protected long nextSampleLocalEpoch;
     protected RecordCursor base;
@@ -81,6 +81,11 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     }
 
     @Override
+    public long size() {
+        return -1;
+    }
+
+    @Override
     public void toTop() {
         GroupByUtils.toTop(recordFunctions);
         this.base.toTop();
@@ -90,11 +95,6 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         this.tzOffset = topTzOffset;
         this.prevDst = Long.MIN_VALUE;
         this.nextDstUTC = topNextDst;
-    }
-
-    @Override
-    public long size() {
-        return -1;
     }
 
     public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {

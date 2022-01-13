@@ -72,34 +72,6 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testRenameColumnEndsWithSemicolon() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            createX();
-            compile("alter table x rename column i to i1;", sqlExecutionContext);
-            engine.clear();
-        });
-    }
-
-    @Test
-    public void testRenameColumnEndsWithSemicolonEndingWithWhitesace() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            createX();
-            compile("alter table x rename column i to i1; \n", sqlExecutionContext);
-            engine.clear();
-        });
-    }
-
-    @Test
-    public void testRenameWithSemicolonHalfWay() throws Exception {
-        assertFailure("alter table x rename column l; to b", 29, "'to' expected");
-    }
-
-    @Test
-    public void testRenameWithSemicolonHalfWay2() throws Exception {
-        assertFailure("alter table x rename column l to l2; c to d", 35, "',' expected");
-    }
-
-    @Test
     public void testRenameColumn() throws Exception {
         TestUtils.assertMemoryLeak(
                 () -> {
@@ -194,6 +166,24 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
 
                 Assert.assertEquals("bb", reader.getMetadata().getColumnName(4));
             }
+        });
+    }
+
+    @Test
+    public void testRenameColumnEndsWithSemicolon() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            createX();
+            compile("alter table x rename column i to i1;", sqlExecutionContext);
+            engine.clear();
+        });
+    }
+
+    @Test
+    public void testRenameColumnEndsWithSemicolonEndingWithWhitesace() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            createX();
+            compile("alter table x rename column i to i1; \n", sqlExecutionContext);
+            engine.clear();
         });
     }
 
@@ -317,6 +307,16 @@ public class AlterTableRenameColumnTest extends AbstractGriffinTest {
                 Assert.assertEquals("ts", reader.getMetadata().getColumnName(3));
             }
         });
+    }
+
+    @Test
+    public void testRenameWithSemicolonHalfWay() throws Exception {
+        assertFailure("alter table x rename column l; to b", 29, "'to' expected");
+    }
+
+    @Test
+    public void testRenameWithSemicolonHalfWay2() throws Exception {
+        assertFailure("alter table x rename column l to l2; c to d", 35, "',' expected");
     }
 
     @Test

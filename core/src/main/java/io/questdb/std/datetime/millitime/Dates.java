@@ -45,11 +45,11 @@ final public class Dates {
     public static final int STATE_END = 6;
     public static final int STATE_SIGN = 7;
     private static final long AVG_YEAR_MILLIS = (long) (365.2425 * DAY_MILLIS);
-    private static final long YEAR_MILLIS = 365 * DAY_MILLIS;
-    private static final long LEAP_YEAR_MILLIS = 366 * DAY_MILLIS;
     private static final long HALF_YEAR_MILLIS = AVG_YEAR_MILLIS / 2;
     private static final long EPOCH_MILLIS = 1970L * AVG_YEAR_MILLIS;
     private static final long HALF_EPOCH_MILLIS = EPOCH_MILLIS / 2;
+    private static final long YEAR_MILLIS = 365 * DAY_MILLIS;
+    private static final long LEAP_YEAR_MILLIS = 366 * DAY_MILLIS;
     private static final int DAY_HOURS = 24;
     private static final int HOUR_MINUTES = 60;
     private static final int MINUTE_SECONDS = 60;
@@ -61,17 +61,6 @@ final public class Dates {
     private static final long[] MAX_MONTH_OF_YEAR_MILLIS = new long[12];
     private static final char BEFORE_ZERO = '0' - 1;
     private static final char AFTER_NINE = '9' + 1;
-
-    static {
-        long minSum = 0;
-        long maxSum = 0;
-        for (int i = 0; i < 11; i++) {
-            minSum += DAYS_PER_MONTH[i] * DAY_MILLIS;
-            MIN_MONTH_OF_YEAR_MILLIS[i + 1] = minSum;
-            maxSum += getDaysPerMonth(i + 1, true) * DAY_MILLIS;
-            MAX_MONTH_OF_YEAR_MILLIS[i + 1] = maxSum;
-        }
-    }
 
     private Dates() {
     }
@@ -576,6 +565,17 @@ final public class Dates {
     private static long toMillis(int y, int m, int d) {
         boolean l = isLeapYear(y);
         return yearMillis(y, l) + monthOfYearMillis(m, l) + (d - 1) * DAY_MILLIS;
+    }
+
+    static {
+        long minSum = 0;
+        long maxSum = 0;
+        for (int i = 0; i < 11; i++) {
+            minSum += DAYS_PER_MONTH[i] * DAY_MILLIS;
+            MIN_MONTH_OF_YEAR_MILLIS[i + 1] = minSum;
+            maxSum += getDaysPerMonth(i + 1, true) * DAY_MILLIS;
+            MAX_MONTH_OF_YEAR_MILLIS[i + 1] = maxSum;
+        }
     }
 
 }

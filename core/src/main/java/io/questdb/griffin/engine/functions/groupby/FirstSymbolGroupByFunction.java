@@ -89,12 +89,12 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     }
 
     @Override
-    public CharSequence valueOf(int key) {
-        return arg.valueOf(key);
+    public CharSequence valueBOf(int key) {
+        return arg.valueBOf(key);
     }
 
     @Override
-    public CharSequence valueBOf(int key) {
-        return arg.valueBOf(key);
+    public CharSequence valueOf(int key) {
+        return arg.valueOf(key);
     }
 }

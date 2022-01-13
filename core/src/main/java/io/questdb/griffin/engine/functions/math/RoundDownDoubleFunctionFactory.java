@@ -74,6 +74,11 @@ public class RoundDownDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
         public double getDouble(Record rec) {
             final double l = arg.getDouble(rec);
             if (l != l) {
@@ -81,11 +86,6 @@ public class RoundDownDoubleFunctionFactory implements FunctionFactory {
             }
 
             return Numbers.roundDownPosScale(l, scale);
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
         }
 
     }
@@ -101,6 +101,11 @@ public class RoundDownDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
         public double getDouble(Record rec) {
             final double l = arg.getDouble(rec);
             if (l != l) {
@@ -108,11 +113,6 @@ public class RoundDownDoubleFunctionFactory implements FunctionFactory {
             }
 
             return Numbers.roundDownNegScale(l, scale);
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
         }
 
     }

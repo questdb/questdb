@@ -45,16 +45,9 @@ public interface MultiArgFunction extends Function {
     }
 
     @Override
-    default void toTop() {
-        GroupByUtils.toTop(getArgs());
-    }
-
-    ObjList<Function> getArgs();
-
-    @Override
     default boolean isConstant() {
         ObjList<Function> args = getArgs();
-        for(int i = 0, n = args.size(); i < n; i++) {
+        for (int i = 0, n = args.size(); i < n; i++) {
             if (!args.getQuick(i).isConstant()) {
                 return false;
             }
@@ -73,4 +66,11 @@ public interface MultiArgFunction extends Function {
         }
         return true;
     }
+
+    @Override
+    default void toTop() {
+        GroupByUtils.toTop(getArgs());
+    }
+
+    ObjList<Function> getArgs();
 }

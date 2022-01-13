@@ -87,26 +87,14 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         }
     }
 
-    private void initialize(SqlExecutionContext executionContext, RecordCursor baseCursor) throws SqlException {
-        if (isInitialized()) {
-            return;
-        }
-
-        if (canBeOptimized(baseCursor, executionContext)) {
-            initializeLimitedSizeCursor(executionContext, baseCursor);
-        } else {
-            initializeUnlimitedSizeCursor();
-        }
+    @Override
+    public boolean implementsLimit() {
+        return true;
     }
 
-    private void initializeUnlimitedSizeCursor() {
-        this.chain = new LongTreeChain(
-                configuration.getSqlSortKeyPageSize(),
-                configuration.getSqlSortKeyMaxPages(),
-                configuration
-                        .getSqlSortLightValuePageSize(),
-                configuration.getSqlSortLightValueMaxPages());
-        this.cursor = new SortedLightRecordCursor((LongTreeChain) chain, comparator);
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return true;
     }
 
     /*
@@ -134,27 +122,22 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         long lo = loFunction.getLong(null);
         if (lo < 0 && hiFunction == null) {
             // last N rows
-            isFirstN = false;
             // lo is negative, -5 for example
             // if we have 12 records we need to skip 12-5 = 7
             // if we have 4 records = return all of them
             // set limit to return remaining rows
             limit = -lo;
-            skipFirst = skipLast = 0;
         } else if (lo > -1 && hiFunction == null) {
             // first N rows
             isFirstN = true;
             limit = lo;
-            skipFirst = skipLast = 0;
         } else {
             // at this stage we also have 'hi'
             long hi = hiFunction.getLong(null);
             if (lo < 0) {
                 // right, here we are looking for something like -10,-5 five rows away from tail
                 if (lo < hi) {
-                    isFirstN = false;
                     limit = -lo;
-                    skipFirst = 0;
                     skipLast = Math.max(-hi, 0);
                     //}
                 } else {
@@ -192,10 +175,6 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         this.cursor = new LimitedSizeSortedLightRecordCursor((LimitedSizeLongTreeChain) chain, comparator, limit, skipFirst, skipLast);
     }
 
-    private boolean isInitialized() {
-        return chain != null && cursor != null;
-    }
-
     // Check if lo, hi is set and lo >=0 while hi < 0 (meaning - return whole result set except some rows at start and some at the end)
     // because such case can't really be optimized by topN/bottomN
     private boolean canBeOptimized(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
@@ -209,14 +188,30 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
                 hiFunction.getLong(null) < 0);
     }
 
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return true;
+    private void initialize(SqlExecutionContext executionContext, RecordCursor baseCursor) throws SqlException {
+        if (isInitialized()) {
+            return;
+        }
+
+        if (canBeOptimized(baseCursor, executionContext)) {
+            initializeLimitedSizeCursor(executionContext, baseCursor);
+        } else {
+            initializeUnlimitedSizeCursor();
+        }
     }
 
-    @Override
-    public boolean implementsLimit() {
-        return true;
+    private void initializeUnlimitedSizeCursor() {
+        this.chain = new LongTreeChain(
+                configuration.getSqlSortKeyPageSize(),
+                configuration.getSqlSortKeyMaxPages(),
+                configuration
+                        .getSqlSortLightValuePageSize(),
+                configuration.getSqlSortLightValueMaxPages());
+        this.cursor = new SortedLightRecordCursor((LongTreeChain) chain, comparator);
+    }
+
+    private boolean isInitialized() {
+        return chain != null && cursor != null;
     }
 }
 

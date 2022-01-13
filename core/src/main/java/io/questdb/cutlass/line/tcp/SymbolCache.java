@@ -48,9 +48,9 @@ class SymbolCache implements Closeable {
     private final MemoryMR txMem = Vm.getMRInstance();
     private final SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl();
     private final MicrosecondClock clock;
+    private final long waitUsBeforeReload;
     private long transientSymCountOffset;
     private long lastSymbolReaderReloadTimestamp;
-    private final long waitUsBeforeReload;
 
     SymbolCache(LineTcpReceiverConfiguration configuration) {
         this.clock = configuration.getMicrosecondClock();

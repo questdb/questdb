@@ -97,6 +97,26 @@ public class GroupByFunctionTest {
         }
 
         @Override
+        public byte getGeoByte(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public int getGeoInt(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public long getGeoLong(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public short getGeoShort(Record rec) {
+            return 0;
+        }
+
+        @Override
         public int getInt(Record rec) {
             return 0;
         }
@@ -120,8 +140,9 @@ public class GroupByFunctionTest {
             return null;
         }
 
-        private int getPosition() {
-            return 0;
+        @Override
+        public Record getRecord(Record rec) {
+            return null;
         }
 
         @Override
@@ -150,11 +171,6 @@ public class GroupByFunctionTest {
 
         @Override
         public void getStr(Record rec, CharSink sink, int arrayIndex) {
-        }
-
-        @Override
-        public Record getRecord(Record rec) {
-            return null;
         }
 
         @Override
@@ -193,27 +209,11 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public byte getGeoByte(Record rec) {
-            return 0;
-        }
-
-        @Override
-        public short getGeoShort(Record rec) {
-            return 0;
-        }
-
-        @Override
-        public int getGeoInt(Record rec) {
-            return 0;
-        }
-
-        @Override
-        public long getGeoLong(Record rec) {
-            return 0;
-        }
-
-        @Override
         public int getType() {
+            return 0;
+        }
+
+        private int getPosition() {
             return 0;
         }
     };

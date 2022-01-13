@@ -29,6 +29,7 @@ import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.net.URL;
 
 public final class Misc {
     public static final String EOL = "\r\n";
@@ -50,12 +51,6 @@ public final class Misc {
         return null;
     }
 
-    public static StringSink getThreadLocalBuilder() {
-        StringSink b = tlBuilder.get();
-        b.clear();
-        return b;
-    }
-
     public static <T> void freeObjList(ObjList<T> list) {
         if (list != null) {
             for (int i = 0, n = list.size(); i < n; i++) {
@@ -71,4 +66,28 @@ public final class Misc {
             }
         }
     }
+
+    public static StringSink getThreadLocalBuilder() {
+        StringSink b = tlBuilder.get();
+        b.clear();
+        return b;
+    }
+
+    @SuppressWarnings("AssertWithSideEffects")
+    public static boolean isAssertionsEnabled() {
+        boolean enabled = false;
+        assert enabled = true; // Test only when assertions enabled
+        return enabled;
+    }
+
+    public static URL getResource(Class<?> baseClass, String resourceName) {
+        final URL url = baseClass.getResource(resourceName);
+        assert url != null;
+        return url;
+    }
+
+    public static URL getResource(Object o, String resourceName) {
+        return getResource(o.getClass(), resourceName);
+    }
+
 }

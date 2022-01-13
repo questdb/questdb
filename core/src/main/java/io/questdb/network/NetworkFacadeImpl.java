@@ -36,18 +36,6 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
-    public void close(long fd, Log logger) {
-        if (close(fd) != 0) {
-            logger.error().$("could not close [fd=").$(fd).$(", errno=").$(errno()).$(']').$();
-        }
-    }
-
-    @Override
-    public int shutdown(long fd, int how) {
-        return Net.shutdown(fd, how);
-    }
-
-    @Override
     public long accept(long serverFd) {
         return Net.accept(serverFd);
     }
@@ -63,8 +51,20 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
+    public boolean bindUdp(long fd, int ipv4Address, int port) {
+        return Net.bindUdp(fd, ipv4Address, port);
+    }
+
+    @Override
     public int close(long fd) {
         return Net.close(fd);
+    }
+
+    @Override
+    public void close(long fd, Log logger) {
+        if (close(fd) != 0) {
+            logger.error().$("could not close [fd=").$(fd).$(", errno=").$(errno()).$(']').$();
+        }
     }
 
     @Override
@@ -83,8 +83,28 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
+    public int errno() {
+        return Os.errno();
+    }
+
+    @Override
+    public void freeMsgHeaders(long msgVec) {
+        Net.freeMsgHeaders(msgVec);
+    }
+
+    @Override
     public void freeSockAddr(long socketAddress) {
         Net.freeSockAddr(socketAddress);
+    }
+
+    @Override
+    public long getMMsgBuf(long msg) {
+        return Net.getMMsgBuf(msg);
+    }
+
+    @Override
+    public long getMMsgBufLen(long msg) {
+        return Net.getMMsgBufLen(msg);
     }
 
     @Override
@@ -93,53 +113,8 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
-    public void listen(long serverFd, int backlog) {
-        Net.listen(serverFd, backlog);
-    }
-
-    @Override
-    public int recv(long fd, long buffer, int bufferLen) {
-        return Net.recv(fd, buffer, bufferLen);
-    }
-
-    @Override
-    public int peek(long fd, long buffer, int bufferLen) {
-        return Net.peek(fd, buffer, bufferLen);
-    }
-
-    @Override
-    public int send(long fd, long buffer, int bufferLen) {
-        return Net.send(fd, buffer, bufferLen);
-    }
-
-    @Override
-    public int errno() {
-        return Os.errno();
-    }
-
-    @Override
-    public long sockaddr(int address, int port) {
-        return Net.sockaddr(address, port);
-    }
-
-    @Override
-    public int sendTo(long fd, long ptr, int len, long socketAddress) {
-        return Net.sendTo(fd, ptr, len, socketAddress);
-    }
-
-    @Override
-    public long socketTcp(boolean blocking) {
-        return Net.socketTcp(blocking);
-    }
-
-    @Override
-    public long socketUdp() {
-        return Net.socketUdp();
-    }
-
-    @Override
-    public boolean bindUdp(long fd, int ipv4Address, int port) {
-        return Net.bindUdp(fd, ipv4Address, port);
+    public int getSndBuf(long fd) {
+        return Net.getSndBuf(fd);
     }
 
     @Override
@@ -153,8 +128,43 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
-    public long sockaddr(CharSequence address, int port) {
-        return Net.sockaddr(address, port);
+    public void listen(long serverFd, int backlog) {
+        Net.listen(serverFd, backlog);
+    }
+
+    @Override
+    public long msgHeaders(int msgBufferSize, int msgCount) {
+        return Net.msgHeaders(msgBufferSize, msgCount);
+    }
+
+    @Override
+    public int parseIPv4(CharSequence ipv4Address) {
+        return Net.parseIPv4(ipv4Address);
+    }
+
+    @Override
+    public int peek(long fd, long buffer, int bufferLen) {
+        return Net.peek(fd, buffer, bufferLen);
+    }
+
+    @Override
+    public int recv(long fd, long buffer, int bufferLen) {
+        return Net.recv(fd, buffer, bufferLen);
+    }
+
+    @Override
+    public int recvmmsg(long fd, long msgVec, int msgCount) {
+        return Net.recvmmsg(fd, msgVec, msgCount);
+    }
+
+    @Override
+    public int send(long fd, long buffer, int bufferLen) {
+        return Net.send(fd, buffer, bufferLen);
+    }
+
+    @Override
+    public int sendTo(long fd, long ptr, int len, long socketAddress) {
+        return Net.sendTo(fd, ptr, len, socketAddress);
     }
 
     @Override
@@ -173,18 +183,8 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
-    public int parseIPv4(CharSequence ipv4Address) {
-        return Net.parseIPv4(ipv4Address);
-    }
-
-    @Override
-    public int setReusePort(long fd) {
-        return Net.setReusePort(fd);
-    }
-
-    @Override
-    public int setTcpNoDelay(long fd, boolean noDelay) {
-        return Net.setTcpNoDelay(fd, noDelay);
+    public int setMulticastTtl(long fd, int ttl) {
+        return Net.setMulticastTtl(fd, ttl);
     }
 
     @Override
@@ -193,28 +193,8 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
-    public void freeMsgHeaders(long msgVec) {
-        Net.freeMsgHeaders(msgVec);
-    }
-
-    @Override
-    public long getMMsgBuf(long msg) {
-        return Net.getMMsgBuf(msg);
-    }
-
-    @Override
-    public long getMMsgBufLen(long msg) {
-        return Net.getMMsgBufLen(msg);
-    }
-
-    @Override
-    public long msgHeaders(int msgBufferSize, int msgCount) {
-        return Net.msgHeaders(msgBufferSize, msgCount);
-    }
-
-    @Override
-    public int recvmmsg(long fd, long msgVec, int msgCount) {
-        return Net.recvmmsg(fd, msgVec, msgCount);
+    public int setReusePort(long fd) {
+        return Net.setReusePort(fd);
     }
 
     @Override
@@ -223,12 +203,32 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
-    public int getSndBuf(long fd) {
-        return Net.getSndBuf(fd);
+    public int setTcpNoDelay(long fd, boolean noDelay) {
+        return Net.setTcpNoDelay(fd, noDelay);
     }
 
     @Override
-    public int setMulticastTtl(long fd, int ttl) {
-        return Net.setMulticastTtl(fd, ttl);
+    public int shutdown(long fd, int how) {
+        return Net.shutdown(fd, how);
+    }
+
+    @Override
+    public long sockaddr(int address, int port) {
+        return Net.sockaddr(address, port);
+    }
+
+    @Override
+    public long sockaddr(CharSequence address, int port) {
+        return Net.sockaddr(address, port);
+    }
+
+    @Override
+    public long socketTcp(boolean blocking) {
+        return Net.socketTcp(blocking);
+    }
+
+    @Override
+    public long socketUdp() {
+        return Net.socketUdp();
     }
 }

@@ -75,12 +75,12 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     }
 
     @Override
-    public int getInt(Record rec) {
-        return rec.getInt(valueIndex);
+    public Function getArg() {
+        return arg;
     }
 
     @Override
-    public Function getArg() {
-        return arg;
+    public int getInt(Record rec) {
+        return rec.getInt(valueIndex);
     }
 }

@@ -38,13 +38,13 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
+    protected final int pageFrameMaxSize;
     private final DataFrameRecordCursor cursor;
     private final boolean followsOrderByAdvice;
     private final Function filter;
     private final boolean framingSupported;
     private final IntList columnIndexes;
     private final IntList columnSizes;
-    protected final int pageFrameMaxSize;
     private TableReaderPageFrameCursor pageFrameCursor;
 
     public DataFrameRecordCursorFactory(
@@ -76,10 +76,6 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         Misc.free(dataFrameCursorFactory);
     }
 
-    public boolean hasDescendingOrder() {
-        return dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_DESC;
-    }
-
     @Override
     public boolean followedOrderByAdvice() {
         return followsOrderByAdvice;
@@ -96,6 +92,10 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         } else {
             return null;
         }
+    }
+
+    public boolean hasDescendingOrder() {
+        return dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_DESC;
     }
 
     @Override
@@ -159,6 +159,11 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         }
 
         @Override
+        public SymbolMapReader getSymbolMapReader(int columnIndex) {
+            return reader.getSymbolMapReader(columnIndexes.getQuick(columnIndex));
+        }
+
+        @Override
         public @Nullable PageFrame next() {
             if (this.reenterDataFrame) {
                 return computeFrame(reenterPartitionLo, reenterPartitionHi);
@@ -172,6 +177,11 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         }
 
         @Override
+        public long size() {
+            return reader.size();
+        }
+
+        @Override
         public void toTop() {
             this.dataFrameCursor.toTop();
             pages.setAll(columnCount, 0);
@@ -181,16 +191,6 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             pageRowsRemaining.setAll(columnCount, -1L);
             pageSizes.setAll(columnCount * 2, -1L);
             reenterDataFrame = false;
-        }
-
-        @Override
-        public long size() {
-            return reader.size();
-        }
-
-        @Override
-        public SymbolMapReader getSymbolMapReader(int columnIndex) {
-            return reader.getSymbolMapReader(columnIndexes.getQuick(columnIndex));
         }
 
         public TableReaderPageFrameCursor of(DataFrameCursor dataFrameCursor) {
@@ -288,18 +288,23 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             }
 
             @Override
-            public long getPageAddress(int columnIndex) {
-                return columnPageAddress.getQuick(columnIndex * 2);
-            }
-
-            @Override
             public long getIndexPageAddress(int columnIndex) {
                 return columnPageAddress.getQuick(columnIndex * 2 + 1);
             }
 
             @Override
+            public long getPageAddress(int columnIndex) {
+                return columnPageAddress.getQuick(columnIndex * 2);
+            }
+
+            @Override
             public long getPageSize(int columnIndex) {
                 return pageSizes.getQuick(columnIndex * 2);
+            }
+
+            @Override
+            public long getPartitionHi() {
+                return partitionHi;
             }
 
             @Override
@@ -310,11 +315,6 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             @Override
             public long getPartitionLo() {
                 return partitionLo;
-            }
-
-            @Override
-            public long getPartitionHi() {
-                return partitionHi;
             }
         }
     }

@@ -30,8 +30,8 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
 class IntersectRecordCursor implements RecordCursor {
@@ -46,6 +46,57 @@ class IntersectRecordCursor implements RecordCursor {
     public IntersectRecordCursor(Map map, RecordSink recordSink) {
         this.map = map;
         this.recordSink = recordSink;
+    }
+
+    @Override
+    public void close() {
+        Misc.free(this.masterCursor);
+        Misc.free(this.slaveCursor);
+        circuitBreaker = null;
+    }
+
+    @Override
+    public Record getRecord() {
+        return masterRecord;
+    }
+
+    @Override
+    public Record getRecordB() {
+        return masterCursor.getRecordB();
+    }
+
+    @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return symbolCursor.getSymbolTable(columnIndex);
+    }
+
+    @Override
+    public boolean hasNext() {
+        while (masterCursor.hasNext()) {
+            MapKey key = map.withKey();
+            key.put(masterRecord, recordSink);
+            if (key.findValue() != null) {
+                return true;
+            }
+            circuitBreaker.test();
+        }
+        return false;
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        masterCursor.recordAt(record, atRowId);
+    }
+
+    @Override
+    public long size() {
+        return -1;
+    }
+
+    @Override
+    public void toTop() {
+        symbolCursor = masterCursor;
+        masterCursor.toTop();
     }
 
     void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) {
@@ -66,56 +117,5 @@ class IntersectRecordCursor implements RecordCursor {
             key.createValue();
             circuitBreaker.test();
         }
-    }
-
-    @Override
-    public Record getRecordB() {
-        return masterCursor.getRecordB();
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        masterCursor.recordAt(record, atRowId);
-    }
-
-    @Override
-    public void close() {
-        Misc.free(this.masterCursor);
-        Misc.free(this.slaveCursor);
-        circuitBreaker = null;
-    }
-
-    @Override
-    public Record getRecord() {
-        return masterRecord;
-    }
-
-    @Override
-    public boolean hasNext() {
-        while (masterCursor.hasNext()) {
-            MapKey key = map.withKey();
-            key.put(masterRecord, recordSink);
-            if (key.findValue() != null) {
-                return true;
-            }
-            circuitBreaker.test();
-        }
-        return false;
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return symbolCursor.getSymbolTable(columnIndex);
-    }
-
-    @Override
-    public void toTop() {
-        symbolCursor = masterCursor;
-        masterCursor.toTop();
-    }
-
-    @Override
-    public long size() {
-        return -1;
     }
 }

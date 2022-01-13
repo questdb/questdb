@@ -36,9 +36,9 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     static final int SCAN_UP = -1;
     static final int SCAN_DOWN = 1;
     protected final RuntimeIntrinsicIntervalModel intervalsModel;
-    protected LongList intervals;
     protected final IntervalDataFrame dataFrame = new IntervalDataFrame();
     protected final int timestampIndex;
+    protected LongList intervals;
     protected TableReader reader;
     protected int intervalsLo;
     protected int intervalsHi;
@@ -62,6 +62,19 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     }
 
     @Override
+    public void close() {
+        if (reader != null) {
+            reader.close();
+            reader = null;
+        }
+    }
+
+    @Override
+    public SymbolMapReader getSymbolTable(int columnIndex) {
+        return reader.getSymbolMapReader(columnIndex);
+    }
+
+    @Override
     public TableReader getTableReader() {
         return reader;
     }
@@ -76,11 +89,8 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     }
 
     @Override
-    public void close() {
-        if (reader != null) {
-            reader.close();
-            reader = null;
-        }
+    public long size() {
+        return size > -1 ? size : computeSize();
     }
 
     @Override
@@ -90,16 +100,6 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         partitionLo = initialPartitionLo;
         partitionHi = initialPartitionHi;
         sizeSoFar = 0;
-    }
-
-    @Override
-    public long size() {
-        return size > -1 ? size : computeSize();
-    }
-
-    @Override
-    public SymbolMapReader getSymbolTable(int columnIndex) {
-        return reader.getSymbolMapReader(columnIndex);
     }
 
     public void of(TableReader reader, SqlExecutionContext sqlContext) throws SqlException {
@@ -198,7 +198,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
                 if (hi < 0) {
                     hi = -hi - 1;
                 } else {
-                    // We have direct hit. Interval is inclusive of edges and we have to
+                    // We have direct hit. Interval is inclusive of edges, and we have to
                     // bump to high bound because it is non-inclusive
                     hi++;
                 }

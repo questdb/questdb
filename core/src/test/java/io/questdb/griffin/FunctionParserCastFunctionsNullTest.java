@@ -40,6 +40,25 @@ import java.util.Collections;
 
 public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest {
 
+    private static final FunctionFactory[] CAST_FUNCS = {
+            new CastBooleanToBooleanFunctionFactory(),
+            new CastByteToByteFunctionFactory(),
+            new CastShortToShortFunctionFactory(),
+            new CastIntToIntFunctionFactory(),
+            new CastLongToLongFunctionFactory(),
+            new CastDateToDateFunctionFactory(),
+            new CastTimestampToTimestampFunctionFactory(),
+            new CastFloatToFloatFunctionFactory(),
+            new CastDoubleToDoubleFunctionFactory(),
+            new CastStrToStrFunctionFactory(),
+            new CastSymbolToSymbolFunctionFactory(),
+            new CastLong256ToLong256FunctionFactory(),
+            new CastStrToGeoHashFunctionFactory(),
+            new CastGeoHashToGeoHashFunctionFactory(),
+            new CastNullFunctionFactory(),
+    };
+    private static final CharSequenceIntHashMap typeNameToId = new CharSequenceIntHashMap();
+    private static final ObjList<CharSequence> typeNames = typeNameToId.keys();
     private FunctionParser functionParser;
     private GenericRecordMetadata metadata;
 
@@ -62,46 +81,6 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
     }
 
     @Test
-    public void testCastNullGeoLongChars() throws SqlException {
-        Function function = parseFunction("cast(null as GeOhAsH(12c))", metadata, functionParser);
-        Assert.assertTrue(function.isConstant());
-        Assert.assertEquals(ColumnType.GEOLONG, function.getType());
-        Assert.assertEquals(GeoHashes.NULL, function.getGeoLong(null));
-    }
-
-    @Test
-    public void testCastNullGeoByteChars() throws SqlException {
-        Function function = parseFunction("cast(null as GeOhAsH(1c))", metadata, functionParser);
-        Assert.assertTrue(function.isConstant());
-        Assert.assertEquals(ColumnType.GEOBYTE, function.getType());
-        Assert.assertEquals(GeoHashes.BYTE_NULL, function.getGeoByte(null));
-    }
-
-    @Test
-    public void testCastNullGeoShortChars() throws SqlException {
-        Function function = parseFunction("cast(null as GeOhAsH(3c))", metadata, functionParser);
-        Assert.assertTrue(function.isConstant());
-        Assert.assertEquals(ColumnType.GEOSHORT, function.getType());
-        Assert.assertEquals(GeoHashes.SHORT_NULL, function.getGeoShort(null));
-    }
-
-    @Test
-    public void testCastNullGeoIntChars() throws SqlException {
-        Function function = parseFunction("cast(null as GeOhAsH(6c))", metadata, functionParser);
-        Assert.assertTrue(function.isConstant());
-        Assert.assertEquals(ColumnType.GEOINT, function.getType());
-        Assert.assertEquals(GeoHashes.INT_NULL, function.getGeoInt(null));
-    }
-
-    @Test
-    public void testCastNullGeoLongBits() throws SqlException {
-        Function function = parseFunction("cast(null as GeOhAsH(60b))", metadata, functionParser);
-        Assert.assertTrue(function.isConstant());
-        Assert.assertEquals(ColumnType.GEOLONG, function.getType());
-        Assert.assertEquals(GeoHashes.NULL, function.getGeoLong(null));
-    }
-
-    @Test
     public void testCastNullGeoByteBits() throws SqlException {
         Function function = parseFunction("cast(null as GeOhAsH(7b))", metadata, functionParser);
         Assert.assertTrue(function.isConstant());
@@ -110,11 +89,11 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
     }
 
     @Test
-    public void testCastNullGeoShortBits() throws SqlException {
-        Function function = parseFunction("cast(null as GeOhAsH(8b))", metadata, functionParser);
+    public void testCastNullGeoByteChars() throws SqlException {
+        Function function = parseFunction("cast(null as GeOhAsH(1c))", metadata, functionParser);
         Assert.assertTrue(function.isConstant());
-        Assert.assertEquals(ColumnType.GEOSHORT, function.getType());
-        Assert.assertEquals(GeoHashes.NULL, function.getGeoShort(null));
+        Assert.assertEquals(ColumnType.GEOBYTE, function.getType());
+        Assert.assertEquals(GeoHashes.BYTE_NULL, function.getGeoByte(null));
     }
 
     @Test
@@ -165,25 +144,45 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
                 "invalid GEOHASH size, must be number followed by 'C' or 'B' character");
     }
 
-    private static final FunctionFactory[] CAST_FUNCS = {
-            new CastBooleanToBooleanFunctionFactory(),
-            new CastByteToByteFunctionFactory(),
-            new CastShortToShortFunctionFactory(),
-            new CastIntToIntFunctionFactory(),
-            new CastLongToLongFunctionFactory(),
-            new CastDateToDateFunctionFactory(),
-            new CastTimestampToTimestampFunctionFactory(),
-            new CastFloatToFloatFunctionFactory(),
-            new CastDoubleToDoubleFunctionFactory(),
-            new CastStrToStrFunctionFactory(),
-            new CastSymbolToSymbolFunctionFactory(),
-            new CastLong256ToLong256FunctionFactory(),
-            new CastStrToGeoHashFunctionFactory(),
-            new CastGeoHashToGeoHashFunctionFactory(),
-            new CastNullFunctionFactory(),
-    };
+    @Test
+    public void testCastNullGeoIntChars() throws SqlException {
+        Function function = parseFunction("cast(null as GeOhAsH(6c))", metadata, functionParser);
+        Assert.assertTrue(function.isConstant());
+        Assert.assertEquals(ColumnType.GEOINT, function.getType());
+        Assert.assertEquals(GeoHashes.INT_NULL, function.getGeoInt(null));
+    }
 
-    private static final CharSequenceIntHashMap typeNameToId = new CharSequenceIntHashMap();
+    @Test
+    public void testCastNullGeoLongBits() throws SqlException {
+        Function function = parseFunction("cast(null as GeOhAsH(60b))", metadata, functionParser);
+        Assert.assertTrue(function.isConstant());
+        Assert.assertEquals(ColumnType.GEOLONG, function.getType());
+        Assert.assertEquals(GeoHashes.NULL, function.getGeoLong(null));
+    }
+
+    @Test
+    public void testCastNullGeoLongChars() throws SqlException {
+        Function function = parseFunction("cast(null as GeOhAsH(12c))", metadata, functionParser);
+        Assert.assertTrue(function.isConstant());
+        Assert.assertEquals(ColumnType.GEOLONG, function.getType());
+        Assert.assertEquals(GeoHashes.NULL, function.getGeoLong(null));
+    }
+
+    @Test
+    public void testCastNullGeoShortBits() throws SqlException {
+        Function function = parseFunction("cast(null as GeOhAsH(8b))", metadata, functionParser);
+        Assert.assertTrue(function.isConstant());
+        Assert.assertEquals(ColumnType.GEOSHORT, function.getType());
+        Assert.assertEquals(GeoHashes.NULL, function.getGeoShort(null));
+    }
+
+    @Test
+    public void testCastNullGeoShortChars() throws SqlException {
+        Function function = parseFunction("cast(null as GeOhAsH(3c))", metadata, functionParser);
+        Assert.assertTrue(function.isConstant());
+        Assert.assertEquals(ColumnType.GEOSHORT, function.getType());
+        Assert.assertEquals(GeoHashes.SHORT_NULL, function.getGeoShort(null));
+    }
 
     static {
         typeNameToId.put("boolean", ColumnType.BOOLEAN);
@@ -201,6 +200,4 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
         typeNameToId.put("long256", ColumnType.LONG256);
         typeNameToId.put("binary", ColumnType.BINARY);
     }
-
-    private static final ObjList<CharSequence> typeNames = typeNameToId.keys();
 }

@@ -35,15 +35,13 @@ import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReadWriteLock;
 
 /**
- * 
- * This lock is not re-entrant. 
- * If a thread holds a write lock and it tries to grab a lock again it will deadlock. 
- * If a thread holding a read lock tries to upgrade its lock to a write lock it must first release its read lock or it will deadlock.
- * Threads waiting on a write lock have priority over threads waiting on a read lock.
- * Threads waiting on a write lock are not resumed fairly.
- * 
- * @author Patrick Mackinlay
+ * This lock is not re-entrant.
+ * If a thread holds a write-lock, and it tries to grab a lock again it will deadlock.
+ * If a thread holding a read-lock tries to upgrade its lock to a write-lock it must first release its read lock, or it will deadlock.
+ * Threads waiting on a write-lock have priority over threads waiting on a read lock.
+ * Threads waiting on a write-lock are not resumed fairly.
  *
+ * @author Patrick Mackinlay
  */
 public class SimpleReadWriteLock implements ReadWriteLock {
     private final int MAX_READERS = Integer.MAX_VALUE / 2 - 1;

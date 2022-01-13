@@ -38,6 +38,36 @@ public class SimpleReadWriteLockTest {
     protected static final int WRITER_ACTIVITY_NUM = 100_000;
 
     @Test
+    public void testHammerLockMultipleReaderMultipleWriter() throws Exception {
+        testHammerLock(4, 4, 1000);
+    }
+
+    @Test
+    public void testHammerLockMultipleReaderSingleWriter() throws Exception {
+        testHammerLock(4, 1, 1000);
+    }
+
+    @Test
+    public void testHammerLockSingleReaderSingleWriter() throws Exception {
+        testHammerLock(1, 1, 1000);
+    }
+
+    @Test
+    public void testHammerTryLockMultipleReaderMultipleWriter() throws Exception {
+        testHammerTryLock(4, 4, 1000);
+    }
+
+    @Test
+    public void testHammerTryLockMultipleReaderSingleWriter() throws Exception {
+        testHammerTryLock(4, 1, 1000);
+    }
+
+    @Test
+    public void testHammerTryLockSingleReaderSingleWriter() throws Exception {
+        testHammerTryLock(1, 1, 1000);
+    }
+
+    @Test
     public void testSerialReadLock() {
         final SimpleReadWriteLock lock = new SimpleReadWriteLock();
         for (int i = 0; i < 32; i++) {
@@ -62,36 +92,6 @@ public class SimpleReadWriteLockTest {
             Assert.assertTrue(lock.writeLock().tryLock());
             lock.writeLock().unlock();
         }
-    }
-
-    @Test
-    public void testHammerLockSingleReaderSingleWriter() throws Exception {
-        testHammerLock(1, 1, 1000);
-    }
-
-    @Test
-    public void testHammerLockMultipleReaderSingleWriter() throws Exception {
-        testHammerLock(4, 1, 1000);
-    }
-
-    @Test
-    public void testHammerLockMultipleReaderMultipleWriter() throws Exception {
-        testHammerLock(4, 4, 1000);
-    }
-
-    @Test
-    public void testHammerTryLockSingleReaderSingleWriter() throws Exception {
-        testHammerTryLock(1, 1, 1000);
-    }
-
-    @Test
-    public void testHammerTryLockMultipleReaderSingleWriter() throws Exception {
-        testHammerTryLock(4, 1, 1000);
-    }
-
-    @Test
-    public void testHammerTryLockMultipleReaderMultipleWriter() throws Exception {
-        testHammerTryLock(4, 4, 1000);
     }
 
     private void testHammerLock(int readers, int writers, int iterations) throws Exception {

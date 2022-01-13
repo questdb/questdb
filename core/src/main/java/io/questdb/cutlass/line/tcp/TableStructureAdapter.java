@@ -56,6 +56,11 @@ class TableStructureAdapter implements TableStructure {
     }
 
     @Override
+    public long getColumnHash(int columnIndex) {
+        return cairoConfiguration.getRandom().nextLong();
+    }
+
+    @Override
     public CharSequence getColumnName(int columnIndex) {
         assert columnIndex < getColumnCount();
         if (columnIndex == getTimestampIndex()) {
@@ -77,8 +82,8 @@ class TableStructureAdapter implements TableStructure {
     }
 
     @Override
-    public long getColumnHash(int columnIndex) {
-        return cairoConfiguration.getRandom().nextLong();
+    public long getCommitLag() {
+        return cairoConfiguration.getCommitLag();
     }
 
     @Override
@@ -87,13 +92,8 @@ class TableStructureAdapter implements TableStructure {
     }
 
     @Override
-    public boolean isIndexed(int columnIndex) {
-        return false;
-    }
-
-    @Override
-    public boolean isSequential(int columnIndex) {
-        return false;
+    public int getMaxUncommittedRows() {
+        return cairoConfiguration.getMaxUncommittedRows();
     }
 
     @Override
@@ -122,13 +122,13 @@ class TableStructureAdapter implements TableStructure {
     }
 
     @Override
-    public int getMaxUncommittedRows() {
-        return cairoConfiguration.getMaxUncommittedRows();
+    public boolean isIndexed(int columnIndex) {
+        return false;
     }
 
     @Override
-    public long getCommitLag() {
-        return cairoConfiguration.getCommitLag();
+    public boolean isSequential(int columnIndex) {
+        return false;
     }
 
     TableStructureAdapter of(CharSequence tableName, LineTcpParser parser) {

@@ -37,8 +37,8 @@ import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
-import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
 import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8BytesToString;
+import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
 
 public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
@@ -90,12 +90,6 @@ public class TableUpdateDetails implements Closeable {
                 .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
                 .$(']').$();
 
-    }
-
-    public void tick() {
-        if (writer != null) {
-            writer.tick(false);
-        }
     }
 
     @Override
@@ -172,6 +166,27 @@ public class TableUpdateDetails implements Closeable {
                 .I$();
     }
 
+    public void tick() {
+        if (writer != null) {
+            writer.tick(false);
+        }
+    }
+
+    private boolean checkMaxAndCommitLag(TableWriter writer) {
+        final long rowsSinceCommit = writer.getUncommittedRowCount();
+        if (rowsSinceCommit < writer.getMetadata().getMaxUncommittedRows()) {
+            if ((rowsSinceCommit & writerTickRowsCountMod) == 0) {
+                // Tick without commit. Some tick commands may force writer to commit though.
+                writer.tick(false);
+            }
+            return false;
+        }
+        writer.commitWithLag(engine.getConfiguration().getCommitMode());
+        // Tick after commit.
+        writer.tick(false);
+        return true;
+    }
+
     int getSymbolIndex(ThreadLocalDetails localDetails, int colIndex, CharSequence symValue) {
         if (colIndex >= 0) {
             return localDetails.getSymbolIndex(colIndex, symValue);
@@ -196,21 +211,6 @@ public class TableUpdateDetails implements Closeable {
         if (checkMaxAndCommitLag(writer)) {
             lastCommitMillis = millisecondClock.getTicks();
         }
-    }
-
-    private boolean checkMaxAndCommitLag(TableWriter writer) {
-        final long rowsSinceCommit = writer.getUncommittedRowCount();
-        if (rowsSinceCommit < writer.getMetadata().getMaxUncommittedRows()) {
-            if ((rowsSinceCommit & writerTickRowsCountMod) == 0) {
-                // Tick without commit. Some tick commands may force writer to commit though.
-                writer.tick(false);
-            }
-            return false;
-        }
-        writer.commitWithLag(engine.getConfiguration().getCommitMode());
-        // Tick after commit.
-        writer.tick(false);
-        return true;
     }
 
     void handleWriterThreadMaintenance(long ticks, long maintenanceInterval) {
@@ -315,6 +315,11 @@ public class TableUpdateDetails implements Closeable {
             columnTypeMeta.add(0);
         }
 
+        String getColName() {
+            assert colName != null;
+            return colName;
+        }
+
         // returns the column index for column name passed in colNameUtf8,
         // or COLUMN_NOT_FOUND if column index cannot be resolved (i.e. new column),
         // or DUPLICATED_COLUMN if the column has already been processed on the current event
@@ -364,29 +369,8 @@ public class TableUpdateDetails implements Closeable {
             }
         }
 
-        private void updateColumnTypeCache(int colIndex, TableReaderMetadata metadata) {
-            if (colIndex < 0) {
-                return;
-            }
-            columnCount = metadata.getColumnCount();
-            final int colType = metadata.getColumnType(colIndex);
-            final int geoHashBits = ColumnType.getGeoHashBits(colType);
-            columnTypeMeta.extendAndSet(colIndex + 1,
-                    geoHashBits == 0 ? 0 : Numbers.encodeLowHighShorts((short) geoHashBits, ColumnType.tagOf(colType)));
-        }
-
         int getColumnTypeMeta(int colIndex) {
             return columnTypeMeta.getQuick(colIndex + 1); // first val accounts for new cols, index -1
-        }
-
-        void resetProcessedColumnsTracking() {
-            processedCols.setAll(columnCount, false);
-            addedColsUtf16.clear();
-        }
-
-        String getColName() {
-            assert colName != null;
-            return colName;
         }
 
         int getSymbolIndex(int colIndex, CharSequence symValue) {
@@ -397,6 +381,11 @@ public class TableUpdateDetails implements Closeable {
             return symCache.getSymbolKey(symValue);
         }
 
+        void resetProcessedColumnsTracking() {
+            processedCols.setAll(columnCount, false);
+            addedColsUtf16.clear();
+        }
+
         private int resolveSymbolIndex(TableReaderMetadata metadata, int colIndex) {
             int symIndex = 0;
             for (int n = 0; n < colIndex; n++) {
@@ -405,6 +394,17 @@ public class TableUpdateDetails implements Closeable {
                 }
             }
             return symIndex;
+        }
+
+        private void updateColumnTypeCache(int colIndex, TableReaderMetadata metadata) {
+            if (colIndex < 0) {
+                return;
+            }
+            columnCount = metadata.getColumnCount();
+            final int colType = metadata.getColumnType(colIndex);
+            final int geoHashBits = ColumnType.getGeoHashBits(colType);
+            columnTypeMeta.extendAndSet(colIndex + 1,
+                    geoHashBits == 0 ? 0 : Numbers.encodeLowHighShorts((short) geoHashBits, ColumnType.tagOf(colType)));
         }
     }
 }

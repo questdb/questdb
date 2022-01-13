@@ -28,8 +28,8 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -73,7 +73,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         this.activeEntries = new ObjList<>(configuration.getGroupByPoolCapacity());
         // columnTypes and functions must align in the following way:
         // columnTypes[0] is the type of key, for now single key is supported
-        // functions.size = columnTypes.size - 1, functions do not have instance for key, only for values
+        // functions.size = columnTypes.size - 1, functions do not have an instance for key, only for values
         // functions[0].type == columnTypes[1]
         // ...
         // functions[n].type == columnTypes[n+1]
@@ -135,18 +135,6 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             this.cursor = new RostiRecordCursor(pRosti, columnSkewIndex, symbolSkew);
         } else {
             this.cursor = new RostiRecordCursor(pRosti, columnSkewIndex, null);
-        }
-    }
-
-    private static void addOffsets(
-            IntList columnSkewIndex,
-            @Transient ObjList<VectorAggregateFunction> vafList,
-            int start,
-            int end,
-            long columnOffsets
-    ) {
-        for (int i = start; i < end; i++) {
-            columnSkewIndex.add(Unsafe.getUnsafe().getInt(columnOffsets + vafList.getQuick(i).getValueOffset() * 4L));
         }
     }
 
@@ -289,6 +277,18 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         return base.usesCompiledFilter();
     }
 
+    private static void addOffsets(
+            IntList columnSkewIndex,
+            @Transient ObjList<VectorAggregateFunction> vafList,
+            int start,
+            int end,
+            long columnOffsets
+    ) {
+        for (int i = start; i < end; i++) {
+            columnSkewIndex.add(Unsafe.getUnsafe().getInt(columnOffsets + vafList.getQuick(i).getValueOffset() * 4L));
+        }
+    }
+
     private static class RostiRecordCursor implements RecordCursor {
         private final RostiRecord record;
         private final long pRosti;
@@ -310,12 +310,6 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             this.columnSkewIndex = columnSkewIndex;
         }
 
-        public RostiRecordCursor of(PageFrameCursor parent) {
-            this.parent = parent;
-            this.toTop();
-            return this;
-        }
-
         @Override
         public void close() {
             Misc.free(parent);
@@ -324,6 +318,19 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         @Override
         public Record getRecord() {
             return record;
+        }
+
+        @Override
+        public Record getRecordB() {
+            if (recordB != null) {
+                return recordB;
+            }
+            return (recordB = new RostiRecord());
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return parent.getSymbolMapReader(symbolTableSkewIndex.getQuick(columnIndex));
         }
 
         @Override
@@ -343,16 +350,13 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
-        public Record getRecordB() {
-            if (recordB != null) {
-                return recordB;
-            }
-            return (recordB = new RostiRecord());
+        public void recordAt(Record record, long atRowId) {
+            ((RostiRecord) record).of(atRowId);
         }
 
         @Override
-        public void recordAt(Record record, long atRowId) {
-            ((RostiRecord) record).of(atRowId);
+        public long size() {
+            return size;
         }
 
         @Override
@@ -365,22 +369,14 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             this.count = 0;
         }
 
-        @Override
-        public long size() {
-            return size;
-        }
-
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            return parent.getSymbolMapReader(symbolTableSkewIndex.getQuick(columnIndex));
+        public RostiRecordCursor of(PageFrameCursor parent) {
+            this.parent = parent;
+            this.toTop();
+            return this;
         }
 
         private class RostiRecord implements Record {
             private long pRow;
-
-            public void of(long pRow) {
-                this.pRow = pRow;
-            }
 
             @Override
             public BinarySequence getBin(int col) {
@@ -412,10 +408,6 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
                 return getLong(col);
             }
 
-            private long getValueOffset(int column) {
-                return pRow + columnSkewIndex.getQuick(column);
-            }
-
             @Override
             public double getDouble(int col) {
                 return Unsafe.getUnsafe().getDouble(getValueOffset(col));
@@ -424,6 +416,26 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             @Override
             public float getFloat(int col) {
                 return 0;
+            }
+
+            @Override
+            public byte getGeoByte(int col) {
+                return getByte(col);
+            }
+
+            @Override
+            public int getGeoInt(int col) {
+                return getInt(col);
+            }
+
+            @Override
+            public long getGeoLong(int col) {
+                return getLong(col);
+            }
+
+            @Override
+            public short getGeoShort(int col) {
+                return getShort(col);
             }
 
             @Override
@@ -496,24 +508,12 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
                 return getLong(col);
             }
 
-            @Override
-            public byte getGeoByte(int col) {
-                return getByte(col);
+            public void of(long pRow) {
+                this.pRow = pRow;
             }
 
-            @Override
-            public short getGeoShort(int col) {
-                return getShort(col);
-            }
-
-            @Override
-            public int getGeoInt(int col) {
-                return getInt(col);
-            }
-
-            @Override
-            public long getGeoLong(int col) {
-                return getLong(col);
+            private long getValueOffset(int column) {
+                return pRow + columnSkewIndex.getQuick(column);
             }
         }
     }

@@ -57,10 +57,6 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
         this.httpProtocolVersion = configuration.getHttpContextConfiguration().getHttpVersion();
     }
 
-    private static void sendStatusWithDefaultMessage(HttpConnectionContext context, int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        context.simpleResponse().sendStatusWithDefaultMessage(code);
-    }
-
     @Override
     public void close() {
         Misc.free(prefixedPath);
@@ -120,6 +116,10 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             state.bytesSent += l;
             socket.send((int) l);
         }
+    }
+
+    private static void sendStatusWithDefaultMessage(HttpConnectionContext context, int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        context.simpleResponse().sendStatusWithDefaultMessage(code);
     }
 
     private void send(HttpConnectionContext context, LPSZ path, boolean asAttachment) throws PeerDisconnectedException, PeerIsSlowToReadException {

@@ -46,14 +46,14 @@ public class TestMatchFunctionFactory implements FunctionFactory {
         return openCounter.get() > 0 && topCounter.get() > 0 && closeCount.get() == 1;
     }
 
-    public static boolean isClosed() {
-        return closeCount.get() == 1;
-    }
-
     public static void clear() {
         openCounter.set(0);
         topCounter.set(0);
         closeCount.set(0);
+    }
+
+    public static boolean isClosed() {
+        return closeCount.get() == 1;
     }
 
     @Override

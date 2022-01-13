@@ -195,6 +195,40 @@ public class PrefixedClassCatalogueFunctionFactoryTest extends AbstractGriffinTe
     }
 
     @Test
+    public void testPgClassOneTable() throws Exception {
+        assertQuery(
+                "relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\n" +
+                        "pg_class\t11\tr\t0\t1259\t\n" +
+                        "x\t2200\tr\t0\t1\t\n",
+                "pg_catalog.pg_class",
+                "create table x(a int)",
+                null,
+                false,
+                false
+        );
+    }
+
+    @Test
+    public void testPgClassTwoTables() throws Exception {
+        assertQuery(
+                "relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\n" +
+                        "pg_class\t11\tr\t0\t1259\t\n" +
+                        "x\t2200\tr\t0\t1\t\n",
+                "pg_catalog.pg_class order by 1",
+                "create table x(a int)",
+                null,
+                "create table y(a int)",
+                "relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\n" +
+                        "pg_class\t11\tr\t0\t1259\t\n" +
+                        "x\t2200\tr\t0\t1\t\n" +
+                        "y\t2200\tr\t0\t2\t\n",
+                true,
+                false,
+                false
+        );
+    }
+
+    @Test
     public void testPythonInitialSql() throws SqlException {
         assertQuery(
                 "oid\ttyparray\n",
@@ -310,40 +344,6 @@ public class PrefixedClassCatalogueFunctionFactoryTest extends AbstractGriffinTe
                 sqlExecutionContext,
                 false,
                 true
-        );
-    }
-
-    @Test
-    public void testPgClassOneTable() throws Exception {
-        assertQuery(
-                "relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\n" +
-                        "pg_class\t11\tr\t0\t1259\t\n" +
-                        "x\t2200\tr\t0\t1\t\n",
-                "pg_catalog.pg_class",
-                "create table x(a int)",
-                null,
-                false,
-                false
-        );
-    }
-
-    @Test
-    public void testPgClassTwoTables() throws Exception {
-        assertQuery(
-                "relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\n" +
-                        "pg_class\t11\tr\t0\t1259\t\n" +
-                        "x\t2200\tr\t0\t1\t\n",
-                "pg_catalog.pg_class order by 1",
-                "create table x(a int)",
-                null,
-                "create table y(a int)",
-                "relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\n" +
-                        "pg_class\t11\tr\t0\t1259\t\n" +
-                        "x\t2200\tr\t0\t1\t\n" +
-                        "y\t2200\tr\t0\t2\t\n",
-                true,
-                false,
-                false
         );
     }
 }

@@ -30,7 +30,7 @@ import java.util.Arrays;
 import java.util.Iterator;
 
 
-public class ObjObjHashMap<K,V> implements Iterable<ObjObjHashMap.Entry<K,V>>, Mutable {
+public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>, Mutable {
     private static final int MIN_INITIAL_CAPACITY = 16;
     private static final Object noEntryValue = new Object();
     private final double loadFactor;
@@ -71,7 +71,7 @@ public class ObjObjHashMap<K,V> implements Iterable<ObjObjHashMap.Entry<K,V>>, M
 
     @Override
     @NotNull
-    public Iterator<Entry<K,V>> iterator() {
+    public Iterator<Entry<K, V>> iterator() {
         iterator.index = 0;
         return iterator;
     }
@@ -165,9 +165,9 @@ public class ObjObjHashMap<K,V> implements Iterable<ObjObjHashMap.Entry<K,V>>, M
         public V value;
     }
 
-    public class EntryIterator implements ImmutableIterator<Entry<K,V>> {
+    public class EntryIterator implements ImmutableIterator<Entry<K, V>> {
 
-        private final Entry<K,V> entry = new Entry<>();
+        private final Entry<K, V> entry = new Entry<>();
         private int index = 0;
 
         @Override
@@ -176,7 +176,7 @@ public class ObjObjHashMap<K,V> implements Iterable<ObjObjHashMap.Entry<K,V>>, M
         }
 
         @Override
-        public Entry<K,V> next() {
+        public Entry<K, V> next() {
             entry.key = keys[index];
             int index1 = index++;
             entry.value = values[index1];

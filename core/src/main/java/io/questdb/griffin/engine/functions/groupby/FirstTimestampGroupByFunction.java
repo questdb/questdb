@@ -54,16 +54,6 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     }
 
     @Override
-    public Function getArg() {
-        return this.arg;
-    }
-
-    @Override
-    public long getTimestamp(Record rec) {
-        return rec.getTimestamp(this.valueIndex);
-    }
-
-    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.TIMESTAMP);
@@ -72,5 +62,15 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putTimestamp(this.valueIndex, Numbers.LONG_NaN);
+    }
+
+    @Override
+    public Function getArg() {
+        return this.arg;
+    }
+
+    @Override
+    public long getTimestamp(Record rec) {
+        return rec.getTimestamp(this.valueIndex);
     }
 }

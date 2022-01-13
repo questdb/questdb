@@ -41,16 +41,6 @@ public class DefaultSqlExecutionCircuitBreakerConfiguration implements SqlExecut
     }
 
     @Override
-    public NetworkFacade getNetworkFacade() {
-        return NetworkFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public boolean isEnabled() {
-        return true;
-    }
-
-    @Override
     public MicrosecondClock getClock() {
         return MicrosecondClockImpl.INSTANCE;
     }
@@ -58,5 +48,15 @@ public class DefaultSqlExecutionCircuitBreakerConfiguration implements SqlExecut
     @Override
     public long getMaxTime() {
         return Long.MAX_VALUE;
+    }
+
+    @Override
+    public NetworkFacade getNetworkFacade() {
+        return NetworkFacadeImpl.INSTANCE;
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return true;
     }
 }

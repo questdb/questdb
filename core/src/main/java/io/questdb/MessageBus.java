@@ -89,17 +89,17 @@ public interface MessageBus extends Closeable {
 
     MCSequence getO3PurgeSubSeq();
 
+    FanOut getTableWriterCommandFanOut();
+
     MPSequence getTableWriterCommandPubSeq();
 
     RingQueue<TableWriterTask> getTableWriterCommandQueue();
 
-    FanOut getTableWriterCommandFanOut();
+    FanOut getTableWriterEventFanOut();
 
     MPSequence getTableWriterEventPubSeq();
 
     RingQueue<TableWriterTask> getTableWriterEventQueue();
-
-    FanOut getTableWriterEventFanOut();
 
     Sequence getVectorAggregatePubSeq();
 

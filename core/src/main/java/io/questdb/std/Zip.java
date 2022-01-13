@@ -33,19 +33,6 @@ public final class Zip {
     public static final int gzipHeaderLen = 10;
     private final static int GZIP_MAGIC = 0x8b1f;
 
-    static {
-        Os.init();
-        gzipHeader = Unsafe.calloc(Numbers.ceilPow2(gzipHeaderLen), MemoryTag.NATIVE_DEFAULT);
-        long p = gzipHeader;
-        Unsafe.getUnsafe().putByte(p++, (byte) GZIP_MAGIC);
-        Unsafe.getUnsafe().putByte(p++, (byte) (GZIP_MAGIC >> 8));
-        Unsafe.getUnsafe().putByte(p, (byte) 8); // compression method
-    }
-
-    public static void init() {
-        // Method used for testing to force invocation of static class methods and hence memory initialisation
-    }
-
     private Zip() {
     }
 
@@ -55,27 +42,40 @@ public final class Zip {
 
     public static native int crc32(int crc, long address, int available);
 
-    // Deflate
-
     public static native int deflate(long z_streamp, long out, int available, boolean flush);
 
     public static native void deflateEnd(long z_streamp);
+
+    // Deflate
 
     public static native long deflateInit();
 
     public static native void deflateReset(long z_stream);
 
-    // Inflate
-
     public static native int inflate(long z_streamp, long address, int available, boolean flush);
 
     public static native void inflateEnd(long z_streamp);
+
+    // Inflate
 
     public static native long inflateInit(boolean nowrap);
 
     public static native int inflateReset(long z_streamp);
 
+    public static void init() {
+        // Method used for testing to force invocation of static class methods and hence memory initialisation
+    }
+
     public static native void setInput(long z_streamp, long address, int available);
 
     public static native int totalOut(long z_streamp);
+
+    static {
+        Os.init();
+        gzipHeader = Unsafe.calloc(Numbers.ceilPow2(gzipHeaderLen), MemoryTag.NATIVE_DEFAULT);
+        long p = gzipHeader;
+        Unsafe.getUnsafe().putByte(p++, (byte) GZIP_MAGIC);
+        Unsafe.getUnsafe().putByte(p++, (byte) (GZIP_MAGIC >> 8));
+        Unsafe.getUnsafe().putByte(p, (byte) 8); // compression method
+    }
 }

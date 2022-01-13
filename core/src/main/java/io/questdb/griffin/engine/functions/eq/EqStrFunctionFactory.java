@@ -126,16 +126,6 @@ public class EqStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getLeft() {
-            return left;
-        }
-
-        @Override
-        public Function getRight() {
-            return right;
-        }
-
-        @Override
         public boolean getBool(Record rec) {
             // important to compare A and B strings in case
             // these are columns of the same record
@@ -148,6 +138,16 @@ public class EqStrFunctionFactory implements FunctionFactory {
             }
 
             return negated != Chars.equalsNc(a, b);
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
         }
     }
 }

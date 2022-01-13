@@ -46,7 +46,7 @@ import io.questdb.std.*;
  * to determine optimal storage structure. Both keys and values are stored
  * in individually sized memory cells. Types written to these cells are not
  * yet validated. User must make sure correct types are written to correct cells.
- * Failing to do so will lead to memory corruption. But lets not dwell on that.
+ * Failing to do so will lead to memory corruption. But let's not dwell on that.
  * Map memory structure looks like this:
  * <pre>
  *     union cell {
@@ -192,6 +192,11 @@ public class CompactMap implements Map {
     }
 
     @Override
+    public void restoreInitialCapacity() {
+        // no op
+    }
+
+    @Override
     public long size() {
         return size;
     }
@@ -218,11 +223,6 @@ public class CompactMap implements Map {
         currentEntrySize = entryFixedSize;
 
         return key;
-    }
-
-    @Override
-    public void restoreInitialCapacity() {
-        // no op
     }
 
     public long getKeyCapacity() {
@@ -319,10 +319,10 @@ public class CompactMap implements Map {
                 //    distance byte to keep structure consistent
                 // 2. Find empty slot from parent
                 // 3. Move current entry there
-                // 4. For next entry - current will be parent
+                // 4. For next entry - current will become parent
                 // 5. Find empty slot from new parent
                 // 6. Move entry there
-                // 7. etc
+                // 7. etc.
                 // as we shuffle these things we have to be careful not to use
                 // entry we originally set out to free
 

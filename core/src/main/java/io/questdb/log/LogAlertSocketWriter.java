@@ -39,17 +39,19 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.TestOnly;
 
-import java.io.*;
+import java.io.Closeable;
+import java.io.IOException;
+import java.io.InputStream;
 
 import static io.questdb.log.TemplateParser.TemplateNode;
 
 public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, LogWriter {
 
+    public static final String QDB_VERSION_ENV = "QDB_VERSION";
     static final String DEFAULT_ALERT_TPT_FILE = "/alert-manager-tpt.json";
     static final CharSequenceObjHashMap<CharSequence> ALERT_PROPS = TemplateParser.adaptMap(System.getenv());
     private static final String DEFAULT_ENV_VALUE = "GLOBAL";
     private static final String ORG_ID_ENV = "ORGID";
-    public static final String QDB_VERSION_ENV = "QDB_VERSION";
     private static final String NAMESPACE_ENV = "NAMESPACE";
     private static final String CLUSTER_ENV = "CLUSTER_NAME";
     private static final String INSTANCE_ENV = "INSTANCE_NAME";
@@ -63,13 +65,14 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private final NetworkFacade nf;
     private final SCSequence writeSequence;
     private final RingQueue<LogRecordSink> alertsSourceQueue;
-    private final QueueConsumer<LogRecordSink> alertsProcessor = this::onLogRecord;
     private final TemplateParser alertTemplate = new TemplateParser();
+    private final CharSequenceObjHashMap<CharSequence> properties;
     private HttpLogRecordSink alertSink;
     private LogAlertSocket socket;
     private ObjList<TemplateNode> alertTemplateNodes;
     private int alertTemplateNodesLen;
     private Log log;
+    private final QueueConsumer<LogRecordSink> alertsProcessor = this::onLogRecord;
     // changed by introspection
     private String defaultAlertHost;
     private String defaultAlertPort;
@@ -78,7 +81,6 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
     private String outBufferSize;
     private String alertTargets;
     private String reconnectDelay;
-    private final CharSequenceObjHashMap<CharSequence> properties;
 
     public LogAlertSocketWriter(RingQueue<LogRecordSink> alertsSrc, SCSequence writeSequence, int level) {
         this(

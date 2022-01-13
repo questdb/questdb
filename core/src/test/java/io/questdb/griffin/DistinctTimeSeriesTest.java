@@ -86,6 +86,35 @@ public class DistinctTimeSeriesTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCursorCorrectness() throws Exception {
+        assertMemoryLeak(() -> assertQuery(
+                "i\tsym\tts\n" +
+                        "1\tmsft\t1970-01-06T18:53:20.000000Z\n" +
+                        "2\tmsft\t1970-01-06T18:58:50.000000Z\n" +
+                        "3\tibm\t1970-01-06T19:04:20.000000Z\n" +
+                        "4\tgoogl\t1970-01-06T19:09:50.000000Z\n" +
+                        "5\tgoogl\t1970-01-06T19:15:20.000000Z\n" +
+                        "6\tgoogl\t1970-01-06T19:20:50.000000Z\n" +
+                        "7\tgoogl\t1970-01-06T19:26:20.000000Z\n" +
+                        "8\tibm\t1970-01-06T19:31:50.000000Z\n" +
+                        "9\tmsft\t1970-01-06T19:37:20.000000Z\n" +
+                        "10\tibm\t1970-01-06T19:42:50.000000Z\n",
+                "select distinct * from x",
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " timestamp_sequence(500000000000L,330000000L) ts" +
+                        " from long_sequence(10)" +
+                        ") timestamp (ts) partition by DAY",
+                "ts",
+                true,
+                false,
+                false
+        ));
+    }
+
+    @Test
     public void testEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile(
@@ -121,34 +150,5 @@ public class DistinctTimeSeriesTest extends AbstractGriffinTest {
                     "i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tts\tl\tm\tn\tt\tl256\n"
             );
         });
-    }
-
-    @Test
-    public void testCursorCorrectness() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
-                "i\tsym\tts\n" +
-                        "1\tmsft\t1970-01-06T18:53:20.000000Z\n" +
-                        "2\tmsft\t1970-01-06T18:58:50.000000Z\n" +
-                        "3\tibm\t1970-01-06T19:04:20.000000Z\n" +
-                        "4\tgoogl\t1970-01-06T19:09:50.000000Z\n" +
-                        "5\tgoogl\t1970-01-06T19:15:20.000000Z\n" +
-                        "6\tgoogl\t1970-01-06T19:20:50.000000Z\n" +
-                        "7\tgoogl\t1970-01-06T19:26:20.000000Z\n" +
-                        "8\tibm\t1970-01-06T19:31:50.000000Z\n" +
-                        "9\tmsft\t1970-01-06T19:37:20.000000Z\n" +
-                        "10\tibm\t1970-01-06T19:42:50.000000Z\n",
-                "select distinct * from x",
-                "create table x as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " timestamp_sequence(500000000000L,330000000L) ts" +
-                        " from long_sequence(10)" +
-                        ") timestamp (ts) partition by DAY",
-                "ts",
-                true,
-                false,
-                false
-        ));
     }
 }

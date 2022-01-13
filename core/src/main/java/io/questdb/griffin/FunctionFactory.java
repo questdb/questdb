@@ -58,7 +58,7 @@ public interface FunctionFactory {
      * <li>H = long256</li>
      * <li>G = GeoHash</li>
      * </ul>
-     *
+     * <p>
      * Lower-case letters will require arguments to be constant expressions. Upper-case letters allow both constant and
      * variable expressions.
      *
@@ -66,7 +66,7 @@ public interface FunctionFactory {
      */
     String getSignature();
 
-    default boolean isGroupBy() {
+    default boolean isBoolean() {
         return false;
     }
 
@@ -74,7 +74,7 @@ public interface FunctionFactory {
         return false;
     }
 
-    default boolean isBoolean() {
+    default boolean isGroupBy() {
         return false;
     }
 

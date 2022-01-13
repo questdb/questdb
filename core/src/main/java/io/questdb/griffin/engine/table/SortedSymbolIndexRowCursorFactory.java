@@ -52,6 +52,17 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
+    public RowCursor getCursor(DataFrame dataFrame) {
+        cursor.of(dataFrame);
+        return cursor;
+    }
+
+    @Override
+    public boolean isEntity() {
+        return false;
+    }
+
+    @Override
     public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
         symbolKeys.clear();
 
@@ -86,17 +97,6 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
         }
     }
 
-    @Override
-    public RowCursor getCursor(DataFrame dataFrame) {
-        cursor.of(dataFrame);
-        return cursor;
-    }
-
-    @Override
-    public boolean isEntity() {
-        return false;
-    }
-
     // this is a thread-local contraption used for sorting symbol values. We ought to think of something better
     private static class SymbolTableEntry {
         private String value;
@@ -121,16 +121,16 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
             return entries;
         }
 
+        public void sort(int max, Comparator<SymbolTableEntry> comparator) {
+            entries.sort(0, max, comparator);
+        }
+
         private int compareAsc(SymbolTableEntry e1, SymbolTableEntry e2) {
             return (e1.value == null && e2.value == null) ? 0 : e1.value == null ? -1 : e1.value.compareTo(e2.value);
         }
 
         private int compareDesc(SymbolTableEntry e1, SymbolTableEntry e2) {
             return (e1.value == null && e2.value == null) ? 0 : e1.value == null ? 1 : e2.value.compareTo(e1.value);
-        }
-
-        public void sort(int max, Comparator<SymbolTableEntry> comparator) {
-            entries.sort(0, max, comparator);
         }
     }
 
@@ -139,15 +139,14 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
         private RowCursor current;
         private DataFrame dataFrame;
 
-        private void of(DataFrame dataFrame) {
-            this.dataFrame = dataFrame;
-            this.index = 0;
-            this.current = EmptyRowCursor.INSTANCE;
-        }
-
         @Override
         public boolean hasNext() {
             return current.hasNext() || fetchNext();
+        }
+
+        @Override
+        public long next() {
+            return current.next();
         }
 
         private boolean fetchNext() {
@@ -168,9 +167,10 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
             return false;
         }
 
-        @Override
-        public long next() {
-            return current.next();
+        private void of(DataFrame dataFrame) {
+            this.dataFrame = dataFrame;
+            this.index = 0;
+            this.current = EmptyRowCursor.INSTANCE;
         }
     }
 }

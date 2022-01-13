@@ -34,10 +34,9 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.hamcrest.MatcherAssert;
-
-import static org.hamcrest.CoreMatchers.*;
-
 import org.junit.Test;
+
+import static org.hamcrest.CoreMatchers.equalTo;
 
 public class ToTimestampVCFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test

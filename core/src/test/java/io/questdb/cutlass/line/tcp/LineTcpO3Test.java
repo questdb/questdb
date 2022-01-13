@@ -38,8 +38,8 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.Net;
 import io.questdb.std.Chars;
-import io.questdb.std.Misc;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUnboundedByteSink;
 import io.questdb.std.str.Path;
@@ -50,6 +50,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.zip.GZIPInputStream;
 
@@ -84,7 +85,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
         try (InputStream is = LineTcpO3Test.class.getResourceAsStream(LineTcpO3Test.class.getSimpleName() + ".server.conf")) {
             File mimeTypesFile = new File(new File(root.toString(), PropServerConfiguration.CONFIG_DIRECTORY), "mime.types");
             if (!mimeTypesFile.exists()) {
-                mimeTypesFile.getParentFile().mkdirs();
+                Assert.assertTrue(mimeTypesFile.getParentFile().mkdirs());
                 FileOutputStream fos = new FileOutputStream(mimeTypesFile);
                 fos.write('\n');
                 fos.close();
@@ -121,7 +122,13 @@ public class LineTcpO3Test extends AbstractCairoTest {
 
     private void readGzResource(String rname) {
         int resourceNLines;
-        try (InputStream is = new GZIPInputStream(getClass().getResourceAsStream(getClass().getSimpleName() + "." + rname + ".gz"))) {
+        try (
+                InputStream is = new GZIPInputStream(
+                        Objects.requireNonNull(
+                                getClass().getResourceAsStream(getClass().getSimpleName() + "." + rname + ".gz")
+                        )
+                )
+        ) {
             final int bufSz = 10_000_000;
             byte[] bytes = new byte[bufSz];
             resourceSize = 0;

@@ -87,17 +87,17 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
         public boolean getBool(Record rec) {
             final Long256 value = arg.getLong256A(rec);
             return negated != (value.getLong0() == long0 &&
                     value.getLong1() == long1 &&
                     value.getLong2() == long2 &&
                     value.getLong3() == long3);
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
         }
     }
 

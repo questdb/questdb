@@ -38,6 +38,8 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Comparator;
 
 public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
+    private static final Comparator<FunctionBasedRowCursorFactory> COMPARATOR = FilterOnValuesRecordCursorFactory::compareStrFunctions;
+    private static final Comparator<FunctionBasedRowCursorFactory> COMPARATOR_DESC = FilterOnValuesRecordCursorFactory::compareStrFunctionsDesc;
     private final DataFrameRecordCursor cursor;
     private final int columnIndex;
     private final Function filter;
@@ -98,6 +100,14 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
         return true;
     }
 
+    private static int compareStrFunctions(FunctionBasedRowCursorFactory a, FunctionBasedRowCursorFactory b) {
+        return Chars.compare(a.getFunction().getStr(null), b.getFunction().getStrB(null));
+    }
+
+    private static int compareStrFunctionsDesc(FunctionBasedRowCursorFactory a, FunctionBasedRowCursorFactory b) {
+        return Chars.compareDescending(a.getFunction().getStr(null), b.getFunction().getStrB(null));
+    }
+
     private void addSymbolKey(int symbolKey, Function symbolFunction, int indexDirection) {
         final FunctionBasedRowCursorFactory rowCursorFactory;
         if (filter == null) {
@@ -149,17 +159,6 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
             filter.init(this.cursor, sqlExecutionContext);
         }
         return this.cursor;
-    }
-
-    private static final Comparator<FunctionBasedRowCursorFactory> COMPARATOR = FilterOnValuesRecordCursorFactory::compareStrFunctions;
-    private static final Comparator<FunctionBasedRowCursorFactory> COMPARATOR_DESC = FilterOnValuesRecordCursorFactory::compareStrFunctionsDesc;
-
-    private static int compareStrFunctions(FunctionBasedRowCursorFactory a, FunctionBasedRowCursorFactory b) {
-        return Chars.compare(a.getFunction().getStr(null), b.getFunction().getStrB(null));
-    }
-
-    private static int compareStrFunctionsDesc(FunctionBasedRowCursorFactory a, FunctionBasedRowCursorFactory b) {
-        return Chars.compareDescending(a.getFunction().getStr(null), b.getFunction().getStrB(null));
     }
 
 }

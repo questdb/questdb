@@ -52,12 +52,6 @@ public class NumbersTest {
         Numbers.parseLong("10000LL");
     }
 
-    @Test
-    public void testShortBswap() {
-        short v = Numbers.bswap((short) -7976);
-        Assert.assertEquals(-7976, Numbers.bswap(v));
-    }
-
     @Before
     public void setUp() {
         rnd = new Rnd();
@@ -72,22 +66,10 @@ public class NumbersTest {
     }
 
     @Test
-    public void testLong256() throws NumericException {
-        CharSequence tok = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
-        Long256Impl long256 = new Long256Impl();
-        Long256FromCharSequenceDecoder.decode(tok, 2, tok.length(), long256);
-        long256.toSink(sink);
-        CharSequence tokLong256 = sink.toString();
-        Assert.assertEquals(tok, tokLong256);
-
-        Long256Impl long256a = new Long256Impl();
-        Numbers.parseLong256(tok, tok.length(), long256a);
-        sink.clear();
-        long256a.toSink(sink);
-        CharSequence tokLong256a = sink.toString();
-        Assert.assertEquals(tok, tokLong256a);
-
-        Assert.assertEquals(tokLong256, tokLong256a);
+    public void testBswap() {
+        int expected = rnd.nextInt();
+        int x = Numbers.bswap(expected);
+        Assert.assertEquals(expected, Numbers.bswap(x));
     }
 
     @Test
@@ -110,6 +92,20 @@ public class NumbersTest {
     @Test(expected = NumericException.class)
     public void testEmptyLong() throws Exception {
         Numbers.parseLong("L");
+    }
+
+    @Test
+    public void testEncodeDecodeShortInInt() {
+        short[] testCases = new short[]{Short.MIN_VALUE, Short.MAX_VALUE, 0, -1, 1024, -1024, 0xfff, -0xfff};
+        for (int i = 0; i < testCases.length; i++) {
+            for (int j = 0; j < testCases.length; j++) {
+                short hi = testCases[i];
+                short lo = testCases[j];
+                int encoded = Numbers.encodeLowHighShorts(lo, hi);
+                Assert.assertEquals(lo, Numbers.decodeLowShort(encoded));
+                Assert.assertEquals(hi, Numbers.decodeHighShort(encoded));
+            }
+        }
     }
 
     @Test
@@ -399,6 +395,25 @@ public class NumbersTest {
     }
 
     @Test
+    public void testLong256() throws NumericException {
+        CharSequence tok = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
+        Long256Impl long256 = new Long256Impl();
+        Long256FromCharSequenceDecoder.decode(tok, 2, tok.length(), long256);
+        long256.toSink(sink);
+        CharSequence tokLong256 = sink.toString();
+        Assert.assertEquals(tok, tokLong256);
+
+        Long256Impl long256a = new Long256Impl();
+        Numbers.parseLong256(tok, tok.length(), long256a);
+        sink.clear();
+        long256a.toSink(sink);
+        CharSequence tokLong256a = sink.toString();
+        Assert.assertEquals(tok, tokLong256a);
+
+        Assert.assertEquals(tokLong256, tokLong256a);
+    }
+
+    @Test
     public void testLongEdge() throws Exception {
         Numbers.append(sink, Long.MAX_VALUE);
         Assert.assertEquals(Long.MAX_VALUE, Numbers.parseLong(sink));
@@ -461,20 +476,6 @@ public class NumbersTest {
     }
 
     @Test
-    public void testEncodeDecodeShortInInt() {
-        short[] testCases = new short[]{Short.MIN_VALUE, Short.MAX_VALUE, 0, -1, 1024, -1024, 0xfff, -0xfff};
-        for (int i = 0; i < testCases.length; i++) {
-            for (int j = 0; j < testCases.length; j++) {
-                short hi = testCases[i];
-                short lo = testCases[j];
-                int encoded = Numbers.encodeLowHighShorts(lo, hi);
-                Assert.assertEquals(lo, Numbers.decodeLowShort(encoded));
-                Assert.assertEquals(hi, Numbers.decodeHighShort(encoded));
-            }
-        }
-    }
-
-    @Test
     public void testParse000Greedy3() throws NumericException {
         String input = "219";
         long val = Numbers.parseInt000Greedy(input, 0, input.length());
@@ -487,15 +488,6 @@ public class NumbersTest {
         Numbers.parseInt000Greedy("1234", 0, 4);
     }
 
-    @Test
-    public void testParseDoubleWithManyLeadingZeros() throws Exception {
-        String s1 = "000000.000000000033458980809808359835083490580348503845";
-        Assert.assertEquals(Double.parseDouble(s1), Numbers.parseDouble(s1), 0.000000001);
-
-        String s2 = "000000.00000000003345898080E25";
-        Assert.assertEquals(Double.parseDouble(s2), Numbers.parseDouble(s2), 0.000000001);
-    }
-    
     @Test
     public void testParseDouble() throws Exception {
 
@@ -541,7 +533,7 @@ public class NumbersTest {
         String s2 = "0.12345678901234567890123456789E12";
         Assert.assertEquals(Double.parseDouble(s2), Numbers.parseDouble(s2), 0.000000001);
     }
-    
+
     @Test
     public void testParseDoubleIntegerLargerThanLongMaxValue() throws Exception {
         String s1 = "9223372036854775808";
@@ -570,6 +562,15 @@ public class NumbersTest {
 
         String s4 = "92233720368547758081239223372036854775808123.01239223372036854775808123";
         Assert.assertEquals(Double.parseDouble(s4), Numbers.parseDouble(s4), 0.000000001);
+    }
+
+    @Test
+    public void testParseDoubleWithManyLeadingZeros() throws Exception {
+        String s1 = "000000.000000000033458980809808359835083490580348503845";
+        Assert.assertEquals(Double.parseDouble(s1), Numbers.parseDouble(s1), 0.000000001);
+
+        String s2 = "000000.00000000003345898080E25";
+        Assert.assertEquals(Double.parseDouble(s2), Numbers.parseDouble(s2), 0.000000001);
     }
 
     @Test
@@ -652,7 +653,7 @@ public class NumbersTest {
         String s4 = "922337203685477580812392233720368547758081.01239223372036854775808123";//Infinity
         Assert.assertEquals(Float.parseFloat(s4), Numbers.parseFloat(s4), 0.000000001);
     }
-    
+
     @Test
     public void testParseInt() throws Exception {
         Assert.assertEquals(567963, Numbers.parseInt("567963"));
@@ -895,9 +896,8 @@ public class NumbersTest {
     }
 
     @Test
-    public void testBswap() {
-        int expected = rnd.nextInt();
-        int x = Numbers.bswap(expected);
-        Assert.assertEquals(expected, Numbers.bswap(x));
+    public void testShortBswap() {
+        short v = Numbers.bswap((short) -7976);
+        Assert.assertEquals(-7976, Numbers.bswap(v));
     }
 }

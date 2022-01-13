@@ -54,11 +54,6 @@ class FirstGeoHashGroupByFunctionInt extends GeoByteFunction implements GroupByF
     }
 
     @Override
-    public Function getArg() {
-        return function;
-    }
-
-    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.INT);
@@ -72,6 +67,11 @@ class FirstGeoHashGroupByFunctionInt extends GeoByteFunction implements GroupByF
     @Override
     public void setNull(MapValue mapValue) {
         setInt(mapValue, GeoHashes.INT_NULL);
+    }
+
+    @Override
+    public Function getArg() {
+        return function;
     }
 
     @Override

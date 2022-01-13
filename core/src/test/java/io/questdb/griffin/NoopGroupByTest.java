@@ -58,36 +58,6 @@ public class NoopGroupByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testNoopGroupByValidColumnName() throws Exception {
-        assertQuery(
-                "sym1\tavgBid\n",
-                "select a.sym1, avg(bid) avgBid from x a group by a.sym1 order by a.sym1",
-                "create table x (\n" +
-                        "    sym1 symbol,\n" +
-                        "    sym2 symbol,\n" +
-                        "    bid double,\n" +
-                        "    ask double,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select " +
-                        "         rnd_symbol('A', 'B', 'C') sym1, \n" +
-                        "         rnd_symbol('D', 'E', 'F') sym2, \n" +
-                        "        rnd_double() bid, \n" +
-                        "        rnd_double() ask, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(20)) timestamp (ts)",
-                "sym1\tavgBid\n" +
-                        "A\t0.5942181417903911\n" +
-                        "B\t0.7080299543021055\n" +
-                        "C\t0.4760584891454253\n",
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testNoopGroupByBindVariable() throws Exception {
         compiler.compile("create table y(id int, ref int, val double)", sqlExecutionContext);
         engine.releaseAllWriters();
@@ -246,6 +216,102 @@ public class NoopGroupByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNoopGroupByJoinConst() throws Exception {
+        compiler.compile("create table y(id int, ref int, val double)", sqlExecutionContext);
+        engine.releaseAllWriters();
+        assertFailure(
+                "select 'x' z, sum(val) from x join y on (id) group by 'x'",
+                "create table x (id int, ref int, ref3 int)",
+                54,
+                "group by expression does not match anything select in statement"
+        );
+    }
+
+    @Test
+    public void testNoopGroupByJoinInvalidConst() throws Exception {
+        compiler.compile("create table y(id int, ref int, val double)", sqlExecutionContext);
+        engine.releaseAllWriters();
+        assertFailure(
+                "select 'x' z, sum(val) from x join y on (id) group by 'y'",
+                "create table x (id int, ref int, ref3 int)",
+                54,
+                "group by expression does not match anything select in statement"
+        );
+    }
+
+    @Test
+    public void testNoopGroupByJoinReference() throws Exception {
+        compiler.compile("create table y(id int, ref int, val double)", sqlExecutionContext);
+        engine.releaseAllWriters();
+        assertQuery(
+                "id\tref\tref1\tsum\n",
+                "select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, x.ref, y.ref",
+                "create table x (id int, ref int, ref3 int)",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testNoopGroupByJoinReferenceNonSelected() throws Exception {
+        compiler.compile("create table y(id int, ref int, val double)", sqlExecutionContext);
+        engine.releaseAllWriters();
+        assertFailure(
+                "select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, x.ref3, y.ref",
+                "create table x (id int, ref int, ref3 int)",
+                73, "invalid column reference"
+        );
+    }
+
+    @Test
+    public void testNoopGroupByMissingColumnWithTableAlias1() throws Exception {
+        assertFailure(
+                "select a.sym1, a.sym2, avg(bid) avgBid from x a group by a.sym1", //a.sym2 is missing in group by clause
+                "create table x (\n" +
+                        "    sym1 symbol,\n" +
+                        "    sym2 symbol,\n" +
+                        "    bid double,\n" +
+                        "    ask double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                7,
+                "not enough columns in group by"
+        );
+    }
+
+    @Test
+    public void testNoopGroupByValidColumnName() throws Exception {
+        assertQuery(
+                "sym1\tavgBid\n",
+                "select a.sym1, avg(bid) avgBid from x a group by a.sym1 order by a.sym1",
+                "create table x (\n" +
+                        "    sym1 symbol,\n" +
+                        "    sym2 symbol,\n" +
+                        "    bid double,\n" +
+                        "    ask double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select " +
+                        "         rnd_symbol('A', 'B', 'C') sym1, \n" +
+                        "         rnd_symbol('D', 'E', 'F') sym2, \n" +
+                        "        rnd_double() bid, \n" +
+                        "        rnd_double() ask, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "    from long_sequence(20)) timestamp (ts)",
+                "sym1\tavgBid\n" +
+                        "A\t0.5942181417903911\n" +
+                        "B\t0.7080299543021055\n" +
+                        "C\t0.4760584891454253\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testNoopGroupByValidColumnNameWithHourFunction() throws Exception {
         assertQuery(
                 "hour\tavgBid\n",
@@ -364,72 +430,6 @@ public class NoopGroupByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testNoopGroupByJoinConst() throws Exception {
-        compiler.compile("create table y(id int, ref int, val double)", sqlExecutionContext);
-        engine.releaseAllWriters();
-        assertFailure(
-                "select 'x' z, sum(val) from x join y on (id) group by 'x'",
-                "create table x (id int, ref int, ref3 int)",
-                54,
-                "group by expression does not match anything select in statement"
-        );
-    }
-
-    @Test
-    public void testNoopGroupByJoinInvalidConst() throws Exception {
-        compiler.compile("create table y(id int, ref int, val double)", sqlExecutionContext);
-        engine.releaseAllWriters();
-        assertFailure(
-                "select 'x' z, sum(val) from x join y on (id) group by 'y'",
-                "create table x (id int, ref int, ref3 int)",
-                54,
-                "group by expression does not match anything select in statement"
-        );
-    }
-
-    @Test
-    public void testNoopGroupByJoinReference() throws Exception {
-        compiler.compile("create table y(id int, ref int, val double)", sqlExecutionContext);
-        engine.releaseAllWriters();
-        assertQuery(
-                "id\tref\tref1\tsum\n",
-                "select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, x.ref, y.ref",
-                "create table x (id int, ref int, ref3 int)",
-                null,
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testNoopGroupByJoinReferenceNonSelected() throws Exception {
-        compiler.compile("create table y(id int, ref int, val double)", sqlExecutionContext);
-        engine.releaseAllWriters();
-        assertFailure(
-                "select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, x.ref3, y.ref",
-                "create table x (id int, ref int, ref3 int)",
-                73, "invalid column reference"
-        );
-    }
-
-    @Test
-    public void testNoopGroupByMissingColumnWithTableAlias1() throws Exception {
-        assertFailure(
-                "select a.sym1, a.sym2, avg(bid) avgBid from x a group by a.sym1", //a.sym2 is missing in group by clause
-                "create table x (\n" +
-                        "    sym1 symbol,\n" +
-                        "    sym2 symbol,\n" +
-                        "    bid double,\n" +
-                        "    ask double,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                7,
-                "not enough columns in group by"
-        );
-    }
-
-    @Test
     public void testNoopGroupByWhenUsingAliasedColumnAndAliasedTable2() throws Exception {
         assertFailure(
                 "select sym1 ccy, avg(bid) avgBid from x a where sym1 in ('A', 'B' ) group by b.ccy",
@@ -442,22 +442,6 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         ") timestamp(ts) partition by DAY",
                 77,
                 "invalid column reference"
-        );
-    }
-
-    @Test
-    public void testNoopGroupReferenceAggregate() throws Exception {
-        assertFailure(
-                "select a.sym1, avg(bid) avgBid from x a group by a.sym1, avgBid order by a.sym1",
-                "create table x (\n" +
-                        "    sym1 symbol,\n" +
-                        "    sym2 symbol,\n" +
-                        "    bid double,\n" +
-                        "    ask double,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                57,
-                "group by column references aggregate expression"
         );
     }
 
@@ -487,22 +471,6 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                 true,
                 true,
                 true
-        );
-    }
-
-    @Test
-    public void testNoopGroupReferenceNonKeyColumn() throws Exception {
-        assertFailure(
-                "select a.sym1, avg(bid) avgBid from x a group by a.sym2 order by a.sym1",
-                "create table x (\n" +
-                        "    sym1 symbol,\n" +
-                        "    sym2 symbol,\n" +
-                        "    bid double,\n" +
-                        "    ask double,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                49,
-                "group by column does not match any key column is select statement"
         );
     }
 
@@ -613,6 +581,38 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                 true,
                 true,
                 true
+        );
+    }
+
+    @Test
+    public void testNoopGroupReferenceAggregate() throws Exception {
+        assertFailure(
+                "select a.sym1, avg(bid) avgBid from x a group by a.sym1, avgBid order by a.sym1",
+                "create table x (\n" +
+                        "    sym1 symbol,\n" +
+                        "    sym2 symbol,\n" +
+                        "    bid double,\n" +
+                        "    ask double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                57,
+                "group by column references aggregate expression"
+        );
+    }
+
+    @Test
+    public void testNoopGroupReferenceNonKeyColumn() throws Exception {
+        assertFailure(
+                "select a.sym1, avg(bid) avgBid from x a group by a.sym2 order by a.sym1",
+                "create table x (\n" +
+                        "    sym1 symbol,\n" +
+                        "    sym2 symbol,\n" +
+                        "    bid double,\n" +
+                        "    ask double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                49,
+                "group by column does not match any key column is select statement"
         );
     }
 

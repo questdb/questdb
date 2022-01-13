@@ -68,6 +68,29 @@ public class StringAggGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void close() {
+            sink.close();
+        }
+
+        @Override
+        public CharSequence getStr(Record rec) {
+            if (nullValue) {
+                return null;
+            }
+            return sink;
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            return getStr(rec);
+        }
+
+        @Override
+        public boolean isConstant() {
+            return false;
+        }
+
+        @Override
         public void computeFirst(MapValue mapValue, Record record) {
             setNull();
             CharSequence str = arg.getStr(record);
@@ -97,41 +120,18 @@ public class StringAggGroupByFunctionFactory implements FunctionFactory {
             setNull();
         }
 
-        @Override
-        public void close() {
-            sink.close();
-        }
-
-        @Override
-        public CharSequence getStr(Record rec) {
-            if (nullValue) {
-                return null;
-            }
-            return sink;
-        }
-
-        @Override
-        public CharSequence getStrB(Record rec) {
-            return getStr(rec);
-        }
-
-        @Override
-        public boolean isConstant() {
-            return false;
-        }
-
-        private void setNull() {
-            sink.clear();
-            nullValue = true;
+        private void append(CharSequence str) {
+            sink.put(str);
+            nullValue = false;
         }
 
         private void appendDelimiter() {
             sink.put(delimiter);
         }
 
-        private void append(CharSequence str) {
-            sink.put(str);
-            nullValue = false;
+        private void setNull() {
+            sink.clear();
+            nullValue = true;
         }
     }
 }

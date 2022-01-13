@@ -56,6 +56,11 @@ public class TableReaderRecordCursor implements RecordCursor {
     }
 
     @Override
+    public Record getRecordB() {
+        return recordB;
+    }
+
+    @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         return reader.getSymbolMapReader(columnIndex);
     }
@@ -70,18 +75,13 @@ public class TableReaderRecordCursor implements RecordCursor {
     }
 
     @Override
-    public Record getRecordB() {
-        return recordB;
+    public void recordAt(Record record, long rowId) {
+        ((TableReaderRecord) record).jumpTo(Rows.toPartitionIndex(rowId), Rows.toLocalRowID(rowId));
     }
 
     @Override
     public long size() {
         return reader.size();
-    }
-
-    @Override
-    public void recordAt(Record record, long rowId) {
-        ((TableReaderRecord) record).jumpTo(Rows.toPartitionIndex(rowId), Rows.toLocalRowID(rowId));
     }
 
     @Override
@@ -106,14 +106,6 @@ public class TableReaderRecordCursor implements RecordCursor {
         of0(reader);
     }
 
-    private void of0(TableReader reader) {
-        close();
-        this.reader = reader;
-        this.recordA.of(reader);
-        this.recordB.of(reader);
-        toTop();
-    }
-
     public void of(TableReader reader, int partitionLo, long recordLo, int partitionHi, long recordHi) {
         this.partitionLo = partitionLo;
         this.partitionHi = partitionHi;
@@ -129,6 +121,14 @@ public class TableReaderRecordCursor implements RecordCursor {
         maxRecordIndex = reader.openPartition(partitionIndex) - 1;
         partitionIndex++;
         this.partitionLimit = reader.getPartitionCount();
+    }
+
+    private void of0(TableReader reader) {
+        close();
+        this.reader = reader;
+        this.recordA.of(reader);
+        this.recordB.of(reader);
+        toTop();
     }
 
     private boolean switchPartition() {

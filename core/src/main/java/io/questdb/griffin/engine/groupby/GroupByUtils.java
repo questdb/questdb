@@ -215,7 +215,7 @@ public class GroupByUtils {
                 inferredKeyColumnCount++;
 
             } else {
-                // add group-by function as a record function as well
+                // add group-by function as a record function as well,
                 // so it can produce column values
                 final GroupByFunction groupByFunction = groupByFunctions.getQuick(valueColumnIndex);
                 recordFunctions.add(groupByFunction);
@@ -245,6 +245,12 @@ public class GroupByUtils {
         }
     }
 
+    public static void updateEmpty(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value) {
+        for (int i = 0; i < n; i++) {
+            groupByFunctions.getQuick(i).setEmpty(value);
+        }
+    }
+
     public static void updateExisting(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
         for (int i = 0; i < n; i++) {
             groupByFunctions.getQuick(i).computeNext(value, record);
@@ -254,12 +260,6 @@ public class GroupByUtils {
     public static void updateNew(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
         for (int i = 0; i < n; i++) {
             groupByFunctions.getQuick(i).computeFirst(value, record);
-        }
-    }
-
-    public static void updateEmpty(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value) {
-        for (int i = 0; i < n; i++) {
-            groupByFunctions.getQuick(i).setEmpty(value);
         }
     }
 

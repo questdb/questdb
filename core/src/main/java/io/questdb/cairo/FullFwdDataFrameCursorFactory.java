@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrameCursor;
-import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
 
 public class FullFwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {

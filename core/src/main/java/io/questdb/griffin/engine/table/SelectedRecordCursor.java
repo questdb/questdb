@@ -56,21 +56,6 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return baseCursor.getSymbolTable(columnCrossIndex.getQuick(columnIndex));
-    }
-
-    @Override
-    public long size() {
-        return baseCursor.size();
-    }
-
-    @Override
-    public boolean hasNext() {
-        return baseCursor.hasNext();
-    }
-
-    @Override
     public Record getRecordB() {
         if (recordB != null) {
             return recordB;
@@ -79,8 +64,23 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return baseCursor.getSymbolTable(columnCrossIndex.getQuick(columnIndex));
+    }
+
+    @Override
+    public boolean hasNext() {
+        return baseCursor.hasNext();
+    }
+
+    @Override
     public void recordAt(Record record, long atRowId) {
         baseCursor.recordAt(((SelectedRecord) record).getBaseRecord(), atRowId);
+    }
+
+    @Override
+    public long size() {
+        return baseCursor.size();
     }
 
     @Override

@@ -73,15 +73,15 @@ public class TextLoaderCompletedState {
         return textLoader.getTimestampCol();
     }
 
+    public int getWarnings() {
+        return textLoader.getWarnings();
+    }
+
     public long getWrittenLineCount() {
         return writtenLineCount;
     }
 
     public boolean isForceHeaders() {
         return textLoader.isForceHeaders();
-    }
-
-    public int getWarnings() {
-        return textLoader.getWarnings();
     }
 }

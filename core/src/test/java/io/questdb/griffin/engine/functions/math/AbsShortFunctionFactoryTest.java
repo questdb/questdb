@@ -32,16 +32,17 @@ import org.junit.Test;
 public class AbsShortFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
-    public void testPositive() throws SqlException {
-        call(1).andAssert(1, 0.0000000001);
-    }
-
-    @Test
     public void testNegative() throws SqlException {
         call(-1).andAssert(1, 0.0000000001);
     }
 
+    @Test
+    public void testPositive() throws SqlException {
+        call(1).andAssert(1, 0.0000000001);
+    }
+
     @Override
-    protected FunctionFactory getFunctionFactory() { return new AbsShortFunctionFactory();
+    protected FunctionFactory getFunctionFactory() {
+        return new AbsShortFunctionFactory();
     }
 }

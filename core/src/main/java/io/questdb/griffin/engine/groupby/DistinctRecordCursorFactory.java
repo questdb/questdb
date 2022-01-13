@@ -31,11 +31,11 @@ import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
@@ -122,6 +122,11 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
+        public Record getRecordB() {
+            return baseCursor.getRecordB();
+        }
+
+        @Override
         public SymbolTable getSymbolTable(int columnIndex) {
             return baseCursor.getSymbolTable(columnIndex);
         }
@@ -140,13 +145,13 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
-        public Record getRecordB() {
-            return baseCursor.getRecordB();
+        public void recordAt(Record record, long atRowId) {
+            baseCursor.recordAt(record, atRowId);
         }
 
         @Override
-        public void recordAt(Record record, long atRowId) {
-            baseCursor.recordAt(record, atRowId);
+        public long size() {
+            return -1;
         }
 
         @Override
@@ -161,11 +166,6 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
             this.recordSink = recordSink;
             this.record = baseCursor.getRecord();
             this.circuitBreaker = circuitBreaker;
-        }
-
-        @Override
-        public long size() {
-            return -1;
         }
     }
 }

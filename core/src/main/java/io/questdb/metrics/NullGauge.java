@@ -33,11 +33,11 @@ class NullGauge implements Gauge {
     }
 
     @Override
-    public void inc() {
+    public void dec() {
     }
 
     @Override
-    public void dec() {
+    public void inc() {
     }
 
     @Override

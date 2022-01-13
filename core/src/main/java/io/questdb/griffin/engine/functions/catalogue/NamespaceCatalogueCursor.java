@@ -53,13 +53,13 @@ class NamespaceCatalogueCursor implements NoRandomAccessRecordCursor {
     }
 
     @Override
-    public void toTop() {
-        row = -1;
+    public long size() {
+        return rowCount;
     }
 
     @Override
-    public long size() {
-        return rowCount;
+    public void toTop() {
+        row = -1;
     }
 
     private class NamespaceCatalogueRecord implements Record {

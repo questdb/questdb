@@ -55,6 +55,15 @@ public class O3FailureTest extends AbstractO3Test {
         private boolean failNextAlloc = false;
 
         @Override
+        public boolean allocate(long fd, long size) {
+            if (failNextAlloc) {
+                failNextAlloc = false;
+                return false;
+            }
+            return super.allocate(fd, size);
+        }
+
+        @Override
         public long length(long fd) {
             final long remaining = counter.decrementAndGet();
             if (remaining == 0) {
@@ -63,21 +72,23 @@ public class O3FailureTest extends AbstractO3Test {
             }
             return super.length(fd);
         }
-
-        @Override
-        public boolean allocate(long fd, long size) {
-            if (failNextAlloc) {
-                failNextAlloc = false;
-                return false;
-            }
-            return super.allocate(fd, size);
-        }
     };
 
     private static final FilesFacade ffIndexAllocateFailure = new FilesFacadeImpl() {
 
         long theFd = 0;
         boolean failNextAlloc = false;
+
+        @Override
+        public boolean allocate(long fd, long size) {
+            if (fd == theFd && failNextAlloc) {
+                // don't forget to set this to 0 so that next attempt doesn't fail
+                theFd = 0;
+                failNextAlloc = false;
+                return false;
+            }
+            return super.allocate(fd, size);
+        }
 
         @Override
         public long length(long fd) {
@@ -95,17 +106,6 @@ public class O3FailureTest extends AbstractO3Test {
                 theFd = fd;
             }
             return fd;
-        }
-
-        @Override
-        public boolean allocate(long fd, long size) {
-            if (fd == theFd && failNextAlloc) {
-                // don't forget to set this to 0 so that next attempt doesn't fail
-                theFd = 0;
-                failNextAlloc = false;
-                return false;
-            }
-            return super.allocate(fd, size);
         }
     };
 
@@ -251,6 +251,15 @@ public class O3FailureTest extends AbstractO3Test {
         boolean failNextAlloc = false;
 
         @Override
+        public boolean allocate(long fd, long size) {
+            if (fd == theFd && failNextAlloc) {
+                failNextAlloc = false;
+                return false;
+            }
+            return super.allocate(fd, size);
+        }
+
+        @Override
         public boolean close(long fd) {
             if (fd == theFd) {
                 theFd = -1;
@@ -274,15 +283,6 @@ public class O3FailureTest extends AbstractO3Test {
                 theFd = fd;
             }
             return fd;
-        }
-
-        @Override
-        public boolean allocate(long fd, long size) {
-            if (fd == theFd && failNextAlloc) {
-                failNextAlloc = false;
-                return false;
-            }
-            return super.allocate(fd, size);
         }
     };
     private static final Log LOG = LogFactory.getLog(O3FailureTest.class);
@@ -665,6 +665,23 @@ public class O3FailureTest extends AbstractO3Test {
                     boolean armageddon = false;
 
                     @Override
+                    public boolean allocate(long fd, long size) {
+                        if (restoreDiskSpace.get()) {
+                            return super.allocate(fd, size);
+                        }
+
+                        if (armageddon) {
+                            return false;
+                        }
+                        if (fd == theFd) {
+                            theFd = 0;
+                            armageddon = true;
+                            return false;
+                        }
+                        return super.allocate(fd, size);
+                    }
+
+                    @Override
                     public boolean close(long fd) {
                         if (fd == theFd) {
                             theFd = 0;
@@ -681,23 +698,6 @@ public class O3FailureTest extends AbstractO3Test {
                             }
                         }
                         return fd;
-                    }
-
-                    @Override
-                    public boolean allocate(long fd, long size) {
-                        if (restoreDiskSpace.get()) {
-                            return super.allocate(fd, size);
-                        }
-
-                        if (armageddon) {
-                            return false;
-                        }
-                        if (fd == theFd) {
-                            theFd = 0;
-                            armageddon = true;
-                            return false;
-                        }
-                        return super.allocate(fd, size);
                     }
                 });
     }
@@ -1001,6 +1001,18 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
+    public void testPartitionedOpenTimestampFail() throws Exception {
+        counter.set(3);
+        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffOpenFailure);
+    }
+
+    @Test
+    public void testPartitionedOpenTimestampFailContended() throws Exception {
+        counter.set(3);
+        executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffOpenFailure);
+    }
+
+    @Test
     public void testPartitionedWithAllocationCallLimit() throws Exception {
         counter.set(0);
         executeWithPool(0, O3FailureTest::testPartitionedWithAllocationCallLimit0, new FilesFacadeImpl() {
@@ -1015,18 +1027,6 @@ public class O3FailureTest extends AbstractO3Test {
                 return super.allocate(fd, size);
             }
         });
-    }
-
-    @Test
-    public void testPartitionedOpenTimestampFail() throws Exception {
-        counter.set(3);
-        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffOpenFailure);
-    }
-
-    @Test
-    public void testPartitionedOpenTimestampFailContended() throws Exception {
-        counter.set(3);
-        executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffOpenFailure);
     }
 
     @Test
@@ -1606,7 +1606,7 @@ public class O3FailureTest extends AbstractO3Test {
         sink2.clear();
         sink2.put(
                 "count\n" +
-                "502\n"
+                        "502\n"
         );
 
         assertXCount(

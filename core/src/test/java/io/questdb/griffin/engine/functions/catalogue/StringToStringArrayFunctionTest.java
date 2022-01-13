@@ -32,8 +32,26 @@ import org.junit.Test;
 public class StringToStringArrayFunctionTest {
 
     @Test
-    public void testSimple() throws SqlException {
-        assertArray("{ab, 3,true,1.26,test 1}", array("ab", "3", "true", "1.26", "test 1"));
+    public void testEmptyArray() throws SqlException {
+        assertArray("{}", array());
+    }
+
+    @Test
+    public void testEmptyString() {
+        assertFailure("", "array must start with '{'");
+    }
+
+    @Test
+    public void testEscapeWithBackslash() throws SqlException {
+        assertArray("{\\a\\b}", array("ab"));
+        assertArray("{\"\\\\\"}", array("\\"));
+        assertArray("{\\\\}", array("\\"));
+        assertArray("{\\}}", array("}"));
+        assertArray("{\\{}", array("{"));
+        assertArray("{\\,}", array(","));
+        assertArray("{\\\"}", array("\""));
+        assertArray("{\\ }", array(" "));
+        assertFailure("{\\}", "array must end with '}'");
     }
 
     @Test
@@ -51,31 +69,12 @@ public class StringToStringArrayFunctionTest {
     }
 
     @Test
-    public void testEscapeWithBackslash() throws SqlException {
-        assertArray("{\\a\\b}", array("ab"));
-        assertArray("{\"\\\\\"}", array("\\"));
-        assertArray("{\\\\}", array("\\"));
-        assertArray("{\\}}", array("}"));
-        assertArray("{\\{}", array("{"));
-        assertArray("{\\,}", array(","));
-        assertArray("{\\\"}", array("\""));
-        assertArray("{\\ }", array(" "));
-        assertFailure("{\\}", "array must end with '}'");
-    }
-
-    @Test
-    public void testSkippingWhitespaces() throws SqlException {
-        assertArray(" { test 1 } ", array("test 1"));
-    }
-
-    @Test
-    public void testEmptyArray() throws SqlException {
-        assertArray("{}", array());
-    }
-
-    @Test
-    public void testEmptyString() {
-        assertFailure("", "array must start with '{'");
+    public void testGeoHashInterface() throws SqlException {
+        StringToStringArrayFunction f = new StringToStringArrayFunction(5, "{abcd}");
+        Assert.assertThrows(UnsupportedOperationException.class, () -> f.getGeoInt(null));
+        Assert.assertThrows(UnsupportedOperationException.class, () -> f.getGeoLong(null));
+        Assert.assertThrows(UnsupportedOperationException.class, () -> f.getGeoShort(null));
+        Assert.assertThrows(UnsupportedOperationException.class, () -> f.getGeoByte(null));
     }
 
     @Test
@@ -100,10 +99,18 @@ public class StringToStringArrayFunctionTest {
     }
 
     @Test
-    public void testUnexpectedComma() {
-        assertFailure("{ab,}", "unexpected '}' character");
-        assertFailure("{,}", "unexpected ',' character");
-        assertFailure("{,ab}", "unexpected ',' character");
+    public void testNull() {
+        assertFailure(null, "NULL is not allowed");
+    }
+
+    @Test
+    public void testSimple() throws SqlException {
+        assertArray("{ab, 3,true,1.26,test 1}", array("ab", "3", "true", "1.26", "test 1"));
+    }
+
+    @Test
+    public void testSkippingWhitespaces() throws SqlException {
+        assertArray(" { test 1 } ", array("test 1"));
     }
 
     @Test
@@ -118,17 +125,10 @@ public class StringToStringArrayFunctionTest {
     }
 
     @Test
-    public void testNull() {
-        assertFailure(null, "NULL is not allowed");
-    }
-
-    @Test
-    public void testGeoHashInterface() throws SqlException {
-        StringToStringArrayFunction f = new StringToStringArrayFunction(5, "{abcd}");
-        Assert.assertThrows(UnsupportedOperationException.class, () -> f.getGeoInt(null));
-        Assert.assertThrows(UnsupportedOperationException.class, () -> f.getGeoLong(null));
-        Assert.assertThrows(UnsupportedOperationException.class, () -> f.getGeoShort(null));
-        Assert.assertThrows(UnsupportedOperationException.class, () -> f.getGeoByte(null));
+    public void testUnexpectedComma() {
+        assertFailure("{ab,}", "unexpected '}' character");
+        assertFailure("{,}", "unexpected ',' character");
+        assertFailure("{,ab}", "unexpected ',' character");
     }
 
     private static String[] array(String... items) {

@@ -78,9 +78,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void overloadToUndefinedDoesNotExist() {
-        boolean assertsEnabled = false;
-        assert assertsEnabled = true;
-        if (assertsEnabled) {
+        if (Misc.isAssertionsEnabled()) {
             try {
                 ColumnType.overloadDistance(ColumnType.INT, ColumnType.UNDEFINED);
                 Assert.fail();
@@ -595,13 +593,13 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         FunctionParser functionParser = createFunctionParser();
         Record record = new Record() {
             @Override
-            public long getLong(int col) {
-                return 847187636514L;
+            public int getGeoInt(int col) {
+                return (int) getLong(col);
             }
 
             @Override
-            public int getGeoInt(int col) {
-                return (int) getLong(col);
+            public long getLong(int col) {
+                return 847187636514L;
             }
         };
 
@@ -1137,7 +1135,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         });
 
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", 1,ColumnType.INT));
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.INT));
         try {
             parseFunction("x(a)", metadata, createFunctionParser());
             Assert.fail();

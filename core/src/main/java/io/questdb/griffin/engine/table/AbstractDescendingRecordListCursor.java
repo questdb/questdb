@@ -43,13 +43,6 @@ abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecor
     }
 
     @Override
-    public long size() {
-        return rows.size();
-    }
-
-    abstract protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException;
-
-    @Override
     public boolean hasNext() {
         if (index > -1) {
             long row = rows.get(index--);
@@ -60,9 +53,16 @@ abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecor
     }
 
     @Override
+    public long size() {
+        return rows.size();
+    }
+
+    @Override
     public void toTop() {
         index = rows.size() - 1;
     }
+
+    abstract protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException;
 
     @Override
     void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {

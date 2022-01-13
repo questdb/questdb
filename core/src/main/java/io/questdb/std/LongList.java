@@ -250,7 +250,7 @@ public class LongList implements Mutable, LongVec {
     /**
      * Returns element at the specified position. This method does not do
      * bounds check and may cause memory corruption if index is out of bounds.
-     * Instead the responsibility to check bounds is placed on application code,
+     * Instead, the responsibility to check bounds is placed on application code,
      * which is often the case anyway, for example in indexed for() loop.
      *
      * @param index of the element
@@ -260,14 +260,14 @@ public class LongList implements Mutable, LongVec {
         return data[index];
     }
 
-    public void setQuick(int index, long value) {
-        assert index < pos;
-        data[index] = value;
-    }
-
     @Override
     public LongVec newInstance() {
         return new LongList(size());
+    }
+
+    public void setQuick(int index, long value) {
+        assert index < pos;
+        data[index] = value;
     }
 
     /**

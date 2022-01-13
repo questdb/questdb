@@ -28,7 +28,7 @@ public interface LongVec {
 
     long getQuick(int index);
 
-    void setQuick(int index, long value);
-
     LongVec newInstance();
+
+    void setQuick(int index, long value);
 }

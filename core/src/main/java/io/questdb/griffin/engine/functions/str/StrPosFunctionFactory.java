@@ -53,7 +53,7 @@ public class StrPosFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         final Function substrFunc = args.getQuick(1);
         if (substrFunc.isConstant()) {
             CharSequence substr = substrFunc.getStr(null);
@@ -135,17 +135,17 @@ public class StrPosFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function getArg() {
+            return strFunc;
+        }
+
+        @Override
         public int getInt(Record rec) {
             final CharSequence str = this.strFunc.getStr(rec);
             if (str == null) {
                 return Numbers.INT_NaN;
             }
             return strpos(str, substr);
-        }
-
-        @Override
-        public Function getArg() {
-            return strFunc;
         }
     }
 }

@@ -35,12 +35,12 @@ public final class AnyRecordMetadata extends BaseRecordMetadata {
     }
 
     @Override
-    public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
-        return 0;
+    public int getColumnType(int columnIndex) {
+        return ColumnType.LONG;
     }
 
     @Override
-    public int getColumnType(int columnIndex) {
-        return ColumnType.LONG;
+    public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
+        return 0;
     }
 }

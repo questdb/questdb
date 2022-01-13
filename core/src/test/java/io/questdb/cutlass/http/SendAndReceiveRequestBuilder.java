@@ -24,18 +24,17 @@
 
 package io.questdb.cutlass.http;
 
-import java.util.concurrent.BrokenBarrierException;
-import java.util.concurrent.locks.LockSupport;
-
-import io.questdb.std.*;
-import org.junit.Assert;
-
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.*;
 import io.questdb.std.str.ByteSequence;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.locks.LockSupport;
 
 public class SendAndReceiveRequestBuilder {
     public final static String RequestHeaders = "Host: localhost:9000\r\n" +
@@ -89,7 +88,7 @@ public class SendAndReceiveRequestBuilder {
     public void execute(
             String request,
             CharSequence response
-    ) throws InterruptedException {
+    ) {
         final long fd = nf.socketTcp(true);
         nf.configureNoLinger(fd);
         try {
@@ -221,13 +220,13 @@ public class SendAndReceiveRequestBuilder {
             try {
                 RequestExecutor executor = new RequestExecutor() {
                     @Override
-                    public void executeWithStandardHeaders(String request, String response) {
-                        executeWithSocket(request + RequestHeaders, ResponseHeaders + response, fd);
+                    public void execute(String request, String response) {
+                        executeWithSocket(request, response, fd);
                     }
 
                     @Override
-                    public void execute(String request, String response) {
-                        executeWithSocket(request, response, fd);
+                    public void executeWithStandardHeaders(String request, String response) {
+                        executeWithSocket(request + RequestHeaders, ResponseHeaders + response, fd);
                     }
                 };
 
@@ -365,11 +364,11 @@ public class SendAndReceiveRequestBuilder {
         void execute(
                 String request,
                 String response
-        ) throws InterruptedException;
+        );
 
         void executeWithStandardHeaders(
                 String request,
                 String response
-        ) throws InterruptedException;
+        );
     }
 }

@@ -30,6 +30,79 @@ import org.junit.Test;
 public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
+    public void testBooleanDuplicateFalse() throws Exception {
+        assertFailure("select \n" +
+                        "    x,\n" +
+                        "    a,\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    case x\n" +
+                        "        when false then 'HELLO'\n" +
+                        "        when false then 'HELLO2'\n" +
+                        "    end k\n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_boolean() x," +
+                        " rnd_str() a," +
+                        " rnd_str() b," +
+                        " rnd_str() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                92,
+                "duplicate branch"
+        );
+    }
+
+    @Test
+    public void testBooleanDuplicateTrue() throws Exception {
+        assertFailure("select \n" +
+                        "    x,\n" +
+                        "    a,\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    case x\n" +
+                        "        when true then 'HELLO'\n" +
+                        "        when true then 'HELLO2'\n" +
+                        "    end k\n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_boolean() x," +
+                        " rnd_str() a," +
+                        " rnd_str() b," +
+                        " rnd_str() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                91,
+                "duplicate branch"
+        );
+    }
+
+    @Test
+    public void testBooleanDuplicateWayTooManyBranches() throws Exception {
+        assertFailure("select \n" +
+                        "    x,\n" +
+                        "    a,\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    case x\n" +
+                        "        when false then 'HELLO'\n" +
+                        "        when true then 'HELLO2'\n" +
+                        "        when false then 'HELLO3'\n" +
+                        "    end k\n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_boolean() x," +
+                        " rnd_str() a," +
+                        " rnd_str() b," +
+                        " rnd_str() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                124,
+                "too many branches"
+        );
+    }
+
+    @Test
     public void testBooleanToStrOrElse() throws Exception {
         assertQuery(
                 "x\ta\tb\tc\tk\n" +
@@ -126,109 +199,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLongDuplicateBranch() throws Exception {
-        assertFailure("select \n" +
-                        "    x,\n" +
-                        "    a,\n" +
-                        "    b,\n" +
-                        "    c,\n" +
-                        "    case x\n" +
-                        "        when -920 then a\n" +
-                        "        when 701 then c\n" +
-                        "        when -714 then 350\n" +
-                        "        when 701 then c\n" +
-                        "    end k\n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_long() % 1000 x," +
-                        " rnd_int() a," +
-                        " rnd_int() b," +
-                        " rnd_int() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                136,
-                "duplicate branch"
-        );
-    }
-
-    @Test
-    public void testLongStringKeyError() throws Exception {
-        assertFailure("select \n" +
-                        "    x,\n" +
-                        "    a,\n" +
-                        "    b,\n" +
-                        "    c,\n" +
-                        "    case x\n" +
-                        "        when -920 then a\n" +
-                        "        when 701 then c\n" +
-                        "        when -714 then 350\n" +
-                        "        when '701' then c\n" +
-                        "    end k\n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_long() % 1000 x," +
-                        " rnd_int() a," +
-                        " rnd_int() b," +
-                        " rnd_int() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                136,
-                "type mismatch [expected=LONG, actual=STRING]"
-        );
-    }
-
-    @Test
-    public void testLongVariableKeyError() throws Exception {
-        assertFailure("select \n" +
-                        "    x,\n" +
-                        "    a,\n" +
-                        "    b,\n" +
-                        "    c,\n" +
-                        "    case x\n" +
-                        "        when -920 then a\n" +
-                        "        when 701 then c\n" +
-                        "        when c then 350\n" +
-                        "    end k\n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_long() % 1000 x," +
-                        " rnd_int() a," +
-                        " rnd_int() b," +
-                        " rnd_int() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                109,
-                "constant expected"
-        );
-    }
-
-    @Test
-    public void testIntDuplicateBranch() throws Exception {
-        assertFailure("select \n" +
-                        "    x,\n" +
-                        "    a,\n" +
-                        "    b,\n" +
-                        "    c,\n" +
-                        "    case x\n" +
-                        "        when -920 then a\n" +
-                        "        when 701 then c\n" +
-                        "        when -714 then 350\n" +
-                        "        when 701 then c\n" +
-                        "    end k\n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_int() a," +
-                        " rnd_int() b," +
-                        " rnd_int() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                136,
-                "duplicate branch"
-        );
-    }
-
-    @Test
     public void testBooleanToStrOrMoreBranches() throws Exception {
         assertQuery(
                 "x\ta\tb\tc\tk\n" +
@@ -308,6 +278,54 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         "    case x\n" +
                         "        when false then c\n" +
                         "        when true then 'HELLO'\n" +
+                        "    end k\n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_boolean() x," +
+                        " rnd_str() a," +
+                        " rnd_str() b," +
+                        " rnd_str() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testBooleanTooManyBranchesIgnoreElse() throws Exception {
+        assertQuery("x\ta\tb\tc\tk\n" +
+                        "false\tWCPS\tYRXPE\tRXG\tHELLO2\n" +
+                        "false\tUXIBBT\tGWFFYUD\tYQEHBH\tHELLO2\n" +
+                        "false\tLPD\tSBEOUOJS\tUED\tHELLO2\n" +
+                        "true\tULOFJGE\tRSZSRYRF\tTMHGOOZZVD\tHELLO\n" +
+                        "true\tYICCXZOUIC\tKGH\tVSDOTS\tHELLO\n" +
+                        "true\tYCTGQO\tXWCK\tSUWDSWU\tHELLO\n" +
+                        "false\tOLNVTI\tZXIOVI\tSMSSUQ\tHELLO2\n" +
+                        "false\tTKVV\tOJIPHZ\tIHVL\tHELLO2\n" +
+                        "true\tLJU\tGLHMLLEOYP\tIPZIMNZZR\tHELLO\n" +
+                        "true\tBEZGHWVD\tLOPJOX\tRGIIHYH\tHELLO\n" +
+                        "true\tMYSSMPGLUO\tZHZSQLDGL\tIFOUSZM\tHELLO\n" +
+                        "true\tEBNDCQ\tHNOMVELLKK\tWNWIFFLR\tHELLO\n" +
+                        "true\tMNXKUIZ\tIGYV\tFKWZ\tHELLO\n" +
+                        "true\tGXHFVWSWSR\tONFCLTJCKF\tNTO\tHELLO\n" +
+                        "false\tUKL\tXSLUQD\tPHNIMYF\tHELLO2\n" +
+                        "true\tNPH\tPBNH\tWWC\tHELLO\n" +
+                        "false\tTNLE\tUHH\tGGLN\tHELLO2\n" +
+                        "false\tLCBDMIGQ\tKHT\tZSLQVFGPP\tHELLO2\n" +
+                        "true\tXBHYSBQYMI\tSVTNPIW\tFKPEV\tHELLO\n" +
+                        "false\tFNWG\tDGGI\tDVRVNGS\tHELLO2\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    a,\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    case x\n" +
+                        "        when true then 'HELLO'\n" +
+                        "        when false then 'HELLO2'\n" +
+                        "        else c\n" +
                         "    end k\n" +
                         "from tanc",
                 "create table tanc as (" +
@@ -573,6 +591,32 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIntDuplicateBranch() throws Exception {
+        assertFailure("select \n" +
+                        "    x,\n" +
+                        "    a,\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    case x\n" +
+                        "        when -920 then a\n" +
+                        "        when 701 then c\n" +
+                        "        when -714 then 350\n" +
+                        "        when 701 then c\n" +
+                        "    end k\n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                136,
+                "duplicate branch"
+        );
+    }
+
+    @Test
     public void testIntOrElse() throws Exception {
         assertQuery(
                 "x\ta\tb\tc\tk\n" +
@@ -801,6 +845,58 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLong256OrElse() throws Exception {
+        assertFailure("select \n" +
+                        "    x,\n" +
+                        "    a,\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    case x\n" +
+                        "        when cast('0x00' as long256) then a\n" +
+                        "        when cast('0x00' as long256) then c\n" +
+                        "        when cast('0x00' as long256) then 350\n" +
+                        "        else b\n" +
+                        "    end k\n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_long256() x," +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                45,
+                "type LONG256 is not supported in 'switch' type of 'case' statement"
+        );
+    }
+
+    @Test
+    public void testLongDuplicateBranch() throws Exception {
+        assertFailure("select \n" +
+                        "    x,\n" +
+                        "    a,\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    case x\n" +
+                        "        when -920 then a\n" +
+                        "        when 701 then c\n" +
+                        "        when -714 then 350\n" +
+                        "        when 701 then c\n" +
+                        "    end k\n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_long() % 1000 x," +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                136,
+                "duplicate branch"
+        );
+    }
+
+    @Test
     public void testLongOrElse() throws Exception {
         assertQuery(
                 "x\ta\tb\tc\tk\n" +
@@ -851,28 +947,53 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLong256OrElse() throws Exception {
+    public void testLongStringKeyError() throws Exception {
         assertFailure("select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
                         "    c,\n" +
                         "    case x\n" +
-                        "        when cast('0x00' as long256) then a\n" +
-                        "        when cast('0x00' as long256) then c\n" +
-                        "        when cast('0x00' as long256) then 350\n" +
-                        "        else b\n" +
+                        "        when -920 then a\n" +
+                        "        when 701 then c\n" +
+                        "        when -714 then 350\n" +
+                        "        when '701' then c\n" +
                         "    end k\n" +
                         "from tanc",
                 "create table tanc as (" +
-                        "select rnd_long256() x," +
+                        "select rnd_long() % 1000 x," +
                         " rnd_int() a," +
                         " rnd_int() b," +
                         " rnd_int() c" +
                         " from long_sequence(20)" +
                         ")",
-                45,
-                "type LONG256 is not supported in 'switch' type of 'case' statement"
+                136,
+                "type mismatch [expected=LONG, actual=STRING]"
+        );
+    }
+
+    @Test
+    public void testLongVariableKeyError() throws Exception {
+        assertFailure("select \n" +
+                        "    x,\n" +
+                        "    a,\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    case x\n" +
+                        "        when -920 then a\n" +
+                        "        when 701 then c\n" +
+                        "        when c then 350\n" +
+                        "    end k\n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_long() % 1000 x," +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                109,
+                "constant expected"
         );
     }
 
@@ -1022,32 +1143,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testStrToStrOrElseDuplicateBranch() throws Exception {
-        assertFailure("select \n" +
-                        "    x,\n" +
-                        "    a,\n" +
-                        "    b,\n" +
-                        "    c,\n" +
-                        "    case x\n" +
-                        "        when 'NTO' then a\n" +
-                        "        when 'PRGSXBHYS' then c\n" +
-                        "        when 'NTO' then 'WORKS!'\n" +
-                        "        else b\n" +
-                        "    end k\n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_str() x," +
-                        " rnd_str() a," +
-                        " rnd_str() b," +
-                        " rnd_str() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                118,
-                "duplicate branch"
-        );
-    }
-
-    @Test
     public void testStrOrElse() throws Exception {
         assertQuery(
                 "x\ta\tb\tc\tk\n" +
@@ -1098,127 +1193,6 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testBooleanTooManyBranchesIgnoreElse() throws Exception {
-        assertQuery("x\ta\tb\tc\tk\n" +
-                        "false\tWCPS\tYRXPE\tRXG\tHELLO2\n" +
-                        "false\tUXIBBT\tGWFFYUD\tYQEHBH\tHELLO2\n" +
-                        "false\tLPD\tSBEOUOJS\tUED\tHELLO2\n" +
-                        "true\tULOFJGE\tRSZSRYRF\tTMHGOOZZVD\tHELLO\n" +
-                        "true\tYICCXZOUIC\tKGH\tVSDOTS\tHELLO\n" +
-                        "true\tYCTGQO\tXWCK\tSUWDSWU\tHELLO\n" +
-                        "false\tOLNVTI\tZXIOVI\tSMSSUQ\tHELLO2\n" +
-                        "false\tTKVV\tOJIPHZ\tIHVL\tHELLO2\n" +
-                        "true\tLJU\tGLHMLLEOYP\tIPZIMNZZR\tHELLO\n" +
-                        "true\tBEZGHWVD\tLOPJOX\tRGIIHYH\tHELLO\n" +
-                        "true\tMYSSMPGLUO\tZHZSQLDGL\tIFOUSZM\tHELLO\n" +
-                        "true\tEBNDCQ\tHNOMVELLKK\tWNWIFFLR\tHELLO\n" +
-                        "true\tMNXKUIZ\tIGYV\tFKWZ\tHELLO\n" +
-                        "true\tGXHFVWSWSR\tONFCLTJCKF\tNTO\tHELLO\n" +
-                        "false\tUKL\tXSLUQD\tPHNIMYF\tHELLO2\n" +
-                        "true\tNPH\tPBNH\tWWC\tHELLO\n" +
-                        "false\tTNLE\tUHH\tGGLN\tHELLO2\n" +
-                        "false\tLCBDMIGQ\tKHT\tZSLQVFGPP\tHELLO2\n" +
-                        "true\tXBHYSBQYMI\tSVTNPIW\tFKPEV\tHELLO\n" +
-                        "false\tFNWG\tDGGI\tDVRVNGS\tHELLO2\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    a,\n" +
-                        "    b,\n" +
-                        "    c,\n" +
-                        "    case x\n" +
-                        "        when true then 'HELLO'\n" +
-                        "        when false then 'HELLO2'\n" +
-                        "        else c\n" +
-                        "    end k\n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_boolean() x," +
-                        " rnd_str() a," +
-                        " rnd_str() b," +
-                        " rnd_str() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true,
-                false,
-                true
-        );
-    }
-
-    @Test
-    public void testBooleanDuplicateTrue() throws Exception {
-        assertFailure("select \n" +
-                        "    x,\n" +
-                        "    a,\n" +
-                        "    b,\n" +
-                        "    c,\n" +
-                        "    case x\n" +
-                        "        when true then 'HELLO'\n" +
-                        "        when true then 'HELLO2'\n" +
-                        "    end k\n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_boolean() x," +
-                        " rnd_str() a," +
-                        " rnd_str() b," +
-                        " rnd_str() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                91,
-                "duplicate branch"
-        );
-    }
-
-    @Test
-    public void testBooleanDuplicateFalse() throws Exception {
-        assertFailure("select \n" +
-                        "    x,\n" +
-                        "    a,\n" +
-                        "    b,\n" +
-                        "    c,\n" +
-                        "    case x\n" +
-                        "        when false then 'HELLO'\n" +
-                        "        when false then 'HELLO2'\n" +
-                        "    end k\n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_boolean() x," +
-                        " rnd_str() a," +
-                        " rnd_str() b," +
-                        " rnd_str() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                92,
-                "duplicate branch"
-        );
-    }
-
-    @Test
-    public void testBooleanDuplicateWayTooManyBranches() throws Exception {
-        assertFailure("select \n" +
-                        "    x,\n" +
-                        "    a,\n" +
-                        "    b,\n" +
-                        "    c,\n" +
-                        "    case x\n" +
-                        "        when false then 'HELLO'\n" +
-                        "        when true then 'HELLO2'\n" +
-                        "        when false then 'HELLO3'\n" +
-                        "    end k\n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_boolean() x," +
-                        " rnd_str() a," +
-                        " rnd_str() b," +
-                        " rnd_str() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                124,
-                "too many branches"
-        );
-    }
-
-    @Test
     public void testStrToStrOrElse() throws Exception {
         assertQuery(
                 "x\ta\tb\tc\tk\n" +
@@ -1265,6 +1239,32 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                 true,
                 false,
                 true
+        );
+    }
+
+    @Test
+    public void testStrToStrOrElseDuplicateBranch() throws Exception {
+        assertFailure("select \n" +
+                        "    x,\n" +
+                        "    a,\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    case x\n" +
+                        "        when 'NTO' then a\n" +
+                        "        when 'PRGSXBHYS' then c\n" +
+                        "        when 'NTO' then 'WORKS!'\n" +
+                        "        else b\n" +
+                        "    end k\n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_str() x," +
+                        " rnd_str() a," +
+                        " rnd_str() b," +
+                        " rnd_str() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                118,
+                "duplicate branch"
         );
     }
 

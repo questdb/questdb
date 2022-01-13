@@ -40,6 +40,10 @@ public class O3CallbackTask extends AbstractLockable {
         return columnIndex;
     }
 
+    public int getColumnType() {
+        return columnType;
+    }
+
     public CountDownLatchSPI getCountDownLatchSPI() {
         return countDownLatchSPI;
     }
@@ -48,16 +52,12 @@ public class O3CallbackTask extends AbstractLockable {
         return mergedTimestampsAddr;
     }
 
-    public int getColumnType() {
-        return columnType;
+    public long getValueCount() {
+        return valueCount;
     }
 
     public TableWriter.O3ColumnUpdateMethod getWriterCallbackMethod() {
         return writerCallbackMethod;
-    }
-
-    public long getValueCount() {
-        return valueCount;
     }
 
     public void of(

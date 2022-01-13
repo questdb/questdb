@@ -40,15 +40,6 @@ public final class Constants {
         return getGeoHashConstantWithType(hash, type);
     }
 
-    public static ConstantFunction getNullConstant(int columnType) {
-        return nullConstants.getQuick(ColumnType.tagOf(columnType));
-    }
-
-    public static TypeConstant getTypeConstant(int columnType) {
-        // GEOHASH takes a different path, no need to extract tag
-        return typeConstants.getQuick(columnType);
-    }
-
     @NotNull
     public static ConstantFunction getGeoHashConstantWithType(long hash, int type) {
         switch (ColumnType.tagOf(type)) {
@@ -61,6 +52,15 @@ public final class Constants {
             default:
                 return new GeoLongConstant(hash, type);
         }
+    }
+
+    public static ConstantFunction getNullConstant(int columnType) {
+        return nullConstants.getQuick(ColumnType.tagOf(columnType));
+    }
+
+    public static TypeConstant getTypeConstant(int columnType) {
+        // GEOHASH takes a different path, no need to extract tag
+        return typeConstants.getQuick(columnType);
     }
 
     static {

@@ -88,12 +88,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<ExpressionNode> sampleByFill = new ObjList<>();
-    private ExpressionNode sampleByTimezoneName = null;
-    private ExpressionNode sampleByOffset = null;
-    private int latestByType = LATEST_BY_NONE;
     private final ObjList<ExpressionNode> latestBy = new ObjList<>();
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntList orderByDirectionAdvice = new IntList();
+    private ExpressionNode sampleByTimezoneName = null;
+    private ExpressionNode sampleByOffset = null;
+    private int latestByType = LATEST_BY_NONE;
     private ExpressionNode whereClause;
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode constWhereClause;
@@ -318,22 +318,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return alias;
     }
 
-    public ExpressionNode getSampleByUnit() {
-        return sampleByUnit;
-    }
-
-    public int getTableId() {
-        return tableId;
-    }
-
-    public void moveAliasFrom(QueryModel that) {
-        final ExpressionNode alias = that.alias;
-        if (alias != null && !Chars.startsWith(alias.token, SUB_QUERY_ALIAS_PREFIX)) {
-            setAlias(alias);
-            addAliasIndex(alias, 0);
-        }
-    }
-
     public void setAlias(ExpressionNode alias) {
         this.alias = alias;
     }
@@ -434,16 +418,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.joinType = joinType;
     }
 
+    public ObjList<ExpressionNode> getLatestBy() {
+        return latestBy;
+    }
+
     public int getLatestByType() {
         return latestByType;
     }
 
     public void setLatestByType(int latestByType) {
         this.latestByType = latestByType;
-    }
-
-    public ObjList<ExpressionNode> getLatestBy() {
-        return latestBy;
     }
 
     public ExpressionNode getLimitHi() {
@@ -544,17 +528,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.sampleBy = sampleBy;
     }
 
-    public void setSampleBy(ExpressionNode sampleBy, ExpressionNode sampleByUnit) {
-        this.sampleBy = sampleBy;
-        this.sampleByUnit = sampleByUnit;
-    }
-
-    public ExpressionNode getSampleByTimezoneName() {
-        return sampleByTimezoneName;
-    }
-
-    public void setSampleByTimezoneName(ExpressionNode sampleByTimezoneName) {
-        this.sampleByTimezoneName = sampleByTimezoneName;
+    public ObjList<ExpressionNode> getSampleByFill() {
+        return sampleByFill;
     }
 
     public ExpressionNode getSampleByOffset() {
@@ -565,8 +540,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.sampleByOffset = sampleByOffset;
     }
 
-    public ObjList<ExpressionNode> getSampleByFill() {
-        return sampleByFill;
+    public ExpressionNode getSampleByTimezoneName() {
+        return sampleByTimezoneName;
+    }
+
+    public void setSampleByTimezoneName(ExpressionNode sampleByTimezoneName) {
+        this.sampleByTimezoneName = sampleByTimezoneName;
+    }
+
+    public ExpressionNode getSampleByUnit() {
+        return sampleByUnit;
     }
 
     public int getSelectModelType() {
@@ -585,12 +568,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.setOperationType = setOperationType;
     }
 
-    public ExpressionNode getTableName() {
-        return tableName;
+    public int getTableId() {
+        return tableId;
     }
 
     public void setTableId(int id) {
         this.tableId = id;
+    }
+
+    public ExpressionNode getTableName() {
+        return tableName;
     }
 
     public void setTableName(ExpressionNode tableName) {
@@ -667,6 +654,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isTopDownNameMissing(CharSequence columnName) {
         return topDownNameSet.excludes(columnName);
+    }
+
+    public void moveAliasFrom(QueryModel that) {
+        final ExpressionNode alias = that.alias;
+        if (alias != null && !Chars.startsWith(alias.token, SUB_QUERY_ALIAS_PREFIX)) {
+            setAlias(alias);
+            addAliasIndex(alias, 0);
+        }
     }
 
     public void moveGroupByFrom(QueryModel model) {
@@ -746,6 +741,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public void setLimit(ExpressionNode lo, ExpressionNode hi) {
         this.limitLo = lo;
         this.limitHi = hi;
+    }
+
+    public void setSampleBy(ExpressionNode sampleBy, ExpressionNode sampleByUnit) {
+        this.sampleBy = sampleBy;
+        this.sampleByUnit = sampleByUnit;
     }
 
     @Override
@@ -986,7 +986,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                     sink.put(sampleByTimezoneName);
                 }
 
-                if(sampleByOffset != null) {
+                if (sampleByOffset != null) {
                     sink.put(" with offset ");
                     sink.put(sampleByOffset);
                 }

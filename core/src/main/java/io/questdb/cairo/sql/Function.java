@@ -46,12 +46,12 @@ public interface Function extends Closeable {
         }
     }
 
-    @Override
-    default void close() {
+    default void assignType(int type, BindVariableService bindVariableService) throws SqlException {
+        throw new UnsupportedOperationException();
     }
 
-    default boolean supportsRandomAccess() {
-        return true;
+    @Override
+    default void close() {
     }
 
     int getArrayLength();
@@ -72,6 +72,14 @@ public interface Function extends Closeable {
 
     float getFloat(Record rec);
 
+    byte getGeoByte(Record rec);
+
+    int getGeoInt(Record rec);
+
+    long getGeoLong(Record rec);
+
+    short getGeoShort(Record rec);
+
     int getInt(Record rec);
 
     long getLong(Record rec);
@@ -82,16 +90,16 @@ public interface Function extends Closeable {
 
     Long256 getLong256B(Record rec);
 
-    // when function returns factory it becomes factory
-    // on other words this is not a tear-away instance
-    RecordCursorFactory getRecordCursorFactory();
+    default RecordMetadata getMetadata() {
+        return null;
+    }
 
     // function returns a record of values
     Record getRecord(Record rec);
 
-    default RecordMetadata getMetadata() {
-        return null;
-    }
+    // when function returns factory it becomes factory
+    // on other words this is not a tear-away instance
+    RecordCursorFactory getRecordCursorFactory();
 
     short getShort(Record rec);
 
@@ -117,25 +125,9 @@ public interface Function extends Closeable {
 
     long getTimestamp(Record rec);
 
-    byte getGeoByte(Record rec);
-
-    short getGeoShort(Record rec);
-
-    int getGeoInt(Record rec);
-
-    long getGeoLong(Record rec);
-
     int getType();
 
-    default boolean isUndefined() {
-        return getType() == ColumnType.UNDEFINED;
-    }
-
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-    }
-
-    default void assignType(int type, BindVariableService bindVariableService) throws SqlException {
-        throw new UnsupportedOperationException();
     }
 
     default boolean isConstant() {
@@ -146,6 +138,14 @@ public interface Function extends Closeable {
     // For example now() and bind variables are Runtime Constants
     default boolean isRuntimeConstant() {
         return false;
+    }
+
+    default boolean isUndefined() {
+        return getType() == ColumnType.UNDEFINED;
+    }
+
+    default boolean supportsRandomAccess() {
+        return true;
     }
 
     default void toTop() {

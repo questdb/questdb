@@ -35,6 +35,14 @@ public class FilesFacadeImpl implements FilesFacade {
     private long mapPageSize = 0;
 
     @Override
+    public boolean allocate(long fd, long size) {
+        if (Os.type != Os.WINDOWS) {
+            return Files.allocate(fd, size);
+        }
+        return true;
+    }
+
+    @Override
     public long append(long fd, long buf, int len) {
         return Files.append(fd, buf, len);
     }
@@ -98,18 +106,13 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long getLastModified(LPSZ path) {
-        return Files.getLastModified(path);
-    }
-
-    @Override
-    public int msync(long addr, long len, boolean async) {
-        return Files.msync(addr, len, async);
-    }
-
-    @Override
     public int fsync(long fd) {
         return Files.fsync(fd);
+    }
+
+    @Override
+    public long getLastModified(LPSZ path) {
+        return Files.getLastModified(path);
     }
 
     @Override
@@ -194,6 +197,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public int msync(long addr, long len, boolean async) {
+        return Files.msync(addr, len, async);
+    }
+
+    @Override
     public void munmap(long address, long size, int memoryTag) {
         Files.munmap(address, size, memoryTag);
     }
@@ -204,6 +212,15 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public long openCleanRW(LPSZ name, long size) {
+        // Open files and if file exists, try exclusively lock it
+        // If exclusive lock worked the file will be cleaned and allocated to the given size
+        // Shared lock will be left on the file which will be removed when file descriptor is closed
+        // If file did not exist, it will be allocated to the size and shared lock set
+        return Files.openCleanRW(name, size);
+    }
+
+    @Override
     public long openRO(LPSZ name) {
         return Files.openRO(name);
     }
@@ -211,15 +228,6 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public long openRW(LPSZ name) {
         return Files.openRW(name);
-    }
-
-    @Override
-    public long openCleanRW(LPSZ name, long size) {
-        // Open files and if file exists, try exclusively lock it
-        // If exclusive lock worked the file will be cleaned and allocated to the given size
-        // Shared lock will be left on the file which will be removed when file descriptor is closed
-        // If file did not exist, it will be allocated to the size and shared lock set
-        return Files.openCleanRW(name, size);
     }
 
     @Override
@@ -255,14 +263,6 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public boolean truncate(long fd, long size) {
         return Files.truncate(fd, size);
-    }
-
-    @Override
-    public boolean allocate(long fd, long size) {
-        if (Os.type != Os.WINDOWS) {
-            return Files.allocate(fd, size);
-        }
-        return true;
     }
 
     @Override

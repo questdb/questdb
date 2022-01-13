@@ -65,6 +65,11 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
     }
 
     @Override
+    public boolean isEntity() {
+        return false;
+    }
+
+    @Override
     public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
             symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbol);
@@ -72,10 +77,5 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
                 symbolKey++;
             }
         }
-    }
-
-    @Override
-    public boolean isEntity() {
-        return false;
     }
 }

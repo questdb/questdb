@@ -184,6 +184,14 @@ public class DatesTest {
     }
 
     @Test
+    public void testFormatDateTime() throws Exception {
+        assertTrue("2014-11-30T12:34:55.332Z");
+        assertTrue("2008-03-15T11:22:30.500Z");
+        assertTrue("1917-10-01T11:22:30.500Z");
+        assertTrue("0900-01-01T01:02:00.005Z");
+    }
+
+    @Test
     public void testFormatHTTP() throws Exception {
         DateFormatUtils.formatHTTP(sink, DateFormatUtils.parseUTCDate("2015-12-05T12:34:55.332Z"));
         TestUtils.assertEquals("Sat, 5 Dec 2015 12:34:55 GMT", sink);
@@ -193,14 +201,6 @@ public class DatesTest {
     public void testFormatHTTP2() throws Exception {
         DateFormatUtils.formatHTTP(sink, DateFormatUtils.parseUTCDate("2015-12-05T12:04:55.332Z"));
         TestUtils.assertEquals("Sat, 5 Dec 2015 12:04:55 GMT", sink);
-    }
-
-    @Test
-    public void testFormatDateTime() throws Exception {
-        assertTrue("2014-11-30T12:34:55.332Z");
-        assertTrue("2008-03-15T11:22:30.500Z");
-        assertTrue("1917-10-01T11:22:30.500Z");
-        assertTrue("0900-01-01T01:02:00.005Z");
     }
 
     @Test
@@ -267,20 +267,6 @@ public class DatesTest {
     }
 
     @Test
-    public void testParseDateTime() throws Exception {
-        String date = "2008-02-29T10:54:01.010Z";
-        DateFormatUtils.appendDateTime(sink, DateFormatUtils.parseUTCDate(date));
-        TestUtils.assertEquals(date, sink);
-    }
-
-    @Test
-    public void testParseDateTimePrevEpoch() throws Exception {
-        String date = "1812-02-29T10:54:01.010Z";
-        DateFormatUtils.appendDateTime(sink, DateFormatUtils.parseUTCDate(date));
-        TestUtils.assertEquals(date, sink);
-    }
-
-    @Test
     public void testOverflowDate() {
         Assert.assertEquals("6477-07-27T03:15:50.400Z", Dates.toString(142245170150400L));
     }
@@ -304,6 +290,20 @@ public class DatesTest {
         expectExceptionDateTime("2014-03-10T01:19:28.");
         expectExceptionDateTime("2014-03-10T01:19:28.2");
         expectExceptionDateTime("2014-03-10T01:19:28.255K");
+    }
+
+    @Test
+    public void testParseDateTime() throws Exception {
+        String date = "2008-02-29T10:54:01.010Z";
+        DateFormatUtils.appendDateTime(sink, DateFormatUtils.parseUTCDate(date));
+        TestUtils.assertEquals(date, sink);
+    }
+
+    @Test
+    public void testParseDateTimePrevEpoch() throws Exception {
+        String date = "1812-02-29T10:54:01.010Z";
+        DateFormatUtils.appendDateTime(sink, DateFormatUtils.parseUTCDate(date));
+        TestUtils.assertEquals(date, sink);
     }
 
     @Test(expected = NumericException.class)

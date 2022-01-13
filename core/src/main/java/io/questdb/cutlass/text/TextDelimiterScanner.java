@@ -39,32 +39,6 @@ public class TextDelimiterScanner implements Closeable {
     private static final byte[] priorities = new byte[Byte.MAX_VALUE + 1];
     private static final double DOUBLE_TOLERANCE = 0.05d;
     private static final byte[] potentialDelimiterBytes = new byte[256];
-
-    static {
-        configurePriority((byte) ',', (byte) 10);
-        configurePriority((byte) '\t', (byte) 10);
-        configurePriority((byte) '|', (byte) 10);
-        configurePriority((byte) ':', (byte) 9);
-        configurePriority((byte) ' ', (byte) 8);
-        configurePriority((byte) ';', (byte) 8);
-
-        Arrays.fill(potentialDelimiterBytes, (byte) 0);
-        for (int i = 1; i < '0'; i++) {
-            potentialDelimiterBytes[i] = 1;
-        }
-        for (int i = '9' + 1; i < 'A'; i++) {
-            potentialDelimiterBytes[i] = 1;
-        }
-
-        for (int i = 'Z'; i < 'a'; i++) {
-            potentialDelimiterBytes[i] = 1;
-        }
-
-        for (int i = 'z' + 1; i < 255; i++) {
-            potentialDelimiterBytes[i] = 1;
-        }
-    }
-
     private final long matrix;
     private final int matrixSize;
     private final int matrixRowSize;
@@ -72,7 +46,6 @@ public class TextDelimiterScanner implements Closeable {
     private final double maxRequiredDelimiterStdDev;
     private final double maxRequiredLineLengthStdDev;
     private CharSequence tableName;
-
     public TextDelimiterScanner(TextConfiguration configuration) {
         this.lineCountLimit = configuration.getTextAnalysisMaxLines();
         this.matrixRowSize = 256 * Integer.BYTES;
@@ -82,6 +55,11 @@ public class TextDelimiterScanner implements Closeable {
         this.maxRequiredLineLengthStdDev = configuration.getMaxRequiredLineLengthStdDev();
     }
 
+    @Override
+    public void close() {
+        Unsafe.free(matrix, matrixSize, MemoryTag.NATIVE_DEFAULT);
+    }
+
     private static void configurePriority(byte value, byte priority) {
         assert value > -1;
         priorities[value] = priority;
@@ -89,11 +67,6 @@ public class TextDelimiterScanner implements Closeable {
 
     private static byte getPriority(byte value) {
         return priorities[value];
-    }
-
-    @Override
-    public void close() {
-        Unsafe.free(matrix, matrixSize, MemoryTag.NATIVE_DEFAULT);
     }
 
     private void bumpCountAt(int line, byte bytePosition, int increment) {
@@ -144,7 +117,7 @@ public class TextDelimiterScanner implements Closeable {
             switch (b) {
                 case '\n':
                 case '\r':
-                    // if line doesn't have content we just ignore
+                    // if line doesn't have any content we just ignore
                     // line end, thus skipping empty lines as well
                     if (lineLen > 0) {
                         // we are going to be storing this line length in 'A' byte
@@ -228,7 +201,7 @@ public class TextDelimiterScanner implements Closeable {
                     final byte thisPriority = getPriority((byte) i);
 
                     // when stddev of this is less than last - use this
-                    // when stddev of this is the same as last then
+                    // when stddev of this is the same as last, then
                     //    choose on priority (higher is better)
                     //    when priority is the same choose on mean (higher is better)
                     if (stdDev < lastDelimiterStdDev
@@ -286,5 +259,30 @@ public class TextDelimiterScanner implements Closeable {
 
     void setTableName(CharSequence tableName) {
         this.tableName = tableName;
+    }
+
+    static {
+        configurePriority((byte) ',', (byte) 10);
+        configurePriority((byte) '\t', (byte) 10);
+        configurePriority((byte) '|', (byte) 10);
+        configurePriority((byte) ':', (byte) 9);
+        configurePriority((byte) ' ', (byte) 8);
+        configurePriority((byte) ';', (byte) 8);
+
+        Arrays.fill(potentialDelimiterBytes, (byte) 0);
+        for (int i = 1; i < '0'; i++) {
+            potentialDelimiterBytes[i] = 1;
+        }
+        for (int i = '9' + 1; i < 'A'; i++) {
+            potentialDelimiterBytes[i] = 1;
+        }
+
+        for (int i = 'Z'; i < 'a'; i++) {
+            potentialDelimiterBytes[i] = 1;
+        }
+
+        for (int i = 'z' + 1; i < 255; i++) {
+            potentialDelimiterBytes[i] = 1;
+        }
     }
 }

@@ -96,13 +96,13 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence valueOf(int symbolKey) {
-            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
         }
 
         @Override
-        public CharSequence valueBOf(int key) {
-            return valueOf(key);
+        public CharSequence valueOf(int symbolKey) {
+            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
         }
 
         private int next() {

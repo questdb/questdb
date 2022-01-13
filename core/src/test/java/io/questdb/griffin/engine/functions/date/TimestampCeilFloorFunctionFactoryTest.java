@@ -32,6 +32,70 @@ import org.junit.Test;
 
 public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
     @Test
+    public void testCeilInvalidKind() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile(
+                        "select timestamp_ceil('o', null)",
+                        sqlExecutionContext
+                );
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(22, e.getPosition());
+                TestUtils.assertContains("invalid kind 'o'", e.getFlyweightMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testCeilNullKind() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile(
+                        "select timestamp_ceil(null, null)",
+                        sqlExecutionContext
+                );
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(22, e.getPosition());
+                TestUtils.assertContains("invalid kind 'null'", e.getFlyweightMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testFloorInvalidKind() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile(
+                        "select timestamp_floor('z', null)",
+                        sqlExecutionContext
+                );
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(23, e.getPosition());
+                TestUtils.assertContains("invalid kind 'z'", e.getFlyweightMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testFloorNullKind() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile(
+                        "select timestamp_floor(null, null)",
+                        sqlExecutionContext
+                );
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(23, e.getPosition());
+                TestUtils.assertContains("invalid kind 'null'", e.getFlyweightMessage());
+            }
+        });
+    }
+
+    @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> TestUtils.assertSql(
                 compiler,
@@ -62,69 +126,5 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractGriffinTest {
                 "ts\tc_milli\tc_second\tc_minute\tc_hour\tc_day\tc_month\tc_year\tc_null\tf_milli\tf_second\tf_minute\tf_hour\tf_day\tf_month\tf_year\tf_null\n" +
                         "2016-02-10T16:18:22.862145Z\t2016-02-10T16:18:22.863000Z\t2016-02-10T16:18:23.000000Z\t2016-02-10T16:19:00.000000Z\t2016-02-10T17:00:00.000000Z\t2016-02-11T00:00:00.000000Z\t2016-03-01T00:00:00.000000Z\t2017-01-01T00:00:00.000000Z\t\t2016-02-10T16:18:22.862000Z\t2016-02-10T16:18:22.000000Z\t2016-02-10T16:18:00.000000Z\t2016-02-10T16:00:00.000000Z\t2016-02-10T00:00:00.000000Z\t2016-02-01T00:00:00.000000Z\t2016-01-01T00:00:00.000000Z\t\n"
         ));
-    }
-
-    @Test
-    public void testFloorNullKind() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                compiler.compile(
-                        "select timestamp_floor(null, null)",
-                         sqlExecutionContext
-                );
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(23, e.getPosition());
-                TestUtils.assertContains("invalid kind 'null'", e.getFlyweightMessage());
-            }
-        });
-    }
-
-    @Test
-    public void testFloorInvalidKind() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                compiler.compile(
-                        "select timestamp_floor('z', null)",
-                        sqlExecutionContext
-                );
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(23, e.getPosition());
-                TestUtils.assertContains("invalid kind 'z'", e.getFlyweightMessage());
-            }
-        });
-    }
-
-    @Test
-    public void testCeilNullKind() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                compiler.compile(
-                        "select timestamp_ceil(null, null)",
-                        sqlExecutionContext
-                );
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(22, e.getPosition());
-                TestUtils.assertContains("invalid kind 'null'", e.getFlyweightMessage());
-            }
-        });
-    }
-
-    @Test
-    public void testCeilInvalidKind() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                compiler.compile(
-                        "select timestamp_ceil('o', null)",
-                        sqlExecutionContext
-                );
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(22, e.getPosition());
-                TestUtils.assertContains("invalid kind 'o'", e.getFlyweightMessage());
-            }
-        });
     }
 }

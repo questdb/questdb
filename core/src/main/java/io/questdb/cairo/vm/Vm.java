@@ -108,11 +108,11 @@ public class Vm {
         return new MemoryCMRImpl(ff, name, size, memoryTag);
     }
 
-    public static MemoryMA getSmallMAInstance(FilesFacade ff, LPSZ name, int memoryTag) {
+    public static MemoryCMARW getSmallCMARWInstance(FilesFacade ff, LPSZ name, int memoryTag) {
         return new MemoryCMARWImpl(ff, name, ff.getPageSize(), -1, memoryTag);
     }
 
-    public static MemoryCMARW getSmallCMARWInstance(FilesFacade ff, LPSZ name, int memoryTag) {
+    public static MemoryMA getSmallMAInstance(FilesFacade ff, LPSZ name, int memoryTag) {
         return new MemoryCMARWImpl(ff, name, ff.getPageSize(), -1, memoryTag);
     }
 

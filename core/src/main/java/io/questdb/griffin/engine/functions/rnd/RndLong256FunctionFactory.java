@@ -54,6 +54,11 @@ public class RndLong256FunctionFactory implements FunctionFactory {
         private Rnd rnd;
 
         @Override
+        public void getLong256(Record rec, CharSink sink) {
+            Numbers.appendLong256(rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), sink);
+        }
+
+        @Override
         public Long256 getLong256A(Record rec) {
             return rndLong(long256A);
         }
@@ -61,11 +66,6 @@ public class RndLong256FunctionFactory implements FunctionFactory {
         @Override
         public Long256 getLong256B(Record rec) {
             return rndLong(long256B);
-        }
-
-        @Override
-        public void getLong256(Record rec, CharSink sink) {
-            Numbers.appendLong256(rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), sink);
         }
 
         @Override

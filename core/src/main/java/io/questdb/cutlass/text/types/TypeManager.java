@@ -135,6 +135,10 @@ public class TypeManager implements Mutable {
         return dateAdapterPool.next();
     }
 
+    public TypeAdapter nextSymbolAdapter(boolean indexed) {
+        return indexed ? indexedSymbolAdapter : notIndexedSymbolAdapter;
+    }
+
     public TypeAdapter nextTimestampAdapter(boolean decodeUtf8, DateFormat format, DateLocale locale) {
         if (decodeUtf8) {
             TimestampUtf8Adapter adapter = timestampUtf8AdapterPool.next();
@@ -145,10 +149,6 @@ public class TypeManager implements Mutable {
         TimestampAdapter adapter = timestampAdapterPool.next();
         adapter.of(format, locale);
         return adapter;
-    }
-
-    public TypeAdapter nextSymbolAdapter(boolean indexed) {
-        return indexed ? indexedSymbolAdapter : notIndexedSymbolAdapter;
     }
 
     private void addDefaultProbes() {

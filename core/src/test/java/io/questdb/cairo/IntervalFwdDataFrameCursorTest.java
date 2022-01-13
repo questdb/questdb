@@ -46,7 +46,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         // 3 days
         int N = 36;
 
-        // single interval spanning all of the table
+        // single interval spanning all the table
         intervals.clear();
         intervals.add(TimestampFormatUtils.parseTimestamp("1979-01-01T00:00:00.000Z"));
         intervals.add(TimestampFormatUtils.parseTimestamp("1979-01-06T00:00:00.000Z"));
@@ -68,7 +68,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         // 3 days
         int N = 36;
 
-        // single interval spanning all of the table
+        // single interval spanning all the table
         intervals.clear();
         intervals.add(TimestampFormatUtils.parseTimestamp("1979-01-01T00:00:00.000Z"));
         intervals.add(TimestampFormatUtils.parseTimestamp("1979-01-06T00:00:00.000Z"));
@@ -90,7 +90,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         // 3 days
         int N = 36;
 
-        // single interval spanning all of the table
+        // single interval spanning all the table
         intervals.clear();
         intervals.add(TimestampFormatUtils.parseTimestamp("1979-01-01T00:00:00.000Z"));
         intervals.add(TimestampFormatUtils.parseTimestamp("1979-01-06T00:00:00.000Z"));
@@ -112,7 +112,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         // 3 days
         int N = 36;
 
-        // single interval spanning all of the table
+        // single interval spanning all the table
         intervals.clear();
         intervals.add(TimestampFormatUtils.parseTimestamp("1979-01-01T00:00:00.000Z"));
         intervals.add(TimestampFormatUtils.parseTimestamp("1979-01-06T00:00:00.000Z"));
@@ -184,7 +184,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         intervals.add(TimestampFormatUtils.parseTimestamp("1983-01-02T00:00:00.000Z"));
 
         sink.clear();
-        sink.repeat( "1983-01-01T00:00:00.000000Z\n", N);
+        sink.repeat("1983-01-01T00:00:00.000000Z\n", N);
 
         testIntervals(PartitionBy.NONE, 0, N, sink, N);
     }
@@ -315,7 +315,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         // 3 days
         int N = 36;
 
-        // single interval spanning all of the table
+        // single interval spanning all the table
         intervals.clear();
         intervals.add(TimestampFormatUtils.parseTimestamp("1980-01-02T01:00:00.000Z"));
         intervals.add(TimestampFormatUtils.parseTimestamp("1980-01-02T16:00:00.000Z"));
@@ -458,7 +458,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         // 3 days
         int N = 36;
 
-        // single interval spanning all of the table
+        // single interval spanning all the table
         intervals.clear();
         intervals.add(TimestampFormatUtils.parseTimestamp("1980-01-01T00:00:00.000Z"));
         intervals.add(TimestampFormatUtils.parseTimestamp("1984-01-06T00:00:00.000Z"));
@@ -555,7 +555,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
             // we have to get BitmapIndexReader instance once for each frame.
             BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
 
-            // because out Symbol column 0 is indexed, frame has to have index.
+            // because our Symbol column 0 is indexed, frame has to have an index.
             Assert.assertNotNull(indexReader);
 
             int keyCount = indexReader.getKeyCount();

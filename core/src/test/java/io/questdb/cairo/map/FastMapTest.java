@@ -194,7 +194,7 @@ public class FastMapTest extends AbstractCairoTest {
         valueTypes.add(ColumnType.LONG);
 
         // These are default FastMap configuration for a join
-        try (FastMap map = new FastMap(4194304, keyTypes, valueTypes, 2097152/4, 0.5, 2147483647)) {
+        try (FastMap map = new FastMap(4194304, keyTypes, valueTypes, 2097152 / 4, 0.5, 2147483647)) {
             for (int i = 0; i < 40_000_000; i++) {
                 MapKey key = map.withKey();
                 key.putStr(Integer.toString(i / 151));
@@ -466,7 +466,7 @@ public class FastMapTest extends AbstractCairoTest {
     }
 
     @Test
-    // This test crashes CircleCI, probably due to amount of memory it need to run
+    // This test crashes CircleCI, probably due to amount of memory it needs to run
     // I'm going to find out how to deal with that
     public void testMemoryStretch() throws Exception {
         if (System.getProperty("questdb.enable_heavy_tests") != null) {

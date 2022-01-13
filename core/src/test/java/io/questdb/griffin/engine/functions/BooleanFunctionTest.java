@@ -70,6 +70,26 @@ public class BooleanFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGeoByte() {
+        functionA.getGeoByte(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoInt() {
+        functionA.getGeoInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoLong() {
+        functionA.getGeoLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoShort() {
+        functionA.getGeoShort(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {
         functionA.getBin(null);
     }
@@ -187,25 +207,5 @@ public class BooleanFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testLong256B() {
         functionA.getLong256B(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoLong() {
-        functionA.getGeoLong(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoInt() {
-        functionA.getGeoInt(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoByte() {
-        functionA.getGeoByte(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoShort() {
-        functionA.getGeoShort(null);
     }
 }

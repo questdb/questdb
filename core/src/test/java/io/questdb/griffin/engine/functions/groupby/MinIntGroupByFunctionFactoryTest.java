@@ -110,32 +110,6 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSomeNull() throws SqlException {
-
-        compiler.compile("create table tab (f int)", sqlExecutionContext);
-
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
-            for (int i = 100; i > 10; i--) {
-                TableWriter.Row r = w.newRow();
-                if (i % 4 == 0) {
-                    r.putInt(0, i);
-                }
-                r.append();
-            }
-            w.commit();
-        }
-
-        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(12, record.getInt(0));
-            }
-        }
-    }
-
-    @Test
     public void testSampleFill() throws Exception {
         assertQuery("b\tmin\tk\n" +
                         "\t-1792928964\t1970-01-03T00:00:00.000000Z\n" +
@@ -307,6 +281,32 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testSomeNull() throws SqlException {
+
+        compiler.compile("create table tab (f int)", sqlExecutionContext);
+
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
+            for (int i = 100; i > 10; i--) {
+                TableWriter.Row r = w.newRow();
+                if (i % 4 == 0) {
+                    r.putInt(0, i);
+                }
+                r.append();
+            }
+            w.commit();
+        }
+
+        try (RecordCursorFactory factory = compiler.compile("select min(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Record record = cursor.getRecord();
+                Assert.assertEquals(1, cursor.size());
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(12, record.getInt(0));
+            }
+        }
     }
 
 }

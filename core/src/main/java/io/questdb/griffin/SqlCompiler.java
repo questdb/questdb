@@ -800,41 +800,6 @@ public class SqlCompiler implements Closeable {
         return asm.newInstance();
     }
 
-    private static void addCheckDoubleBoundsCall(BytecodeAssembler asm, int checkDoubleBounds, int min, int max, int fromColumnType, int toColumnType, int toColumnIndex) {
-        asm.dup2();
-
-        invokeCheckMethod(asm, checkDoubleBounds, min, max, fromColumnType, toColumnType, toColumnIndex);
-    }
-
-    private static void addCheckFloatBoundsCall(BytecodeAssembler asm, int checkDoubleBounds, int min, int max, int fromColumnType, int toColumnType, int toColumnIndex) {
-        asm.dup();
-        asm.f2d();
-
-        invokeCheckMethod(asm, checkDoubleBounds, min, max, fromColumnType, toColumnType, toColumnIndex);
-    }
-
-    private static void addCheckLongBoundsCall(BytecodeAssembler asm, int checkLongBounds, int min, int max, int fromColumnType, int toColumnType, int toColumnIndex) {
-        asm.dup2();
-
-        invokeCheckMethod(asm, checkLongBounds, min, max, fromColumnType, toColumnType, toColumnIndex);
-    }
-
-    private static void addCheckIntBoundsCall(BytecodeAssembler asm, int checkLongBounds, int min, int max, int fromColumnType, int toColumnType, int toColumnIndex) {
-        asm.dup();
-        asm.i2l();
-
-        invokeCheckMethod(asm, checkLongBounds, min, max, fromColumnType, toColumnType, toColumnIndex);
-    }
-
-    private static void invokeCheckMethod(BytecodeAssembler asm, int checkBounds, int min, int max, int fromColumnType, int toColumnType, int toColumnIndex) {
-        asm.ldc2_w(min);
-        asm.ldc2_w(max);
-        asm.iconst(fromColumnType);
-        asm.iconst(toColumnType);
-        asm.iconst(toColumnIndex);
-        asm.invokeStatic(checkBounds);
-    }
-
     public static void configureLexer(GenericLexer lexer) {
         for (int i = 0, k = sqlControlSymbols.size(); i < k; i++) {
             lexer.defineSymbol(sqlControlSymbols.getQuick(i));
@@ -917,12 +882,65 @@ public class SqlCompiler implements Closeable {
         return executor.execute(executionContext);
     }
 
+    public void filterPartitions(
+            Function function,
+            TableReader reader,
+            AlterStatementBuilder changePartitionStatement
+    ) {
+        // Iterate partitions in descending order so if folders are missing on disk
+        // removePartition does not fail to determine next minTimestamp
+        // Last partition cannot be dropped, exclude it from the list
+        // TODO: allow to drop last partition
+        for (int i = reader.getPartitionCount() - 2; i > -1; i--) {
+            long partitionTimestamp = reader.getPartitionTimestampByIndex(i);
+            partitionFunctionRec.setTimestamp(partitionTimestamp);
+            if (function.getBool(partitionFunctionRec)) {
+                changePartitionStatement.ofPartition(partitionTimestamp);
+            }
+        }
+    }
+
     public CairoEngine getEngine() {
         return engine;
     }
 
     public FunctionFactoryCache getFunctionFactoryCache() {
         return functionParser.getFunctionFactoryCache();
+    }
+
+    private static void addCheckDoubleBoundsCall(BytecodeAssembler asm, int checkDoubleBounds, int min, int max, int fromColumnType, int toColumnType, int toColumnIndex) {
+        asm.dup2();
+
+        invokeCheckMethod(asm, checkDoubleBounds, min, max, fromColumnType, toColumnType, toColumnIndex);
+    }
+
+    private static void addCheckFloatBoundsCall(BytecodeAssembler asm, int checkDoubleBounds, int min, int max, int fromColumnType, int toColumnType, int toColumnIndex) {
+        asm.dup();
+        asm.f2d();
+
+        invokeCheckMethod(asm, checkDoubleBounds, min, max, fromColumnType, toColumnType, toColumnIndex);
+    }
+
+    private static void addCheckLongBoundsCall(BytecodeAssembler asm, int checkLongBounds, int min, int max, int fromColumnType, int toColumnType, int toColumnIndex) {
+        asm.dup2();
+
+        invokeCheckMethod(asm, checkLongBounds, min, max, fromColumnType, toColumnType, toColumnIndex);
+    }
+
+    private static void addCheckIntBoundsCall(BytecodeAssembler asm, int checkLongBounds, int min, int max, int fromColumnType, int toColumnType, int toColumnIndex) {
+        asm.dup();
+        asm.i2l();
+
+        invokeCheckMethod(asm, checkLongBounds, min, max, fromColumnType, toColumnType, toColumnIndex);
+    }
+
+    private static void invokeCheckMethod(BytecodeAssembler asm, int checkBounds, int min, int max, int fromColumnType, int toColumnType, int toColumnIndex) {
+        asm.ldc2_w(min);
+        asm.ldc2_w(max);
+        asm.iconst(fromColumnType);
+        asm.iconst(toColumnType);
+        asm.iconst(toColumnIndex);
+        asm.invokeStatic(checkBounds);
     }
 
     private static boolean isCompatibleCase(int from, int to) {
@@ -1124,52 +1142,6 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private TableReader getTableReaderForAlterTable(SqlExecutionContext executionContext, CharSequence tableName) {
-        try {
-            return engine.getReader(executionContext.getCairoSecurityContext(), tableName);
-        } catch (CairoException ex) {
-            // Cannot open reader on existing table is pretty bad
-            LOG.error().$("error opening reader for alter table statement [table=").$(tableName)
-                    .$(",errno=").$(ex.getErrno())
-                    .$(",error=").$(ex.getMessage()).I$();
-            // In some messed states, for example after _meta file swap failure Reader cannot be opened
-            // but writer can be
-            // Opening writer fixes the table mess
-            try(TableWriter ignored = engine.getWriter(executionContext.getCairoSecurityContext(), tableName, "alter table statement")) {
-                return engine.getReader(executionContext.getCairoSecurityContext(), tableName);
-            } catch (EntryUnavailableException wrOpEx) {
-                // This is fine, writer is busy. Throw back origin error
-                throw ex;
-            } catch (Throwable th) {
-                LOG.error().$("error preliminary opening writer for alter table statement [table=").$(tableName).$(",error=").$(ex.getMessage()).I$();
-                throw ex;
-            }
-        }
-    }
-
-    private CompiledQuery alterTableSetParam(CharSequence paramName, CharSequence value, int paramNameNamePosition, String tableName, int tableId) throws SqlException {
-        if (isMaxUncommittedRowsParam(paramName)) {
-            int maxUncommittedRows;
-            try {
-                maxUncommittedRows = Numbers.parseInt(value);
-            } catch (NumericException e) {
-                throw SqlException.$(paramNameNamePosition, "invalid value [value=").put(value).put(",parameter=").put(paramName).put(']');
-            }
-            if (maxUncommittedRows < 0) {
-                throw SqlException.$(paramNameNamePosition, "maxUncommittedRows must be non negative");
-            }
-            return compiledQuery.ofAlter(alterQueryBuilder.ofSetParamUncommittedRows(tableName, tableId, maxUncommittedRows).build());
-        } else if (isCommitLag(paramName)) {
-            long commitLag = SqlUtil.expectMicros(value, paramNameNamePosition);
-            if (commitLag < 0) {
-                throw SqlException.$(paramNameNamePosition, "commitLag must be non negative");
-            }
-            return compiledQuery.ofAlter(alterQueryBuilder.ofSetParamCommitLag(tableName, tableId, commitLag).build());
-        } else {
-            throw SqlException.$(paramNameNamePosition, "unknown parameter '").put(paramName).put('\'');
-        }
-    }
-
     private CompiledQuery alterTableAddColumn(int tableNamePosition, String tableName, TableReaderMetadata tableMetadata) throws SqlException {
         // add columns to table
         CharSequence tok = SqlUtil.fetchNext(lexer);
@@ -1360,7 +1332,7 @@ public class SqlCompiler implements Closeable {
         if (metadata.getColumnIndexQuiet(columnName) == -1) {
             throw SqlException.invalidColumn(columnNamePosition, columnName);
         }
-        if (indexValueBlockSize == -1 ){
+        if (indexValueBlockSize == -1) {
             indexValueBlockSize = configuration.getIndexValueBlockSize();
         }
         return compiledQuery.ofAlter(
@@ -1390,8 +1362,8 @@ public class SqlCompiler implements Closeable {
         return cache ? compiledQuery.ofAlter(
                 alterQueryBuilder.ofCacheSymbol(tableNamePosition, tableName, metadata.getId(), columnName).build()
         )
-                :  compiledQuery.ofAlter(
-                        alterQueryBuilder.ofRemoveCacheSymbol(tableNamePosition, tableName, metadata.getId(), columnName).build()
+                : compiledQuery.ofAlter(
+                alterQueryBuilder.ofRemoveCacheSymbol(tableNamePosition, tableName, metadata.getId(), columnName).build()
         );
     }
 
@@ -1466,24 +1438,6 @@ public class SqlCompiler implements Closeable {
             }
         } else {
             throw SqlException.$(lexer.lastTokenPosition(), "'list' or 'where' expected");
-        }
-    }
-
-    public void filterPartitions(
-            Function function,
-            TableReader reader,
-            AlterStatementBuilder changePartitionStatement
-    ) {
-        // Iterate partitions in descending order so if folders are missing on disk
-        // removePartition does not fail to determine next minTimestamp
-        // Last partition cannot be dropped, exclude it from the list
-        // TODO: allow to drop last partition
-        for (int i = reader.getPartitionCount() - 2; i > -1; i--) {
-            long partitionTimestamp = reader.getPartitionTimestampByIndex(i);
-            partitionFunctionRec.setTimestamp(partitionTimestamp);
-            if (function.getBool(partitionFunctionRec)) {
-                changePartitionStatement.ofPartition(partitionTimestamp);
-            }
         }
     }
 
@@ -1585,6 +1539,29 @@ public class SqlCompiler implements Closeable {
             }
         } while (true);
         return compiledQuery.ofAlter(alterQueryBuilder.build());
+    }
+
+    private CompiledQuery alterTableSetParam(CharSequence paramName, CharSequence value, int paramNameNamePosition, String tableName, int tableId) throws SqlException {
+        if (isMaxUncommittedRowsParam(paramName)) {
+            int maxUncommittedRows;
+            try {
+                maxUncommittedRows = Numbers.parseInt(value);
+            } catch (NumericException e) {
+                throw SqlException.$(paramNameNamePosition, "invalid value [value=").put(value).put(",parameter=").put(paramName).put(']');
+            }
+            if (maxUncommittedRows < 0) {
+                throw SqlException.$(paramNameNamePosition, "maxUncommittedRows must be non negative");
+            }
+            return compiledQuery.ofAlter(alterQueryBuilder.ofSetParamUncommittedRows(tableName, tableId, maxUncommittedRows).build());
+        } else if (isCommitLag(paramName)) {
+            long commitLag = SqlUtil.expectMicros(value, paramNameNamePosition);
+            if (commitLag < 0) {
+                throw SqlException.$(paramNameNamePosition, "commitLag must be non negative");
+            }
+            return compiledQuery.ofAlter(alterQueryBuilder.ofSetParamCommitLag(tableName, tableId, commitLag).build());
+        } else {
+            throw SqlException.$(paramNameNamePosition, "unknown parameter '").put(paramName).put('\'');
+        }
     }
 
     private void clear() {
@@ -1987,6 +1964,29 @@ public class SqlCompiler implements Closeable {
         return codeGenerator.generate(queryModel, executionContext);
     }
 
+    private TableReader getTableReaderForAlterTable(SqlExecutionContext executionContext, CharSequence tableName) {
+        try {
+            return engine.getReader(executionContext.getCairoSecurityContext(), tableName);
+        } catch (CairoException ex) {
+            // Cannot open reader on existing table is pretty bad
+            LOG.error().$("error opening reader for alter table statement [table=").$(tableName)
+                    .$(",errno=").$(ex.getErrno())
+                    .$(",error=").$(ex.getMessage()).I$();
+            // In some messed states, for example after _meta file swap failure Reader cannot be opened
+            // but writer can be
+            // Opening writer fixes the table mess
+            try (TableWriter ignored = engine.getWriter(executionContext.getCairoSecurityContext(), tableName, "alter table statement")) {
+                return engine.getReader(executionContext.getCairoSecurityContext(), tableName);
+            } catch (EntryUnavailableException wrOpEx) {
+                // This is fine, writer is busy. Throw back origin error
+                throw ex;
+            } catch (Throwable th) {
+                LOG.error().$("error preliminary opening writer for alter table statement [table=").$(tableName).$(",error=").$(ex.getMessage()).I$();
+                throw ex;
+            }
+        }
+    }
+
     private CompiledQuery insert(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
         final InsertModel model = (InsertModel) executionModel;
         final ExpressionNode name = model.getTableName();
@@ -2015,67 +2015,67 @@ public class SqlCompiler implements Closeable {
                         if (index > -1) {
                             final ExpressionNode node = model.getRowTupleValues(t).getQuick(i);
 
-                                Function function = functionParser.parseFunction(
-                                        node,
-                                        GenericRecordMetadata.EMPTY,
-                                        executionContext
-                                );
+                            Function function = functionParser.parseFunction(
+                                    node,
+                                    GenericRecordMetadata.EMPTY,
+                                    executionContext
+                            );
 
-                                function = validateAndConsume(
-                                        model,
-                                        t,
-                                        valueFunctions,
-                                        metadata,
-                                        writerTimestampIndex,
-                                        i,
-                                        index,
-                                        function,
-                                        node.position,
-                                        executionContext.getBindVariableService()
-                                );
-
-                                if (writerTimestampIndex == index) {
-                                    timestampFunction = function;
-                                }
-
-                            } else {
-                                throw SqlException.invalidColumn(model.getColumnPosition(i), columnSet.get(i));
-                            }
-                        }
-                    } else {
-                        final int columnCount = metadata.getColumnCount();
-                        final ObjList<ExpressionNode> values = model.getRowTupleValues(t);
-                        final int valueCount = values.size();
-                        if (columnCount != valueCount) {
-                            throw SqlException.$(
-                                    model.getEndOfRowTupleValuesPosition(t),
-                                    "row value count does not match column count [expected=").put(columnCount).put(", actual=").put(values.size())
-                                    .put(", tuple=").put(t+1).put(']');
-                        }
-                        valueFunctions = new ObjList<>(columnCount);
-
-                        for (int i = 0; i < columnCount; i++) {
-                            final ExpressionNode node = values.getQuick(i);
-
-                            Function function = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, executionContext);
-                            validateAndConsume(
+                            function = validateAndConsume(
                                     model,
                                     t,
                                     valueFunctions,
                                     metadata,
                                     writerTimestampIndex,
                                     i,
-                                    i,
+                                    index,
                                     function,
                                     node.position,
                                     executionContext.getBindVariableService()
                             );
 
-                            if (writerTimestampIndex == i) {
+                            if (writerTimestampIndex == index) {
                                 timestampFunction = function;
                             }
+
+                        } else {
+                            throw SqlException.invalidColumn(model.getColumnPosition(i), columnSet.get(i));
                         }
                     }
+                } else {
+                    final int columnCount = metadata.getColumnCount();
+                    final ObjList<ExpressionNode> values = model.getRowTupleValues(t);
+                    final int valueCount = values.size();
+                    if (columnCount != valueCount) {
+                        throw SqlException.$(
+                                        model.getEndOfRowTupleValuesPosition(t),
+                                        "row value count does not match column count [expected=").put(columnCount).put(", actual=").put(values.size())
+                                .put(", tuple=").put(t + 1).put(']');
+                    }
+                    valueFunctions = new ObjList<>(columnCount);
+
+                    for (int i = 0; i < columnCount; i++) {
+                        final ExpressionNode node = values.getQuick(i);
+
+                        Function function = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, executionContext);
+                        validateAndConsume(
+                                model,
+                                t,
+                                valueFunctions,
+                                metadata,
+                                writerTimestampIndex,
+                                i,
+                                i,
+                                function,
+                                node.position,
+                                executionContext.getBindVariableService()
+                        );
+
+                        if (writerTimestampIndex == i) {
+                            timestampFunction = function;
+                        }
+                    }
+                }
 
                 // validate timestamp
                 if (writerTimestampIndex > -1 && (timestampFunction == null || ColumnType.isNull(timestampFunction.getType()))) {
@@ -2240,9 +2240,9 @@ public class SqlCompiler implements Closeable {
         for (int i = 0, n = model.getRowTupleCount(); i < n; i++) {
             if (columnSetSize > 0 && columnSetSize != model.getRowTupleValues(i).size()) {
                 throw SqlException.$(
-                        model.getEndOfRowTupleValuesPosition(i),
-                        "row value count does not match column count [expected=").put(columnSetSize).put(", actual=").put(model.getRowTupleValues(i).size())
-                        .put(", tuple=").put(i+1).put(']');
+                                model.getEndOfRowTupleValuesPosition(i),
+                                "row value count does not match column count [expected=").put(columnSetSize).put(", actual=").put(model.getRowTupleValues(i).size())
+                        .put(", tuple=").put(i + 1).put(']');
             }
         }
 
@@ -2283,6 +2283,11 @@ public class SqlCompiler implements Closeable {
 
         } while (tok != null && Chars.equals(tok, ','));
         return compiledQuery.ofRepair();
+    }
+
+    // used in tests
+    void setEnableJitNullChecks(boolean value) {
+        codeGenerator.setEnableJitNullChecks(value);
     }
 
     void setFullFatJoins(boolean value) {
@@ -2568,11 +2573,6 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    // used in tests
-    void setEnableJitNullChecks(boolean value) {
-        codeGenerator.setEnableJitNullChecks(value);
-    }
-
     @FunctionalInterface
     protected interface KeywordBasedExecutor {
         CompiledQuery execute(SqlExecutionContext executionContext) throws SqlException;
@@ -2581,6 +2581,10 @@ public class SqlCompiler implements Closeable {
     @FunctionalInterface
     private interface ExecutableMethod {
         CompiledQuery execute(ExecutionModel model, SqlExecutionContext sqlExecutionContext) throws SqlException;
+    }
+
+    public interface RecordToRowCopier {
+        void copy(Record record, TableWriter.Row row);
     }
 
     public static class RecordToRowCopierUtils {
@@ -2604,10 +2608,6 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    public interface RecordToRowCopier {
-        void copy(Record record, TableWriter.Row row);
-    }
-
     public final static class PartitionAction {
         public static final int DROP = 1;
         public static final int ATTACH = 2;
@@ -2625,6 +2625,11 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
+        public long getColumnHash(int columnIndex) {
+            return metadata.getColumnHash(columnIndex);
+        }
+
+        @Override
         public CharSequence getColumnName(int columnIndex) {
             return model.getColumnName(columnIndex);
         }
@@ -2639,18 +2644,18 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
+        public long getCommitLag() {
+            return model.getCommitLag();
+        }
+
+        @Override
         public int getIndexBlockCapacity(int columnIndex) {
             return model.getIndexBlockCapacity(columnIndex);
         }
 
         @Override
-        public boolean isIndexed(int columnIndex) {
-            return model.isIndexed(columnIndex);
-        }
-
-        @Override
-        public boolean isSequential(int columnIndex) {
-            return model.isSequential(columnIndex);
+        public int getMaxUncommittedRows() {
+            return model.getMaxUncommittedRows();
         }
 
         @Override
@@ -2678,11 +2683,6 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
-        public long getColumnHash(int columnIndex) {
-            return metadata.getColumnHash(columnIndex);
-        }
-
-        @Override
         public CharSequence getTableName() {
             return model.getTableName();
         }
@@ -2693,13 +2693,13 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
-        public int getMaxUncommittedRows() {
-            return model.getMaxUncommittedRows();
+        public boolean isIndexed(int columnIndex) {
+            return model.isIndexed(columnIndex);
         }
 
         @Override
-        public long getCommitLag() {
-            return model.getCommitLag();
+        public boolean isSequential(int columnIndex) {
+            return model.isSequential(columnIndex);
         }
 
         TableStructureAdapter of(CreateTableModel model, RecordMetadata metadata, IntIntHashMap typeCast) {
@@ -2715,15 +2715,28 @@ public class SqlCompiler implements Closeable {
         }
     }
 
+    private static class TimestampValueRecord implements Record {
+        private long value;
+
+        @Override
+        public long getTimestamp(int col) {
+            return value;
+        }
+
+        public void setTimestamp(long value) {
+            this.value = value;
+        }
+    }
+
     private class DatabaseBackupAgent implements Closeable {
         protected final Path srcPath = new Path();
         private final CharSequenceObjHashMap<RecordToRowCopier> tableBackupRowCopiedCache = new CharSequenceObjHashMap<>();
         private final ObjHashSet<CharSequence> tableNames = new ObjHashSet<>();
         private final Path dstPath = new Path();
+        private final StringSink fileNameSink = new StringSink();
         private transient String cachedTmpBackupRoot;
         private transient int changeDirPrefixLen;
         private transient int currDirPrefixLen;
-        private final StringSink fileNameSink = new StringSink();
         private final FindVisitor confFilesBackupOnFind = (file, type) -> {
             if (type == Files.DT_FILE) {
                 srcPath.of(configuration.getConfRoot()).concat(file).$();
@@ -3001,18 +3014,5 @@ public class SqlCompiler implements Closeable {
         sqlControlSymbols.add("--");
         sqlControlSymbols.add("[");
         sqlControlSymbols.add("]");
-    }
-
-    private static class TimestampValueRecord implements Record {
-        private long value;
-
-        @Override
-        public long getTimestamp(int col) {
-            return value;
-        }
-
-        public void setTimestamp(long value) {
-            this.value = value;
-        }
     }
 }

@@ -25,7 +25,9 @@
 package io.questdb;
 
 public interface BuildInformation {
-    CharSequence getQuestDbVersion();
-    CharSequence getJdkVersion();
     CharSequence getCommitHash();
+
+    CharSequence getJdkVersion();
+
+    CharSequence getQuestDbVersion();
 }

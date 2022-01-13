@@ -76,8 +76,25 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public QueryFutureUpdateListener getQueryFutureUpdateListener() {
-        return QueryFutureUpdateListener.EMPTY;
+    public void configureAnalyticContext(
+            @Nullable VirtualRecord partitionByRecord,
+            @Nullable RecordSink partitionBySink,
+            @Transient @Nullable ColumnTypes partitionByKeyTypes,
+            boolean ordered,
+            boolean baseSupportsRandomAccess
+    ) {
+        analyticContext.of(
+                partitionByRecord,
+                partitionBySink,
+                partitionByKeyTypes,
+                ordered,
+                baseSupportsRandomAccess
+        );
+    }
+
+    @Override
+    public AnalyticContext getAnalyticContext() {
+        return analyticContext;
     }
 
     @Override
@@ -86,8 +103,64 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public CairoEngine getCairoEngine() {
+        return cairoEngine;
+    }
+
+    @Override
     public CairoSecurityContext getCairoSecurityContext() {
         return cairoSecurityContext;
+    }
+
+    @Override
+    public SqlExecutionCircuitBreaker getCircuitBreaker() {
+        circuitBreaker.powerUp();
+        return circuitBreaker;
+    }
+
+    @Override
+    public int getJitMode() {
+        return jitMode;
+    }
+
+    @Override
+    public void setJitMode(int jitMode) {
+        this.jitMode = jitMode;
+    }
+
+    @Override
+    public long getNow() {
+        return now;
+    }
+
+    @Override
+    public QueryFutureUpdateListener getQueryFutureUpdateListener() {
+        return QueryFutureUpdateListener.EMPTY;
+    }
+
+    @Override
+    public Rnd getRandom() {
+        return random != null ? random : SharedRandom.getRandom(cairoConfiguration);
+    }
+
+    @Override
+    public void setRandom(Rnd rnd) {
+        this.random = rnd;
+    }
+
+    @Override
+    public long getRequestFd() {
+        return requestFd;
+    }
+
+    @Override
+    public int getWorkerCount() {
+        return workerCount;
+    }
+
+    @Override
+    public void initNow() {
+        now = cairoConfiguration.getMicrosecondClock().getTicks();
     }
 
     @Override
@@ -106,81 +179,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public int getWorkerCount() {
-        return workerCount;
-    }
-
-    @Override
-    public Rnd getRandom() {
-        return random != null ? random : SharedRandom.getRandom(cairoConfiguration);
-    }
-
-    @Override
-    public void setRandom(Rnd rnd) {
-        this.random = rnd;
-    }
-
-    @Override
-    public CairoEngine getCairoEngine() {
-        return cairoEngine;
-    }
-
-    @Override
-    public long getRequestFd() {
-        return requestFd;
-    }
-
-    @Override
-    public SqlExecutionCircuitBreaker getCircuitBreaker() {
-        circuitBreaker.powerUp();
-        return circuitBreaker;
-    }
-
-    @Override
     public void storeTelemetry(short event, short origin) {
         telemetryMethod.store(event, origin);
-    }
-
-    @Override
-    public AnalyticContext getAnalyticContext() {
-        return analyticContext;
-    }
-
-    @Override
-    public void configureAnalyticContext(
-            @Nullable VirtualRecord partitionByRecord,
-            @Nullable RecordSink partitionBySink,
-            @Transient @Nullable ColumnTypes partitionByKeyTypes,
-            boolean ordered,
-            boolean baseSupportsRandomAccess
-    ) {
-        analyticContext.of(
-                partitionByRecord,
-                partitionBySink,
-                partitionByKeyTypes,
-                ordered,
-                baseSupportsRandomAccess
-        );
-    }
-
-    @Override
-    public void initNow() {
-        now = cairoConfiguration.getMicrosecondClock().getTicks();
-    }
-
-    @Override
-    public long getNow() {
-        return now;
-    }
-
-    @Override
-    public int getJitMode() {
-        return jitMode;
-    }
-
-    @Override
-    public void setJitMode(int jitMode) {
-        this.jitMode = jitMode;
     }
 
     public SqlExecutionContextImpl with(

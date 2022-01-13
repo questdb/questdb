@@ -38,8 +38,8 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
     private final int columnIndex;
     private final boolean cachedIndexReaderCursor;
     private final Function symbol;
-    private int symbolKey;
     private final int indexDirection;
+    private int symbolKey;
 
     public DeferredSymbolIndexRowCursorFactory(
             int columnIndex,
@@ -55,11 +55,6 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
     }
 
     @Override
-    public Function getFunction() {
-        return symbol;
-    }
-
-    @Override
     public RowCursor getCursor(DataFrame dataFrame) {
         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
             return EmptyRowCursor.INSTANCE;
@@ -68,6 +63,11 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
         return dataFrame
                 .getBitmapIndexReader(columnIndex, indexDirection)
                 .getCursor(cachedIndexReaderCursor, symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
+    }
+
+    @Override
+    public boolean isEntity() {
+        return false;
     }
 
     @Override
@@ -80,7 +80,7 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
     }
 
     @Override
-    public boolean isEntity() {
-        return false;
+    public Function getFunction() {
+        return symbol;
     }
 }

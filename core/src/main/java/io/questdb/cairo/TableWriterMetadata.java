@@ -32,12 +32,12 @@ import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.ObjList;
 
 public class TableWriterMetadata extends BaseRecordMetadata {
+    private final int id;
+    private final int metaFileSize;
     private int symbolMapCount;
     private int version;
-    private final int id;
     private int maxUncommittedRows;
     private long commitLag;
-    private final int metaFileSize;
 
     public TableWriterMetadata(FilesFacade ff, MemoryMR metaMem) {
         this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
@@ -73,11 +73,43 @@ public class TableWriterMetadata extends BaseRecordMetadata {
             }
             offset += Vm.getStorageLength(name);
         }
-        metaFileSize = (int)offset;
+        metaFileSize = (int) offset;
+    }
+
+    public long getCommitLag() {
+        return commitLag;
+    }
+
+    public void setCommitLag(long micros) {
+        this.commitLag = micros;
+    }
+
+    public int getFileDataSize() {
+        return metaFileSize;
+    }
+
+    public int getId() {
+        return id;
+    }
+
+    public int getMaxUncommittedRows() {
+        return maxUncommittedRows;
+    }
+
+    public void setMaxUncommittedRows(int rows) {
+        this.maxUncommittedRows = rows;
     }
 
     public int getSymbolMapCount() {
         return symbolMapCount;
+    }
+
+    public int getTableVersion() {
+        return version;
+    }
+
+    public void setTableVersion() {
+        version = ColumnType.VERSION;
     }
 
     void addColumn(CharSequence name, long hash, int type, boolean indexFlag, int indexValueBlockCapacity) {
@@ -128,37 +160,5 @@ public class TableWriterMetadata extends BaseRecordMetadata {
 
     void setTimestampIndex(int index) {
         this.timestampIndex = index;
-    }
-
-    public int getTableVersion() {
-        return version;
-    }
-
-    public void setTableVersion() {
-        version = ColumnType.VERSION;
-    }
-
-    public int getId() {
-        return id;
-    }
-
-    public int getMaxUncommittedRows() {
-        return maxUncommittedRows;
-    }
-
-    public long getCommitLag() {
-        return commitLag;
-    }
-
-    public void setMaxUncommittedRows(int rows) {
-        this.maxUncommittedRows = rows;
-    }
-
-    public void setCommitLag(long micros) {
-        this.commitLag = micros;
-    }
-
-    public int getFileDataSize() {
-        return metaFileSize;
     }
 }

@@ -136,6 +136,11 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean getBool(Record rec) {
+            return negated != Chars.equalsNc(symFunc.getSymbol(rec), chrFunc.getChar(rec));
+        }
+
+        @Override
         public Function getLeft() {
             return symFunc;
         }
@@ -143,11 +148,6 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return chrFunc;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != Chars.equalsNc(symFunc.getSymbol(rec), chrFunc.getChar(rec));
         }
     }
 }

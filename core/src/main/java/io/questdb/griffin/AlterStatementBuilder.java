@@ -44,14 +44,14 @@ public class AlterStatementBuilder {
         this.resultInstance = new AlterStatement(longList, objCharList);
     }
 
+    public AlterStatement build() {
+        return resultInstance.of(command, tableName, tableId, tableNamePosition);
+    }
+
     public void clear() {
         resultInstance.clear();
         objCharList.clear();
         longList.clear();
-    }
-
-    public AlterStatement build() {
-        return resultInstance.of(command, tableName, tableId, tableNamePosition);
     }
 
     public AlterStatementBuilder ofAddColumn(
@@ -64,6 +64,23 @@ public class AlterStatementBuilder {
         this.tableName = tableName;
         this.tableId = tableId;
         return this;
+    }
+
+    public void ofAddColumn(
+            CharSequence columnName,
+            int type,
+            int symbolCapacity,
+            boolean cache,
+            boolean indexed,
+            int indexValueBlockCapacity
+    ) {
+        assert columnName != null && columnName.length() > 0;
+        objCharList.add(columnName);
+        longList.add(type);
+        longList.add(symbolCapacity);
+        longList.add(cache ? 1 : -1);
+        longList.add(indexed ? 1 : -1);
+        longList.add(indexValueBlockCapacity);
     }
 
     public AlterStatementBuilder ofAddIndex(int tableNamePosition, String tableName, int tableId, CharSequence columnName, int indexValueBlockSize) {
@@ -93,16 +110,6 @@ public class AlterStatementBuilder {
         return this;
     }
 
-    public AlterStatementBuilder ofRemoveCacheSymbol(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
-        assert columnName != null && columnName.length() > 0;
-        this.command = REMOVE_SYMBOL_CACHE;
-        this.tableNamePosition = tableNamePosition;
-        this.tableName = tableName;
-        this.tableId = tableId;
-        this.objCharList.add(columnName);
-        return this;
-    }
-
     public AlterStatementBuilder ofDropColumn(CharSequence columnName) {
         assert columnName != null && columnName.length() > 0;
         this.objCharList.add(columnName);
@@ -125,12 +132,31 @@ public class AlterStatementBuilder {
         return this;
     }
 
+    public void ofPartition(long timestamp) {
+        longList.add(timestamp);
+    }
+
+    public AlterStatementBuilder ofRemoveCacheSymbol(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
+        assert columnName != null && columnName.length() > 0;
+        this.command = REMOVE_SYMBOL_CACHE;
+        this.tableNamePosition = tableNamePosition;
+        this.tableName = tableName;
+        this.tableId = tableId;
+        this.objCharList.add(columnName);
+        return this;
+    }
+
     public AlterStatementBuilder ofRenameColumn(int tableNamePosition, String tableName, int tableId) {
         this.command = RENAME_COLUMN;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.tableId = tableId;
         return this;
+    }
+
+    public void ofRenameColumn(CharSequence columnName, CharSequence newName) {
+        objCharList.add(columnName);
+        objCharList.add(newName);
     }
 
     public AlterStatementBuilder ofSetParamCommitLag(String tableName, int tableId, long commitLag) {
@@ -148,31 +174,5 @@ public class AlterStatementBuilder {
         this.tableId = tableId;
         return this;
     }
-
-        public void ofRenameColumn(CharSequence columnName, CharSequence newName) {
-            objCharList.add(columnName);
-            objCharList.add(newName);
-        }
-
-        public void ofPartition(long timestamp) {
-            longList.add(timestamp);
-        }
-
-        public void ofAddColumn(
-                CharSequence columnName,
-                int type,
-                int symbolCapacity,
-                boolean cache,
-                boolean indexed,
-                int indexValueBlockCapacity
-        ) {
-            assert columnName != null && columnName.length() > 0;
-            objCharList.add(columnName);
-            longList.add(type);
-            longList.add(symbolCapacity);
-            longList.add(cache ? 1 : -1);
-            longList.add(indexed ? 1 : -1);
-            longList.add(indexValueBlockCapacity);
-        }
 
 }

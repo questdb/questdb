@@ -36,15 +36,78 @@ import java.util.Map;
 
 public class TemplateParserTest {
     private static final Map<String, String> ENV = new HashMap<>();
-
-    static {
-        ENV.put("JSON_FILE", "file.json");
-        ENV.put("DATABASE_ROOT", "c:/\\/\\");
-    }
-
     private static final TemplateParser parser = new TemplateParser();
     private static final StringSink sink = new StringSink();
 
+    @Test
+    public void testChangeFileTimestamp() {
+        parser.parseEnv("${date:y}", 0);
+        parser.setDateValue(1637091363010000L); // time is always in micros
+        TestUtils.assertEquals("2021", parser);
+    }
+
+    @Test
+    public void testFailedParse() {
+        assertFail("$", "Unexpected '$' at position 0");
+        assertFail("$$", "Unexpected '$' at position 1");
+        assertFail("${}", "Missing expression at position 2");
+        int position = ENV.get("JSON_FILE").length() + 1;
+        assertFail("$JSON_FILE$", "Unexpected '$' at position " + position);
+        assertFail("$COCO$", "Undefined property: COCO");
+        assertFail("$ COCO  $", "Undefined property:  COCO  ");
+        assertFail("${COCO", "Missing '}' at position 6");
+        assertFail("$JSON_FILE}", "Mismatched '{}' at position 10");
+        assertFail("${date:}", "Missing expression at position 7");
+        assertFail("${date:       }", "Missing expression at position 14");
+        assertFail("/a/b/$DATABASE_ROOT/c", "Undefined property: DATABASE_ROOT/c");
+    }
+
+    @Test
+    public void testKeyOffsets() {
+        Map<String, String> props = new HashMap<>();
+        props.put("tarzan", "T");
+        props.put("jane", "J");
+        parser.parse("${date:yyyy}{${tarzan}^$jane}", 0, props);
+        TestUtils.assertEquals("1970{T^J}", parser);
+        Assert.assertTrue(parser.getKeyOffset("date:") < 0);
+        Assert.assertEquals(parser.getKeyOffset("tarzan"), 13);
+        Assert.assertEquals(parser.getKeyOffset("jane"), 23);
+    }
+
+    @Test
+    public void testParseTemplate() throws IOException {
+        try (InputStream is = LogAlertSocketWriter.class.getResourceAsStream("/alert-manager-tpt-international.json")) {
+            byte[] buff = new byte[1024];
+            Assert.assertNotNull(is);
+            int len = is.read(buff, 0, buff.length);
+            String template = new String(buff, 0, len);
+            parser.parseUtf8(template, 0, LogAlertSocketWriter.ALERT_PROPS);
+            TestUtils.assertEquals(
+                    "[\n" +
+                            "  {\n" +
+                            "    \"Status\": \"firing\",\n" +
+                            "    \"Labels\": {\n" +
+                            "      \"alertname\": \"உலகனைத்தும்\",\n" +
+                            "      \"category\": \"воно мені не\",\n" +
+                            "      \"severity\": \"łódź jeża lub osiem\",\n" +
+                            "      \"orgid\": \"GLOBAL\",\n" +
+                            "      \"service\": \"QuestDB\",\n" +
+                            "      \"namespace\": \"GLOBAL\",\n" +
+                            "      \"cluster\": \"GLOBAL\",\n" +
+                            "      \"instance\": \"GLOBAL\",\n" +
+                            "      \"我能吞下玻璃而不傷身體\": \"ππππππππππππππππππππ 01\"\n" +
+                            "    },\n" +
+                            "    \"Annotations\": {\n" +
+                            "      \"description\": \"ERROR/GLOBAL/GLOBAL/GLOBAL/GLOBAL\",\n" +
+                            "      \"message\": \"${ALERT_MESSAGE}\"\n" +
+                            "    }\n" +
+                            "  }\n" +
+                            "]\n" +
+                            "\n",
+                    parser
+            );
+        }
+    }
 
     @Test
     public void testSuccessfulParse() {
@@ -141,41 +204,6 @@ public class TemplateParserTest {
     }
 
     @Test
-    public void testFailedParse() {
-        assertFail("$", "Unexpected '$' at position 0");
-        assertFail("$$", "Unexpected '$' at position 1");
-        assertFail("${}", "Missing expression at position 2");
-        int position = ENV.get("JSON_FILE").length() + 1;
-        assertFail("$JSON_FILE$", "Unexpected '$' at position " + position);
-        assertFail("$COCO$", "Undefined property: COCO");
-        assertFail("$ COCO  $", "Undefined property:  COCO  ");
-        assertFail("${COCO", "Missing '}' at position 6");
-        assertFail("$JSON_FILE}", "Mismatched '{}' at position 10");
-        assertFail("${date:}", "Missing expression at position 7");
-        assertFail("${date:       }", "Missing expression at position 14");
-        assertFail("/a/b/$DATABASE_ROOT/c", "Undefined property: DATABASE_ROOT/c");
-    }
-
-    @Test
-    public void testChangeFileTimestamp() {
-        parser.parseEnv("${date:y}", 0);
-        parser.setDateValue(1637091363010000L); // time is always in micros
-        TestUtils.assertEquals("2021", parser);
-    }
-
-    @Test
-    public void testKeyOffsets() {
-        Map<String, String> props = new HashMap<>();
-        props.put("tarzan", "T");
-        props.put("jane", "J");
-        parser.parse("${date:yyyy}{${tarzan}^$jane}", 0, props);
-        TestUtils.assertEquals("1970{T^J}", parser);
-        Assert.assertTrue(parser.getKeyOffset("date:") < 0);
-        Assert.assertEquals(parser.getKeyOffset("tarzan"), 13);
-        Assert.assertEquals(parser.getKeyOffset("jane"), 23);
-    }
-
-    @Test
     public void testToString() {
         parser.parseEnv("calendar:${date:y}!", 0);
         parser.setDateValue(1637091363010000L); // time is always in micros
@@ -183,43 +211,13 @@ public class TemplateParserTest {
         TestUtils.assertEquals("calendar:2021!", str);
     }
 
-    @Test
-    public void testParseTemplate() throws IOException {
-        try (InputStream is = LogAlertSocketWriter.class.getResourceAsStream("/alert-manager-tpt-international.json")) {
-            byte[] buff = new byte[1024];
-            Assert.assertNotNull(is);
-            int len = is.read(buff, 0, buff.length);
-            String template = new String(buff, 0, len);
-            parser.parseUtf8(template, 0, LogAlertSocketWriter.ALERT_PROPS);
-            TestUtils.assertEquals(
-                    "[\n" +
-                            "  {\n" +
-                            "    \"Status\": \"firing\",\n" +
-                            "    \"Labels\": {\n" +
-                            "      \"alertname\": \"உலகனைத்தும்\",\n" +
-                            "      \"category\": \"воно мені не\",\n" +
-                            "      \"severity\": \"łódź jeża lub osiem\",\n" +
-                            "      \"orgid\": \"GLOBAL\",\n" +
-                            "      \"service\": \"QuestDB\",\n" +
-                            "      \"namespace\": \"GLOBAL\",\n" +
-                            "      \"cluster\": \"GLOBAL\",\n" +
-                            "      \"instance\": \"GLOBAL\",\n" +
-                            "      \"我能吞下玻璃而不傷身體\": \"ππππππππππππππππππππ 01\"\n" +
-                            "    },\n" +
-                            "    \"Annotations\": {\n" +
-                            "      \"description\": \"ERROR/GLOBAL/GLOBAL/GLOBAL/GLOBAL\",\n" +
-                            "      \"message\": \"${ALERT_MESSAGE}\"\n" +
-                            "    }\n" +
-                            "  }\n" +
-                            "]\n" +
-                    "\n",
-                    parser
-            );
+    private void assertFail(String location, String expected) {
+        try {
+            parser.parse(location, 0, ENV);
+            Assert.fail();
+        } catch (LogError t) {
+            Assert.assertEquals(expected, t.getMessage());
         }
-    }
-
-    private void assertParseEquals(String location, String expected, String expectedLocation) {
-        assertParseEquals(location, expected, expectedLocation, ENV);
     }
 
     private void assertParseEquals(
@@ -235,12 +233,12 @@ public class TemplateParserTest {
         TestUtils.assertEquals(expectedLocation, sink);
     }
 
-    private void assertFail(String location, String expected) {
-        try {
-            parser.parse(location, 0, ENV);
-            Assert.fail();
-        } catch (LogError t) {
-            Assert.assertEquals(expected, t.getMessage());
-        }
+    private void assertParseEquals(String location, String expected, String expectedLocation) {
+        assertParseEquals(location, expected, expectedLocation, ENV);
+    }
+
+    static {
+        ENV.put("JSON_FILE", "file.json");
+        ENV.put("DATABASE_ROOT", "c:/\\/\\");
     }
 }

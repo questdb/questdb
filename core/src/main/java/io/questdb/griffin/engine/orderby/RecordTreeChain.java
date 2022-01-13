@@ -71,6 +71,64 @@ public class RecordTreeChain implements Closeable, Mutable {
         this.recordChainRecord = this.recordChain.getRecordB();
     }
 
+    @Override
+    public void clear() {
+        root = -1;
+        this.mem.clear();
+        recordChain.clear();
+    }
+
+    @Override
+    public void close() {
+        Misc.free(recordChain);
+        Misc.free(mem);
+    }
+
+    public TreeCursor getCursor(RecordCursor base) {
+        cursor.of(base);
+        return cursor;
+    }
+
+    public void put(Record record) {
+        if (root == -1) {
+            putParent(record);
+            return;
+        }
+
+        comparator.setLeft(record);
+
+        long p = root;
+        long parent;
+        int cmp;
+        do {
+            parent = p;
+            long r = refOf(p);
+            recordChain.recordAt(recordChainRecord, r);
+            cmp = comparator.compare(recordChainRecord);
+            if (cmp < 0) {
+                p = leftOf(p);
+            } else if (cmp > 0) {
+                p = rightOf(p);
+            } else {
+                setRef(p, recordChain.put(record, r));
+                return;
+            }
+        } while (p > -1);
+
+        p = allocateBlock();
+        setParent(p, parent);
+        long r = recordChain.put(record, -1L);
+        setTop(p, r);
+        setRef(p, r);
+
+        if (cmp < 0) {
+            setLeft(parent, p);
+        } else {
+            setRight(parent, p);
+        }
+        fix(p);
+    }
+
     private static void setLeft(long blockAddress, long left) {
         Unsafe.getUnsafe().putLong(blockAddress + O_LEFT, left);
     }
@@ -142,64 +200,6 @@ public class RecordTreeChain implements Closeable, Mutable {
             }
         }
         return p;
-    }
-
-    @Override
-    public void clear() {
-        root = -1;
-        this.mem.clear();
-        recordChain.clear();
-    }
-
-    @Override
-    public void close() {
-        Misc.free(recordChain);
-        Misc.free(mem);
-    }
-
-    public TreeCursor getCursor(RecordCursor base) {
-        cursor.of(base);
-        return cursor;
-    }
-
-    public void put(Record record) {
-        if (root == -1) {
-            putParent(record);
-            return;
-        }
-
-        comparator.setLeft(record);
-
-        long p = root;
-        long parent;
-        int cmp;
-        do {
-            parent = p;
-            long r = refOf(p);
-            recordChain.recordAt(recordChainRecord, r);
-            cmp = comparator.compare(recordChainRecord);
-            if (cmp < 0) {
-                p = leftOf(p);
-            } else if (cmp > 0) {
-                p = rightOf(p);
-            } else {
-                setRef(p, recordChain.put(record, r));
-                return;
-            }
-        } while (p > -1);
-
-        p = allocateBlock();
-        setParent(p, parent);
-        long r = recordChain.put(record, -1L);
-        setTop(p, r);
-        setRef(p, r);
-
-        if (cmp < 0) {
-            setLeft(parent, p);
-        } else {
-            setRight(parent, p);
-        }
-        fix(p);
     }
 
     private long allocateBlock() {
@@ -316,6 +316,11 @@ public class RecordTreeChain implements Closeable, Mutable {
         }
 
         @Override
+        public Record getRecordB() {
+            return recordChain.getRecordB();
+        }
+
+        @Override
         public SymbolTable getSymbolTable(int columnIndex) {
             return base.getSymbolTable(columnIndex);
         }
@@ -336,18 +341,13 @@ public class RecordTreeChain implements Closeable, Mutable {
         }
 
         @Override
-        public long size() {
-            return base.size();
-        }
-
-        @Override
-        public Record getRecordB() {
-            return recordChain.getRecordB();
-        }
-
-        @Override
         public void recordAt(Record record, long atRowId) {
             recordChain.recordAt(record, atRowId);
+        }
+
+        @Override
+        public long size() {
+            return base.size();
         }
 
         @Override

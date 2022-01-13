@@ -56,16 +56,19 @@ public class IntObjHashMap<V> extends AbstractIntHashSet {
         ((Object[]) values)[index] = null;
     }
 
-    public V[] getValues() {
-        return values;
+    @Override
+    protected void move(int from, int to) {
+        keys[to] = keys[from];
+        values[to] = values[from];
+        erase(from);
     }
 
     public V get(int key) {
         return valueAt(keyIndex(key));
     }
 
-    public V valueAt(int index) {
-        return index < 0 ? valueAtQuick(index) : null;
+    public V[] getValues() {
+        return values;
     }
 
     public void put(int key, V value) {
@@ -84,11 +87,8 @@ public class IntObjHashMap<V> extends AbstractIntHashSet {
         }
     }
 
-    @Override
-    protected void move(int from, int to) {
-        keys[to] = keys[from];
-        values[to] = values[from];
-        erase(from);
+    public V valueAt(int index) {
+        return index < 0 ? valueAtQuick(index) : null;
     }
 
     public V valueAtQuick(int index) {

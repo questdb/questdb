@@ -51,6 +51,11 @@ class FilteredRecordCursor implements RecordCursor {
     }
 
     @Override
+    public Record getRecordB() {
+        return base.getRecordB();
+    }
+
+    @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         return base.getSymbolTable(columnIndex);
     }
@@ -70,11 +75,9 @@ class FilteredRecordCursor implements RecordCursor {
         return false;
     }
 
-    private boolean filterIsConstant() {
-        if (filter.getBool(record)) {
-            return base.hasNext();
-        }
-        return false;
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        base.recordAt(record, atRowId);
     }
 
     @Override
@@ -83,19 +86,16 @@ class FilteredRecordCursor implements RecordCursor {
     }
 
     @Override
-    public Record getRecordB() {
-        return base.getRecordB();
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        base.recordAt(record, atRowId);
-    }
-
-    @Override
     public void toTop() {
         base.toTop();
         filter.toTop();
+    }
+
+    private boolean filterIsConstant() {
+        if (filter.getBool(record)) {
+            return base.hasNext();
+        }
+        return false;
     }
 
     void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {

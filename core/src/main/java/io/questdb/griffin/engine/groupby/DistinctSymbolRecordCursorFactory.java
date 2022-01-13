@@ -28,8 +28,8 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
@@ -98,6 +98,15 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
+        public Record getRecordB() {
+            if (recordB == null) {
+                recordB = new DistinctSymbolRecord();
+            }
+            recordB.reset();
+            return recordB;
+        }
+
+        @Override
         public SymbolTable getSymbolTable(int columnIndex) {
             return symbolMapReader;
         }
@@ -112,17 +121,13 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
-        public Record getRecordB() {
-            if (recordB == null) {
-                recordB = new DistinctSymbolRecord();
-            }
-            recordB.reset();
-            return recordB;
+        public void recordAt(Record record, long atRowId) {
+            ((DistinctSymbolRecord) record).recordIndex = (int) atRowId;
         }
 
         @Override
-        public void recordAt(Record record, long atRowId) {
-            ((DistinctSymbolRecord) record).recordIndex = (int) atRowId;
+        public long size() {
+            return numberOfSymbols;
         }
 
         @Override
@@ -137,11 +142,6 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
             this.recordA.reset();
         }
 
-        @Override
-        public long size() {
-            return numberOfSymbols;
-        }
-
         public class DistinctSymbolRecord implements Record {
             private int recordIndex = -1;
 
@@ -149,18 +149,17 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
                 recordIndex--;
             }
 
-            @Override
-            public CharSequence getSym(int col) {
-                return symbolMapReader.valueOf(recordIndex);
-            }
-
-            @Override
-            public CharSequence getSymB(int col) {
-                return symbolMapReader.valueBOf(recordIndex);
+            public long getAndIncrementRecordIndex() {
+                return ++recordIndex;
             }
 
             @Override
             public int getInt(int col) {
+                return recordIndex;
+            }
+
+            @Override
+            public long getRowId() {
                 return recordIndex;
             }
 
@@ -180,16 +179,17 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
             }
 
             @Override
-            public long getRowId() {
-                return recordIndex;
+            public CharSequence getSym(int col) {
+                return symbolMapReader.valueOf(recordIndex);
+            }
+
+            @Override
+            public CharSequence getSymB(int col) {
+                return symbolMapReader.valueBOf(recordIndex);
             }
 
             public void reset() {
                 this.recordIndex = -1;
-            }
-
-            public long getAndIncrementRecordIndex() {
-                return ++recordIndex;
             }
         }
     }

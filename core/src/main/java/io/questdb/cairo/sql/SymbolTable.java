@@ -35,15 +35,6 @@ public interface SymbolTable {
     int VALUE_IS_NULL = Numbers.INT_NaN;
 
     /**
-     * Look up CharSequence by symbol key. The returned value is mutable and
-     * must not be stored anywhere.
-     *
-     * @param key numeric key of the symbol
-     * @return mutable CharSequence value of the symbol
-     */
-    CharSequence valueOf(int key);
-
-    /**
      * Look up "B" instance of CharSequence for symbol key. "B" instance allows
      * calling code to have two simultaneous symbol CharSequence instances in case
      * they have to be compared by their text value.
@@ -52,4 +43,13 @@ public interface SymbolTable {
      * @return string value of the symbol
      */
     CharSequence valueBOf(int key);
+
+    /**
+     * Look up CharSequence by symbol key. The returned value is mutable and
+     * must not be stored anywhere.
+     *
+     * @param key numeric key of the symbol
+     * @return mutable CharSequence value of the symbol
+     */
+    CharSequence valueOf(int key);
 }

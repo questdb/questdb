@@ -30,7 +30,10 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cutlass.http.processors.*;
-import io.questdb.griffin.*;
+import io.questdb.griffin.QueryFutureUpdateListener;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -124,17 +127,22 @@ public class HttpQueryTestBuilder {
                 }
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
                     }
 
                     @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration);
                     }
                 });
 
                 httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/upload";
+                    }
+
                     @Override
                     public HttpRequestProcessor newInstance() {
                         return textImportProcessor != null ? textImportProcessor.create(
@@ -142,11 +150,6 @@ public class HttpQueryTestBuilder {
                                 engine,
                                 workerPool.getWorkerCount()
                         ) : new TextImportProcessor(engine);
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/upload";
                     }
                 });
 
@@ -159,6 +162,11 @@ public class HttpQueryTestBuilder {
 
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+
+                    @Override
                     public HttpRequestProcessor newInstance() {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
@@ -168,14 +176,14 @@ public class HttpQueryTestBuilder {
                                 sqlExecutionContext
                         );
                     }
-
-                    @Override
-                    public String getUrl() {
-                        return "/query";
-                    }
                 });
 
                 httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/exp";
+                    }
+
                     @Override
                     public HttpRequestProcessor newInstance() {
                         return new TextQueryProcessor(
@@ -184,27 +192,27 @@ public class HttpQueryTestBuilder {
                                 workerPool.getWorkerCount()
                         );
                     }
-
-                    @Override
-                    public String getUrl() {
-                        return "/exp";
-                    }
                 });
 
 
                 httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new TableStatusCheckProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
-                    }
-
                     @Override
                     public String getUrl() {
                         return "/chk";
                     }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new TableStatusCheckProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
+                    }
                 });
 
                 httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/exec";
+                    }
+
                     @Override
                     public HttpRequestProcessor newInstance() {
                         return new JsonQueryProcessor(
@@ -213,11 +221,6 @@ public class HttpQueryTestBuilder {
                                 1,
                                 Metrics.enabled()
                         );
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/exec";
                     }
                 });
 
@@ -263,6 +266,11 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
+    public HttpQueryTestBuilder withQueryFutureUpdateListener(QueryFutureUpdateListener queryFutureUpdateListener) {
+        this.queryFutureUpdateListener = queryFutureUpdateListener;
+        return this;
+    }
+
     public HttpQueryTestBuilder withTelemetry(boolean telemetry) {
         this.telemetry = telemetry;
         return this;
@@ -275,11 +283,6 @@ public class HttpQueryTestBuilder {
 
     public HttpQueryTestBuilder withWorkerCount(int workerCount) {
         this.workerCount = workerCount;
-        return this;
-    }
-
-    public HttpQueryTestBuilder withQueryFutureUpdateListener(QueryFutureUpdateListener queryFutureUpdateListener) {
-        this.queryFutureUpdateListener = queryFutureUpdateListener;
         return this;
     }
 

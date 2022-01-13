@@ -24,15 +24,14 @@
 
 package io.questdb.griffin.engine;
 
-import org.junit.Assert;
-import org.junit.Test;
-
 import io.questdb.griffin.engine.table.LongTreeSet;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Test;
 
 public class LongTreeSetTest {
     // To instantiate a logger to prevent memory leaks from being detected

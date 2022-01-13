@@ -89,14 +89,6 @@ public class FunctionFactoryCache {
         }
     }
 
-    private FunctionFactory createNegatingFactory(String name, FunctionFactory factory) throws SqlException {
-        return new NegatingFunctionFactory(name, factory);
-    }
-
-    private FunctionFactory createSwappingFactory(String name, FunctionFactory factory) throws SqlException {
-        return new SwappingArgsFunctionFactory(name, factory);
-    }
-
     public ObjList<FunctionFactoryDescriptor> getOverloadList(CharSequence token) {
         return factories.get(token);
     }
@@ -111,6 +103,22 @@ public class FunctionFactoryCache {
 
     public boolean isRuntimeConstant(CharSequence name) {
         return name != null && runtimeConstantFunctionNames.contains(name);
+    }
+
+    public boolean isValidNoArgFunction(ExpressionNode node) {
+        final ObjList<FunctionFactoryDescriptor> overload = getOverloadList(node.token);
+        if (overload == null) {
+            return false;
+        }
+
+        for (int i = 0, n = overload.size(); i < n; i++) {
+            FunctionFactoryDescriptor ffd = overload.getQuick(i);
+            if (ffd.getSigArgCount() == 0) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void addFactoryToList(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactory factory) throws SqlException {
@@ -130,23 +138,15 @@ public class FunctionFactoryCache {
         overload.add(descriptor);
     }
 
-    int getFunctionCount() {
-        return factories.size();
+    private FunctionFactory createNegatingFactory(String name, FunctionFactory factory) throws SqlException {
+        return new NegatingFunctionFactory(name, factory);
     }
 
-    public boolean isValidNoArgFunction(ExpressionNode node) {
-        final ObjList<FunctionFactoryDescriptor> overload = getOverloadList(node.token);
-        if (overload == null) {
-            return false;
-        }
+    private FunctionFactory createSwappingFactory(String name, FunctionFactory factory) throws SqlException {
+        return new SwappingArgsFunctionFactory(name, factory);
+    }
 
-        for (int i = 0, n = overload.size(); i < n; i++) {
-            FunctionFactoryDescriptor ffd = overload.getQuick(i);
-            if (ffd.getSigArgCount() == 0) {
-                return true;
-            }
-        }
-
-        return false;
+    int getFunctionCount() {
+        return factories.size();
     }
 }

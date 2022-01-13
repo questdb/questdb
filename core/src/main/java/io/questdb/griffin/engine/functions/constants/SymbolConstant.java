@@ -68,11 +68,6 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     }
 
     @Override
-    public boolean isSymbolTableStatic() {
-        return false;
-    }
-
-    @Override
     public int getInt(Record rec) {
         return index;
     }
@@ -88,12 +83,17 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     }
 
     @Override
-    public CharSequence valueOf(int symbolKey) {
-        return value;
+    public boolean isSymbolTableStatic() {
+        return false;
     }
 
     @Override
     public CharSequence valueBOf(int key) {
+        return value;
+    }
+
+    @Override
+    public CharSequence valueOf(int symbolKey) {
         return value;
     }
 }

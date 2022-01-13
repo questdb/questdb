@@ -36,6 +36,16 @@ public class NegFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNegDouble() throws Exception {
+        assertNeg("select -x, typeOf(-x) from (select 5.6 x)", "-5.6000000000000005\tDOUBLE\n");
+    }
+
+    @Test
+    public void testNegFloat() throws Exception {
+        assertNeg("select -x, typeOf(-x) from (select cast(10 as float) x)", "-10.0000\tFLOAT\n");
+    }
+
+    @Test
     public void testNegInt() throws Exception {
         assertNeg("select -x, typeOf(-x) from (select 20 x)", "-20\tINT\n");
     }
@@ -56,18 +66,8 @@ public class NegFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testNegDouble() throws Exception {
-        assertNeg("select -x, typeOf(-x) from (select 5.6 x)", "-5.6000000000000005\tDOUBLE\n");
-    }
-
-    @Test
     public void testNegShort() throws Exception {
         assertNeg("select -x, typeOf(-x) from (select cast(10 as short) x)", "-10\tSHORT\n");
-    }
-
-    @Test
-    public void testNegFloat() throws Exception {
-        assertNeg("select -x, typeOf(-x) from (select cast(10 as float) x)", "-10.0000\tFLOAT\n");
     }
 
     private void assertNeg(String sql, String expected) throws Exception {

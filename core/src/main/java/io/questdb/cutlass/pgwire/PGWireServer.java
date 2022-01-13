@@ -168,10 +168,6 @@ public class PGWireServer implements Closeable {
                     new PGConnectionContext(engine, configuration, getSqlExecutionContext(engine, workerCount)), configuration.getConnectionPoolInitialCapacity()));
         }
 
-        protected SqlExecutionContextImpl getSqlExecutionContext(CairoEngine engine, int workerCount) {
-            return new SqlExecutionContextImpl(engine, workerCount);
-        }
-
         @Override
         public void close() {
             closed = true;
@@ -200,6 +196,10 @@ public class PGWireServer implements Closeable {
         private void closeContextPool() {
             Misc.free(this.contextPool.get());
             LOG.info().$("closed").$();
+        }
+
+        protected SqlExecutionContextImpl getSqlExecutionContext(CairoEngine engine, int workerCount) {
+            return new SqlExecutionContextImpl(engine, workerCount);
         }
     }
 }

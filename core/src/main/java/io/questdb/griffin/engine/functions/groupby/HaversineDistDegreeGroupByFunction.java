@@ -109,11 +109,6 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     }
 
     @Override
-    public boolean isScalar() {
-        return false;
-    }
-
-    @Override
     public void computeFirst(MapValue mapValue, Record record) {
         //first item
         saveFirstItem(mapValue, this.latDegree.getDouble(record), this.lonDegree.getDouble(record), this.timestamp.getTimestamp(record));
@@ -141,6 +136,11 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
         } else {
             saveLastItem(mapValue, lat2Degrees, lon2Degrees, timestamp2);
         }
+    }
+
+    @Override
+    public boolean isScalar() {
+        return false;
     }
 
     @Override
@@ -201,10 +201,6 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
         return result.getDouble(valueIndex + 6);
     }
 
-    private double toRad(double deg) {
-        return deg * PI / 180;
-    }
-
     private double getFirstLatitude(MapValue value) {
         return value.getDouble(valueIndex);
     }
@@ -247,5 +243,9 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
         mapValue.putDouble(this.valueIndex + 3, lat);
         mapValue.putDouble(this.valueIndex + 4, lon);
         mapValue.putTimestamp(this.valueIndex + 5, timestamp);
+    }
+
+    private double toRad(double deg) {
+        return deg * PI / 180;
     }
 }

@@ -690,7 +690,7 @@ public final class IntervalUtils {
      * Unions two lists of intervals compacted in one list in place.
      * Intervals to be chronologically ordered and result list will be ordered as well.
      * <p>
-     * Treat a as 2 lists,
+     * Treat "a" as 2 lists,
      * a: first from 0 to divider
      * b: from divider to the end of list
      *
@@ -779,7 +779,7 @@ public final class IntervalUtils {
      * Intersects two lists of intervals compacted in one list in place.
      * Intervals to be chronologically ordered and result list will be ordered as well.
      * <p>
-     * Treat a as 2 lists,
+     * Treat "a" as 2 lists,
      * a: first from 0 to divider
      * b: from divider to the end of list
      *
@@ -819,15 +819,15 @@ public final class IntervalUtils {
                 intervalB++;
             } else {
                 if (aHi < bHi) {
-                    // b hanging lower than a
-                    // a loses
+                    // "b" hanging lower than "a"
+                    // "a" loses
                     if (aUpper < aUpperSize) {
                         aUpper++;
                     } else {
                         aLower++;
                     }
                 } else {
-                    // otherwise a lower than b
+                    // otherwise, a lower than b
                     // a loses
                     intervalB++;
                 }
@@ -979,7 +979,7 @@ public final class IntervalUtils {
     }
 
     /**
-     * Inverts intervals. This method also produces inclusive edges that differ from source ones by 1 milli.
+     * Inverts intervals. This method also produces inclusive edges that differ from source one's by 1 milli.
      *
      * @param intervals collection of intervals
      */
@@ -988,7 +988,7 @@ public final class IntervalUtils {
     }
 
     /**
-     * Inverts intervals. This method also produces inclusive edges that differ from source ones by 1 milli.
+     * Inverts intervals. This method also produces inclusive edges that differ from source one's by 1 milli.
      *
      * @param intervals collection of intervals
      */

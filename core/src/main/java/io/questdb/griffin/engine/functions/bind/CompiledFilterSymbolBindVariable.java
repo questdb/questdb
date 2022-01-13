@@ -48,11 +48,6 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction implements 
     }
 
     @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        this.symbolTable = (StaticSymbolTable) symbolTableSource.getSymbolTable(columnIndex);
-    }
-
-    @Override
     public int getInt(Record rec) {
         final CharSequence symbolStr = symbolFunction.getStr(null);
         return symbolTable.keyOf(symbolStr);
@@ -69,13 +64,18 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction implements 
     }
 
     @Override
-    public boolean isSymbolTableStatic() {
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+        this.symbolTable = (StaticSymbolTable) symbolTableSource.getSymbolTable(columnIndex);
+    }
+
+    @Override
+    public boolean isRuntimeConstant() {
         return true;
     }
 
     @Override
-    public CharSequence valueOf(int symbolKey) {
-        return symbolTable.valueOf(symbolKey);
+    public boolean isSymbolTableStatic() {
+        return true;
     }
 
     @Override
@@ -84,7 +84,7 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction implements 
     }
 
     @Override
-    public boolean isRuntimeConstant() {
-        return true;
+    public CharSequence valueOf(int symbolKey) {
+        return symbolTable.valueOf(symbolKey);
     }
 }

@@ -62,6 +62,7 @@ public class InputFormatConfiguration {
     private final DateFormatFactory dateFormatFactory;
     private final DateLocaleFactory dateLocaleFactory;
     private final TimestampFormatFactory timestampFormatFactory;
+    private final DateLocale dateLocale;
     private int jsonState = STATE_EXPECT_TOP; // expect start of object
     private DateFormat jsonDateFormat;
     private DateLocale jsonDateLocale;
@@ -69,7 +70,6 @@ public class InputFormatConfiguration {
     private DateFormat jsonTimestampFormat;
     private DateLocale jsonTimestampLocale;
     private boolean jsonTimestampUtf8;
-    private final DateLocale dateLocale;
 
     public InputFormatConfiguration(
             DateFormatFactory dateFormatFactory,
@@ -148,7 +148,7 @@ public class InputFormatConfiguration {
                 throw JsonException.$(0, "could not find [resource=").put(adapterSetConfigurationFileName).put(']');
             }
             // here is where using direct memory is very disadvantageous
-            // we will copy buffer twice to parse json, but luckily contents should be small
+            // we will copy buffer twice to parse json, but luckily contents should be small,
             // and we should be parsing this only once on startup
             byte[] heapBuffer = new byte[4096];
             long memBuffer = Unsafe.malloc(heapBuffer.length, MemoryTag.NATIVE_DEFAULT);

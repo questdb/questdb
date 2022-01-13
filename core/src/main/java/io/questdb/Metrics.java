@@ -45,22 +45,12 @@ public class Metrics implements Scrapable {
         this.metricsRegistry = metricsRegistry;
     }
 
-    private void createMemoryGauges(MetricsRegistry metricsRegistry) {
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            metricsRegistry.newGauge(i);
-        }
-
-        metricsRegistry.newVirtualGauge("memory_free_count", Unsafe::getFreeCount);
-        metricsRegistry.newVirtualGauge("memory_mem_used", Unsafe::getMemUsed);
-        metricsRegistry.newVirtualGauge("memory_malloc_count", Unsafe::getMallocCount);
+    public static Metrics disabled() {
+        return new Metrics(false, new NullMetricsRegistry());
     }
 
     public static Metrics enabled() {
         return new Metrics(true, new MetricsRegistryImpl());
-    }
-
-    public static Metrics disabled() {
-        return new Metrics(false, new NullMetricsRegistry());
     }
 
     public boolean isEnabled() {
@@ -74,5 +64,15 @@ public class Metrics implements Scrapable {
     @Override
     public void scrapeIntoPrometheus(CharSink sink) {
         metricsRegistry.scrapeIntoPrometheus(sink);
+    }
+
+    private void createMemoryGauges(MetricsRegistry metricsRegistry) {
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            metricsRegistry.newGauge(i);
+        }
+
+        metricsRegistry.newVirtualGauge("memory_free_count", Unsafe::getFreeCount);
+        metricsRegistry.newVirtualGauge("memory_mem_used", Unsafe::getMemUsed);
+        metricsRegistry.newVirtualGauge("memory_malloc_count", Unsafe::getMallocCount);
     }
 }

@@ -355,7 +355,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 if (value == null) {
                     sink.put("null");
                 } else {
-                    byte[] bytes = (byte[])value;
+                    byte[] bytes = (byte[]) value;
                     sink.put('\'');
                     sink.put(Arrays.toString(bytes));
                     sink.put('\'');
@@ -552,6 +552,11 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
 
         @Override
+        public char getChar(int col) {
+            return (char) args[col];
+        }
+
+        @Override
         public double getDouble(int col) {
             Object value = args[col];
             if (value instanceof Integer) {
@@ -583,11 +588,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         @Override
         public short getShort(int col) {
             return (short) (int) args[col];
-        }
-
-        @Override
-        public char getChar(int col) {
-            return (char) args[col];
         }
 
         @Override

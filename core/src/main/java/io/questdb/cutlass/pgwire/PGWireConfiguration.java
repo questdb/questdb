@@ -38,7 +38,11 @@ public interface PGWireConfiguration extends WorkerPoolAwareConfiguration {
 
     int getCharacterStorePoolCapacity();
 
+    SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
+
     int getConnectionPoolInitialCapacity();
+
+    DateLocale getDefaultDateLocale();
 
     String getDefaultPassword();
 
@@ -53,14 +57,6 @@ public interface PGWireConfiguration extends WorkerPoolAwareConfiguration {
     int getIdleRecvCountBeforeGivingUp();
 
     int getIdleSendCountBeforeGivingUp();
-
-    boolean isSelectCacheEnabled();
-
-    int getSelectCacheBlockCount();
-
-    int getSelectCacheRowCount();
-
-    boolean isInsertCacheEnabled();
 
     int getInsertCacheBlockCount();
 
@@ -78,18 +74,22 @@ public interface PGWireConfiguration extends WorkerPoolAwareConfiguration {
 
     int getPendingWritersCacheSize();
 
-    int getRecvBufferSize();
-
-    int getSendBufferSize();
-
-    String getServerVersion();
-
-    DateLocale getDefaultDateLocale();
-
     // this is used in tests to fix pseudo-random generator
     default Rnd getRandom() {
         return null;
     }
 
-    SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
+    int getRecvBufferSize();
+
+    int getSelectCacheBlockCount();
+
+    int getSelectCacheRowCount();
+
+    int getSendBufferSize();
+
+    String getServerVersion();
+
+    boolean isInsertCacheEnabled();
+
+    boolean isSelectCacheEnabled();
 }

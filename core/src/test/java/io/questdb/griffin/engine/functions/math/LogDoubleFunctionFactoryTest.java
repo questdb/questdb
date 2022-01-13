@@ -32,16 +32,17 @@ import org.junit.Test;
 public class LogDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
-    public void testPositive() throws SqlException {
-        call(2.0).andAssert(0.6931471805599453, 0.0000000001);
-    }
-
-    @Test
     public void testNegative() throws SqlException {
         call(-2.0).andAssert(Double.NaN, 0.000001);
     }
 
+    @Test
+    public void testPositive() throws SqlException {
+        call(2.0).andAssert(0.6931471805599453, 0.0000000001);
+    }
+
     @Override
-    protected FunctionFactory getFunctionFactory() { return new LogDoubleFunctionFactory();
+    protected FunctionFactory getFunctionFactory() {
+        return new LogDoubleFunctionFactory();
     }
 }

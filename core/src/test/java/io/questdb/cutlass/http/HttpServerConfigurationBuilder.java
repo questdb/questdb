@@ -78,6 +78,11 @@ public class HttpServerConfigurationBuilder {
                 }
 
                 @Override
+                public String getKeepAliveHeader() {
+                    return null;
+                }
+
+                @Override
                 public MimeTypesCache getMimeTypesCache() {
                     return mimeTypesCache;
                 }
@@ -86,15 +91,15 @@ public class HttpServerConfigurationBuilder {
                 public CharSequence getPublicDirectory() {
                     return baseDir;
                 }
-
-                @Override
-                public String getKeepAliveHeader() {
-                    return null;
-                }
             };
 
             private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
                 private final DefaultSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
+
+                @Override
+                public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+                    return circuitBreakerConfiguration;
+                }
 
                 @Override
                 public MillisecondClock getClock() {
@@ -104,6 +109,11 @@ public class HttpServerConfigurationBuilder {
                 @Override
                 public int getConnectionCheckFrequency() {
                     return 1_000_000;
+                }
+
+                @Override
+                public int getDoubleScale() {
+                    return Numbers.MAX_SCALE;
                 }
 
                 @Override
@@ -117,11 +127,6 @@ public class HttpServerConfigurationBuilder {
                 }
 
                 @Override
-                public int getDoubleScale() {
-                    return Numbers.MAX_SCALE;
-                }
-
-                @Override
                 public CharSequence getKeepAliveHeader() {
                     return "Keep-Alive: timeout=5, max=10000\r\n";
                 }
@@ -129,11 +134,6 @@ public class HttpServerConfigurationBuilder {
                 @Override
                 public long getMaxQueryResponseRowLimit() {
                     return configuredMaxQueryResponseRowLimit;
-                }
-
-                @Override
-                public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
-                    return circuitBreakerConfiguration;
                 }
             };
 
@@ -199,21 +199,11 @@ public class HttpServerConfigurationBuilder {
             }
 
             @Override
-            public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
-                return jsonQueryProcessorConfiguration;
-            }
-
-            @Override
             public WaitProcessorConfiguration getWaitProcessorConfiguration() {
                 return new WaitProcessorConfiguration() {
                     @Override
                     public MillisecondClock getClock() {
                         return MillisecondClockImpl.INSTANCE;
-                    }
-
-                    @Override
-                    public long getMaxWaitCapMs() {
-                        return 1000;
                     }
 
                     @Override
@@ -230,7 +220,17 @@ public class HttpServerConfigurationBuilder {
                     public int getMaxProcessingQueueSize() {
                         return rerunProcessingQueueSize;
                     }
+
+                    @Override
+                    public long getMaxWaitCapMs() {
+                        return 1000;
+                    }
                 };
+            }
+
+            @Override
+            public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
+                return jsonQueryProcessorConfiguration;
             }
 
             @Override

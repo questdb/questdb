@@ -52,11 +52,6 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test(expected = NumericException.class)
-    public void testRandomFormat() throws Exception {
-        assertThat("Ketchup", "", "2021-11-19T14:00:00.000Z");
-    }
-
-    @Test(expected = NumericException.class)
     public void testBadAmPm() throws Exception {
         assertThat("KaMMy", "", "11 0910 am");
     }
@@ -519,6 +514,12 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testIgnoredNanos() throws Exception {
+        assertThat("E, dd-MM-yyyy N", "2014-04-03T00:00:00.000Z", "Fri, 03-04-2014 234");
+        assertThat("EE, dd-MM-yyyy N", "2014-04-03T00:00:00.000Z", "Fri, 03-04-2014 234");
+    }
+
+    @Test
     public void testLeapYear() throws Exception {
         assertThat("dd-MM-yyyy", "2016-02-29T00:00:00.000Z", "29-02-2016");
     }
@@ -646,6 +647,11 @@ public class TimestampFormatCompilerTest {
         assertThat("yyyy'y'ddMM", "2010-03-10T00:00:00.000Z", "2010y1003");
     }
 
+    @Test(expected = NumericException.class)
+    public void testRandomFormat() throws Exception {
+        assertThat("Ketchup", "", "2021-11-19T14:00:00.000Z");
+    }
+
     @Test
     public void testSecondGreedy() throws Exception {
         assertThat("ddMMy HH:mm:s", "1978-03-19T21:20:45.000Z", "190378 21:20:45");
@@ -742,12 +748,6 @@ public class TimestampFormatCompilerTest {
     public void testWeekdayShort() throws Exception {
         assertThat("E, dd-MM-yyyy", "2014-04-03T00:00:00.000Z", "Fri, 03-04-2014");
         assertThat("EE, dd-MM-yyyy", "2014-04-03T00:00:00.000Z", "Fri, 03-04-2014");
-    }
-
-    @Test
-    public void testIgnoredNanos() throws Exception {
-        assertThat("E, dd-MM-yyyy N", "2014-04-03T00:00:00.000Z", "Fri, 03-04-2014 234");
-        assertThat("EE, dd-MM-yyyy N", "2014-04-03T00:00:00.000Z", "Fri, 03-04-2014 234");
     }
 
     private static DateFormat get(CharSequence pattern) {

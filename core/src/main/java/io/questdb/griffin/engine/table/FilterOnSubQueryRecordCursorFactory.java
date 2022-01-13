@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
@@ -45,9 +45,9 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
     private final IntObjHashMap<RowCursorFactory> factoriesA = new IntObjHashMap<>(64, 0.5, -5);
     private final IntObjHashMap<RowCursorFactory> factoriesB = new IntObjHashMap<>(64, 0.5, -5);
     private final RecordCursorFactory recordCursorFactory;
-    private IntObjHashMap<RowCursorFactory> factories;
     private final Record.CharSequenceFunction func;
     private final IntList columnIndexes;
+    private IntObjHashMap<RowCursorFactory> factories;
 
     public FilterOnSubQueryRecordCursorFactory(
             @NotNull RecordMetadata metadata,

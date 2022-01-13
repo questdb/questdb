@@ -34,14 +34,14 @@ public interface RowCursor {
     boolean hasNext();
 
     /**
-     * @return numeric index of the next row
-     */
-    long next();
-
-    /**
      * Iterates or jumps to given position.
      */
     default void jumpTo(long position) {
         while (position-- > 0 && hasNext()) next();
     }
+
+    /**
+     * @return numeric index of the next row
+     */
+    long next();
 }

@@ -38,6 +38,28 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
         registerListenerFd();
     }
 
+    @Override
+    public void close() {
+        super.close();
+        this.epoll.close();
+        LOG.info().$("closed").$();
+    }
+
+    @Override
+    protected void pendingAdded(int index) {
+        pending.set(index, M_ID, fdid++);
+    }
+
+    @Override
+    protected void registerListenerFd() {
+        this.epoll.listen(serverFd);
+    }
+
+    @Override
+    protected void unregisterListenerFd() {
+        this.epoll.removeListen(serverFd);
+    }
+
     private void enqueuePending(int watermark) {
         for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += EpollAccessor.SIZEOF_EVENT) {
             epoll.setOffset(offset);
@@ -51,18 +73,6 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                 LOG.debug().$("epoll_ctl failure ").$(nf.errno()).$();
             }
         }
-    }
-
-    @Override
-    public void close() {
-        super.close();
-        this.epoll.close();
-        LOG.info().$("closed").$();
-    }
-
-    @Override
-    protected void pendingAdded(int index) {
-        pending.set(index, M_ID, fdid++);
     }
 
     private void processIdleConnections(long deadline) {
@@ -164,15 +174,5 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
         }
 
         return processRegistrations(timestamp) || useful;
-    }
-
-    @Override
-    protected void registerListenerFd() {
-        this.epoll.listen(serverFd);
-    }
-
-    @Override
-    protected void unregisterListenerFd() {
-        this.epoll.removeListen(serverFd);
     }
 }

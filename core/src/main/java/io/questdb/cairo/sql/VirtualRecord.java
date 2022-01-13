@@ -85,6 +85,26 @@ public class VirtualRecord implements ColumnTypes, Record {
     }
 
     @Override
+    public byte getGeoByte(int col) {
+        return getFunction(col).getGeoByte(base);
+    }
+
+    @Override
+    public int getGeoInt(int col) {
+        return getFunction(col).getGeoInt(base);
+    }
+
+    @Override
+    public long getGeoLong(int col) {
+        return getFunction(col).getGeoLong(base);
+    }
+
+    @Override
+    public short getGeoShort(int col) {
+        return getFunction(col).getGeoShort(base);
+    }
+
+    @Override
     public int getInt(int col) {
         return getFunction(col).getInt(base);
     }
@@ -157,26 +177,6 @@ public class VirtualRecord implements ColumnTypes, Record {
     @Override
     public long getTimestamp(int col) {
         return getFunction(col).getTimestamp(base);
-    }
-
-    @Override
-    public byte getGeoByte(int col) {
-        return getFunction(col).getGeoByte(base);
-    }
-
-    @Override
-    public short getGeoShort(int col) {
-        return getFunction(col).getGeoShort(base);
-    }
-
-    @Override
-    public int getGeoInt(int col) {
-        return getFunction(col).getGeoInt(base);
-    }
-
-    @Override
-    public long getGeoLong(int col) {
-        return getFunction(col).getGeoLong(base);
     }
 
     @Override

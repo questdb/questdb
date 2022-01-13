@@ -75,6 +75,41 @@ public class RebuildIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCannotRemoveOldFiles() throws Exception {
+        assertMemoryLeak(() -> {
+            String createTableSql = "create table xxx as (" +
+                    "select " +
+                    "rnd_symbol('A', 'B', 'C') as sym1," +
+                    "rnd_symbol(4,4,4,2) as sym2," +
+                    "rnd_symbol(4,4,4,2) as sym3," +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(10000)" +
+                    "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
+
+            ff = new FilesFacadeImpl() {
+                @Override
+                public boolean remove(LPSZ path) {
+                    if (Chars.endsWith(path, ".v") || Chars.endsWith(path, ".k")) {
+                        return false;
+                    }
+                    return Files.remove(path);
+                }
+            };
+
+            try {
+                checkRebuildIndexes(createTableSql,
+                        tablePath -> {
+                        },
+                        rebuildIndex -> rebuildIndex.rebuildColumn("sym2"));
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "cannot remove index file");
+            }
+        });
+    }
+
+    @Test
     public void testEmptyTable() throws Exception {
         String createTableSql = "create table xxx as (" +
                 "select " +
@@ -388,41 +423,6 @@ public class RebuildIndexTest extends AbstractCairoTest {
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "could not create index");
-            }
-        });
-    }
-
-    @Test
-    public void testCannotRemoveOldFiles() throws Exception {
-        assertMemoryLeak(() -> {
-            String createTableSql = "create table xxx as (" +
-                    "select " +
-                    "rnd_symbol('A', 'B', 'C') as sym1," +
-                    "rnd_symbol(4,4,4,2) as sym2," +
-                    "rnd_symbol(4,4,4,2) as sym3," +
-                    "x," +
-                    "timestamp_sequence(0, 100000000) ts " +
-                    "from long_sequence(10000)" +
-                    "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
-
-            ff = new FilesFacadeImpl() {
-                @Override
-                public boolean remove(LPSZ path) {
-                    if (Chars.endsWith(path, ".v") || Chars.endsWith(path, ".k")) {
-                        return false;
-                    }
-                    return Files.remove(path);
-                }
-            };
-
-            try {
-                checkRebuildIndexes(createTableSql,
-                        tablePath -> {
-                        },
-                        rebuildIndex -> rebuildIndex.rebuildColumn("sym2"));
-                Assert.fail();
-            } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "cannot remove index file");
             }
         });
     }

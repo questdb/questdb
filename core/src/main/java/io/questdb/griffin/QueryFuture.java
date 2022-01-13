@@ -30,6 +30,25 @@ public interface QueryFuture extends Closeable {
     int QUERY_NO_RESPONSE = 0;
     int QUERY_STARTED = 1;
     int QUERY_COMPLETE = 2;
+    QueryFuture DONE = new QueryFuture() {
+        @Override
+        public void await() {
+        }
+
+        @Override
+        public int await(long timeout) {
+            return QUERY_COMPLETE;
+        }
+
+        @Override
+        public int getStatus() {
+            return QUERY_COMPLETE;
+        }
+
+        @Override
+        public void close() {
+        }
+    };
 
     /***
      * Blocking wait for query completion. Returns immediately if query has executed synchronously
@@ -50,6 +69,12 @@ public interface QueryFuture extends Closeable {
     int await(long timeout) throws SqlException;
 
     /***
+     * In case of async execution close must be called to remove sequence
+     */
+    @Override
+    void close();
+
+    /***
      * True if operation completed, false otherwise
      * @return
      *  - QUERY_NO_RESPONSE if no writer response received
@@ -57,30 +82,4 @@ public interface QueryFuture extends Closeable {
      *  - QUERY_COMPLETE if writer completed response received
      */
     int getStatus();
-
-    /***
-     * In case of async execution close must be called to remove sequence
-     */
-    @Override
-    void close();
-
-    QueryFuture DONE = new QueryFuture() {
-        @Override
-        public void await() {
-        }
-
-        @Override
-        public int await(long timeout) {
-            return QUERY_COMPLETE;
-        }
-
-        @Override
-        public int getStatus() {
-            return QUERY_COMPLETE;
-        }
-
-        @Override
-        public void close() {
-        }
-    };
 }

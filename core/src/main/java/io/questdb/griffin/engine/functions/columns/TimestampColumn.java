@@ -39,16 +39,16 @@ public class TimestampColumn extends TimestampFunction implements ScalarFunction
         this.columnIndex = columnIndex;
     }
 
-    @Override
-    public long getTimestamp(Record rec) {
-        return rec.getTimestamp(columnIndex);
-    }
-
     public static TimestampColumn newInstance(int columnIndex) {
         if (columnIndex < STATIC_COLUMN_COUNT) {
             return COLUMNS.getQuick(columnIndex);
         }
         return new TimestampColumn(columnIndex);
+    }
+
+    @Override
+    public long getTimestamp(Record rec) {
+        return rec.getTimestamp(columnIndex);
     }
 
     static {

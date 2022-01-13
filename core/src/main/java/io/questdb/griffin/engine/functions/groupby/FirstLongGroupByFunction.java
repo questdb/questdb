@@ -54,19 +54,14 @@ public class FirstLongGroupByFunction extends LongFunction implements GroupByFun
     }
 
     @Override
-    public Function getArg() {
-        return this.arg;
-    }
-
-    @Override
-    public long getLong(Record rec) {
-        return rec.getLong(this.valueIndex);
-    }
-
-    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
+    }
+
+    @Override
+    public void setLong(MapValue mapValue, long value) {
+        mapValue.putTimestamp(this.valueIndex, value);
     }
 
     @Override
@@ -75,7 +70,12 @@ public class FirstLongGroupByFunction extends LongFunction implements GroupByFun
     }
 
     @Override
-    public void setLong(MapValue mapValue, long value) {
-        mapValue.putTimestamp(this.valueIndex, value);
+    public Function getArg() {
+        return this.arg;
+    }
+
+    @Override
+    public long getLong(Record rec) {
+        return rec.getLong(this.valueIndex);
     }
 }

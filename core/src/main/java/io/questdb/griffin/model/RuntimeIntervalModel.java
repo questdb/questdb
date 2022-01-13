@@ -77,23 +77,6 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         return !PartitionBy.isPartitioned(partitionBy) || allIntervalsHitOnePartition(PartitionBy.getPartitionFloorMethod(partitionBy));
     }
 
-    private boolean allIntervalsHitOnePartition(PartitionBy.PartitionFloorMethod floorMethod) {
-        if (!isStatic()) {
-            return false;
-        }
-        if (intervals.size() == 0) {
-            return true;
-        }
-
-        long floor = floorMethod.floor(intervals.getQuick(0));
-        for (int i = 1, n = intervals.size(); i < n; i++) {
-            if (floor != floorMethod.floor(intervals.getQuick(i))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     @Override
     public void close() {
         Misc.freeObjList(dynamicRangeList);
@@ -163,18 +146,18 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                     outIntervals.extendAndSet(divider + 1, hi);
                     outIntervals.setQuick(divider, lo);
                 } else {
-                    // This is subtract or intersect with a string interval (not a single timestamp)
+                    // This is subtracted or intersected with a string interval (not a single timestamp)
                     CharSequence strValue = dynamicFunction.getStr(null);
                     if (operation == IntervalOperation.INTERSECT_INTERVALS) {
-                        // This is intersect
-                        if (parseIntervalFails(outIntervals, strValue)){
+                        // This is intersection
+                        if (parseIntervalFails(outIntervals, strValue)) {
                             // return empty set
                             outIntervals.clear();
                             return;
                         }
                     } else {
-                        // This is subtract
-                        if (parseIntervalFails(outIntervals, strValue)){
+                        // This is subtraction
+                        if (parseIntervalFails(outIntervals, strValue)) {
                             // full set
                             negatedNothing(outIntervals, divider);
                             continue;
@@ -206,25 +189,21 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         }
     }
 
-    private boolean parseIntervalFails(LongList outIntervals, CharSequence strValue) {
-        if (strValue  != null) {
-            try {
-                IntervalUtils.parseIntervalEx(strValue, 0, strValue.length(), 0, outIntervals, IntervalOperation.INTERSECT);
-                IntervalUtils.applyLastEncodedIntervalEx(outIntervals);
-            } catch (SqlException e) {
-                return true;
-            }
+    private boolean allIntervalsHitOnePartition(PartitionBy.PartitionFloorMethod floorMethod) {
+        if (!isStatic()) {
             return false;
         }
-        return true;
-    }
-
-    private void negatedNothing(LongList outIntervals, int divider) {
-        outIntervals.setPos(divider);
-        if (divider == 0) {
-            outIntervals.extendAndSet(1, Long.MAX_VALUE);
-            outIntervals.extendAndSet(0, Long.MIN_VALUE);
+        if (intervals.size() == 0) {
+            return true;
         }
+
+        long floor = floorMethod.floor(intervals.getQuick(0));
+        for (int i = 1, n = intervals.size(); i < n; i++) {
+            if (floor != floorMethod.floor(intervals.getQuick(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private long getTimestamp(Function dynamicFunction) {
@@ -241,5 +220,26 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
 
     private boolean isStatic() {
         return dynamicRangeList == null || dynamicRangeList.size() == 0;
+    }
+
+    private void negatedNothing(LongList outIntervals, int divider) {
+        outIntervals.setPos(divider);
+        if (divider == 0) {
+            outIntervals.extendAndSet(1, Long.MAX_VALUE);
+            outIntervals.extendAndSet(0, Long.MIN_VALUE);
+        }
+    }
+
+    private boolean parseIntervalFails(LongList outIntervals, CharSequence strValue) {
+        if (strValue != null) {
+            try {
+                IntervalUtils.parseIntervalEx(strValue, 0, strValue.length(), 0, outIntervals, IntervalOperation.INTERSECT);
+                IntervalUtils.applyLastEncodedIntervalEx(outIntervals);
+            } catch (SqlException e) {
+                return true;
+            }
+            return false;
+        }
+        return true;
     }
 }

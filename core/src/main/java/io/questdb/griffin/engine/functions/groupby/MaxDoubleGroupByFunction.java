@@ -73,12 +73,12 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
-    public double getDouble(Record rec) {
-        return rec.getDouble(valueIndex);
+    public Function getArg() {
+        return arg;
     }
 
     @Override
-    public Function getArg() {
-        return arg;
+    public double getDouble(Record rec) {
+        return rec.getDouble(valueIndex);
     }
 }

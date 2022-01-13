@@ -37,6 +37,11 @@ class Long256BindVariable extends Long256Function implements ScalarFunction, Mut
     final Long256Impl value = new Long256Impl();
 
     @Override
+    public void clear() {
+        value.copyFrom(Long256Impl.NULL_LONG256);
+    }
+
+    @Override
     public void getLong256(Record rec, CharSink sink) {
         final long a = value.getLong0();
         final long b = value.getLong1();
@@ -56,21 +61,16 @@ class Long256BindVariable extends Long256Function implements ScalarFunction, Mut
         return value;
     }
 
-    public void setValue(long l0, long l1, long l2, long l3) {
-        this.value.setAll(l0, l1, l2, l3);
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
     }
 
     public void setValue(Long256 value) {
         this.value.copyFrom(value);
     }
 
-    @Override
-    public void clear() {
-        value.copyFrom(Long256Impl.NULL_LONG256);
-    }
-
-    @Override
-    public boolean isRuntimeConstant() {
-        return true;
+    public void setValue(long l0, long l1, long l2, long l3) {
+        this.value.setAll(l0, l1, l2, l3);
     }
 }

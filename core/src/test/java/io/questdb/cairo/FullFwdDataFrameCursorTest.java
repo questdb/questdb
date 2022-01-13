@@ -866,7 +866,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             // we have to get BitmapIndexReader instance once for each frame.
             BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, indexDirection);
 
-            // because out Symbol column 0 is indexed, frame has to have index.
+            // because our Symbol column 0 is indexed, frame has to have an index.
             Assert.assertNotNull(indexReader);
 
             int keyCount = indexReader.getKeyCount();
@@ -910,7 +910,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
         BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, direction);
 
-        // because out Symbol column 0 is indexed, frame has to have index.
+        // because our Symbol column 0 is indexed, frame has to have an index.
         Assert.assertNotNull(indexReader);
 
         final long hi = frame.getRowHi();
@@ -1067,7 +1067,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             Assert.assertTrue(ff.wasCalled());
 
-            // lets see what we can read after this catastrophe
+            // let's see what we can read after this catastrophe
             try (TableReader reader = new TableReader(AbstractCairoTest.configuration, "ABC")) {
                 FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                 TableReaderRecord record = new TableReaderRecord();
@@ -1138,11 +1138,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                 @Override
-                public FilesFacade getFilesFacade() {
-                    return ff;
-                }
-
-                @Override
                 public long getDataIndexKeyAppendPageSize() {
                     return 65535;
                 }
@@ -1150,6 +1145,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 @Override
                 public long getDataIndexValueAppendPageSize() {
                     return 65535;
+                }
+
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
                 }
             };
 
@@ -1188,7 +1188,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "distressed");
                 }
 
-                // test that we cannot rollback
+                // test that we cannot roll back
                 try {
                     writer.rollback();
                     Assert.fail();
@@ -1208,7 +1208,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
             }
 
-            // lets see what we can read after this catastrophe
+            // let's see what we can read after this catastrophe
             try (TableReader reader = new TableReader(AbstractCairoTest.configuration, "ABC")) {
                 FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                 TableReaderRecord record = new TableReaderRecord();
@@ -1487,16 +1487,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                 @Override
-                public FilesFacade getFilesFacade() {
-                    return ff;
-                }
-
-                @Override
-                public int getParallelIndexThreshold() {
-                    return 1;
-                }
-
-                @Override
                 public long getDataIndexKeyAppendPageSize() {
                     return 65535;
                 }
@@ -1504,6 +1494,16 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 @Override
                 public long getDataIndexValueAppendPageSize() {
                     return 65535;
+                }
+
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+
+                @Override
+                public int getParallelIndexThreshold() {
+                    return 1;
                 }
             };
 
@@ -1561,7 +1561,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                         TestUtils.assertContains(e.getMessage(), "distressed");
                     }
 
-                    // test that we cannot rollback
+                    // test that we cannot roll back
                     try {
                         writer.rollback();
                         Assert.fail();
@@ -1582,7 +1582,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
                 workerPool.halt();
 
-                // lets see what we can read after this catastrophe
+                // let's see what we can read after this catastrophe
                 try (TableReader reader = new TableReader(AbstractCairoTest.configuration, "ABC")) {
                     FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                     TableReaderRecord record = new TableReaderRecord();

@@ -28,7 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.line.*;
+import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.cutlass.line.udp.LineUdpParserSupport.BadCastException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -186,20 +186,16 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             return;
         }
 
-        try {
-            for (int i = 0; i < columnCount; i++) {
-                LineUdpParserSupport.putValue(
-                        row,
-                        (int) columnNameType.getQuick(i * 2 + 1),
-                        geoHashBitsSizeByColIdx.getQuick(i),
-                        i,
-                        cache.get(columnValues.getQuick(i))
-                );
-            }
-            row.append();
-        } catch (BadCastException ignore) {
-            row.cancel();
+        for (int i = 0; i < columnCount; i++) {
+            LineUdpParserSupport.putValue(
+                    row,
+                    (int) columnNameType.getQuick(i * 2 + 1),
+                    geoHashBitsSizeByColIdx.getQuick(i),
+                    i,
+                    cache.get(columnValues.getQuick(i))
+            );
         }
+        row.append();
     }
 
     private void appendRow(CharSequenceCache cache) {
@@ -209,21 +205,17 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             return;
         }
 
-        try {
-            for (int i = 0; i < columnCount; i++) {
-                final long value = columnIndexAndType.getQuick(i);
-                LineUdpParserSupport.putValue(
-                        row,
-                        Numbers.decodeHighInt(value),
-                        geoHashBitsSizeByColIdx.getQuick(i),
-                        Numbers.decodeLowInt(value),
-                        cache.get(columnValues.getQuick(i))
-                );
-            }
-            row.append();
-        } catch (BadCastException ignore) {
-            row.cancel();
+        for (int i = 0; i < columnCount; i++) {
+            final long value = columnIndexAndType.getQuick(i);
+            LineUdpParserSupport.putValue(
+                    row,
+                    Numbers.decodeHighInt(value),
+                    geoHashBitsSizeByColIdx.getQuick(i),
+                    Numbers.decodeLowInt(value),
+                    cache.get(columnValues.getQuick(i))
+            );
         }
+        row.append();
     }
 
     private void cacheWriter(CacheEntry entry, CachedCharSequence tableName) {
@@ -511,6 +503,11 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
 
         @Override
+        public long getColumnHash(int columnIndex) {
+            return configuration.getRandom().nextLong();
+        }
+
+        @Override
         public CharSequence getColumnName(int columnIndex) {
             if (columnIndex == getTimestampIndex()) {
                 return "timestamp";
@@ -531,8 +528,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
 
         @Override
-        public long getColumnHash(int columnIndex) {
-            return configuration.getRandom().nextLong();
+        public long getCommitLag() {
+            return configuration.getCommitLag();
         }
 
         @Override
@@ -541,13 +538,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
 
         @Override
-        public boolean isIndexed(int columnIndex) {
-            return false;
-        }
-
-        @Override
-        public boolean isSequential(int columnIndex) {
-            return false;
+        public int getMaxUncommittedRows() {
+            return configuration.getMaxUncommittedRows();
         }
 
         @Override
@@ -576,13 +568,13 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
 
         @Override
-        public int getMaxUncommittedRows() {
-            return configuration.getMaxUncommittedRows();
+        public boolean isIndexed(int columnIndex) {
+            return false;
         }
 
         @Override
-        public long getCommitLag() {
-            return configuration.getCommitLag();
+        public boolean isSequential(int columnIndex) {
+            return false;
         }
 
         TableStructureAdapter of(CharSequenceCache cache) {

@@ -24,7 +24,8 @@
 
 package io.questdb.cutlass.line.udp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -37,25 +38,25 @@ abstract class LineUdpInsertGeoHashTest extends LineUdpInsertTest {
     static final String targetColumnName = "geohash";
 
     @Test
-    public abstract void testGeoHashes() throws Exception;
-
-    @Test
-    public abstract void testGeoHashesTruncating() throws Exception;
-
-    @Test
-    public abstract void testTableHasGeoHashMessageDoesNot() throws Exception;
-
-    @Test
     public abstract void testExcessivelyLongGeoHashesAreTruncated() throws Exception;
+
+    @Test
+    public abstract void testGeoHashes() throws Exception;
 
     @Test
     public abstract void testGeoHashesNotEnoughPrecision() throws Exception;
 
     @Test
-    public abstract void testWrongCharGeoHashes() throws Exception;
+    public abstract void testGeoHashesTruncating() throws Exception;
 
     @Test
     public abstract void testNullGeoHash() throws Exception;
+
+    @Test
+    public abstract void testTableHasGeoHashMessageDoesNot() throws Exception;
+
+    @Test
+    public abstract void testWrongCharGeoHashes() throws Exception;
 
     protected static void assertGeoHash(int columnBits, int lineGeoSizeChars, int numLines, String expected) throws Exception {
         assertType(tableName,

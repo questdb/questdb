@@ -30,9 +30,11 @@ import io.questdb.network.NetworkFacade;
 
 public interface LineUdpReceiverConfiguration {
 
-    int getCommitMode();
-
     int getBindIPv4Address();
+
+    CairoSecurityContext getCairoSecurityContext();
+
+    int getCommitMode();
 
     int getCommitRate();
 
@@ -48,7 +50,7 @@ public interface LineUdpReceiverConfiguration {
 
     int getReceiveBufferSize();
 
-    CairoSecurityContext getCairoSecurityContext();
+    LineProtoTimestampAdapter getTimestampAdapter();
 
     boolean isEnabled();
 
@@ -57,6 +59,4 @@ public interface LineUdpReceiverConfiguration {
     boolean ownThread();
 
     int ownThreadAffinity();
-
-    LineProtoTimestampAdapter getTimestampAdapter();
 }

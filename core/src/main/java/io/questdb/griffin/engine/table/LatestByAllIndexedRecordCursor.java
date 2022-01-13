@@ -30,7 +30,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.vm.api.MemoryR;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.RingQueue;
@@ -47,7 +46,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     protected final DirectLongList prefixes;
     private final int columnIndex;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
-    protected long indexShift = 0;
+    protected final long indexShift = 0;
     protected long aIndex;
     protected long aLimit;
 
@@ -73,17 +72,17 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     }
 
     @Override
-    public void toTop() {
-        aIndex = indexShift;
-    }
-
-    @Override
     public long size() {
         return aLimit - indexShift;
     }
 
     @Override
-    protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException {
+    public void toTop() {
+        aIndex = indexShift;
+    }
+
+    @Override
+    protected void buildTreeMap(SqlExecutionContext executionContext) {
         final MessageBus bus = executionContext.getMessageBus();
 
         final RingQueue<LatestByTask> queue = bus.getLatestByQueue();
@@ -117,7 +116,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         long prefixesAddress = 0;
         long prefixesCount = 0;
 
-        if(this.prefixes.size() > 2) {
+        if (this.prefixes.size() > 2) {
             hashColumnIndex = (int) prefixes.get(0);
             hashColumnType = (int) prefixes.get(1);
             prefixesAddress = prefixes.getAddress() + 2 * Long.BYTES;

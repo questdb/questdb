@@ -68,12 +68,12 @@ public class MaxCharGroupByFunction extends CharFunction implements GroupByFunct
     }
 
     @Override
-    public char getChar(Record rec) {
-        return rec.getChar(valueIndex);
+    public Function getArg() {
+        return arg;
     }
 
     @Override
-    public Function getArg() {
-        return arg;
+    public char getChar(Record rec) {
+        return rec.getChar(valueIndex);
     }
 }

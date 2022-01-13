@@ -130,10 +130,6 @@ public final class ColumnType {
         return columnType == BINARY;
     }
 
-    public static boolean isLong256(int columnType) {
-        return columnType == LONG256;
-    }
-
     public static boolean isBoolean(int columnType) {
         return columnType == ColumnType.BOOLEAN;
     }
@@ -160,6 +156,10 @@ public final class ColumnType {
 
     public static boolean isInt(int columnType) {
         return columnType == ColumnType.INT;
+    }
+
+    public static boolean isLong256(int columnType) {
+        return columnType == LONG256;
     }
 
     public static boolean isNull(int columnType) {

@@ -40,14 +40,6 @@ public class FloatingDirectCharSink extends AbstractCharSink implements CharSequ
         lo = hi = ptr = 0;
     }
 
-    public FloatingDirectCharSink of(long lo, long hi) {
-        this.ptr = lo;
-        this.lo = lo;
-        this.hi = hi;
-
-        return this;
-    }
-
     public FloatingDirectCharSink asCharSequence(long lo, long hi) {
         this.ptr = lo;
         this.lo = hi;
@@ -67,6 +59,22 @@ public class FloatingDirectCharSink extends AbstractCharSink implements CharSequ
     }
 
     @Override
+    public int hashCode() {
+        return Chars.hashCode(this);
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        return this == obj || obj instanceof CharSequence && Chars.equals(this, (CharSequence) obj);
+    }
+
+    @NotNull
+    @Override
+    public String toString() {
+        return AbstractCharSequence.getString(this);
+    }
+
+    @Override
     public int length() {
         return (int) (lo - ptr) / 2;
     }
@@ -79,6 +87,14 @@ public class FloatingDirectCharSink extends AbstractCharSink implements CharSequ
     @Override
     public CharSequence subSequence(int start, int end) {
         throw new UnsupportedOperationException();
+    }
+
+    public FloatingDirectCharSink of(long lo, long hi) {
+        this.ptr = lo;
+        this.lo = lo;
+        this.hi = hi;
+
+        return this;
     }
 
     @Override
@@ -94,6 +110,14 @@ public class FloatingDirectCharSink extends AbstractCharSink implements CharSequ
     }
 
     @Override
+    public CharSink put(char c) {
+        assert checkCapacity(1);
+        Unsafe.getUnsafe().putChar(lo, c);
+        lo += 2;
+        return this;
+    }
+
+    @Override
     public CharSink put(char[] chars, int start, int len) {
         assert checkCapacity(len);
         int l2 = len * 2;
@@ -105,31 +129,7 @@ public class FloatingDirectCharSink extends AbstractCharSink implements CharSequ
         return this;
     }
 
-    @Override
-    public CharSink put(char c) {
-        assert checkCapacity(1);
-        Unsafe.getUnsafe().putChar(lo, c);
-        lo += 2;
-        return this;
-    }
-
     private boolean checkCapacity(int nChars) {
         return lo + (2L * nChars) <= hi;
-    }
-
-    @Override
-    public int hashCode() {
-        return Chars.hashCode(this);
-    }
-
-    @Override
-    public boolean equals(Object obj) {
-        return this == obj || obj instanceof CharSequence && Chars.equals(this, (CharSequence) obj);
-    }
-
-    @NotNull
-    @Override
-    public String toString() {
-        return AbstractCharSequence.getString(this);
     }
 }

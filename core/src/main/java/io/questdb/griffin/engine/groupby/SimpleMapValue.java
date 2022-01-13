@@ -35,6 +35,38 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
+    public void addByte(int index, byte value) {
+        values[index] += value;
+    }
+
+    @Override
+    public void addDouble(int index, double value) {
+        final double d = Double.longBitsToDouble(values[index]);
+        values[index] = Double.doubleToLongBits(value + d);
+    }
+
+    @Override
+    public void addFloat(int index, float value) {
+        final float d = Float.intBitsToFloat((int) values[index]);
+        values[index] = Float.floatToIntBits(value + d);
+    }
+
+    @Override
+    public void addInt(int index, int value) {
+        values[index] += value;
+    }
+
+    @Override
+    public void addLong(int index, long value) {
+        values[index] += value;
+    }
+
+    @Override
+    public void addShort(int index, short value) {
+        values[index] += value;
+    }
+
+    @Override
     public long getAddress() {
         throw new UnsupportedOperationException();
     }
@@ -50,6 +82,11 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
+    public char getChar(int index) {
+        return (char) values[index];
+    }
+
+    @Override
     public long getDate(int index) {
         return values[index];
     }
@@ -62,11 +99,6 @@ public class SimpleMapValue implements MapValue {
     @Override
     public float getFloat(int index) {
         return Float.intBitsToFloat((int) values[index]);
-    }
-
-    @Override
-    public char getChar(int index) {
-        return (char) values[index];
     }
 
     @Override
@@ -90,26 +122,6 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
-    public byte getGeoByte(int col) {
-        return (byte)values[col];
-    }
-
-    @Override
-    public short getGeoShort(int col) {
-        return (short) values[col];
-    }
-
-    @Override
-    public int getGeoInt(int col) {
-        return (int) values[col];
-    }
-
-    @Override
-    public long getGeoLong(int col) {
-        return values[col];
-    }
-
-    @Override
     public boolean isNew() {
         return false;
     }
@@ -125,8 +137,8 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
-    public void addByte(int index, byte value) {
-        values[index] += value;
+    public void putChar(int index, char value) {
+        values[index] = value;
     }
 
     @Override
@@ -140,20 +152,8 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
-    public void addDouble(int index, double value) {
-        final double d = Double.longBitsToDouble(values[index]);
-        values[index] = Double.doubleToLongBits(value + d);
-    }
-
-    @Override
     public void putFloat(int index, float value) {
         values[index] = Float.floatToIntBits(value);
-    }
-
-    @Override
-    public void addFloat(int index, float value) {
-        final float d = Float.intBitsToFloat((int) values[index]);
-        values[index] = Float.floatToIntBits(value + d);
     }
 
     @Override
@@ -162,32 +162,12 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
-    public void addInt(int index, int value) {
-        values[index] += value;
-    }
-
-    @Override
     public void putLong(int index, long value) {
         values[index] = value;
     }
 
     @Override
-    public void addLong(int index, long value) {
-        values[index] += value;
-    }
-
-    @Override
     public void putShort(int index, short value) {
-        values[index] = value;
-    }
-
-    @Override
-    public void addShort(int index, short value) {
-        values[index] += value;
-    }
-
-    @Override
-    public void putChar(int index, char value) {
         values[index] = value;
     }
 
@@ -199,5 +179,25 @@ public class SimpleMapValue implements MapValue {
     @Override
     public void setMapRecordHere() {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public byte getGeoByte(int col) {
+        return (byte) values[col];
+    }
+
+    @Override
+    public int getGeoInt(int col) {
+        return (int) values[col];
+    }
+
+    @Override
+    public long getGeoLong(int col) {
+        return values[col];
+    }
+
+    @Override
+    public short getGeoShort(int col) {
+        return (short) values[col];
     }
 }

@@ -32,8 +32,8 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
@@ -42,7 +42,7 @@ import io.questdb.std.Transient;
 /**
  * Splice join compares time series that do not always align on timestamp. Consider
  * the following: we have two engines, X and Y, that produce FX prices. We need to verify
- * that prices are the same or similar. When engine X produces price A we need to tell
+ * that prices are the same or similar. When engine X produces price A, we need to tell
  * what was the last price produced by Y at the time of A and vice versa, when engine Y
  * produced price B what was the last price produced by X at the time of B.
  * <p>
@@ -250,15 +250,15 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public long size() {
+            return -1L;
+        }
+
+        @Override
         public void toTop() {
             masterCursor.toTop();
             slaveCursor.toTop();
             resetState();
-        }
-
-        @Override
-        public long size() {
-            return -1L;
         }
 
         private void masterRecordLeads() {

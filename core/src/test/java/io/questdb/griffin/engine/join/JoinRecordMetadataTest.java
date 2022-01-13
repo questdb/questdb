@@ -42,7 +42,7 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
         metadata.add("b", "y", 5, ColumnType.BINARY, false, 0, false, null);
         metadata.add("b", "z", 6, ColumnType.FLOAT, false, 0, false, null);
         try {
-            metadata.add("b", "y", 7,ColumnType.FLOAT, false, 0, false, null);
+            metadata.add("b", "y", 7, ColumnType.FLOAT, false, 0, false, null);
             Assert.fail();
         } catch (Exception ignored) {
         }

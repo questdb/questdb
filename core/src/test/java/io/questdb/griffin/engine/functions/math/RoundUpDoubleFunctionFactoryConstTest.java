@@ -31,7 +31,6 @@ import org.junit.Test;
 public class RoundUpDoubleFunctionFactoryConstTest extends AbstractGriffinTest {
 
 
-
     @Test
     public void testLargeNegScale() throws SqlException {
         assertQuery(

@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
@@ -172,6 +172,11 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
         }
 
         @Override
+        public long size() {
+            return -1;
+        }
+
+        @Override
         public void toTop() {
             if (findFileStruct != 0) {
                 ff.findClose(findFileStruct);
@@ -179,11 +184,6 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
             }
             fixedRelPos = -1;
             record.of(staticReadingRecord);
-        }
-
-        @Override
-        public long size() {
-            return -1;
         }
 
         private boolean next0() {

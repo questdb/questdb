@@ -53,7 +53,7 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         final int targetType = args.getQuick(1).getType();
         switch (ColumnType.tagOf(targetType)) {
             case ColumnType.GEOBYTE:

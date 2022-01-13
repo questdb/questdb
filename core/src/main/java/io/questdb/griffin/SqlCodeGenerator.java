@@ -70,9 +70,9 @@ import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 import static io.questdb.griffin.model.QueryModel.*;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
-    private static final Log LOG = LogFactory.getLog(SqlCodeGenerator.class);
     public static final int GKK_VANILLA_INT = 0;
     public static final int GKK_HOUR_INT = 1;
+    private static final Log LOG = LogFactory.getLog(SqlCodeGenerator.class);
     private static final IntHashSet limitTypes = new IntHashSet();
     private static final FullFatJoinGenerator CREATE_FULL_FAT_LT_JOIN = SqlCodeGenerator::createFullFatLtJoin;
     private static final FullFatJoinGenerator CREATE_FULL_FAT_AS_OF_JOIN = SqlCodeGenerator::createFullFatAsOfJoin;
@@ -90,7 +90,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final WhereClauseParser whereClauseParser = new WhereClauseParser();
     private final CompiledFilterIRSerializer jitIRSerializer = new CompiledFilterIRSerializer();
     private final MemoryCARW jitIRMem;
-    private boolean enableJitNullChecks = true;
     private final boolean enableJitDebug;
     private final FunctionParser functionParser;
     private final CairoEngine engine;
@@ -118,17 +117,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ObjObjHashMap<IntList, ObjList<AnalyticFunction>> grouppedAnalytic = new ObjObjHashMap<>();
     private final IntList recordFunctionPositions = new IntList();
     private final IntList groupByFunctionPositions = new IntList();
-    private boolean fullFatJoins = false;
     private final LongList prefixes = new LongList();
-
-    static {
-        joinsRequiringTimestamp[JOIN_INNER] = false;
-        joinsRequiringTimestamp[JOIN_OUTER] = false;
-        joinsRequiringTimestamp[JOIN_CROSS] = false;
-        joinsRequiringTimestamp[JOIN_ASOF] = true;
-        joinsRequiringTimestamp[JOIN_SPLICE] = true;
-        joinsRequiringTimestamp[JOIN_LT] = true;
-    }
+    private boolean enableJitNullChecks = true;
+    private boolean fullFatJoins = false;
 
     public SqlCodeGenerator(
             CairoEngine engine,
@@ -312,6 +303,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return GenericRecordMetadata.removeTimestamp(masterMetadata);
     }
 
+    // Check if lo, hi is set and lo >=0 while hi < 0 (meaning - return whole result set except some rows at start and some at the end)
+    // because such case can't really be optimized by topN/bottomN
+    private boolean canBeOptimized(QueryModel model, SqlExecutionContext context, Function loFunc, Function hiFunc) {
+        if (model.getLimitLo() == null && model.getLimitHi() == null) {
+            return false;
+        }
+
+        if (loFunc != null && loFunc.isConstant() &&
+                hiFunc != null && hiFunc.isConstant()) {
+            try {
+                loFunc.init(null, context);
+                hiFunc.init(null, context);
+
+                return !(loFunc.getLong(null) >= 0 && hiFunc.getLong(null) < 0);
+            } catch (SqlException ex) {
+                LOG.error().$("Failed to initialize lo or hi functions [").$("error=").$(ex.getMessage()).I$();
+            }
+        }
+
+        return true;
+    }
+
     @Nullable
     private Function compileFilter(IntrinsicModel intrinsicModel, RecordMetadata readerMeta, SqlExecutionContext executionContext) throws SqlException {
         if (intrinsicModel.filter != null) {
@@ -363,7 +376,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         // map doesn't support variable length types in map value, which is ok
-        // when we join tables on strings - technically string is the key
+        // when we join tables on strings - technically string is the key,
         // and we do not need to store it in value, but we will still reject
         //
         // never mind, this is a stop-gap measure until I understand the problem
@@ -921,7 +934,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && master.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     master = createSpliceJoin(
-                                            // splice join result does not have timestamp
+                                            // splice join result does not have the timestamp
                                             createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, -1),
                                             master,
                                             RecordSinkFactory.getInstance(
@@ -1212,31 +1225,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return new LimitRecordCursorFactory(factory, loFunc, hiFunc);
     }
 
-    private Function toFunction(SqlExecutionContext executionContext,
-                                ExpressionNode limit,
-                                ConstantFunction defaultValue) throws SqlException {
-        if (limit == null) {
-            return defaultValue;
-        }
-
-        final Function func = functionParser.parseFunction(limit, EmptyRecordMetadata.INSTANCE, executionContext);
-        final int type = func.getType();
-        if (limitTypes.excludes(type)) {
-            throw SqlException.$(limit.position, "invalid type: ").put(ColumnType.nameOf(type));
-        }
-        return func;
-    }
-
-    @Nullable
-    private Function getHiFunction(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        return toFunction(executionContext, model.getLimitHi(), null);
-    }
-
-    @NotNull
-    private Function getLoFunction(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        return toFunction(executionContext, model.getLimitLo(), LongConstant.ZERO);
-    }
-
     private RecordCursorFactory generateNoSelect(
             QueryModel model,
             SqlExecutionContext executionContext
@@ -1302,7 +1290,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // we could have two possibilities:
                 // 1. if we only have one column to order by - the cursor would already be ordered
                 //    by timestamp (either ASC or DESC); we have nothing to do
-                // 2. metadata of the new cursor will have timestamp
+                // 2. metadata of the new cursor will have the timestamp
 
                 RecordMetadata orderedMetadata;
                 if (metadata.getTimestampIndex() != -1) {
@@ -1368,28 +1356,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    // Check if lo, hi is set and lo >=0 while hi < 0 (meaning - return whole result set except some rows at start and some at the end)
-    // because such case can't really be optimized by topN/bottomN
-    private boolean canBeOptimized(QueryModel model, SqlExecutionContext context, Function loFunc, Function hiFunc) {
-        if (model.getLimitLo() == null && model.getLimitHi() == null) {
-            return false;
-        }
-
-        if (loFunc != null && loFunc.isConstant() &&
-                hiFunc != null && hiFunc.isConstant()) {
-            try {
-                loFunc.init(null, context);
-                hiFunc.init(null, context);
-
-                return !(loFunc.getLong(null) >= 0 && hiFunc.getLong(null) < 0);
-            } catch (SqlException ex) {
-                LOG.error().$("Failed to initialize lo or hi functions [").$("error=").$(ex.getMessage()).I$();
-            }
-        }
-
-        return true;
-    }
-
     private RecordCursorFactory generateQuery(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
         RecordCursorFactory factory = generateQuery0(model, executionContext, processJoins);
         if (model.getUnionModel() != null) {
@@ -1400,7 +1366,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private RecordCursorFactory generateQuery0(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
         return generateLimit(
-                generateOrderBy(  
+                generateOrderBy(
                         generateFilter(
                                 generateSelect(
                                         model,
@@ -1471,7 +1437,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final ObjList<ExpressionNode> sampleByFill = model.getSampleByFill();
             final TimestampSampler timestampSampler;
             if (sampleByUnits == null) {
-                 timestampSampler = TimestampSamplerFactory.getInstance(sampleByNode.token, sampleByNode.position);
+                timestampSampler = TimestampSamplerFactory.getInstance(sampleByNode.token, sampleByNode.position);
             } else {
                 Function sampleByPeriod = functionParser.parseFunction(
                         sampleByNode,
@@ -1796,8 +1762,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // we need to pay attention to stepping over analytic column slots
         // Chain metadata is assembled in such way that all columns the factory
         // needs to provide are at the beginning of the metadata so the record the factory cursor
-        // returns can be chain record, because it chain record is always longer than record needed out of the
-        // cursor and relevant columns are 0..n limited by factory metadata
+        // returns can be chain record, because its chain record is always longer than record needed out of the
+        // cursor and relevant columns are 0...n limited by factory metadata
 
         int addAt = columnCount;
         for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
@@ -2949,58 +2915,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    private boolean isOrderDescendingByDesignatedTimestampOnly(QueryModel model) {
-        return model.getOrderByAdvice().size() == 1 && model.getTimestamp() != null &&
-                Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token, model.getTimestamp().token) &&
-                getOrderByDirectionOrDefault(model, 0) == ORDER_DIRECTION_DESCENDING;
-    }
-
-    private int prepareLatestByColumnIndexes(ObjList<ExpressionNode> latestBy, GenericRecordMetadata myMeta) throws SqlException {
-        keyTypes.clear();
-        listColumnFilterA.clear();
-
-        final int latestByColumnCount = latestBy.size();
-        if (latestByColumnCount > 0) {
-            // validate the latest by against the current reader
-            // first check if column is valid
-            for (int i = 0; i < latestByColumnCount; i++) {
-                final ExpressionNode latestByNode = latestBy.getQuick(i);
-                final int index = myMeta.getColumnIndexQuiet(latestByNode.token);
-                if (index == -1) {
-                    throw SqlException.invalidColumn(latestByNode.position, latestByNode.token);
-                }
-
-                // check the type of the column, not all are supported
-                int columnType = myMeta.getColumnType(index);
-                switch (ColumnType.tagOf(columnType)) {
-                    case ColumnType.BOOLEAN:
-                    case ColumnType.CHAR:
-                    case ColumnType.SHORT:
-                    case ColumnType.INT:
-                    case ColumnType.LONG:
-                    case ColumnType.LONG256:
-                    case ColumnType.STRING:
-                    case ColumnType.SYMBOL:
-                        // we are reusing collections which leads to confusing naming for this method
-                        // keyTypes are types of columns we collect 'latest by' for
-                        keyTypes.add(columnType);
-                        // listColumnFilterA are indexes of columns we collect 'latest by' for
-                        listColumnFilterA.add(index + 1);
-                        break;
-
-                    default:
-                        throw SqlException
-                                .position(latestByNode.position)
-                                .put(latestByNode.token)
-                                .put(" (")
-                                .put(ColumnType.nameOf(columnType))
-                                .put("): invalid type, only [BOOLEAN, SHORT, INT, LONG, LONG256, CHAR, STRING, SYMBOL] are supported in LATEST BY");
-                }
-            }
-        }
-        return latestByColumnCount;
-    }
-
     private RecordCursorFactory generateUnionAllFactory(
             QueryModel model,
             RecordCursorFactory masterFactory,
@@ -3053,6 +2967,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return unionFactory;
     }
 
+    @Nullable
+    private Function getHiFunction(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        return toFunction(executionContext, model.getLimitHi(), null);
+    }
+
+    @NotNull
+    private Function getLoFunction(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        return toFunction(executionContext, model.getLimitLo(), LongConstant.ZERO);
+    }
+
     private int getTimestampIndex(QueryModel model, RecordCursorFactory factory) throws SqlException {
         final RecordMetadata metadata = factory.getMetadata();
         try {
@@ -3076,6 +3000,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return timestampIndex;
         }
         return metadata.getTimestampIndex();
+    }
+
+    private boolean isOrderDescendingByDesignatedTimestampOnly(QueryModel model) {
+        return model.getOrderByAdvice().size() == 1 && model.getTimestamp() != null &&
+                Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token, model.getTimestamp().token) &&
+                getOrderByDirectionOrDefault(model, 0) == ORDER_DIRECTION_DESCENDING;
     }
 
     private boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
@@ -3118,6 +3048,52 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    private int prepareLatestByColumnIndexes(ObjList<ExpressionNode> latestBy, GenericRecordMetadata myMeta) throws SqlException {
+        keyTypes.clear();
+        listColumnFilterA.clear();
+
+        final int latestByColumnCount = latestBy.size();
+        if (latestByColumnCount > 0) {
+            // validate the latest by against the current reader
+            // first check if column is valid
+            for (int i = 0; i < latestByColumnCount; i++) {
+                final ExpressionNode latestByNode = latestBy.getQuick(i);
+                final int index = myMeta.getColumnIndexQuiet(latestByNode.token);
+                if (index == -1) {
+                    throw SqlException.invalidColumn(latestByNode.position, latestByNode.token);
+                }
+
+                // check the type of the column, not all are supported
+                int columnType = myMeta.getColumnType(index);
+                switch (ColumnType.tagOf(columnType)) {
+                    case ColumnType.BOOLEAN:
+                    case ColumnType.CHAR:
+                    case ColumnType.SHORT:
+                    case ColumnType.INT:
+                    case ColumnType.LONG:
+                    case ColumnType.LONG256:
+                    case ColumnType.STRING:
+                    case ColumnType.SYMBOL:
+                        // we are reusing collections which leads to confusing naming for this method
+                        // keyTypes are types of columns we collect 'latest by' for
+                        keyTypes.add(columnType);
+                        // listColumnFilterA are indexes of columns we collect 'latest by' for
+                        listColumnFilterA.add(index + 1);
+                        break;
+
+                    default:
+                        throw SqlException
+                                .position(latestByNode.position)
+                                .put(latestByNode.token)
+                                .put(" (")
+                                .put(ColumnType.nameOf(columnType))
+                                .put("): invalid type, only [BOOLEAN, SHORT, INT, LONG, LONG256, CHAR, STRING, SYMBOL] are supported in LATEST BY");
+                }
+            }
+        }
+        return latestByColumnCount;
+    }
+
     private void processJoinContext(
             boolean vanillaMaster,
             JoinContext jc,
@@ -3146,8 +3122,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    // used in tests
+    void setEnableJitNullChecks(boolean value) {
+        enableJitNullChecks = value;
+    }
+
     void setFullFatJoins(boolean fullFatJoins) {
         this.fullFatJoins = fullFatJoins;
+    }
+
+    private Function toFunction(SqlExecutionContext executionContext,
+                                ExpressionNode limit,
+                                ConstantFunction defaultValue) throws SqlException {
+        if (limit == null) {
+            return defaultValue;
+        }
+
+        final Function func = functionParser.parseFunction(limit, EmptyRecordMetadata.INSTANCE, executionContext);
+        final int type = func.getType();
+        if (limitTypes.excludes(type)) {
+            throw SqlException.$(limit.position, "invalid type: ").put(ColumnType.nameOf(type));
+        }
+        return func;
     }
 
     private IntList toOrderIndices(RecordMetadata m, ObjList<ExpressionNode> orderBy, IntList orderByDirection) throws SqlException {
@@ -3216,11 +3212,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return ColumnType.isString(columnType) ? Record.GET_STR : Record.GET_SYM;
     }
 
-    // used in tests
-    void setEnableJitNullChecks(boolean value) {
-        enableJitNullChecks = value;
-    }
-
     @FunctionalInterface
     public interface FullFatJoinGenerator {
         RecordCursorFactory create(
@@ -3237,6 +3228,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 RecordValueSink slaveValueSink,
                 IntList columnIndex
         );
+    }
+
+    static {
+        joinsRequiringTimestamp[JOIN_INNER] = false;
+        joinsRequiringTimestamp[JOIN_OUTER] = false;
+        joinsRequiringTimestamp[JOIN_CROSS] = false;
+        joinsRequiringTimestamp[JOIN_ASOF] = true;
+        joinsRequiringTimestamp[JOIN_SPLICE] = true;
+        joinsRequiringTimestamp[JOIN_LT] = true;
     }
 
     static {

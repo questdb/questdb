@@ -2363,7 +2363,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleByDayNoFillNotKeyedAlignToCalendarTimezoneOct() throws Exception {
-        // We are going over spring time change. Because time is "expanding" we dont have
+        // We are going over spring time change. Because time is "expanding" we don't have
         // to do anything special. Our UTC timestamps will show "gap" and data doesn't
         // have to change
         assertQuery(
@@ -2627,7 +2627,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezone() throws Exception {
-        // We are going over spring time change. Because time is "expanding" we dont have
+        // We are going over spring time change. Because time is "expanding" we don't have
         // to do anything special. Our UTC timestamps will show "gap" and data doesn't
         // have to change
         assertQuery(
@@ -2662,7 +2662,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOct() throws Exception {
-        // We are going over spring time change. Because time is "expanding" we dont have
+        // We are going over spring time change. Because time is "expanding" we don't have
         // to do anything special. Our UTC timestamps will show "gap" and data doesn't
         // have to change
         assertQuery(
@@ -2696,7 +2696,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
     @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOctMin() throws Exception {
-        // We are going over spring time change. Because time is "expanding" we dont have
+        // We are going over spring time change. Because time is "expanding" we don't have
         // to do anything special. Our UTC timestamps will show "gap" and data doesn't
         // have to change
         assertQuery(
@@ -7086,7 +7086,7 @@ public class SampleByTest extends AbstractGriffinTest {
     public void testSampleFillPrevNotKeyedAlignToCalendarTimeZone() throws Exception {
         // this test verifies transition from Summer to Winter time and
         // clock going backwards. An hour of time should drop out of the result set
-        // without the logic trying to back fill things
+        // without the logic trying to backfill things
         assertQuery("s\tto_timezone\n" +
                         "11.427984775756228\t2021-10-31T03:00:00.000000Z\n" +
                         "66.08297852815922\t2021-10-31T03:30:00.000000Z\n" +
@@ -7178,7 +7178,7 @@ public class SampleByTest extends AbstractGriffinTest {
     public void testSampleFillPrevNotKeyedAlignToCalendarTimeZone2() throws Exception {
         // this test verifies transition from Summer to Winter time and
         // clock going backwards. An hour of time should drop out of the result set
-        // without the logic trying to back fill things
+        // without the logic trying to backfill things
         assertQuery("sum\tk\n" +
                         "11.427984775756228\t2021-03-28T00:00:00.000000Z\n" +
                         "42.17768841969397\t2021-03-28T00:30:00.000000Z\n" +
@@ -7273,7 +7273,7 @@ public class SampleByTest extends AbstractGriffinTest {
     public void testSampleFillPrevNotKeyedAlignToCalendarTimeZoneOffset() throws Exception {
         // this test verifies transition from Summer to Winter time and
         // clock going backwards. An hour of time should drop out of the result set
-        // without the logic trying to back fill things
+        // without the logic trying to backfill things
         assertQuery("sum\tk\n" +
                         "11.427984775756228\t2021-10-30T23:40:00.000000Z\n" +
                         "11.427984775756228\t2021-10-31T00:10:00.000000Z\n" +
@@ -8329,7 +8329,7 @@ public class SampleByTest extends AbstractGriffinTest {
     public void testSampleFillValueNotKeyedAlignToCalendarOffset() throws Exception {
         // this test verifies transition from Summer to Winter time and
         // clock going backwards. An hour of time should drop out of the result set
-        // without the logic trying to back fill things
+        // without the logic trying to backfill things
         assertQuery("sum\tk\n" +
                         "11.427984775756228\t2021-10-30T23:40:00.000000Z\n" +
                         "20.56\t2021-10-31T00:10:00.000000Z\n" +
@@ -8517,7 +8517,7 @@ public class SampleByTest extends AbstractGriffinTest {
     public void testSampleFillValueNotKeyedAlignToCalendarTimeZone2() throws Exception {
         // this test verifies transition from Summer to Winter time and
         // clock going backwards. An hour of time should drop out of the result set
-        // without the logic trying to back fill things
+        // without the logic trying to backfill things
         assertQuery("sum\tk\n" +
                         "11.427984775756228\t2021-10-31T00:00:00.000000Z\n" +
                         "66.08297852815922\t2021-10-31T00:30:00.000000Z\n" +
@@ -8609,7 +8609,7 @@ public class SampleByTest extends AbstractGriffinTest {
     public void testSampleFillValueNotKeyedAlignToCalendarTimeZoneOffset() throws Exception {
         // this test verifies transition from Summer to Winter time and
         // clock going backwards. An hour of time should drop out of the result set
-        // without the logic trying to back fill things
+        // without the logic trying to backfill things
         assertQuery("s\tkz\n" +
                         "2\t2021-10-31T03:10:00.000000Z\n" +
                         "1\t2021-10-31T04:10:00.000000Z\n" +

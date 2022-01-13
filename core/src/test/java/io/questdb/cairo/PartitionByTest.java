@@ -38,7 +38,7 @@ public class PartitionByTest {
     private static final StringSink sink = new StringSink();
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         sink.clear();
     }
 
@@ -100,18 +100,6 @@ public class PartitionByTest {
                 "2023-03-01T00:00:00.000000Z",
                 "2023-03-01T00:00:00.000000Z"
         );
-    }
-
-    @Test
-    public void testUnknowns() {
-        try {
-            //noinspection ResultOfMethodCallIgnored
-            PartitionBy.getPartitionDirFormatMethod(-1);
-            Assert.fail();
-        } catch (Exception ignored) {
-        }
-
-        TestUtils.assertEquals("UNKNOWN", PartitionBy.toString(-1));
     }
 
     @Test
@@ -234,15 +222,6 @@ public class PartitionByTest {
     }
 
     @Test
-    public void testSetPathNoCalcByDay() throws NumericException {
-        setSetPathNoCalc(
-                "a/b/2018-10-12",
-                "2018-10-12T00:00:00.000000Z",
-                PartitionBy.DAY
-        );
-    }
-
-    @Test
     public void testSetPathByHour() throws NumericException {
         setSetPath(
                 "2021-04-01T18:59:59.999999Z",
@@ -253,27 +232,9 @@ public class PartitionByTest {
     }
 
     @Test
-    public void testSetPathNoCalcByHour() throws NumericException {
-        setSetPathNoCalc(
-                "a/b/2021-04-01T18",
-                "2021-04-01T18:00:00.000000Z",
-                PartitionBy.HOUR
-        );
-    }
-
-    @Test
     public void testSetPathByMonth() throws NumericException {
         setSetPath(
                 "2021-04-30T23:59:59.999999Z",
-                "a/b/2021-04",
-                "2021-04-01T00:00:00.000000Z",
-                PartitionBy.MONTH
-        );
-    }
-
-    @Test
-    public void testSetPathNoCalcByMonth() throws NumericException {
-        setSetPathNoCalc(
                 "a/b/2021-04",
                 "2021-04-01T00:00:00.000000Z",
                 PartitionBy.MONTH
@@ -307,12 +268,51 @@ public class PartitionByTest {
     }
 
     @Test
+    public void testSetPathNoCalcByDay() throws NumericException {
+        setSetPathNoCalc(
+                "a/b/2018-10-12",
+                "2018-10-12T00:00:00.000000Z",
+                PartitionBy.DAY
+        );
+    }
+
+    @Test
+    public void testSetPathNoCalcByHour() throws NumericException {
+        setSetPathNoCalc(
+                "a/b/2021-04-01T18",
+                "2021-04-01T18:00:00.000000Z",
+                PartitionBy.HOUR
+        );
+    }
+
+    @Test
+    public void testSetPathNoCalcByMonth() throws NumericException {
+        setSetPathNoCalc(
+                "a/b/2021-04",
+                "2021-04-01T00:00:00.000000Z",
+                PartitionBy.MONTH
+        );
+    }
+
+    @Test
     public void testSetPathNoCalcByYear() throws NumericException {
         setSetPathNoCalc(
                 "a/b/2021",
                 "2021-01-01T00:00:00.000000Z",
                 PartitionBy.YEAR
         );
+    }
+
+    @Test
+    public void testUnknowns() {
+        try {
+            //noinspection ResultOfMethodCallIgnored
+            PartitionBy.getPartitionDirFormatMethod(-1);
+            Assert.fail();
+        } catch (Exception ignored) {
+        }
+
+        TestUtils.assertEquals("UNKNOWN", PartitionBy.toString(-1));
     }
 
     private void assertFormatAndParse(CharSequence expectedDirName, CharSequence timestampString, int partitionBy) throws NumericException {

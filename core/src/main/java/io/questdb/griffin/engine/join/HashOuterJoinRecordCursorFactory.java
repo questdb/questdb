@@ -29,11 +29,11 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
@@ -74,31 +74,6 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
         );
     }
 
-    static void buildMap(
-            RecordCursor slaveCursor,
-            Record record,
-            Map joinKeyMap,
-            RecordSink slaveKeySink,
-            RecordChain slaveChain,
-            SqlExecutionCircuitBreaker circuitBreaker
-    ) {
-        joinKeyMap.clear();
-        slaveChain.clear();
-        while (slaveCursor.hasNext()) {
-            circuitBreaker.test();
-            MapKey key = joinKeyMap.withKey();
-            key.put(record, slaveKeySink);
-            MapValue value = key.createValue();
-            if (value.isNew()) {
-                long offset = slaveChain.put(record, -1);
-                value.putLong(0, offset);
-                value.putLong(1, offset);
-            } else {
-                value.putLong(1, slaveChain.put(record, value.getLong(1)));
-            }
-        }
-    }
-
     @Override
     public void close() {
         joinKeyMap.close();
@@ -126,6 +101,31 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
         return false;
     }
 
+    static void buildMap(
+            RecordCursor slaveCursor,
+            Record record,
+            Map joinKeyMap,
+            RecordSink slaveKeySink,
+            RecordChain slaveChain,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        joinKeyMap.clear();
+        slaveChain.clear();
+        while (slaveCursor.hasNext()) {
+            circuitBreaker.test();
+            MapKey key = joinKeyMap.withKey();
+            key.put(record, slaveKeySink);
+            MapValue value = key.createValue();
+            if (value.isNew()) {
+                long offset = slaveChain.put(record, -1);
+                value.putLong(0, offset);
+                value.putLong(1, offset);
+            } else {
+                value.putLong(1, slaveChain.put(record, value.getLong(1)));
+            }
+        }
+    }
+
     private void buildMapOfSlaveRecords(RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
         buildMap(slaveCursor, slaveCursor.getRecord(), joinKeyMap, slaveKeySink, slaveChain, circuitBreaker);
     }
@@ -151,11 +151,6 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
         public void close() {
             masterCursor = Misc.free(masterCursor);
             slaveCursor = Misc.free(slaveCursor);
-        }
-
-        @Override
-        public long size() {
-            return -1;
         }
 
         @Override
@@ -195,6 +190,11 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
                 return true;
             }
             return false;
+        }
+
+        @Override
+        public long size() {
+            return -1;
         }
 
         @Override

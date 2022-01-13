@@ -41,11 +41,9 @@ public class PGOids {
     public static final int PG_CHAR = 18;
     public static final int PG_DATE = 1082;
     public static final int PG_BYTEA = 17;
-    private static final IntList TYPE_OIDS = new IntList();
     public static final IntList PG_TYPE_OIDS = new IntList();
     public static final IntIntHashMap PG_TYPE_TO_SIZE_MAP = new IntIntHashMap();
     public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[11];
-
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_FLOAT8 = ((PG_FLOAT8 >> 24) & 0xff) | ((PG_FLOAT8 << 8) & 0xff0000) | ((PG_FLOAT8 >> 8) & 0xff00) | ((PG_FLOAT8 << 24) & 0xff000000);
     public static final int X_B_PG_FLOAT8 = 1 | X_PG_FLOAT8;
@@ -74,7 +72,6 @@ public class PGOids {
     public static final int PG_CLASS_OID = 1259;
     public static final int PG_PUBLIC_OID = 2200;
     public static final int PG_NAMESPACE_OID = 2615;
-
     public static final int BINARY_TYPE_INT = (1 << 31) | ColumnType.INT;
     public static final int BINARY_TYPE_BYTE = (1 << 31) | ColumnType.BYTE;
     public static final int BINARY_TYPE_SHORT = (1 << 31) | ColumnType.SHORT;
@@ -84,12 +81,16 @@ public class PGOids {
     public static final int BINARY_TYPE_DATE = (1 << 31) | ColumnType.DATE;
     public static final int BINARY_TYPE_TIMESTAMP = (1 << 31) | ColumnType.TIMESTAMP;
     public static final int BINARY_TYPE_BINARY = (1 << 31) | ColumnType.BINARY;
-
     public static final int BINARY_TYPE_STRING = (1 << 31) | ColumnType.STRING;
     public static final int BINARY_TYPE_SYMBOL = (1 << 31) | ColumnType.SYMBOL;
     public static final int BINARY_TYPE_BOOLEAN = (1 << 31) | ColumnType.BOOLEAN;
     public static final int BINARY_TYPE_LONG256 = (1 << 31) | ColumnType.LONG256;
     public static final int BINARY_TYPE_CHAR = (1 << 31) | ColumnType.CHAR;
+    private static final IntList TYPE_OIDS = new IntList();
+
+    public static int getTypeOid(int type) {
+        return TYPE_OIDS.getQuick(ColumnType.tagOf(type));
+    }
 
     static int toColumnBinaryType(short code, int type) {
         return (((int) code) << 31) | type;
@@ -111,10 +112,6 @@ public class PGOids {
     static int toParamType(int type) {
         // clear format flag
         return type & (~1);
-    }
-
-    public static int getTypeOid(int type) {
-        return TYPE_OIDS.getQuick(ColumnType.tagOf(type));
     }
 
     static {

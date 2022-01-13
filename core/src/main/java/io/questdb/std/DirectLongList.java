@@ -33,13 +33,12 @@ import java.io.Closeable;
 public class DirectLongList implements Mutable, Closeable {
 
     private static final Log LOG = LogFactory.getLog(DirectLongList.class);
-
+    private final int memoryTag;
     private long pos;
     private long start;
     private long limit;
     private long address;
     private long capacity;
-    private final int memoryTag;
 
     public DirectLongList(long capacity, int memoryTag) {
         this.memoryTag = memoryTag;

@@ -43,16 +43,6 @@ public class RoundHalfEvenDoubleFunctionFactoryTest extends AbstractFunctionFact
         call(14.7778, 18).andAssert(Double.NaN, 0.0000000001);
     }
 
-    @Test
-    public void testOKNegScale() throws SqlException {
-        call(14.7778, -13).andAssert(0.0, 0.0000000001);
-    }
-
-    @Test
-    public void testOKPosScale() throws SqlException {
-        call(14.7778, 11).andAssert(14.7778, 0.0000000001);
-    }
-
     /*Sanity*/
     @Test
     public void testLeftNan() throws SqlException {
@@ -60,20 +50,13 @@ public class RoundHalfEvenDoubleFunctionFactoryTest extends AbstractFunctionFact
     }
 
     @Test
-    public void testNegScaleNegValueRoundsDown() throws SqlException {
-        call(-145, -1).andAssert(-140, 0.0000000001);
-    }
-
-    @Test
     public void testNegScaleHigherThanNumber() throws SqlException {
         call(14.7778, -5).andAssert(0, 0.0000000001);
     }
 
-    /*Negative Scale*/
-
     @Test
-    public void testPosScaleNegValueRoundDown() throws SqlException {
-        call(-23.45, 1).andAssert(-23.4, 0.0000000001);
+    public void testNegScaleNegValueRoundsDown() throws SqlException {
+        call(-145, -1).andAssert(-140, 0.0000000001);
     }
 
     @Test
@@ -86,11 +69,27 @@ public class RoundHalfEvenDoubleFunctionFactoryTest extends AbstractFunctionFact
         call(145, -1).andAssert(140, 0.0000000001);
     }
 
+    /*Negative Scale*/
+
     @Test
     public void testNegScalePosValueRoundsUp() throws SqlException {
         call(135, -1).andAssert(140, 0.0000000001);
     }
 
+    @Test
+    public void testOKNegScale() throws SqlException {
+        call(14.7778, -13).andAssert(0.0, 0.0000000001);
+    }
+
+    @Test
+    public void testOKPosScale() throws SqlException {
+        call(14.7778, 11).andAssert(14.7778, 0.0000000001);
+    }
+
+    @Test
+    public void testPosScaleNegValueRoundDown() throws SqlException {
+        call(-23.45, 1).andAssert(-23.4, 0.0000000001);
+    }
 
     /*Positive Scale*/
     @Test

@@ -38,11 +38,10 @@ import java.io.Closeable;
 public class TxnScoreboard implements Closeable {
 
     private static final Log LOG = LogFactory.getLog(TxnScoreboard.class);
-
-    private long fd ;
-    private long mem;
     private final long size;
     private final FilesFacade ff;
+    private long fd;
+    private long mem;
 
     public TxnScoreboard(FilesFacade ff, @Transient Path root, int entryCount) {
         this.ff = ff;

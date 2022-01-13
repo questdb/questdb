@@ -42,17 +42,6 @@ public class AssociativeCacheTest {
     }
 
     @Test
-    public void testMinSize() {
-        AssociativeCache<String> cache = new AssociativeCache<>(1, 1);
-        cache.put("X", "1");
-        cache.put("Y", "2");
-        cache.put("Z", "3");
-        Assert.assertNull(cache.peek("X"));
-        Assert.assertNull(cache.peek("Y"));
-        Assert.assertEquals("3", cache.peek("Z"));
-    }
-
-    @Test
     public void testFull() {
         AssociativeCache<String> cache = new AssociativeCache<>(8, 64);
         CharSequenceHashSet all = new CharSequenceHashSet();
@@ -106,6 +95,17 @@ public class AssociativeCacheTest {
         } finally {
             Unsafe.free(mem, 1024, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    @Test
+    public void testMinSize() {
+        AssociativeCache<String> cache = new AssociativeCache<>(1, 1);
+        cache.put("X", "1");
+        cache.put("Y", "2");
+        cache.put("Z", "3");
+        Assert.assertNull(cache.peek("X"));
+        Assert.assertNull(cache.peek("Y"));
+        Assert.assertEquals("3", cache.peek("Z"));
     }
 
     @Test

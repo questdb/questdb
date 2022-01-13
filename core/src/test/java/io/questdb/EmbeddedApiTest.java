@@ -55,6 +55,37 @@ public class EmbeddedApiTest {
     public TemporaryFolder temp = new TemporaryFolder();
 
     @Test
+    public void testConcurrentReadsAndCreateTableIfNotExists() throws Exception {
+        final int N = 100;
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(temp.getRoot().getAbsolutePath());
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                // Create table upfront, so that reader sees it
+                try (
+                        final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
+                        final SqlCompiler compiler = new SqlCompiler(engine)
+                ) {
+                    compiler.compile("create table if not exists abc (a int, b byte, ts timestamp) timestamp(ts)", ctx);
+                }
+
+                // Now start single reader and writer
+                AtomicInteger errors = new AtomicInteger();
+                CyclicBarrier barrier = new CyclicBarrier(2);
+                CountDownLatch latch = new CountDownLatch(2);
+                Reader reader = new Reader(engine, errors, barrier, latch, N);
+                reader.start();
+                Writer writer = new Writer(engine, errors, barrier, latch, N);
+                writer.start();
+
+                latch.await();
+
+                Assert.assertEquals(0, errors.get());
+            }
+        });
+    }
+
+    @Test
     public void testConcurrentSQLExec() throws Exception {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(temp.getRoot().getAbsolutePath());
         final Log log = LogFactory.getLog("testConcurrentSQLExec");
@@ -160,37 +191,6 @@ public class EmbeddedApiTest {
                         }
                     }
                 }
-            }
-        });
-    }
-
-    @Test
-    public void testConcurrentReadsAndCreateTableIfNotExists() throws Exception {
-        final int N = 100;
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(temp.getRoot().getAbsolutePath());
-
-        TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new CairoEngine(configuration)) {
-                // Create table upfront, so that reader sees it
-                try (
-                        final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
-                        final SqlCompiler compiler = new SqlCompiler(engine)
-                ) {
-                    compiler.compile("create table if not exists abc (a int, b byte, ts timestamp) timestamp(ts)", ctx);
-                }
-
-                // Now start single reader and writer
-                AtomicInteger errors = new AtomicInteger();
-                CyclicBarrier barrier = new CyclicBarrier(2);
-                CountDownLatch latch = new CountDownLatch(2);
-                Reader reader = new Reader(engine, errors, barrier, latch, N);
-                reader.start();
-                Writer writer = new Writer(engine, errors, barrier, latch, N);
-                writer.start();
-
-                latch.await();
-
-                Assert.assertEquals(0, errors.get());
             }
         });
     }

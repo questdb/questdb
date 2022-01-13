@@ -176,20 +176,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
-    private void retryQueryExecution(JsonQueryProcessorState state, QueryFuture continueExecution) throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
-        if (continueExecution.await(0) != QueryFuture.QUERY_COMPLETE) {
-            if (state.getExecutionTime() < alterStartFullTimeoutNs) {
-                throw EntryUnavailableException.instance("retry alter table wait");
-            } else {
-                state.setContinueExecution(Misc.free(continueExecution));
-                throw SqlException.$(0, "Timeout on waiting ALTER table to finish execution");
-            }
-        } else {
-            state.setContinueExecution(Misc.free(continueExecution));
-            sendConfirmation(state, configuration.getKeepAliveHeader());
-        }
-    }
-
     @Override
     public void onRequestComplete(
             HttpConnectionContext context
@@ -227,12 +213,29 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
+    public void onRequestRetry(
+            HttpConnectionContext context
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        JsonQueryProcessorState state = LV.get(context);
+        execute0(state);
+    }
+
+    @Override
     public void parkRequest(HttpConnectionContext context) {
         final JsonQueryProcessorState state = LV.get(context);
         if (state != null) {
             // preserve random when we park the context
             state.setRnd(sqlExecutionContext.getRandom());
         }
+    }
+
+    @Override
+    public void failRequest(HttpConnectionContext context, HttpException e)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final JsonQueryProcessorState state = LV.get(context);
+        final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
+        internalError(socket, e.getFlyweightMessage(), e, state);
+        socket.shutdownWrite();
     }
 
     private static void doResumeSend(
@@ -345,33 +348,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         );
     }
 
-    private void executeCachedSelect(
-            JsonQueryProcessorState state,
-            RecordCursorFactory factory,
-            CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
-        state.setCompilerNanos(0);
-        state.logExecuteCached();
-        executeSelect(state, factory, keepAliveHeader);
-    }
-
-    @Override
-    public void onRequestRetry(
-            HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        JsonQueryProcessorState state = LV.get(context);
-        execute0(state);
-    }
-
-    @Override
-    public void failRequest(HttpConnectionContext context, HttpException e)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final JsonQueryProcessorState state = LV.get(context);
-        final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
-        internalError(socket, e.getFlyweightMessage(), e, state);
-        socket.shutdownWrite();
-    }
-
     private void executeAlterTable(
             JsonQueryProcessorState state,
             CompiledQuery cc,
@@ -396,6 +372,15 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         sendConfirmation(state, cc, keepAliveHeader);
     }
 
+    private void executeCachedSelect(
+            JsonQueryProcessorState state,
+            RecordCursorFactory factory,
+            CharSequence keepAliveHeader
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+        state.setCompilerNanos(0);
+        state.logExecuteCached();
+        executeSelect(state, factory, keepAliveHeader);
+    }
 
     private void executeInsert(
             JsonQueryProcessorState state,
@@ -507,6 +492,20 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             return false;
         }
         return true;
+    }
+
+    private void retryQueryExecution(JsonQueryProcessorState state, QueryFuture continueExecution) throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
+        if (continueExecution.await(0) != QueryFuture.QUERY_COMPLETE) {
+            if (state.getExecutionTime() < alterStartFullTimeoutNs) {
+                throw EntryUnavailableException.instance("retry alter table wait");
+            } else {
+                state.setContinueExecution(Misc.free(continueExecution));
+                throw SqlException.$(0, "Timeout on waiting ALTER table to finish execution");
+            }
+        } else {
+            state.setContinueExecution(Misc.free(continueExecution));
+            sendConfirmation(state, configuration.getKeepAliveHeader());
+        }
     }
 
     @FunctionalInterface

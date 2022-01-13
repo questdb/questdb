@@ -62,6 +62,10 @@ public class LeftFunctionFactory implements FunctionFactory {
         return new LeftStrFunction(strFunc, countFunc);
     }
 
+    private static int getPos(int len, int count) {
+        return count > 0 ? Math.max(0, Math.min(len, count)) : Math.max(0, len + count);
+    }
+
     private static class LeftStrFunction extends StrFunction implements BinaryFunction {
 
         private final StringSink sink = new StringSink();
@@ -167,14 +171,14 @@ public class LeftFunctionFactory implements FunctionFactory {
             }
         }
 
-        private int getPos(int len) {
-            return LeftFunctionFactory.getPos(len, count);
-        }
-
         @Override
         public int getStrLen(Record rec) {
             int len = strFunc.getStrLen(rec);
             return len != TableUtils.NULL_LEN ? getPos(len) : TableUtils.NULL_LEN;
+        }
+
+        private int getPos(int len) {
+            return LeftFunctionFactory.getPos(len, count);
         }
 
         @Nullable
@@ -189,10 +193,6 @@ public class LeftFunctionFactory implements FunctionFactory {
             }
             return null;
         }
-    }
-
-    private static int getPos(int len, int count) {
-        return count > 0 ? Math.max(0, Math.min(len, count)) : Math.max(0, len + count);
     }
 
 }

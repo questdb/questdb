@@ -36,8 +36,17 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
+    default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        getArg().init(symbolTableSource, executionContext);
+    }
+
+    @Override
     default boolean isConstant() {
         return getArg().isConstant();
+    }
+
+    default boolean isRuntimeConstant() {
+        return getArg().isRuntimeConstant();
     }
 
     @Override
@@ -46,13 +55,4 @@ public interface UnaryFunction extends Function {
     }
 
     Function getArg();
-
-    @Override
-    default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        getArg().init(symbolTableSource, executionContext);
-    }
-
-    default boolean isRuntimeConstant() {
-        return getArg().isRuntimeConstant();
-    }
 }

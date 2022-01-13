@@ -57,38 +57,38 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
         }
     }
 
+    public long getKeyBaseAddress() {
+        return keyMem.addressOf(0);
+    }
+
     @Override
     public int getKeyCount() {
         return keyCountIncludingNulls;
-    }
-
-    @Override
-    public boolean isOpen() {
-        return keyMem.getFd() != -1;
-    }
-
-    public long getKeyBaseAddress() {
-        return keyMem.addressOf(0);
     }
 
     public long getKeyMemorySize() {
         return keyMem.size();
     }
 
+    public long getUnIndexedNullCount() {
+        return unIndexedNullCount;
+    }
+
     public long getValueBaseAddress() {
         return valueMem.addressOf(0);
+    }
+
+    public int getValueBlockCapacity() {
+        return blockValueCountMod;
     }
 
     public long getValueMemorySize() {
         return valueMem.size();
     }
 
-    public long getUnIndexedNullCount() {
-        return unIndexedNullCount;
-    }
-
-    public int getValueBlockCapacity() {
-        return blockValueCountMod;
+    @Override
+    public boolean isOpen() {
+        return keyMem.getFd() != -1;
     }
 
     public void of(CairoConfiguration configuration, Path path, CharSequence name, long unIndexedNullCount, long partitionTxn) {

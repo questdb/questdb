@@ -316,11 +316,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         return null != pubSeq;
     }
 
-    @TestOnly
-    void setListener(LineTcpReceiver.SchedulerListener listener) {
-        this.listener = listener;
-    }
-
     boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser, FloatingDirectCharSink floatingDirectCharSink) {
         TableUpdateDetails tableUpdateDetails;
         try {
@@ -358,6 +353,11 @@ class LineTcpMeasurementScheduler implements Closeable {
             return false;
         }
         return true;
+    }
+
+    @TestOnly
+    void setListener(LineTcpReceiver.SchedulerListener listener) {
+        this.listener = listener;
     }
 
     @NotNull

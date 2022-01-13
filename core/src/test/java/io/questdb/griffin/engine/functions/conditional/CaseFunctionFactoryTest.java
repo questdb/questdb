@@ -334,29 +334,6 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIntOrElseMalformedBinaryOperator() throws Exception {
-        assertFailure(
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then c\n" +
-                        "        else +125\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_int() a," +
-                        " rnd_int() b," +
-                        " rnd_int() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                103,
-                "too few arguments for '+' [found=1,expected=2]"
-        );
-    }
-
-    @Test
     public void testChar() throws Exception {
         assertQuery(
                 "x\tcase\n" +
@@ -812,6 +789,29 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIntOrElseMalformedBinaryOperator() throws Exception {
+        assertFailure(
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then c\n" +
+                        "        else +125\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " rnd_int() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                103,
+                "too few arguments for '+' [found=1,expected=2]"
+        );
+    }
+
+    @Test
     public void testIntOrElseUnaryNeg() throws Exception {
         assertQuery(
                 "x\tcase\n" +
@@ -949,25 +949,22 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testNonBooleanWhen() throws Exception {
-        assertFailure(
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "    end \n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_date() a," +
-                        " rnd_date() b," +
-                        " rnd_date() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                37,
-                "BOOLEAN expected, found INT"
-        );
+    public void testKeyedFunctionVarArgumentNumeric() throws Exception {
+        String[] types = {"INT", "LONG", "SHORT", "STRING", "TIMESTAMP", "BOOLEAN"};
+
+        for (String type : types) {
+            compiler.compile("create table tt as (" +
+                    "select cast(x as TIMESTAMP) as ts, cast(x as " + type + ") as x from long_sequence(10)" +
+                    ") timestamp(ts)", sqlExecutionContext);
+
+            assertSql("select sum(case x when CAST(1 as " + type + ") then 1 else 0 end) " +
+                            "from tt",
+                    "sum\n" +
+                            "1\n"
+            );
+
+            compiler.compile("drop table tt", sqlExecutionContext);
+        }
     }
 
     @Test
@@ -1149,6 +1146,28 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                 true,
                 true,
                 true
+        );
+    }
+
+    @Test
+    public void testNonBooleanWhen() throws Exception {
+        assertFailure(
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_date() a," +
+                        " rnd_date() b," +
+                        " rnd_date() c" +
+                        " from long_sequence(20)" +
+                        ")",
+                37,
+                "BOOLEAN expected, found INT"
         );
     }
 
@@ -1423,24 +1442,5 @@ public class CaseFunctionFactoryTest extends AbstractGriffinTest {
                 true,
                 true
         );
-    }
-
-    @Test
-    public void testKeyedFunctionVarArgumentNumeric() throws Exception {
-        String[] types = {"INT", "LONG", "SHORT", "STRING", "TIMESTAMP", "BOOLEAN"};
-
-        for (String type : types) {
-            compiler.compile("create table tt as (" +
-                    "select cast(x as TIMESTAMP) as ts, cast(x as " + type + ") as x from long_sequence(10)" +
-                    ") timestamp(ts)", sqlExecutionContext);
-
-            assertSql("select sum(case x when CAST(1 as " + type + ") then 1 else 0 end) " +
-                            "from tt",
-                    "sum\n" +
-                            "1\n"
-            );
-
-            compiler.compile("drop table tt", sqlExecutionContext);
-        }
     }
 }

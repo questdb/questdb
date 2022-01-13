@@ -34,14 +34,14 @@ public class DirectBinarySequence implements BinarySequence, Mutable {
     }
 
     @Override
-    public void clear() {
-        address = 0;
-        len = 0;
+    public long length() {
+        return len;
     }
 
     @Override
-    public long length() {
-        return len;
+    public void clear() {
+        address = 0;
+        len = 0;
     }
 
     public DirectBinarySequence of(long address, long len) {

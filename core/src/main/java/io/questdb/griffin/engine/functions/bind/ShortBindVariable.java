@@ -33,13 +33,13 @@ class ShortBindVariable extends ShortFunction implements ScalarFunction, Mutable
     short value;
 
     @Override
-    public short getShort(Record rec) {
-        return value;
+    public void clear() {
+        this.value = 0;
     }
 
     @Override
-    public void clear() {
-        this.value = 0;
+    public short getShort(Record rec) {
+        return value;
     }
 
     @Override

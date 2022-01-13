@@ -43,8 +43,13 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration();
 
     @Override
-    public boolean isEnabled() {
-        return true;
+    public int getAggressiveReadRetryCount() {
+        return 0;
+    }
+
+    @Override
+    public String getAuthDbPath() {
+        return null;
     }
 
     @Override
@@ -53,53 +58,13 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public LineProtoTimestampAdapter getTimestampAdapter() {
-        return LineProtoNanoTimestampAdapter.INSTANCE;
-    }
-
-    @Override
     public int getConnectionPoolInitialCapacity() {
         return 64;
     }
 
     @Override
-    public IODispatcherConfiguration getNetDispatcherConfiguration() {
-        return ioDispatcherConfiguration;
-    }
-
-    @Override
-    public int getNetMsgBufferSize() {
-        return 2048;
-    }
-
-    @Override
-    public int getMaxMeasurementSize() {
-        return 512;
-    }
-
-    @Override
-    public NetworkFacade getNetworkFacade() {
-        return NetworkFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public int getWriterQueueCapacity() {
-        return 64;
-    }
-
-    @Override
-    public MicrosecondClock getMicrosecondClock() {
-        return MicrosecondClockImpl.INSTANCE;
-    }
-
-    @Override
-    public MillisecondClock getMillisecondClock() {
-        return MillisecondClockImpl.INSTANCE;
-    }
-
-    @Override
-    public WorkerPoolAwareConfiguration getWriterWorkerPoolConfiguration() {
-        return WorkerPoolAwareConfiguration.USE_SHARED_CONFIGURATION;
+    public int getDefaultPartitionBy() {
+        return PartitionBy.DAY;
     }
 
     @Override
@@ -113,13 +78,43 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public String getAuthDbPath() {
-        return null;
+    public int getMaxMeasurementSize() {
+        return 512;
     }
 
     @Override
-    public int getDefaultPartitionBy() {
-        return PartitionBy.DAY;
+    public MicrosecondClock getMicrosecondClock() {
+        return MicrosecondClockImpl.INSTANCE;
+    }
+
+    @Override
+    public MillisecondClock getMillisecondClock() {
+        return MillisecondClockImpl.INSTANCE;
+    }
+
+    @Override
+    public IODispatcherConfiguration getNetDispatcherConfiguration() {
+        return ioDispatcherConfiguration;
+    }
+
+    @Override
+    public int getNetMsgBufferSize() {
+        return 2048;
+    }
+
+    @Override
+    public NetworkFacade getNetworkFacade() {
+        return NetworkFacadeImpl.INSTANCE;
+    }
+
+    @Override
+    public long getSymbolCacheWaitUsBeforeReload() {
+        return 500_000;
+    }
+
+    @Override
+    public LineProtoTimestampAdapter getTimestampAdapter() {
+        return LineProtoNanoTimestampAdapter.INSTANCE;
     }
 
     @Override
@@ -128,12 +123,17 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public int getAggressiveReadRetryCount() {
-        return 0;
+    public int getWriterQueueCapacity() {
+        return 64;
     }
 
     @Override
-    public long getSymbolCacheWaitUsBeforeReload() {
-        return 500_000;
+    public WorkerPoolAwareConfiguration getWriterWorkerPoolConfiguration() {
+        return WorkerPoolAwareConfiguration.USE_SHARED_CONFIGURATION;
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return true;
     }
 }

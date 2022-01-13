@@ -62,6 +62,16 @@ public class DefaultTextConfiguration implements TextConfiguration {
     }
 
     @Override
+    public DateLocale getDefaultDateLocale() {
+        return DateFormatUtils.enLocale;
+    }
+
+    @Override
+    public InputFormatConfiguration getInputFormatConfiguration() {
+        return inputFormatConfiguration;
+    }
+
+    @Override
     public int getJsonCacheLimit() {
         return 16384;
     }
@@ -114,15 +124,5 @@ public class DefaultTextConfiguration implements TextConfiguration {
     @Override
     public int getUtf8SinkSize() {
         return 4096;
-    }
-
-    @Override
-    public InputFormatConfiguration getInputFormatConfiguration() {
-        return inputFormatConfiguration;
-    }
-
-    @Override
-    public DateLocale getDefaultDateLocale() {
-        return DateFormatUtils.enLocale;
     }
 }

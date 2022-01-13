@@ -58,6 +58,11 @@ public class NullIfCharFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public char getChar(Record rec) {
+            return chrFunc1.getChar(rec) == chrFunc2.getChar(rec) ? Character.MIN_VALUE : chrFunc1.getChar(rec);
+        }
+
+        @Override
         public Function getLeft() {
             return chrFunc1;
         }
@@ -65,11 +70,6 @@ public class NullIfCharFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return chrFunc2;
-        }
-
-        @Override
-        public char getChar(Record rec) {
-            return chrFunc1.getChar(rec) == chrFunc2.getChar(rec) ? Character.MIN_VALUE : chrFunc1.getChar(rec);
         }
     }
 }

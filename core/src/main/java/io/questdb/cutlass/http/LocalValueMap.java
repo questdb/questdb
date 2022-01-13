@@ -42,14 +42,6 @@ public class LocalValueMap implements Closeable, Mutable {
         setThreshold(INITIAL_CAPACITY);
     }
 
-    private static int nextIndex(int i, int mod) {
-        return ((i + 1 < mod) ? i + 1 : 0);
-    }
-
-    private static int prevIndex(int i, int mod) {
-        return ((i - 1 > -1) ? i - 1 : mod - 1);
-    }
-
     @Override
     public void clear() {
         for (int i = 0, n = table.length; i < n; i++) {
@@ -106,6 +98,14 @@ public class LocalValueMap implements Closeable, Mutable {
         if (!removeNullKeys(i, sz) && sz >= threshold) {
             rehash();
         }
+    }
+
+    private static int nextIndex(int i, int mod) {
+        return ((i + 1 < mod) ? i + 1 : 0);
+    }
+
+    private static int prevIndex(int i, int mod) {
+        return ((i - 1 > -1) ? i - 1 : mod - 1);
     }
 
     @SuppressWarnings("unchecked")

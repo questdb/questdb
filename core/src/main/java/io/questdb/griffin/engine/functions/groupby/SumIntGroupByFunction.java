@@ -72,14 +72,15 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
     }
 
     @Override
-    public long getLong(Record rec) {
-        return rec.getLong(valueIndex + 1) > 0 ? rec.getLong(valueIndex) : Numbers.LONG_NaN;
-    }
-
-    @Override
     public void setLong(MapValue mapValue, long value) {
         mapValue.putLong(valueIndex, value);
         mapValue.putLong(valueIndex + 1, 1);
+    }
+
+    @Override
+    public void setNull(MapValue mapValue) {
+        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override
@@ -88,9 +89,8 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
     }
 
     @Override
-    public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
-        mapValue.putLong(valueIndex + 1, 0);
+    public long getLong(Record rec) {
+        return rec.getLong(valueIndex + 1) > 0 ? rec.getLong(valueIndex) : Numbers.LONG_NaN;
     }
 
     @Override

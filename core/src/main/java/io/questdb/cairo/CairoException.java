@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.Misc;
 import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
@@ -41,7 +42,9 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static CairoException instance(int errno) {
         CairoException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
-        assert (ex = new CairoException()) != null;
+        if (Misc.isAssertionsEnabled()) {
+            ex = new CairoException();
+        }
         ex.message.clear();
         ex.errno = errno;
         ex.cacheable = false;

@@ -33,25 +33,25 @@ abstract class LineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
     static final String targetColumnName = "geohash";
 
     @Test
-    public abstract void testGeoHashes() throws Exception;
-
-    @Test
-    public abstract void testGeoHashesTruncating() throws Exception;
-
-    @Test
-    public abstract void testTableHasGeoHashMessageDoesNot() throws Exception;
-
-    @Test
     public abstract void testExcessivelyLongGeoHashesAreTruncated() throws Exception;
+
+    @Test
+    public abstract void testGeoHashes() throws Exception;
 
     @Test
     public abstract void testGeoHashesNotEnoughPrecision() throws Exception;
 
     @Test
-    public abstract void testWrongCharGeoHashes() throws Exception;
+    public abstract void testGeoHashesTruncating() throws Exception;
 
     @Test
     public abstract void testNullGeoHash() throws Exception;
+
+    @Test
+    public abstract void testTableHasGeoHashMessageDoesNot() throws Exception;
+
+    @Test
+    public abstract void testWrongCharGeoHashes() throws Exception;
 
     protected void assertGeoHash(int columnBits, String inboundLines, String expected) throws Exception {
         assertGeoHash(columnBits, inboundLines, expected, (String[]) null);

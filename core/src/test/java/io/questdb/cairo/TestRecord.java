@@ -69,16 +69,6 @@ public class TestRecord implements Record {
     }
 
     @Override
-    public CharSequence getStr(int col) {
-        return rnd.nextInt() % 16 == 0 ? null : rnd.nextChars(15);
-    }
-
-    @Override
-    public CharSequence getStrB(int col) {
-        return rnd.nextInt() % 16 == 0 ? null : rnd.nextChars(15);
-    }
-
-    @Override
     public int getInt(int col) {
         return rnd.nextInt();
     }
@@ -96,6 +86,16 @@ public class TestRecord implements Record {
     @Override
     public short getShort(int col) {
         return rnd.nextShort();
+    }
+
+    @Override
+    public CharSequence getStr(int col) {
+        return rnd.nextInt() % 16 == 0 ? null : rnd.nextChars(15);
+    }
+
+    @Override
+    public CharSequence getStrB(int col) {
+        return rnd.nextInt() % 16 == 0 ? null : rnd.nextChars(15);
     }
 
     @Override

@@ -31,6 +31,98 @@ import org.junit.Test;
 public class UnionTest extends AbstractGriffinTest {
 
     @Test
+    public void testExcept() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table events2 (contact symbol, groupid symbol, eventid string)", sqlExecutionContext);
+            executeInsert("insert into events2 values ('amy', 'grp1', 'flash')");
+            executeInsert("insert into events2 values ('joey', 'grp2', 'sit')");
+            executeInsert("insert into events2 values ('stewy', 'grp1', 'stand')");
+            executeInsert("insert into events2 values ('bobby', 'grp1', 'flash')");
+            executeInsert("insert into events2 values ('stewy', 'grp1', 'flash')");
+
+            assertQuery(
+                    "groupid\tcontact\n" +
+                            "grp1\tamy\n" +
+                            "grp1\tbobby\n",
+                    "select groupid, contact from events2 where groupid = 'grp1' and eventid = 'flash'\n" +
+                            "except\n" +
+                            "select groupid, contact from events2 where groupid = 'grp1' and eventid = 'stand'",
+                    null,
+                    true
+            );
+        });
+
+    }
+
+    @Test
+    public void testExceptOfLiterals() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected1 = "2020-04-21\t1\n" +
+                    "2020-04-21\t1\n";
+            final String query1 = "select '2020-04-21', 1\n" +
+                    "except\n" +
+                    "select '2020-04-22', 2";
+            try (RecordCursorFactory rcf = compiler.compile(query1, sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor(expected1, rcf, true, false, false);
+            }
+
+            final String expected2 = "a\tb\n" +
+                    "2020-04-21\t1\n";
+            final String query2 = "select '2020-04-21' a, 1 b\n" +
+                    "except\n" +
+                    "select '2020-04-22', 2";
+            try (RecordCursorFactory rcf = compiler.compile(query2, sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor(expected2, rcf, true, false, false);
+            }
+        });
+    }
+
+    @Test
+    public void testIntersect() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table events2 (contact symbol, groupid symbol, eventid string)", sqlExecutionContext);
+            executeInsert("insert into events2 values ('amy', 'grp1', 'flash')");
+            executeInsert("insert into events2 values ('joey', 'grp2', 'sit')");
+            executeInsert("insert into events2 values ('stewy', 'grp1', 'stand')");
+            executeInsert("insert into events2 values ('bobby', 'grp1', 'flash')");
+            executeInsert("insert into events2 values ('stewy', 'grp1', 'flash')");
+
+            assertQuery(
+                    "groupid\tcontact\n" +
+                            "grp1\tstewy\n",
+                    "select groupid, contact from events2 where groupid = 'grp1' and eventid = 'flash'\n" +
+                            "intersect\n" +
+                            "select groupid, contact from events2 where groupid = 'grp1' and eventid = 'stand'",
+                    null,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testIntersectOfLiterals() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected1 = "2020-04-21\t1\n" +
+                    "2020-04-21\t1\n";
+            final String query1 = "select '2020-04-21', 1\n" +
+                    "intersect\n" +
+                    "select '2020-04-21', 1";
+            try (RecordCursorFactory rcf = compiler.compile(query1, sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor(expected1, rcf, true, false, false);
+            }
+
+            final String expected2 = "a\tb\n" +
+                    "2020-04-21\t1\n";
+            final String query2 = "select '2020-04-21' a, 1 b\n" +
+                    "intersect\n" +
+                    "select '2020-04-21', 1";
+            try (RecordCursorFactory rcf = compiler.compile(query2, sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor(expected2, rcf, true, false, false);
+            }
+        });
+    }
+
+    @Test
     public void testUnionAllOfAllSupportedTypes() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = "a\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tl256\tchr\n" +
@@ -159,6 +251,31 @@ public class UnionTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testUnionAllOfLiterals() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected1 = "2020-04-21\t1\n" +
+                    "2020-04-21\t1\n" +
+                    "2020-04-22\t2\n";
+            final String query1 = "select '2020-04-21', 1\n" +
+                    "union all\n" +
+                    "select '2020-04-22', 2";
+            try (RecordCursorFactory rcf = compiler.compile(query1, sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor(expected1, rcf, false, false, true);
+            }
+
+            final String expected2 = "a\tb\n" +
+                    "2020-04-21\t1\n" +
+                    "2020-04-22\t2\n";
+            final String query2 = "select '2020-04-21' a, 1 b\n" +
+                    "union all\n" +
+                    "select '2020-04-22', 2";
+            try (RecordCursorFactory rcf = compiler.compile(query2, sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor(expected2, rcf, false, false, true);
+            }
+        });
+    }
+
     //select distinct sym from a union all b
     @Test
     public void testUnionAllOfSymboFor3Tablesl() throws Exception {
@@ -267,52 +384,6 @@ public class UnionTest extends AbstractGriffinTest {
             try (RecordCursorFactory factory = compiler.compile("select distinct t from x union all y", sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor(expected2, factory, false, true, false);
             }
-        });
-    }
-
-    @Test
-    public void testExcept() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table events2 (contact symbol, groupid symbol, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events2 values ('amy', 'grp1', 'flash')");
-            executeInsert("insert into events2 values ('joey', 'grp2', 'sit')");
-            executeInsert("insert into events2 values ('stewy', 'grp1', 'stand')");
-            executeInsert("insert into events2 values ('bobby', 'grp1', 'flash')");
-            executeInsert("insert into events2 values ('stewy', 'grp1', 'flash')");
-
-            assertQuery(
-                    "groupid\tcontact\n" +
-                            "grp1\tamy\n" +
-                            "grp1\tbobby\n",
-                    "select groupid, contact from events2 where groupid = 'grp1' and eventid = 'flash'\n" +
-                            "except\n" +
-                            "select groupid, contact from events2 where groupid = 'grp1' and eventid = 'stand'",
-                    null,
-                    true
-            );
-        });
-
-    }
-
-    @Test
-    public void testIntersect() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table events2 (contact symbol, groupid symbol, eventid string)", sqlExecutionContext);
-            executeInsert("insert into events2 values ('amy', 'grp1', 'flash')");
-            executeInsert("insert into events2 values ('joey', 'grp2', 'sit')");
-            executeInsert("insert into events2 values ('stewy', 'grp1', 'stand')");
-            executeInsert("insert into events2 values ('bobby', 'grp1', 'flash')");
-            executeInsert("insert into events2 values ('stewy', 'grp1', 'flash')");
-
-            assertQuery(
-                    "groupid\tcontact\n" +
-                            "grp1\tstewy\n",
-                    "select groupid, contact from events2 where groupid = 'grp1' and eventid = 'flash'\n" +
-                            "intersect\n" +
-                            "select groupid, contact from events2 where groupid = 'grp1' and eventid = 'stand'",
-                    null,
-                    true
-            );
         });
     }
 
@@ -622,77 +693,6 @@ public class UnionTest extends AbstractGriffinTest {
 
             try (RecordCursorFactory factory = compiler.compile("select * from x union all y union z", sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor(expected2, factory, false, true, false);
-            }
-        });
-    }
-
-    @Test
-    public void testUnionAllOfLiterals() throws Exception {
-        assertMemoryLeak(() -> {
-            final String expected1 = "2020-04-21\t1\n" +
-                    "2020-04-21\t1\n" +
-                    "2020-04-22\t2\n";
-            final String query1 = "select '2020-04-21', 1\n" +
-                    "union all\n" +
-                    "select '2020-04-22', 2";
-            try (RecordCursorFactory rcf = compiler.compile(query1, sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected1, rcf, false, false, true);
-            }
-
-            final String expected2 = "a\tb\n" +
-                    "2020-04-21\t1\n" +
-                    "2020-04-22\t2\n";
-            final String query2 = "select '2020-04-21' a, 1 b\n" +
-                    "union all\n" +
-                    "select '2020-04-22', 2";
-            try (RecordCursorFactory rcf = compiler.compile(query2, sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, rcf, false, false, true);
-            }
-        });
-    }
-
-    @Test
-    public void testExceptOfLiterals() throws Exception {
-        assertMemoryLeak(() -> {
-            final String expected1 = "2020-04-21\t1\n" +
-                    "2020-04-21\t1\n";
-            final String query1 = "select '2020-04-21', 1\n" +
-                    "except\n" +
-                    "select '2020-04-22', 2";
-            try (RecordCursorFactory rcf = compiler.compile(query1, sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected1, rcf, true, false, false);
-            }
-
-            final String expected2 = "a\tb\n" +
-                    "2020-04-21\t1\n";
-            final String query2 = "select '2020-04-21' a, 1 b\n" +
-                    "except\n" +
-                    "select '2020-04-22', 2";
-            try (RecordCursorFactory rcf = compiler.compile(query2, sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, rcf, true, false, false);
-            }
-        });
-    }
-
-    @Test
-    public void testIntersectOfLiterals() throws Exception {
-        assertMemoryLeak(() -> {
-            final String expected1 = "2020-04-21\t1\n" +
-                    "2020-04-21\t1\n";
-            final String query1 = "select '2020-04-21', 1\n" +
-                    "intersect\n" +
-                    "select '2020-04-21', 1";
-            try (RecordCursorFactory rcf = compiler.compile(query1, sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected1, rcf, true, false, false);
-            }
-
-            final String expected2 = "a\tb\n" +
-                    "2020-04-21\t1\n";
-            final String query2 = "select '2020-04-21' a, 1 b\n" +
-                    "intersect\n" +
-                    "select '2020-04-21', 1";
-            try (RecordCursorFactory rcf = compiler.compile(query2, sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, rcf, true, false, false);
             }
         });
     }

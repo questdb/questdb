@@ -46,14 +46,14 @@ public class LineData {
         add("timestamp", timestampSink);
     }
 
-    public long getTimestamp() {
-        return timestampNanos;
-    }
-
     public void add(CharSequence colName, CharSequence colValue) {
         colNames.add(colName);
         colValues.add(colValue);
-        colNameToIndex.putIfAbsent(colName, colNames.size() -1);
+        colNameToIndex.putIfAbsent(colName, colNames.size() - 1);
+    }
+
+    public long getTimestamp() {
+        return timestampNanos;
     }
 
     public String toLine(final CharSequence tableName) {
@@ -62,15 +62,9 @@ public class LineData {
         return toString(sb).append("\n").toString();
     }
 
-    StringBuilder toString(final StringBuilder sb) {
-        for (int i = 0, n = colNames.size(); i < n; i++) {
-            final CharSequence colName = colNames.get(i);
-            if (colName.equals("timestamp")) {
-                continue;
-            }
-            sb.append(colName).append("=").append(colValues.get(i)).append(i == n - 1 ? "" : ",");
-        }
-        return sb.append(" ").append(timestampNanos);
+    @Override
+    public String toString() {
+        return toString(new StringBuilder()).toString();
     }
 
     CharSequence getRow(ObjList<CharSequence> columns, ObjList<CharSequence> defaults) {
@@ -83,8 +77,14 @@ public class LineData {
         return sb.toString();
     }
 
-    @Override
-    public String toString() {
-        return toString(new StringBuilder()).toString();
+    StringBuilder toString(final StringBuilder sb) {
+        for (int i = 0, n = colNames.size(); i < n; i++) {
+            final CharSequence colName = colNames.get(i);
+            if (colName.equals("timestamp")) {
+                continue;
+            }
+            sb.append(colName).append("=").append(colValues.get(i)).append(i == n - 1 ? "" : ",");
+        }
+        return sb.append(" ").append(timestampNanos);
     }
 }

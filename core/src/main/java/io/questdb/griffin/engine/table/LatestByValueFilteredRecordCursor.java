@@ -58,9 +58,13 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
-    public void toTop() {
+    void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        this.dataFrameCursor = dataFrameCursor;
+        this.recordA.of(dataFrameCursor.getTableReader());
+        this.recordB.of(dataFrameCursor.getTableReader());
+        findRecord();
         hasNext = !empty;
-        filter.toTop();
+        filter.init(this, executionContext);
     }
 
     @Override
@@ -78,13 +82,9 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
-    void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        this.dataFrameCursor = dataFrameCursor;
-        this.recordA.of(dataFrameCursor.getTableReader());
-        this.recordB.of(dataFrameCursor.getTableReader());
-        findRecord();
+    public void toTop() {
         hasNext = !empty;
-        filter.init(this, executionContext);
+        filter.toTop();
     }
 
     private void findRecord() {

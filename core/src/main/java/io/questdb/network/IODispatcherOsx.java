@@ -43,6 +43,32 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         registerListenerFd();
     }
 
+    @Override
+    public void close() {
+        super.close();
+        this.kqueue.close();
+        LOG.info().$("closed").$();
+    }
+
+    @Override
+    protected void pendingAdded(int index) {
+        // nothing to do
+    }
+
+    @Override
+    protected void registerListenerFd() {
+        if (this.kqueue.listen(serverFd) != 0) {
+            throw NetworkError.instance(nf.errno(), "could not kqueue.listen()");
+        }
+    }
+
+    @Override
+    protected void unregisterListenerFd() {
+        if (this.kqueue.removeListen(serverFd) != 0) {
+            throw NetworkError.instance(nf.errno(), "could not kqueue.removeListen()");
+        }
+    }
+
     private void enqueuePending(int watermark) {
         int index = 0;
         for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += KqueueAccessor.SIZEOF_KEVENT) {
@@ -64,18 +90,6 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         if (index > 0) {
             registerWithKQueue(index);
         }
-    }
-
-    @Override
-    public void close() {
-        super.close();
-        this.kqueue.close();
-        LOG.info().$("closed").$();
-    }
-
-    @Override
-    protected void pendingAdded(int index) {
-        // nothing to do
     }
 
     private int findPending(int fd, long ts) {
@@ -213,19 +227,5 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             }
         }
         return -1;
-    }
-
-    @Override
-    protected void registerListenerFd() {
-        if (this.kqueue.listen(serverFd) != 0) {
-            throw NetworkError.instance(nf.errno(), "could not kqueue.listen()");
-        }
-    }
-
-    @Override
-    protected void unregisterListenerFd() {
-        if (this.kqueue.removeListen(serverFd) != 0) {
-            throw NetworkError.instance(nf.errno(), "could not kqueue.removeListen()");
-        }
     }
 }

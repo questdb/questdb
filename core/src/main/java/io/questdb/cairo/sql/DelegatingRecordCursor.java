@@ -28,5 +28,5 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
 public interface DelegatingRecordCursor extends RecordCursor {
-    void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException;
+    void of(RecordCursor base, SqlExecutionContext executionContext);
 }

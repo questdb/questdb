@@ -30,10 +30,7 @@ import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Numbers;
-import io.questdb.std.Os;
+import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.str.Path;
@@ -56,6 +53,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         }
 
         @Override
+        public String getKeepAliveHeader() {
+            return null;
+        }
+
+        @Override
         public MimeTypesCache getMimeTypesCache() {
             return mimeTypesCache;
         }
@@ -64,13 +66,13 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         public CharSequence getPublicDirectory() {
             return ".";
         }
-
-        @Override
-        public String getKeepAliveHeader() {
-            return null;
-        }
     };
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
+        @Override
+        public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+            return circuitBreakerConfiguration;
+        }
+
         @Override
         public MillisecondClock getClock() {
             return httpContextConfiguration.getClock();
@@ -79,6 +81,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         @Override
         public int getConnectionCheckFrequency() {
             return 1_000_000;
+        }
+
+        @Override
+        public int getDoubleScale() {
+            return Numbers.MAX_SCALE;
         }
 
         @Override
@@ -92,11 +99,6 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         }
 
         @Override
-        public int getDoubleScale() {
-            return Numbers.MAX_SCALE;
-        }
-
-        @Override
         public CharSequence getKeepAliveHeader() {
             return "Keep-Alive: timeout=5, max=10000\r\n";
         }
@@ -104,11 +106,6 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         @Override
         public long getMaxQueryResponseRowLimit() {
             return Long.MAX_VALUE;
-        }
-
-        @Override
-        public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
-            return circuitBreakerConfiguration;
         }
     };
 
@@ -121,7 +118,7 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     public DefaultHttpServerConfiguration(HttpContextConfiguration httpContextConfiguration, IODispatcherConfiguration ioDispatcherConfiguration) {
-        String defaultFilePath = this.getClass().getResource("/site/conf/mime.types").getFile();
+        String defaultFilePath = Misc.getResource(this, "/site/conf/mime.types").getFile();
         if (Os.type == Os.WINDOWS) {
             // on Windows Java returns "/C:/dir/file". This leading slash is Java specific and doesn't bode well
             // with OS file open methods.
@@ -146,36 +143,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
-    public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
-        return jsonQueryProcessorConfiguration;
-    }
-
-    @Override
-    public boolean isQueryCacheEnabled() {
-        return true;
-    }
-
-    @Override
-    public int getQueryCacheBlockCount() {
-        return 4;
-    }
-
-    @Override
-    public int getQueryCacheRowCount() {
-        return 16;
-    }
-
-    @Override
     public WaitProcessorConfiguration getWaitProcessorConfiguration() {
         return new WaitProcessorConfiguration() {
             @Override
             public MillisecondClock getClock() {
                 return MillisecondClockImpl.INSTANCE;
-            }
-
-            @Override
-            public long getMaxWaitCapMs() {
-                return 1000;
             }
 
             @Override
@@ -192,7 +164,27 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
             public int getMaxProcessingQueueSize() {
                 return 4096;
             }
+
+            @Override
+            public long getMaxWaitCapMs() {
+                return 1000;
+            }
         };
+    }
+
+    @Override
+    public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
+        return jsonQueryProcessorConfiguration;
+    }
+
+    @Override
+    public int getQueryCacheBlockCount() {
+        return 4;
+    }
+
+    @Override
+    public int getQueryCacheRowCount() {
+        return 16;
     }
 
     @Override
@@ -202,6 +194,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
 
     @Override
     public boolean isEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isQueryCacheEnabled() {
         return true;
     }
 

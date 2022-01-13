@@ -79,11 +79,6 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private K[] getKeys() {
-        return (K[]) new Object[Numbers.ceilPow2((int) (this.capacity / this.loadFactor))];
-    }
-
     public int get(K key) {
         return valueAt(keyIndex(key));
     }
@@ -138,6 +133,11 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
     public int valueAt(int index) {
         int index1 = -index - 1;
         return index < 0 ? values[index1] : noKeyValue;
+    }
+
+    @SuppressWarnings("unchecked")
+    private K[] getKeys() {
+        return (K[]) new Object[Numbers.ceilPow2((int) (this.capacity / this.loadFactor))];
     }
 
     private int probe(K key, int index) {

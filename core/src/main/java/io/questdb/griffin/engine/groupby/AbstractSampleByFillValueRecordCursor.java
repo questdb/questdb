@@ -144,13 +144,6 @@ public abstract class AbstractSampleByFillValueRecordCursor extends AbstractSpli
     }
 
     @Override
-    protected void updateValueWhenClockMovesBack(MapValue value, int n) {
-        final MapKey key = map.withKey();
-        keyMapSink.copy(baseRecord, key);
-        super.updateValueWhenClockMovesBack(key.createValue(), n);
-    }
-
-    @Override
     public void toTop() {
         super.toTop();
         if (base.hasNext()) {
@@ -169,6 +162,13 @@ public abstract class AbstractSampleByFillValueRecordCursor extends AbstractSpli
                 }
             }
         }
+    }
+
+    @Override
+    protected void updateValueWhenClockMovesBack(MapValue value, int n) {
+        final MapKey key = map.withKey();
+        keyMapSink.copy(baseRecord, key);
+        super.updateValueWhenClockMovesBack(key.createValue(), n);
     }
 
     private boolean refreshMapCursor() {

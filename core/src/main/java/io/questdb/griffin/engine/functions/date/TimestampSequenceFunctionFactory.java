@@ -86,13 +86,13 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toTop() {
-            next = start;
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            longIncrement.init(symbolTableSource, executionContext);
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            longIncrement.init(symbolTableSource, executionContext);
+        public void toTop() {
+            next = start;
         }
     }
 
@@ -121,14 +121,14 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toTop() {
-            next = 0;
-        }
-
-        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             start.init(symbolTableSource, executionContext);
             longIncrement.init(symbolTableSource, executionContext);
+        }
+
+        @Override
+        public void toTop() {
+            next = 0;
         }
     }
 }

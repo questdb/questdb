@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import org.jetbrains.annotations.Nullable;
@@ -72,12 +72,12 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     }
 
     @Override
-    public CharSequence valueOf(int symbolKey) {
-        return symbolTable.valueOf(symbolKey);
+    public CharSequence valueBOf(int symbolKey) {
+        return symbolTable.valueBOf(symbolKey);
     }
 
     @Override
-    public CharSequence valueBOf(int symbolKey) {
-        return symbolTable.valueBOf(symbolKey);
+    public CharSequence valueOf(int symbolKey) {
+        return symbolTable.valueOf(symbolKey);
     }
 }

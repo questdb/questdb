@@ -49,10 +49,6 @@ public final class LatestByArguments {
         return Unsafe.getUnsafe().getLong(address + FILTERED_SIZE_OFFSET);
     }
 
-    public static void setFilteredSize(long address, long size) {
-        Unsafe.getUnsafe().putLong(address + FILTERED_SIZE_OFFSET, size);
-    }
-
     public static long getHashesAddress(long address) {
         return Unsafe.getUnsafe().getLong(address + HASHES_ADDRESS_OFFSET);
     }
@@ -83,6 +79,10 @@ public final class LatestByArguments {
 
     public static void releaseMemoryArray(long address, int elements) {
         Unsafe.free(address, MEMORY_SIZE * elements, MemoryTag.NATIVE_DEFAULT);
+    }
+
+    public static void setFilteredSize(long address, long size) {
+        Unsafe.getUnsafe().putLong(address + FILTERED_SIZE_OFFSET, size);
     }
 
     public static void setHashesAddress(long address, long addr) {

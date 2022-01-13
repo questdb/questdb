@@ -52,6 +52,8 @@ public class AbstractCairoTest {
     protected final static Log LOG = LogFactory.getLog(AbstractCairoTest.class);
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
+    public static long writerAsyncCommandBusyWaitTimeout = -1;
+    public static long writerAsyncCommandMaxTimeout = -1;
     protected static CharSequence root;
     protected static CairoConfiguration configuration;
     protected static MessageBus messageBus;
@@ -63,17 +65,14 @@ public class AbstractCairoTest {
     protected static FilesFacade ff;
     protected static long configOverrideCommitLag = -1;
     protected static int configOverrideMaxUncommittedRows = -1;
-    protected static Metrics metrics = Metrics.enabled();
+    protected static final Metrics metrics = Metrics.enabled();
     protected static int capacity = -1;
     protected static int sampleByIndexSearchPageSize;
     protected static int binaryEncodingMaxLength = -1;
     protected static CharSequence defaultMapType;
     protected static int pageFrameMaxSize = -1;
-
     @Rule
     public TestName testName = new TestName();
-    public static long writerAsyncCommandBusyWaitTimeout = -1;
-    public static long writerAsyncCommandMaxTimeout = -1;
 
     @BeforeClass
     public static void setUpStatic() {
@@ -89,26 +88,8 @@ public class AbstractCairoTest {
         }
         configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public FilesFacade getFilesFacade() {
-                if (ff != null) {
-                    return ff;
-                }
-                return super.getFilesFacade();
-            }
-
-            @Override
-            public int getCopyPoolCapacity() {
-                return capacity == -1 ? super.getCopyPoolCapacity() : capacity;
-            }
-
-            @Override
-            public MicrosecondClock getMicrosecondClock() {
-                return testMicrosClock;
-            }
-
-            @Override
-            public CharSequence getInputRoot() {
-                return inputRoot;
+            public int getBinaryEncodingMaxLength() {
+                return binaryEncodingMaxLength > 0 ? binaryEncodingMaxLength : super.getBinaryEncodingMaxLength();
             }
 
             @Override
@@ -118,19 +99,8 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public int getMaxUncommittedRows() {
-                if (configOverrideMaxUncommittedRows >= 0) return configOverrideMaxUncommittedRows;
-                return super.getMaxUncommittedRows();
-            }
-
-            @Override
-            public int getSampleByIndexSearchPageSize() {
-                return sampleByIndexSearchPageSize > 0 ? sampleByIndexSearchPageSize : super.getSampleByIndexSearchPageSize();
-            }
-
-            @Override
-            public int getBinaryEncodingMaxLength() {
-                return binaryEncodingMaxLength > 0 ? binaryEncodingMaxLength : super.getBinaryEncodingMaxLength();
+            public int getCopyPoolCapacity() {
+                return capacity == -1 ? super.getCopyPoolCapacity() : capacity;
             }
 
             @Override
@@ -142,13 +112,32 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public long getWriterAsyncCommandBusyWaitTimeout() {
-                return writerAsyncCommandBusyWaitTimeout < 0 ? super.getWriterAsyncCommandBusyWaitTimeout() : writerAsyncCommandBusyWaitTimeout;
+            public FilesFacade getFilesFacade() {
+                if (ff != null) {
+                    return ff;
+                }
+                return super.getFilesFacade();
             }
 
             @Override
-            public long getWriterAsyncCommandMaxTimeout() {
-                return writerAsyncCommandMaxTimeout < 0 ? super.getWriterAsyncCommandMaxTimeout() : writerAsyncCommandMaxTimeout;
+            public CharSequence getInputRoot() {
+                return inputRoot;
+            }
+
+            @Override
+            public int getMaxUncommittedRows() {
+                if (configOverrideMaxUncommittedRows >= 0) return configOverrideMaxUncommittedRows;
+                return super.getMaxUncommittedRows();
+            }
+
+            @Override
+            public MicrosecondClock getMicrosecondClock() {
+                return testMicrosClock;
+            }
+
+            @Override
+            public int getSampleByIndexSearchPageSize() {
+                return sampleByIndexSearchPageSize > 0 ? sampleByIndexSearchPageSize : super.getSampleByIndexSearchPageSize();
             }
 
             @Override
@@ -161,6 +150,16 @@ public class AbstractCairoTest {
             @Override
             public int getSqlPageFrameMaxSize() {
                 return pageFrameMaxSize < 0 ? super.getSqlPageFrameMaxSize() : pageFrameMaxSize;
+            }
+
+            @Override
+            public long getWriterAsyncCommandBusyWaitTimeout() {
+                return writerAsyncCommandBusyWaitTimeout < 0 ? super.getWriterAsyncCommandBusyWaitTimeout() : writerAsyncCommandBusyWaitTimeout;
+            }
+
+            @Override
+            public long getWriterAsyncCommandMaxTimeout() {
+                return writerAsyncCommandMaxTimeout < 0 ? super.getWriterAsyncCommandMaxTimeout() : writerAsyncCommandMaxTimeout;
             }
         };
         engine = new CairoEngine(configuration);

@@ -73,13 +73,13 @@ public class CompactMapCursor implements RecordCursor {
         nextOffset = 0;
     }
 
-    void of(long offsetHi) {
-        this.nextOffset = 0;
-        this.offsetHi = offsetHi;
-    }
-
     @Override
     public long size() {
         return -1;
+    }
+
+    void of(long offsetHi) {
+        this.nextOffset = 0;
+        this.offsetHi = offsetHi;
     }
 }

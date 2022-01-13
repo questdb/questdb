@@ -31,7 +31,7 @@ import io.questdb.std.LongList;
 import java.io.Closeable;
 
 public interface RuntimeIntrinsicIntervalModel extends Closeable {
-    LongList calculateIntervals(SqlExecutionContext sqlContext) throws SqlException;
-
     boolean allIntervalsHitOnePartition(int partitionBy);
+
+    LongList calculateIntervals(SqlExecutionContext sqlContext) throws SqlException;
 }

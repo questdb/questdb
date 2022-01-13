@@ -41,6 +41,7 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
     private final FilesFacade ff;
     private final TableListRecordCursor cursor;
     private Path path;
+
     public TableListRecordCursorFactory(FilesFacade ff, CharSequence dbRoot) {
         this.ff = ff;
         path = new Path().of(dbRoot).$();
@@ -89,6 +90,11 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
+        public Record getRecordB() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public boolean hasNext() {
             while (true) {
                 if (findPtr == 0) {
@@ -108,23 +114,18 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
-        public Record getRecordB() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public void recordAt(Record record, long atRowId) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public void toTop() {
-            close();
+        public long size() {
+            return -1;
         }
 
         @Override
-        public long size() {
-            return -1;
+        public void toTop() {
+            close();
         }
 
         private TableListRecordCursor of() {

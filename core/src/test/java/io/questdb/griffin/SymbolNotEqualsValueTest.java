@@ -87,6 +87,32 @@ public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNotEquals1SymbolsWithEqualsAnogher() throws Exception {
+        final String expected = "k\tprice\tts\tj\n" +
+                "DXR\t0.6778564558839208\t1970-01-03T00:48:00.000000Z\tF\n" +
+                "DXR\t0.299199045961845\t1970-01-03T00:06:00.000000Z\tF\n";
+
+        assertQuery(
+                "k\tprice\tts\tj\n",
+                "select sym k, price, ts, sym2 j from x where sym2 = 'F' AND sym != 'ABB' order by k, j desc",
+                "create table x (\n" +
+                        "    sym symbol cache index,\n" +
+                        "    sym2 symbol cache index,\n" +
+                        "    price double,\n" +
+                        "    ts timestamp\n" +
+                        ") timestamp(ts) partition by DAY",
+                null,
+                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
+                        "        rnd_symbol('D', 'E', 'F') sym2, \n" +
+                        "        rnd_double() price, \n" +
+                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
+                        "        from long_sequence(10)) timestamp (ts)",
+                expected,
+                true
+        );
+    }
+
+    @Test
     public void testNotEquals1SymbolsWithFilter() throws Exception {
         final String expected = "k\tj\tprice\tts\n" +
                 "HBC\tE\t0.9856290845874263\t1970-01-03T00:18:00.000000Z\n" +
@@ -153,32 +179,6 @@ public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
         assertQuery(
                 "k\tj\tprice\tts\n",
                 "select sym k, sym2 j, price, ts from x where sym != 'ABB' order by k, j desc",
-                "create table x (\n" +
-                        "    sym symbol cache index,\n" +
-                        "    sym2 symbol cache index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_symbol('D', 'E', 'F') sym2, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "        from long_sequence(10)) timestamp (ts)",
-                expected,
-                true
-        );
-    }
-
-    @Test
-    public void testNotEquals1SymbolsWithEqualsAnogher() throws Exception {
-        final String expected = "k\tprice\tts\tj\n" +
-                "DXR\t0.6778564558839208\t1970-01-03T00:48:00.000000Z\tF\n" +
-                "DXR\t0.299199045961845\t1970-01-03T00:06:00.000000Z\tF\n";
-
-        assertQuery(
-                "k\tprice\tts\tj\n",
-                "select sym k, price, ts, sym2 j from x where sym2 = 'F' AND sym != 'ABB' order by k, j desc",
                 "create table x (\n" +
                         "    sym symbol cache index,\n" +
                         "    sym2 symbol cache index,\n" +

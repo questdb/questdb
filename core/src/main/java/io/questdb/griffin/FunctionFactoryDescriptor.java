@@ -89,10 +89,6 @@ public class FunctionFactoryDescriptor {
         this.sigArgCount = typeCount;
     }
 
-    private static long toUnsignedLong(int type) {
-        return ((long) type) & 0xffffffffL;
-    }
-
     public static int getArgType(char c) {
         int sigArgType;
         switch (c | 32) {
@@ -168,6 +164,31 @@ public class FunctionFactoryDescriptor {
         return (mask & CONST_MASK) != 0;
     }
 
+    public static String replaceSignatureName(String name, String signature) throws SqlException {
+        int openBraceIndex = validateSignatureAndGetNameSeparator(signature);
+        StringSink signatureBuilder = Misc.getThreadLocalBuilder();
+        signatureBuilder.put(name);
+        signatureBuilder.put(signature, openBraceIndex, signature.length());
+        return signatureBuilder.toString();
+    }
+
+    public static String replaceSignatureNameAndSwapArgs(String name, String signature) throws SqlException {
+        int openBraceIndex = validateSignatureAndGetNameSeparator(signature);
+        StringSink signatureBuilder = Misc.getThreadLocalBuilder();
+        signatureBuilder.put(name);
+        signatureBuilder.put('(');
+        for (int i = signature.length() - 2; i > openBraceIndex; i--) {
+            char curr = signature.charAt(i);
+            if (curr == '[') {
+                signatureBuilder.put("[]");
+            } else if (curr != ']') {
+                signatureBuilder.put(curr);
+            }
+        }
+        signatureBuilder.put(')');
+        return signatureBuilder.toString();
+    }
+
     public static short toType(int mask) {
         return (short) (mask & TYPE_MASK);
     }
@@ -208,31 +229,6 @@ public class FunctionFactoryDescriptor {
         return openBraceIndex;
     }
 
-    public static String replaceSignatureNameAndSwapArgs(String name, String signature) throws SqlException {
-        int openBraceIndex = validateSignatureAndGetNameSeparator(signature);
-        StringSink signatureBuilder = Misc.getThreadLocalBuilder();
-        signatureBuilder.put(name);
-        signatureBuilder.put('(');
-        for (int i = signature.length() - 2; i > openBraceIndex; i--) {
-            char curr = signature.charAt(i);
-            if (curr == '[') {
-                signatureBuilder.put("[]");
-            } else if (curr != ']') {
-                signatureBuilder.put(curr);
-            }
-        }
-        signatureBuilder.put(')');
-        return signatureBuilder.toString();
-    }
-
-    public static String replaceSignatureName(String name, String signature) throws SqlException {
-        int openBraceIndex = validateSignatureAndGetNameSeparator(signature);
-        StringSink signatureBuilder = Misc.getThreadLocalBuilder();
-        signatureBuilder.put(name);
-        signatureBuilder.put(signature, openBraceIndex, signature.length());
-        return signatureBuilder.toString();
-    }
-
     public int getArgTypeMask(int index) {
         int arrayIndex = index / 2;
         long mask = argTypes[arrayIndex];
@@ -249,5 +245,9 @@ public class FunctionFactoryDescriptor {
 
     public int getSigArgCount() {
         return sigArgCount;
+    }
+
+    private static long toUnsignedLong(int type) {
+        return ((long) type) & 0xffffffffL;
     }
 }

@@ -44,6 +44,33 @@ public class TableData {
         this.tableName = tableName;
     }
 
+    public synchronized void addLine(LineData line) {
+        rows.add(line);
+        index.add(rows.size() - 1, line.getTimestamp());
+    }
+
+    public boolean await(long seconds) {
+        return readyLatch.await(TimeUnit.SECONDS.toNanos(seconds));
+    }
+
+    public synchronized CharSequence generateRows(TableReaderMetadata metadata) {
+        final StringBuilder sb = new StringBuilder();
+        final ObjList<CharSequence> columns = new ObjList<>();
+        final ObjList<CharSequence> defaults = new ObjList<>();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            TableColumnMetadata colMetaData = metadata.getColumnQuick(i);
+            CharSequence column = colMetaData.getName();
+            columns.add(column);
+            defaults.add(getDefaultValue((short) colMetaData.getType()));
+            sb.append(column).append(i == n - 1 ? "\n" : "\t");
+        }
+        for (int i = 0, n = rows.size(); i < n; i++) {
+            sb.append(rows.get(index.popIndex()).getRow(columns, defaults));
+            index.popValue();
+        }
+        return sb.toString();
+    }
+
     public CharSequence getName() {
         return tableName;
     }
@@ -56,35 +83,13 @@ public class TableData {
         readyLatch.countDown();
     }
 
-    public boolean await(long seconds) {
-        return readyLatch.await(TimeUnit.SECONDS.toNanos(seconds));
-    }
-
     public synchronized int size() {
         return rows.size();
     }
 
-    public synchronized void addLine(LineData line) {
-        rows.add(line);
-        index.add(rows.size() - 1, line.getTimestamp());
-    }
-
-    public synchronized CharSequence generateRows(TableReaderMetadata metadata) {
-        final StringBuilder sb = new StringBuilder();
-        final ObjList<CharSequence> columns = new ObjList<>();
-        final ObjList<CharSequence> defaults = new ObjList<>();
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            TableColumnMetadata colMetaData = metadata.getColumnQuick(i);
-            CharSequence column = colMetaData.getName();
-            columns.add(column);
-            defaults.add(getDefaultValue((short) colMetaData.getType()));
-            sb.append(column).append( i == n-1 ? "\n" : "\t");
-        }
-        for (int i = 0, n = rows.size(); i < n; i++) {
-            sb.append(rows.get(index.popIndex()).getRow(columns, defaults));
-            index.popValue();
-        }
-        return sb.toString();
+    @Override
+    public synchronized String toString() {
+        return "[" + tableName + ":" + rows + "]";
     }
 
     private String getDefaultValue(short colType) {
@@ -98,10 +103,5 @@ public class TableData {
             default:
                 throw new RuntimeException("Unexpected column type");
         }
-    }
-
-    @Override
-    public synchronized String toString() {
-        return "[" + tableName + ":" + rows + "]";
     }
 }

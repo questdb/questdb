@@ -45,7 +45,7 @@ public class TestListener extends RunListener {
     }
 
     @Override
-    public void testFailure(Failure failure) throws Exception {
+    public void testFailure(Failure failure) {
         testAssumptionFailure(failure);
     }
 

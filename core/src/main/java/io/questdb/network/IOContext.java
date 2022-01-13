@@ -30,9 +30,9 @@ public interface IOContext extends Closeable {
     @Override
     void close();
 
+    IODispatcher<?> getDispatcher();
+
     long getFd();
 
     boolean invalid();
-
-    IODispatcher<?> getDispatcher();
 }

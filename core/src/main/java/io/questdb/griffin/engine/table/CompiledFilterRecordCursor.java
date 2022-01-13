@@ -44,16 +44,13 @@ class CompiledFilterRecordCursor implements RecordCursor {
     private final PageFrameRecord recordA = new PageFrameRecord();
     private final PageFrameRecord recordB = new PageFrameRecord();
     private final PageAddressCache pageAddressCache;
-
+    private final int rowsCapacityThreshold;
     private PageFrameCursor pageFrameCursor;
     private RecordMetadata metadata;
-
     // Java based filter; used for page frames with present column tops
     private Function colTopsFilter;
     // JIT compiled filter; used for dense page frames (no column tops)
     private CompiledFilter compiledFilter;
-
-    private final int rowsCapacityThreshold;
     private DirectLongList rows;
     private DirectLongList columns;
     private MemoryCARW bindVarMemory;
@@ -70,14 +67,65 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
     private BooleanSupplier next;
 
-    private final BooleanSupplier nextPage = this::nextPage;
-    private final BooleanSupplier nextColTopsRow = this::nextColTopsRow;
-    private final BooleanSupplier nextRow = this::nextRow;
-    private final BooleanSupplier nextReenterPageFrame = this::nextReenterPageFrame;
-
     public CompiledFilterRecordCursor(CairoConfiguration configuration) {
         rowsCapacityThreshold = configuration.getSqlJitRowsThreshold() / Long.BYTES;
         pageAddressCache = new PageAddressCache(configuration);
+    }    private final BooleanSupplier nextPage = this::nextPage;
+
+    @Override
+    public void close() {
+        if (rows.getCapacity() > rowsCapacityThreshold) {
+            // This call will shrink down the underlying array
+            rows.extend(rowsCapacityThreshold);
+        }
+        bindVarMemory.truncate();
+        pageAddressCache.clear();
+        pageFrameCursor.close();
+    }    private final BooleanSupplier nextColTopsRow = this::nextColTopsRow;
+
+    @Override
+    public Record getRecord() {
+        return recordA;
+    }    private final BooleanSupplier nextRow = this::nextRow;
+
+    @Override
+    public Record getRecordB() {
+        return recordB;
+    }    private final BooleanSupplier nextReenterPageFrame = this::nextReenterPageFrame;
+
+    @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return pageFrameCursor.getSymbolMapReader(columnIndex);
+    }
+
+    @Override
+    public boolean hasNext() {
+        return next.getAsBoolean();
+    }
+
+    @Override
+    public void recordAt(Record record, long rowId) {
+        final int frameIndex = Rows.toPartitionIndex(rowId);
+        final long index = Rows.toLocalRowID(rowId);
+
+        PageFrameRecord pageFrameRecord = (PageFrameRecord) record;
+        pageFrameRecord.jumpTo(frameIndex);
+        pageFrameRecord.setIndex(index);
+
+        next = nextReenterPageFrame;
+    }
+
+    @Override
+    public long size() {
+        return -1;
+    }
+
+    @Override
+    public void toTop() {
+        pageFrameIndex = -1;
+        colTopsFilter.toTop();
+        pageFrameCursor.toTop();
+        next = nextPage;
     }
 
     public void of(
@@ -107,108 +155,9 @@ class CompiledFilterRecordCursor implements RecordCursor {
         prepareBindVarMemory(bindVarFunctions, executionContext);
     }
 
-    private void prepareBindVarMemory(ObjList<Function> functions, SqlExecutionContext executionContext) throws SqlException {
-        bindVarMemory.truncate();
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            Function function = functions.getQuick(i);
-            writeBindVarFunction(function, executionContext);
-        }
-    }
-
-    @Override
-    public void close() {
-        if (rows.getCapacity() > rowsCapacityThreshold) {
-            // This call will shrink down the underlying array
-            rows.extend(rowsCapacityThreshold);
-        }
-        bindVarMemory.truncate();
-        pageAddressCache.clear();
-        pageFrameCursor.close();
-    }
-
-    @Override
-    public Record getRecord() {
-        return recordA;
-    }
-
-    @Override
-    public Record getRecordB() {
-        return recordB;
-    }
-
-    @Override
-    public void recordAt(Record record, long rowId) {
-        final int frameIndex = Rows.toPartitionIndex(rowId);
-        final long index = Rows.toLocalRowID(rowId);
-
-        PageFrameRecord pageFrameRecord = (PageFrameRecord) record;
-        pageFrameRecord.jumpTo(frameIndex);
-        pageFrameRecord.setIndex(index);
-
-        next = nextReenterPageFrame;
-    }
-
-    private boolean nextReenterPageFrame() {
-        if (pageFrameIndex == -1) {
-            // Cursor iteration -> toTop -> recordAt case
-            pageFrameCursor.toTop();
-            next = nextPage;
-            return next.getAsBoolean();
-        }
-
-        // Cursor iteration -> recordAt case
-        recordA.jumpTo(pageFrameIndex);
-        if (pageAddressCache.hasColumnTops(pageFrameIndex)) {
-            next = nextColTopsRow;
-        } else {
-            next = nextRow;
-        }
-        return next.getAsBoolean();
-    }
-
-    @Override
-    public void toTop() {
-        pageFrameIndex = -1;
-        colTopsFilter.toTop();
-        pageFrameCursor.toTop();
-        next = nextPage;
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return pageFrameCursor.getSymbolMapReader(columnIndex);
-    }
-
-    @Override
-    public boolean hasNext() {
-        return next.getAsBoolean();
-    }
-
-    @Override
-    public long size() {
-        return -1;
-    }
-
     private boolean nextColTopsRow() {
         seekNextColTopsRow();
         if (current < hi) {
-            return true;
-        }
-        return nextPage();
-    }
-
-    private void seekNextColTopsRow() {
-        while (++current < hi) {
-            recordA.setIndex(current);
-            if (colTopsFilter.getBool(recordA)) {
-                return;
-            }
-        }
-    }
-
-    private boolean nextRow() {
-        if (current < hi) {
-            recordA.setIndex(rows.get(current++));
             return true;
         }
         return nextPage();
@@ -270,6 +219,49 @@ class CompiledFilterRecordCursor implements RecordCursor {
             }
         }
         return false;
+    }
+
+    private boolean nextReenterPageFrame() {
+        if (pageFrameIndex == -1) {
+            // Cursor iteration -> toTop -> recordAt case
+            pageFrameCursor.toTop();
+            next = nextPage;
+            return next.getAsBoolean();
+        }
+
+        // Cursor iteration -> recordAt case
+        recordA.jumpTo(pageFrameIndex);
+        if (pageAddressCache.hasColumnTops(pageFrameIndex)) {
+            next = nextColTopsRow;
+        } else {
+            next = nextRow;
+        }
+        return next.getAsBoolean();
+    }
+
+    private boolean nextRow() {
+        if (current < hi) {
+            recordA.setIndex(rows.get(current++));
+            return true;
+        }
+        return nextPage();
+    }
+
+    private void prepareBindVarMemory(ObjList<Function> functions, SqlExecutionContext executionContext) throws SqlException {
+        bindVarMemory.truncate();
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            Function function = functions.getQuick(i);
+            writeBindVarFunction(function, executionContext);
+        }
+    }
+
+    private void seekNextColTopsRow() {
+        while (++current < hi) {
+            recordA.setIndex(current);
+            if (colTopsFilter.getBool(recordA)) {
+                return;
+            }
+        }
     }
 
     private void writeBindVarFunction(Function function, SqlExecutionContext executionContext) throws SqlException {
@@ -343,26 +335,6 @@ class CompiledFilterRecordCursor implements RecordCursor {
         private int frameIndex;
         private long index;
 
-        public void jumpTo(int frameIndex) {
-            this.frameIndex = frameIndex;
-        }
-
-        public void setIndex(long index) {
-            this.index = index;
-        }
-
-        public void of(PageFrameCursor cursor, PageAddressCache columnAddressCache) {
-            this.cursor = cursor;
-            this.pageAddressCache = columnAddressCache;
-            this.frameIndex = 0;
-            this.index = 0;
-        }
-
-        @Override
-        public long getRowId() {
-            return Rows.toRowID(frameIndex, index);
-        }
-
         @Override
         public BinarySequence getBin(int columnIndex) {
             final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
@@ -373,25 +345,6 @@ class CompiledFilterRecordCursor implements RecordCursor {
             final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + index * Long.BYTES);
             final long size = pageAddressCache.getPageSize(frameIndex, columnIndex);
             return getBin(dataPageAddress, offset, size, bsview);
-        }
-
-        private BinarySequence getBin(long base, long offset, long size, ByteSequenceView view) {
-            final long address = base + offset;
-            final long len = Unsafe.getUnsafe().getLong(address);
-            if (len != TableUtils.NULL_LEN) {
-                if (len + Long.BYTES + offset <= size) {
-                    return view.of(address + Long.BYTES, len);
-                }
-                throw CairoException.instance(0)
-                        .put("Bin is outside of file boundary [offset=")
-                        .put(offset)
-                        .put(", len=")
-                        .put(len)
-                        .put(", size=")
-                        .put(size)
-                        .put(']');
-            }
-            return null;
         }
 
         @Override
@@ -424,6 +377,15 @@ class CompiledFilterRecordCursor implements RecordCursor {
         }
 
         @Override
+        public char getChar(int columnIndex) {
+            final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+            if (address == 0) {
+                return NullColumn.INSTANCE.getChar(0);
+            }
+            return Unsafe.getUnsafe().getChar(address + index * Character.BYTES);
+        }
+
+        @Override
         public double getDouble(int columnIndex) {
             final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
             if (address == 0) {
@@ -439,6 +401,42 @@ class CompiledFilterRecordCursor implements RecordCursor {
                 return NullColumn.INSTANCE.getFloat(0);
             }
             return Unsafe.getUnsafe().getFloat(address + index * Float.BYTES);
+        }
+
+        @Override
+        public byte getGeoByte(int columnIndex) {
+            final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+            if (address == 0) {
+                return NullColumn.INSTANCE.getByte(0);
+            }
+            return Unsafe.getUnsafe().getByte(address + index * Byte.BYTES);
+        }
+
+        @Override
+        public int getGeoInt(int columnIndex) {
+            final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+            if (address == 0) {
+                return NullColumn.INSTANCE.getInt(0);
+            }
+            return Unsafe.getUnsafe().getInt(address + index * Integer.BYTES);
+        }
+
+        @Override
+        public long getGeoLong(int columnIndex) {
+            final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+            if (address == 0) {
+                return NullColumn.INSTANCE.getLong(0);
+            }
+            return Unsafe.getUnsafe().getLong(address + index * Long.BYTES);
+        }
+
+        @Override
+        public short getGeoShort(int columnIndex) {
+            final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+            if (address == 0) {
+                return NullColumn.INSTANCE.getShort(0);
+            }
+            return Unsafe.getUnsafe().getShort(address + index * Short.BYTES);
         }
 
         @Override
@@ -460,21 +458,39 @@ class CompiledFilterRecordCursor implements RecordCursor {
         }
 
         @Override
+        public void getLong256(int columnIndex, CharSink sink) {
+            final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+            if (address == 0) {
+                NullColumn.INSTANCE.getLong256(0, sink);
+                return;
+            }
+            getLong256(address + index * Long256.BYTES, sink);
+        }
+
+        @Override
+        public Long256 getLong256A(int columnIndex) {
+            getLong256(columnIndex, long256A);
+            return long256A;
+        }
+
+        @Override
+        public Long256 getLong256B(int columnIndex) {
+            getLong256(columnIndex, long256B);
+            return long256B;
+        }
+
+        @Override
+        public long getRowId() {
+            return Rows.toRowID(frameIndex, index);
+        }
+
+        @Override
         public short getShort(int columnIndex) {
             final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
             if (address == 0) {
                 return NullColumn.INSTANCE.getShort(0);
             }
             return Unsafe.getUnsafe().getShort(address + index * Short.BYTES);
-        }
-
-        @Override
-        public char getChar(int columnIndex) {
-            final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-            if (address == 0) {
-                return NullColumn.INSTANCE.getChar(0);
-            }
-            return Unsafe.getUnsafe().getChar(address + index * Character.BYTES);
         }
 
         @Override
@@ -487,36 +503,6 @@ class CompiledFilterRecordCursor implements RecordCursor {
             final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + index * Long.BYTES);
             final long size = pageAddressCache.getPageSize(frameIndex, columnIndex);
             return getStr(dataPageAddress, offset, size, csview);
-        }
-
-        private CharSequence getStr(long base, long offset, long size, CharSequenceView view) {
-            final long address = base + offset;
-            final int len = Unsafe.getUnsafe().getInt(address);
-            if (len != TableUtils.NULL_LEN) {
-                if (len + 4 + offset <= size) {
-                    return view.of(address + Vm.STRING_LENGTH_BYTES, len);
-                }
-                throw CairoException.instance(0)
-                        .put("String is outside of file boundary [offset=")
-                        .put(offset)
-                        .put(", len=")
-                        .put(len)
-                        .put(", size=")
-                        .put(size)
-                        .put(']');
-            }
-            return null;
-        }
-
-        @Override
-        public int getStrLen(int columnIndex) {
-            final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-            if (dataPageAddress == 0) {
-                return NullColumn.INSTANCE.getStrLen(0);
-            }
-            final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
-            final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + index * Long.BYTES);
-            return Unsafe.getUnsafe().getInt(dataPageAddress + offset);
         }
 
         @Override
@@ -532,50 +518,14 @@ class CompiledFilterRecordCursor implements RecordCursor {
         }
 
         @Override
-        public void getLong256(int columnIndex, CharSink sink) {
-            final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-            if (address == 0) {
-                NullColumn.INSTANCE.getLong256(0, sink);
-                return;
+        public int getStrLen(int columnIndex) {
+            final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+            if (dataPageAddress == 0) {
+                return NullColumn.INSTANCE.getStrLen(0);
             }
-            getLong256(address + index * Long256.BYTES, sink);
-        }
-
-        void getLong256(long offset, CharSink sink) {
-            final long addr = offset + Long.BYTES * 4;
-            final long a, b, c, d;
-            a = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4);
-            b = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3);
-            c = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2);
-            d = Unsafe.getUnsafe().getLong(addr - Long.BYTES);
-            Numbers.appendLong256(a, b, c, d, sink);
-        }
-
-        @Override
-        public Long256 getLong256A(int columnIndex) {
-            getLong256(columnIndex, long256A);
-            return long256A;
-        }
-
-        @Override
-        public Long256 getLong256B(int columnIndex) {
-            getLong256(columnIndex, long256B);
-            return long256B;
-        }
-
-        void getLong256(int columnIndex, Long256Acceptor sink) {
-            final long columnAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-            if (columnAddress == 0) {
-                NullColumn.INSTANCE.getLong256(0, sink);
-                return;
-            }
-            final long addr = columnAddress + index * Long256.BYTES  + Long.BYTES * 4;
-            sink.setAll(
-                    Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4),
-                    Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3),
-                    Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2),
-                    Unsafe.getUnsafe().getLong(addr - Long.BYTES)
-            );
+            final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
+            final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + index * Long.BYTES);
+            return Unsafe.getUnsafe().getInt(dataPageAddress + offset);
         }
 
         @Override
@@ -595,40 +545,82 @@ class CompiledFilterRecordCursor implements RecordCursor {
             return cursor.getSymbolMapReader(columnIndex).valueBOf(key);
         }
 
-        @Override
-        public byte getGeoByte(int columnIndex) {
-            final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-            if (address == 0) {
-                return NullColumn.INSTANCE.getByte(0);
-            }
-            return Unsafe.getUnsafe().getByte(address + index * Byte.BYTES);
+        public void jumpTo(int frameIndex) {
+            this.frameIndex = frameIndex;
         }
 
-        @Override
-        public short getGeoShort(int columnIndex) {
-            final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-            if (address == 0) {
-                return NullColumn.INSTANCE.getShort(0);
-            }
-            return Unsafe.getUnsafe().getShort(address + index * Short.BYTES);
+        public void of(PageFrameCursor cursor, PageAddressCache columnAddressCache) {
+            this.cursor = cursor;
+            this.pageAddressCache = columnAddressCache;
+            this.frameIndex = 0;
+            this.index = 0;
         }
 
-        @Override
-        public int getGeoInt(int columnIndex) {
-            final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-            if (address == 0) {
-                return NullColumn.INSTANCE.getInt(0);
-            }
-            return Unsafe.getUnsafe().getInt(address + index * Integer.BYTES);
+        public void setIndex(long index) {
+            this.index = index;
         }
 
-        @Override
-        public long getGeoLong(int columnIndex) {
-            final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-            if (address == 0) {
-                return NullColumn.INSTANCE.getLong(0);
+        private BinarySequence getBin(long base, long offset, long size, ByteSequenceView view) {
+            final long address = base + offset;
+            final long len = Unsafe.getUnsafe().getLong(address);
+            if (len != TableUtils.NULL_LEN) {
+                if (len + Long.BYTES + offset <= size) {
+                    return view.of(address + Long.BYTES, len);
+                }
+                throw CairoException.instance(0)
+                        .put("Bin is outside of file boundary [offset=")
+                        .put(offset)
+                        .put(", len=")
+                        .put(len)
+                        .put(", size=")
+                        .put(size)
+                        .put(']');
             }
-            return Unsafe.getUnsafe().getLong(address + index * Long.BYTES);
+            return null;
+        }
+
+        void getLong256(long offset, CharSink sink) {
+            final long addr = offset + Long.BYTES * 4;
+            final long a, b, c, d;
+            a = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4);
+            b = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3);
+            c = Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2);
+            d = Unsafe.getUnsafe().getLong(addr - Long.BYTES);
+            Numbers.appendLong256(a, b, c, d, sink);
+        }
+
+        void getLong256(int columnIndex, Long256Acceptor sink) {
+            final long columnAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+            if (columnAddress == 0) {
+                NullColumn.INSTANCE.getLong256(0, sink);
+                return;
+            }
+            final long addr = columnAddress + index * Long256.BYTES + Long.BYTES * 4;
+            sink.setAll(
+                    Unsafe.getUnsafe().getLong(addr - Long.BYTES * 4),
+                    Unsafe.getUnsafe().getLong(addr - Long.BYTES * 3),
+                    Unsafe.getUnsafe().getLong(addr - Long.BYTES * 2),
+                    Unsafe.getUnsafe().getLong(addr - Long.BYTES)
+            );
+        }
+
+        private CharSequence getStr(long base, long offset, long size, CharSequenceView view) {
+            final long address = base + offset;
+            final int len = Unsafe.getUnsafe().getInt(address);
+            if (len != TableUtils.NULL_LEN) {
+                if (len + 4 + offset <= size) {
+                    return view.of(address + Vm.STRING_LENGTH_BYTES, len);
+                }
+                throw CairoException.instance(0)
+                        .put("String is outside of file boundary [offset=")
+                        .put(offset)
+                        .put(", len=")
+                        .put(len)
+                        .put(", size=")
+                        .put(size)
+                        .put(']');
+            }
+            return null;
         }
 
         private static class ByteSequenceView implements BinarySequence {
@@ -684,12 +676,10 @@ class CompiledFilterRecordCursor implements RecordCursor {
     private static class PageAddressCache implements Mutable {
 
         private final int cacheSizeThreshold;
-        private int columnCount;
-        private int varLenColumnCount;
-
         // Index remapping for variable length columns.
         private final IntList varLenColumnIndexes = new IntList();
-
+        private int columnCount;
+        private int varLenColumnCount;
         private LongList pageAddresses = new LongList();
         // Index page addresses and page sizes are stored only for variable length columns.
         private LongList indexPageAddresses = new LongList();
@@ -699,14 +689,16 @@ class CompiledFilterRecordCursor implements RecordCursor {
             cacheSizeThreshold = configuration.getSqlJitPageAddressCacheThreshold() / Long.BYTES;
         }
 
-        public void of(RecordMetadata metadata) {
-            this.columnCount = metadata.getColumnCount();
-            this.varLenColumnIndexes.setAll(columnCount, -1);
-            this.varLenColumnCount = 0;
+        public void add(int frameIndex, PageFrame frame) {
+            if (pageAddresses.size() >= columnCount * (frameIndex + 1)) {
+                return; // The page frame is already cached
+            }
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                final int columnType = metadata.getColumnType(columnIndex);
-                if (ColumnType.isVariableLength(columnType)) {
-                    varLenColumnIndexes.setQuick(columnIndex, varLenColumnCount++);
+                pageAddresses.add(frame.getPageAddress(columnIndex));
+                int varLenColumnIndex = varLenColumnIndexes.getQuick(columnIndex);
+                if (varLenColumnIndex > -1) {
+                    indexPageAddresses.add(frame.getIndexPageAddress(columnIndex));
+                    pageSizes.add(frame.getPageSize(columnIndex));
                 }
             }
         }
@@ -725,30 +717,16 @@ class CompiledFilterRecordCursor implements RecordCursor {
             }
         }
 
-        public void add(int frameIndex, PageFrame frame) {
-            if (pageAddresses.size() >= columnCount * (frameIndex + 1)) {
-                return; // The page frame is already cached
-            }
-            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                pageAddresses.add(frame.getPageAddress(columnIndex));
-                int varLenColumnIndex = varLenColumnIndexes.getQuick(columnIndex);
-                if (varLenColumnIndex > -1) {
-                    indexPageAddresses.add(frame.getIndexPageAddress(columnIndex));
-                    pageSizes.add(frame.getPageSize(columnIndex));
-                }
-            }
-        }
-
-        public long getPageAddress(int frameIndex, int columnIndex) {
-            assert pageAddresses.size() >= columnCount * (frameIndex + 1);
-            return pageAddresses.getQuick(columnCount * frameIndex + columnIndex);
-        }
-
         public long getIndexPageAddress(int frameIndex, int columnIndex) {
             assert indexPageAddresses.size() >= varLenColumnCount * (frameIndex + 1);
             int varLenColumnIndex = varLenColumnIndexes.getQuick(columnIndex);
             assert varLenColumnIndex > -1;
             return indexPageAddresses.getQuick(varLenColumnCount * frameIndex + varLenColumnIndex);
+        }
+
+        public long getPageAddress(int frameIndex, int columnIndex) {
+            assert pageAddresses.size() >= columnCount * (frameIndex + 1);
+            return pageAddresses.getQuick(columnCount * frameIndex + columnIndex);
         }
 
         public long getPageSize(int frameIndex, int columnIndex) {
@@ -767,5 +745,25 @@ class CompiledFilterRecordCursor implements RecordCursor {
             }
             return false;
         }
+
+        public void of(RecordMetadata metadata) {
+            this.columnCount = metadata.getColumnCount();
+            this.varLenColumnIndexes.setAll(columnCount, -1);
+            this.varLenColumnCount = 0;
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                final int columnType = metadata.getColumnType(columnIndex);
+                if (ColumnType.isVariableLength(columnType)) {
+                    varLenColumnIndexes.setQuick(columnIndex, varLenColumnCount++);
+                }
+            }
+        }
     }
+
+
+
+
+
+
+
+
 }

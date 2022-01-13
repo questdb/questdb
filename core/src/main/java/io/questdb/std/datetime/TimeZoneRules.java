@@ -25,10 +25,6 @@
 package io.questdb.std.datetime;
 
 public interface TimeZoneRules {
-    long getOffset(long utcEpoch, int year, boolean leap);
-
-    long getOffset(long utcEpoch);
-
     long getNextDST(long utcEpoch, int year, boolean leap);
 
     /**
@@ -38,4 +34,8 @@ public interface TimeZoneRules {
      * @return UTC epoch
      */
     long getNextDST(long utcEpoch);
+
+    long getOffset(long utcEpoch, int year, boolean leap);
+
+    long getOffset(long utcEpoch);
 }

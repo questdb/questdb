@@ -1023,12 +1023,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         if (queryText != null && queryText.length() > 0) {
 
-            // try insert, peek because this is our private cache
+            // try insert, peek because this is our private cache,
             // and we do not want to remove statement from it
             typesAndInsert = typesAndInsertCache.peek(queryText);
 
             // not found or not insert, try select
-            // poll this cache because it is shared and we do not want
+            // poll this cache because it is shared, and we do not want
             // select factory to be used by another thread concurrently
             if (typesAndInsert != null) {
                 typesAndInsert.defineBindVariables(bindVariableService);
@@ -1119,7 +1119,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
 
         // make sure there is no current wrapper is set, so that we don't assign values
-        // from the wrapper back to context on the first pass where named statement is setup
+        // from the wrapper back to context on the first pass where named statement is set up
         if (statementName != null) {
             LOG.debug().$("named statement [name=").$(statementName).$(']').$();
             wrapper = namedStatementMap.get(statementName);
@@ -1146,7 +1146,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void configurePreparedStatement(CharSequence statementName) throws BadProtocolException {
-        // this is a PARSE message asking us to setup named SQL
+        // this is a PARSE message asking us to set up named SQL
         // we need to keep SQL text in case our SQL cache expires
         // as well as PG types of the bind variables, which we will need to configure setters
 
@@ -1168,8 +1168,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             BadProtocolException,
             PeerDisconnectedException,
             PeerIsSlowToReadException,
-            AuthenticationException,
-            SqlException {
+            AuthenticationException {
         final CairoSecurityContext cairoSecurityContext = authenticator.authenticate(username, msgLo, msgLimit);
         if (cairoSecurityContext != null) {
             sqlExecutionContext.with(cairoSecurityContext, bindVariableService, rnd, this.fd, circuitBreaker.of(this.fd));
@@ -1379,7 +1378,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
         // msgLen does not take into account type byte
         if (msgLen > len - 1) {
-            // When this happens we need to shift our receive buffer left
+            // When this happens we need to shift our "receive" buffer left
             // to fit this message. Outer function will do that if we
             // just exit.
             LOG.debug()
@@ -1856,7 +1855,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         } else if (typesAndInsert != null) {
             LOG.debug().$("executing insert").$();
             executeInsert();
-        } else { //this must be a OK/SET/COMMIT/ROLLBACK or empty query
+        } else { //this must be one of OK/SET/COMMIT/ROLLBACK or empty query
             executeTag();
             prepareCommandComplete(false);
         }
@@ -1897,7 +1896,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 requireInitialMessage = false;
                 msgLimit = address + msgLen;
                 long lo = address + Long.BYTES;
-                // there is an extra byte at the end and it has to be 0
+                // there is an extra byte at the end, and it has to be 0
                 LOG.info()
                         .$("protocol [major=").$(protocol >> 16)
                         .$(", minor=").$((short) protocol)
@@ -2190,7 +2189,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             PGResumeProcessor commandCompleteResumeProcessor
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         // the assumption for now is that any record will fit into response buffer. This of course precludes us from
-        // streaming large BLOBs, but, and its a big one, PostgreSQL protocol for DataRow does not allow for
+        // streaming large BLOBs, but, and it's a big one, PostgreSQL protocol for DataRow does not allow for
         // streaming anyway. On top of that Java PostgreSQL driver downloads data row fully. This simplifies our
         // approach for general queries. For streaming protocol we will code something else. PostgreSQL Java driver is
         // slow anyway.

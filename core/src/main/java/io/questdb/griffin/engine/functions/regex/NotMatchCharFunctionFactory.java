@@ -59,14 +59,14 @@ public class NotMatchCharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
-            return cs != null && Chars.indexOf(cs, expected) == -1;
+        public Function getArg() {
+            return value;
         }
 
         @Override
-        public Function getArg() {
-            return value;
+        public boolean getBool(Record rec) {
+            CharSequence cs = getArg().getStr(rec);
+            return cs != null && Chars.indexOf(cs, expected) == -1;
         }
 
     }

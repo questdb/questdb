@@ -37,17 +37,17 @@ public interface ServerConfiguration {
 
     CairoConfiguration getCairoConfiguration();
 
-    HttpServerConfiguration getHttpServerConfiguration();
-
     HttpMinServerConfiguration getHttpMinServerConfiguration();
 
-    LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
+    HttpServerConfiguration getHttpServerConfiguration();
 
     LineTcpReceiverConfiguration getLineTcpReceiverConfiguration();
 
-    WorkerPoolConfiguration getWorkerPoolConfiguration();
+    LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
+
+    MetricsConfiguration getMetricsConfiguration();
 
     PGWireConfiguration getPGWireConfiguration();
 
-    MetricsConfiguration getMetricsConfiguration();
+    WorkerPoolConfiguration getWorkerPoolConfiguration();
 }

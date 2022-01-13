@@ -412,6 +412,6 @@ public class DispatcherWriterQueueTest {
 
     @FunctionalInterface
     interface AlterVerifyAction {
-        void run(TableWriter writer, TableReader rdr) throws InterruptedException;
+        void run(TableWriter writer, TableReader rdr);
     }
 }

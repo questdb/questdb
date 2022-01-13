@@ -26,6 +26,14 @@ package io.questdb.cutlass.line.tcp;
 
 public class LineTcpInsertIntGeoHashTest extends LineTcpInsertGeoHashTest {
     @Override
+    public void testExcessivelyLongGeoHashesAreTruncated() throws Exception {
+        assertGeoHash(30,
+                "tracking geohash=\"9v1s8hm7wpkssv1h\" 1000000000\n",
+                "geohash\ttimestamp\n" +
+                        "9v1s8h\t1970-01-01T00:00:01.000000Z\n");
+    }
+
+    @Override
     public void testGeoHashes() throws Exception {
         assertGeoHash(30,
                 "tracking geohash=\"9v1s8h\" 1000000000\n" +
@@ -45,6 +53,28 @@ public class LineTcpInsertIntGeoHashTest extends LineTcpInsertGeoHashTest {
                         "wh4b6v\t1970-01-01T00:00:06.000000Z\n" +
                         "s2z2fy\t1970-01-01T00:00:07.000000Z\n" +
                         "1cjjwk\t1970-01-01T00:00:08.000000Z\n");
+    }
+
+    @Override
+    public void testGeoHashesNotEnoughPrecision() throws Exception {
+        assertGeoHash(32,
+                "tracking geohash=\"9v1s8\" 1000000000\n" +
+                        "tracking geohash=\"46swg\" 2000000000\n" +
+                        "tracking geohash=\"jnw97\" 3000000000\n" +
+                        "tracking geohash=\"zfuqd\" 4000000000\n" +
+                        "tracking name=\"hp4mu\" 5000000000\n" +
+                        "tracking geohash=\"wh4b6\" 6000000000\n" +
+                        "tracking geohash=\"s2z2f\" 7000000000\n" +
+                        "tracking geohash=\"1cjjw\",name=\"\" 8000000000\n",
+                "geohash\ttimestamp\tname\n" +
+                        "\t1970-01-01T00:00:01.000000Z\t\n" +
+                        "\t1970-01-01T00:00:02.000000Z\t\n" +
+                        "\t1970-01-01T00:00:03.000000Z\t\n" +
+                        "\t1970-01-01T00:00:04.000000Z\t\n" +
+                        "\t1970-01-01T00:00:05.000000Z\thp4mu\n" +
+                        "\t1970-01-01T00:00:06.000000Z\t\n" +
+                        "\t1970-01-01T00:00:07.000000Z\t\n" +
+                        "\t1970-01-01T00:00:08.000000Z\t\n");
     }
 
     @Override
@@ -70,6 +100,14 @@ public class LineTcpInsertIntGeoHashTest extends LineTcpInsertGeoHashTest {
     }
 
     @Override
+    public void testNullGeoHash() throws Exception {
+        assertGeoHash(30,
+                "tracking geohash=\"\" 1000000000\n",
+                "geohash\ttimestamp\n" +
+                        "\t1970-01-01T00:00:01.000000Z\n");
+    }
+
+    @Override
     public void testTableHasGeoHashMessageDoesNot() throws Exception {
         assertGeoHash(29,
                 "tracking onions=\"9v1\" 1000000000\n" +
@@ -91,38 +129,6 @@ public class LineTcpInsertIntGeoHashTest extends LineTcpInsertGeoHashTest {
     }
 
     @Override
-    public void testExcessivelyLongGeoHashesAreTruncated() throws Exception {
-        assertGeoHash(30,
-                "tracking geohash=\"9v1s8hm7wpkssv1h\" 1000000000\n",
-                "geohash\ttimestamp\n" +
-                        "9v1s8h\t1970-01-01T00:00:01.000000Z\n");
-    }
-
-
-
-    @Override
-    public void testGeoHashesNotEnoughPrecision() throws Exception {
-        assertGeoHash(32,
-                "tracking geohash=\"9v1s8\" 1000000000\n" +
-                        "tracking geohash=\"46swg\" 2000000000\n" +
-                        "tracking geohash=\"jnw97\" 3000000000\n" +
-                        "tracking geohash=\"zfuqd\" 4000000000\n" +
-                        "tracking name=\"hp4mu\" 5000000000\n" +
-                        "tracking geohash=\"wh4b6\" 6000000000\n" +
-                        "tracking geohash=\"s2z2f\" 7000000000\n" +
-                        "tracking geohash=\"1cjjw\",name=\"\" 8000000000\n",
-                "geohash\ttimestamp\tname\n" +
-                        "\t1970-01-01T00:00:01.000000Z\t\n" +
-                        "\t1970-01-01T00:00:02.000000Z\t\n" +
-                        "\t1970-01-01T00:00:03.000000Z\t\n" +
-                        "\t1970-01-01T00:00:04.000000Z\t\n" +
-                        "\t1970-01-01T00:00:05.000000Z\thp4mu\n" +
-                        "\t1970-01-01T00:00:06.000000Z\t\n" +
-                        "\t1970-01-01T00:00:07.000000Z\t\n" +
-                        "\t1970-01-01T00:00:08.000000Z\t\n");
-    }
-
-    @Override
     public void testWrongCharGeoHashes() throws Exception {
         assertGeoHash(29,
                 "tracking geohash=\"9v@1s8h\" 1000000000\n" +
@@ -135,13 +141,5 @@ public class LineTcpInsertIntGeoHashTest extends LineTcpInsertGeoHashTest {
                         "\t1970-01-01T00:00:03.000000Z\t\n" +
                         "\t1970-01-01T00:00:04.000000Z\tMozart\n",
                 "composer");
-    }
-
-    @Override
-    public void testNullGeoHash() throws Exception {
-        assertGeoHash(30,
-                "tracking geohash=\"\" 1000000000\n",
-                "geohash\ttimestamp\n" +
-                        "\t1970-01-01T00:00:01.000000Z\n");
     }
 }

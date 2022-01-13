@@ -611,7 +611,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcOooMax,
             long timestampMin,
             long timestampMax,
-            long partitionTimestamp, // <- pass thru
+            long partitionTimestamp, // <- pass through
             long srcDataTop,
             long srcDataMax,
             int indexBlockCapacity,
@@ -2408,7 +2408,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 0,
                 0,
                 0,
-                false, // partition does not mutate above the append line
+                false, // partition does not mutate above to append line
                 tableWriter,
                 indexWriter
         );

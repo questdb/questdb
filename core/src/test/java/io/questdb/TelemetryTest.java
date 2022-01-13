@@ -24,17 +24,7 @@
 
 package io.questdb;
 
-import java.util.concurrent.atomic.AtomicReference;
-
-import org.junit.Assert;
-import org.junit.Test;
-
-import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.griffin.SqlCompiler;
@@ -46,6 +36,10 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicReference;
 
 public class TelemetryTest extends AbstractCairoTest {
     private final static FilesFacade FF = FilesFacadeImpl.INSTANCE;
@@ -79,6 +73,43 @@ public class TelemetryTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table 'telemetry' does not exist");
                 }
             }
+        });
+    }
+
+    @Test
+    public void testTelemetryConfigUpgrade() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    SqlCompiler compiler = new SqlCompiler(engine, null);
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                compiler.compile(
+                        "CREATE TABLE " + TelemetryJob.configTableName + " (id long256, enabled boolean)",
+                        sqlExecutionContext);
+                InsertStatement ist = compiler.compile(
+                        "INSERT INTO " + TelemetryJob.configTableName + " values(CAST('0x01' AS LONG256), true)",
+                        sqlExecutionContext).getInsertStatement();
+                InsertMethod im = ist.createMethod(sqlExecutionContext);
+                im.execute();
+                im.commit();
+                im.close();
+                ist.close();
+                TelemetryJob telemetryJob = new TelemetryJob(engine, null);
+                String expectedSql = "column	type	indexed	indexBlockCapacity	symbolCached	symbolCapacity	designated\n" +
+                        "id	LONG256	false	0	false	0	false\n" +
+                        "enabled	BOOLEAN	false	0	false	0	false\n" +
+                        "version	SYMBOL	false	256	true	128	false\n" +
+                        "os	SYMBOL	false	256	true	128	false\n" +
+                        "package	SYMBOL	false	256	true	128	false\n";
+                TestUtils.assertSql(compiler, sqlExecutionContext, "SHOW COLUMNS FROM " + TelemetryJob.configTableName, sink, expectedSql);
+                expectedSql = "id\tversion\n" +
+                        "0x01\t\n" +
+                        "0x01\tUnknown Version\n";
+                TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT id, version FROM " + TelemetryJob.configTableName, sink,
+                        expectedSql);
+                Misc.free(telemetryJob);
+            }
+
         });
     }
 
@@ -126,49 +157,12 @@ public class TelemetryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTelemetryConfigUpgrade() throws Exception {
-       TestUtils.assertMemoryLeak(() -> {
-           try (
-                   CairoEngine engine = new CairoEngine(configuration);
-                   SqlCompiler compiler = new SqlCompiler(engine, null);
-                   SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
-               compiler.compile(
-                       "CREATE TABLE " + TelemetryJob.configTableName + " (id long256, enabled boolean)",
-                       sqlExecutionContext);
-               InsertStatement ist = compiler.compile(
-                       "INSERT INTO " + TelemetryJob.configTableName + " values(CAST('0x01' AS LONG256), true)",
-                       sqlExecutionContext).getInsertStatement();
-               InsertMethod im = ist.createMethod(sqlExecutionContext);
-               im.execute();
-               im.commit();
-               im.close();
-               ist.close();
-               TelemetryJob telemetryJob = new TelemetryJob(engine, null);
-               String expectedSql = "column	type	indexed	indexBlockCapacity	symbolCached	symbolCapacity	designated\n" +
-                       "id	LONG256	false	0	false	0	false\n" +
-                       "enabled	BOOLEAN	false	0	false	0	false\n" +
-                       "version	SYMBOL	false	256	true	128	false\n" +
-                       "os	SYMBOL	false	256	true	128	false\n" +
-                       "package	SYMBOL	false	256	true	128	false\n";
-               TestUtils.assertSql(compiler, sqlExecutionContext, "SHOW COLUMNS FROM " + TelemetryJob.configTableName, sink, expectedSql);
-               expectedSql = "id\tversion\n" +
-                       "0x01\t\n" +
-                       "0x01\tUnknown Version\n";
-               TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT id, version FROM " + TelemetryJob.configTableName, sink,
-                       expectedSql);
-               Misc.free(telemetryJob);
-           }
-
-       });
-    }
-
-    @Test
     public void testTelemetryUpdatesVersion() throws Exception {
         final AtomicReference<String> refVersion = new AtomicReference<>();
         BuildInformation buildInformation = new BuildInformation() {
             @Override
-            public CharSequence getQuestDbVersion() {
-                return refVersion.get();
+            public CharSequence getCommitHash() {
+                return null;
             }
 
             @Override
@@ -177,8 +171,8 @@ public class TelemetryTest extends AbstractCairoTest {
             }
 
             @Override
-            public CharSequence getCommitHash() {
-                return null;
+            public CharSequence getQuestDbVersion() {
+                return refVersion.get();
             }
         };
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {

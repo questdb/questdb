@@ -39,9 +39,9 @@ public class MemoryPages implements Closeable, Mutable {
     private final int bits;
 
     private final LongList pages = new LongList();
+    private final int maxPages;
     private long cachePageHi;
     private long cachePageLo;
-    private final int maxPages;
 
     public MemoryPages(long pageSize, int maxPages) {
         this.pageSize = Numbers.ceilPow2(pageSize);
@@ -83,6 +83,12 @@ public class MemoryPages implements Closeable, Mutable {
         pages.clear();
     }
 
+    /* Returns number of chunks of chunkSize that fits in allocated memory (assuming there could be unused space at end of each page) */
+    public long countNumberOf(int chunkSize) {
+        return (cachePageLo >> bits) * (pageSize / chunkSize) + //full pages
+                (cachePageLo & mask) / chunkSize; //last page
+    }
+
     public long size() {
         return cachePageLo;
     }
@@ -103,11 +109,5 @@ public class MemoryPages implements Closeable, Mutable {
 
         cachePageLo = index << bits;
         cachePageHi = cachePageLo + pageSize;
-    }
-
-    /* Returns number of chunks of chunkSize that fits in allocated memory (assuming there could be unused space at end of each page) */
-    public long countNumberOf(int chunkSize) {
-        return (cachePageLo >> bits) * (pageSize / chunkSize) + //full pages 
-                (cachePageLo & mask) / chunkSize; //last page
     }
 }

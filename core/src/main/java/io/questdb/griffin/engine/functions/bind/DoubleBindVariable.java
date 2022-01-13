@@ -33,13 +33,13 @@ class DoubleBindVariable extends DoubleFunction implements ScalarFunction, Mutab
     double value;
 
     @Override
-    public double getDouble(Record rec) {
-        return value;
+    public void clear() {
+        value = Double.NaN;
     }
 
     @Override
-    public void clear() {
-        value = Double.NaN;
+    public double getDouble(Record rec) {
+        return value;
     }
 
     @Override

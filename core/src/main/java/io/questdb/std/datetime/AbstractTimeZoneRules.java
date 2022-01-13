@@ -105,28 +105,6 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     }
 
     @Override
-    public long getOffset(long utcEpoch, int year, boolean leap) {
-        if (standardOffset != Long.MIN_VALUE) {
-            return standardOffset;
-        }
-
-        if (ruleCount > 0 && utcEpoch > cutoffTransition) {
-            return offsetFromRules(utcEpoch, year, leap);
-        }
-
-        if (utcEpoch > cutoffTransition) {
-            return lastWall;
-        }
-        return offsetFromHistory(utcEpoch);
-    }
-
-    @Override
-    public long getOffset(long utcEpoch) {
-        final int y = getYear(utcEpoch);
-        return getOffset(utcEpoch, y, isLeapYear(y));
-    }
-
-    @Override
     public long getNextDST(long utcEpoch, int year, boolean leap) {
         if (standardOffset != Long.MIN_VALUE) {
             // when we have standard offset the next DST does not exist
@@ -150,6 +128,28 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     public long getNextDST(long utcEpoch) {
         final int y = getYear(utcEpoch);
         return getNextDST(utcEpoch, y, isLeapYear(y));
+    }
+
+    @Override
+    public long getOffset(long utcEpoch, int year, boolean leap) {
+        if (standardOffset != Long.MIN_VALUE) {
+            return standardOffset;
+        }
+
+        if (ruleCount > 0 && utcEpoch > cutoffTransition) {
+            return offsetFromRules(utcEpoch, year, leap);
+        }
+
+        if (utcEpoch > cutoffTransition) {
+            return lastWall;
+        }
+        return offsetFromHistory(utcEpoch);
+    }
+
+    @Override
+    public long getOffset(long utcEpoch) {
+        final int y = getYear(utcEpoch);
+        return getOffset(utcEpoch, y, isLeapYear(y));
     }
 
     abstract protected long addDays(long epoch, int days);
@@ -227,7 +227,7 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
                 break;
         }
 
-        // go back to epoch epoch
+        // go back to epoch
         date -= offsetBefore * multiplier;
         return date;
     }
@@ -302,7 +302,7 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
                     break;
             }
 
-            // go back to epoch epoch
+            // go back to epoch
             date -= offsetBefore * multiplier;
 
             if (epoch < date) {

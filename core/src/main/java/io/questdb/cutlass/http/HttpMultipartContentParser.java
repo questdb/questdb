@@ -221,6 +221,26 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
         return false;
     }
 
+    private int matchBoundary(long lo, long hi) {
+        long start = lo;
+        int ptr = boundaryPtr;
+
+        while (lo < hi && ptr < boundaryLen) {
+            if (Unsafe.getUnsafe().getByte(lo++) != boundary.byteAt(ptr++)) {
+                return BOUNDARY_NO_MATCH;
+            }
+        }
+
+        this.boundaryPtr = ptr;
+
+        if (boundaryPtr < boundaryLen) {
+            return BOUNDARY_INCOMPLETE;
+        }
+
+        this.consumedBoundaryLen = (int) (lo - start);
+        return BOUNDARY_MATCH;
+    }
+
     private long onChunkWithRetryHandle(
             HttpMultipartContentListener listener,
             long lo,
@@ -255,25 +275,5 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
         if (needsRetry != null) throw needsRetry;
 
         return resumePtr;
-    }
-
-    private int matchBoundary(long lo, long hi) {
-        long start = lo;
-        int ptr = boundaryPtr;
-
-        while (lo < hi && ptr < boundaryLen) {
-            if (Unsafe.getUnsafe().getByte(lo++) != boundary.byteAt(ptr++)) {
-                return BOUNDARY_NO_MATCH;
-            }
-        }
-
-        this.boundaryPtr = ptr;
-
-        if (boundaryPtr < boundaryLen) {
-            return BOUNDARY_INCOMPLETE;
-        }
-
-        this.consumedBoundaryLen = (int) (lo - start);
-        return BOUNDARY_MATCH;
     }
 }

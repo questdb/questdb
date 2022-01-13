@@ -28,8 +28,8 @@ import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
 
 class SortedLightRecordCursor implements DelegatingRecordCursor {
@@ -42,7 +42,7 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     public SortedLightRecordCursor(LongTreeChain chain, RecordComparator comparator) {
         this.chain = chain;
         this.comparator = comparator;
-        // assign it once, its the same instance anyway
+        // assign it once, it's the same instance anyway
         this.chainCursor = chain.getCursor();
     }
 
@@ -53,13 +53,13 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
-    public long size() {
-        return base.size();
+    public Record getRecord() {
+        return baseRecord;
     }
 
     @Override
-    public Record getRecord() {
-        return baseRecord;
+    public Record getRecordB() {
+        return base.getRecordB();
     }
 
     @Override
@@ -77,13 +77,13 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
-    public Record getRecordB() {
-        return base.getRecordB();
+    public void recordAt(Record record, long atRowId) {
+        base.recordAt(record, atRowId);
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
-        base.recordAt(record, atRowId);
+    public long size() {
+        return base.size();
     }
 
     @Override

@@ -45,15 +45,14 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     private final long bufA;
     private final long bufB;
     private final long sockaddr;
+    private final Log log;
     private boolean quoted = false;
-
     private long lo;
     private long hi;
     private long ptr;
     private long lineStart;
     private boolean hasMetric = false;
     private boolean noFields = true;
-    private final Log log;
 
     public AbstractLineSender(
             int interfaceIPv4Address,
@@ -184,6 +183,34 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         return this;
     }
 
+    @Override
+    public void putUtf8Special(char c) {
+        switch (c) {
+            case ' ':
+            case ',':
+            case '=':
+                if (!quoted) {
+                    put('\\');
+                }
+            default:
+                put(c);
+                break;
+            case '\n':
+            case '\r':
+                put('\\').put(c);
+                break;
+            case '"':
+                if (quoted) {
+                    put('\\');
+                }
+                put(c);
+                break;
+            case '\\':
+                put('\\').put('\\');
+                break;
+        }
+    }
+
     public AbstractLineSender metric(CharSequence metric) {
         if (hasMetric) {
             throw CairoException.instance(0).put("duplicate metric");
@@ -218,41 +245,6 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         throw CairoException.instance(0).put("metric expected");
     }
 
-    @Override
-    public void putUtf8Special(char c) {
-        switch (c) {
-            case ' ':
-            case ',':
-            case '=':
-                if (!quoted) {
-                    put('\\');
-                }
-            default:
-                put(c);
-                break;
-            case '\n':
-            case '\r':
-                put('\\').put(c);
-                break;
-            case '"':
-                if (quoted) {
-                    put('\\');
-                }
-                put(c);
-                break;
-            case '\\':
-                put('\\').put('\\');
-                break;
-        }
-    }
-
-    private void sendLine() {
-        if (lo < lineStart) {
-            int len = (int) (lineStart - lo);
-            sendToSocket(fd, lo, sockaddr, len);
-        }
-    }
-
     protected void send00() {
         int len = (int) (ptr - lineStart);
         if (len == 0) {
@@ -275,6 +267,13 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
             int len = (int) (ptr - lo);
             sendToSocket(fd, lo, sockaddr, len);
             lineStart = ptr = lo;
+        }
+    }
+
+    private void sendLine() {
+        if (lo < lineStart) {
+            int len = (int) (lineStart - lo);
+            sendToSocket(fd, lo, sockaddr, len);
         }
     }
 

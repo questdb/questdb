@@ -153,6 +153,11 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean getBool(Record rec) {
+            return negated != (Chars.equalsNc(strFunc.getStr(rec), chrFunc.getChar(rec)));
+        }
+
+        @Override
         public Function getLeft() {
             return strFunc;
         }
@@ -160,11 +165,6 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return chrFunc;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != (Chars.equalsNc(strFunc.getStr(rec), chrFunc.getChar(rec)));
         }
     }
 }

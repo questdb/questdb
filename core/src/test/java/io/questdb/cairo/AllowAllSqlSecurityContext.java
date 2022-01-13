@@ -37,8 +37,18 @@ import org.jetbrains.annotations.Nullable;
 public final class AllowAllSqlSecurityContext {
     public static final SqlExecutionContext INSTANCE = new SqlExecutionContext() {
         @Override
-        public QueryFutureUpdateListener getQueryFutureUpdateListener() {
-            return QueryFutureUpdateListener.EMPTY;
+        public void configureAnalyticContext(
+                @Nullable VirtualRecord partitionByRecord,
+                @Nullable RecordSink partitionBySink,
+                @Nullable ColumnTypes keyTypes,
+                boolean isOrdered,
+                boolean baseSupportsRandomAccess
+        ) {
+        }
+
+        @Override
+        public AnalyticContext getAnalyticContext() {
+            return null;
         }
 
         @Override
@@ -47,8 +57,61 @@ public final class AllowAllSqlSecurityContext {
         }
 
         @Override
+        public CairoEngine getCairoEngine() {
+            return null;
+        }
+
+        @Override
         public CairoSecurityContext getCairoSecurityContext() {
             return AllowAllCairoSecurityContext.INSTANCE;
+        }
+
+        @Override
+        public SqlExecutionCircuitBreaker getCircuitBreaker() {
+            return null;
+        }
+
+        @Override
+        public int getJitMode() {
+            return SqlJitMode.JIT_MODE_ENABLED;
+        }
+
+        @Override
+        public void setJitMode(int jitMode) {
+        }
+
+        @Override
+        public long getNow() {
+            return 0;
+        }
+
+        @Override
+        public QueryFutureUpdateListener getQueryFutureUpdateListener() {
+            return QueryFutureUpdateListener.EMPTY;
+        }
+
+        @Override
+        public Rnd getRandom() {
+            return null;
+        }
+
+        @Override
+        public void setRandom(Rnd rnd) {
+
+        }
+
+        @Override
+        public long getRequestFd() {
+            return 0;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return 0;
+        }
+
+        @Override
+        public void initNow() {
         }
 
         @Override
@@ -65,70 +128,7 @@ public final class AllowAllSqlSecurityContext {
         }
 
         @Override
-        public int getWorkerCount() {
-            return 0;
-        }
-
-        @Override
-        public Rnd getRandom() {
-            return null;
-        }
-
-        @Override
-        public void setRandom(Rnd rnd) {
-
-        }
-
-        @Override
-        public CairoEngine getCairoEngine() {
-            return null;
-        }
-
-        @Override
-        public long getRequestFd() {
-            return 0;
-        }
-
-        @Override
-        public SqlExecutionCircuitBreaker getCircuitBreaker() {
-            return null;
-        }
-
-        @Override
         public void storeTelemetry(short event, short origin) {
-        }
-
-        @Override
-        public AnalyticContext getAnalyticContext() {
-            return null;
-        }
-
-        @Override
-        public void configureAnalyticContext(
-                @Nullable VirtualRecord partitionByRecord,
-                @Nullable RecordSink partitionBySink,
-                @Nullable ColumnTypes keyTypes,
-                boolean isOrdered,
-                boolean baseSupportsRandomAccess
-        ) {
-        }
-
-        @Override
-        public void initNow() {
-        }
-
-        @Override
-        public long getNow() {
-            return 0;
-        }
-
-        @Override
-        public int getJitMode() {
-            return SqlJitMode.JIT_MODE_ENABLED;
-        }
-
-        @Override
-        public void setJitMode(int jitMode) {
         }
     };
 }

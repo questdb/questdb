@@ -58,8 +58,11 @@ public class LowerCaseAsciiCharSequenceIntHashMap extends AbstractLowerCaseAscii
         values[index] = noEntryValue;
     }
 
-    public int valueAt(int index) {
-        return index < 0 ? values[-index - 1] : noEntryValue;
+    @Override
+    protected void move(int from, int to) {
+        keys[to] = keys[from];
+        values[to] = values[from];
+        erase(from);
     }
 
     public boolean contains(CharSequence key) {
@@ -90,11 +93,8 @@ public class LowerCaseAsciiCharSequenceIntHashMap extends AbstractLowerCaseAscii
         }
     }
 
-    @Override
-    protected void move(int from, int to) {
-        keys[to] = keys[from];
-        values[to] = values[from];
-        erase(from);
+    public int valueAt(int index) {
+        return index < 0 ? values[-index - 1] : noEntryValue;
     }
 
     private void putAt0(int index, CharSequence key, int value) {

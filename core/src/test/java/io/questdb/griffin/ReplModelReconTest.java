@@ -668,63 +668,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     }
 
     @Test
-    // this test fails because master and slave cannot reconcile the situation
-    // where column by the same name was first removed and then re-added. We need more information on
-    // column metadata to help us reconcile this. Until this time the test exists but fails. When
-    // new information is added on column metadata - the test can be uncommented and completed
-    public void testOrderedRemoveAndReAddColumnSameNameNotLast() throws Exception {
-        assertMemoryLeak(() -> {
-            compile(
-                    "create table x as  " +
-                            "(select" +
-                            " cast(x + 10 as int) i," +
-                            " rnd_symbol('msft','ibm', 'googl') sym," +
-                            " round(rnd_double(0)*100, 3) amt," +
-                            " to_timestamp" +
-                            "('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
-                            " rnd_boolean() b," +
-                            " rnd_str(1,1,2) c," +
-                            " rnd_double(2) d," +
-                            " rnd_float(2) e," +
-                            " rnd_short(10,1024) f," +
-                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                            " rnd_symbol(4,4,4,2) ik," +
-                            " rnd_long() j," +
-                            " timestamp_sequence(to_timestamp('2018-01-10', 'yyyy-MM-dd'), 3000000) k," +
-                            " rnd_byte(2,50) l," +
-                            " rnd_bin(10, 20, 2) m," +
-                            " rnd_str(5,16,2) n," +
-                            " rnd_long256() o" +
-                            " from long_sequence(100000)" +
-                            ") timestamp(k) partition by DAY",
-                    sqlExecutionContext
-            );
-
-            compile("create table y as (select * from x limit 80000) timestamp(k) partition by DAY", sqlExecutionContext);
-
-            compile("alter table x drop column n", sqlExecutionContext);
-
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
-
-            compile("alter table x add column n long256", sqlExecutionContext);
-
-            try (
-                    TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
-                    TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
-            ) {
-                sink.clear();
-                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
-            }
-
-            TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T11:19:57.000000Z\"},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":16,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":77070},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":244928}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":3}],\"columnMetaData\":[{\"name\":\"n\",\"type\":\"LONG256\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"remove\",\"fromIndex\":15,\"toIndex\":-1},{\"action\":\"move\",\"fromIndex\":16,\"toIndex\":15},{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":16}]}",
-                    sink
-            );
-        });
-    }
-
-    @Test
     public void testOrderedRemoveAndReAddColumnSameNameLast() throws Exception {
         assertMemoryLeak(() -> {
             compile(
@@ -1160,6 +1103,63 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                             "38\tibm\t81.519\t2018-01-01T07:36:00.000000Z\tfalse\tL\t0.8740701330165472\t0.4177\t926\t2015-11-19T04:41:43.768Z\tVTJW\t2010158947254808963\t2018-01-10T00:01:21.000000Z\t45\t00000000 58 3b 4b b7 e2 7f ab 6e 23 03 dd c7 d6\t0x022f1bcf3743bcd705cd7bfcc309dec560cef557a4907ec5776d02c90b364248\t\n" +
                             "39\tmsft\t12.934000000000001\t2018-01-01T07:48:00.000000Z\ttrue\tQ\t0.8940422626709261\tNaN\t162\t2015-12-20T18:44:44.021Z\tPEHN\t-7175695171900374773\t2018-01-10T00:01:24.000000Z\t42\t\t0xc707cb8de0171211785433a900073b7c220f49362d43ba85361b34a8bfd0d8be\t\n" +
                             "40\tgoogl\t16.638\t2018-01-01T08:00:00.000000Z\ttrue\t\t0.1810605823104886\t0.9209\t917\t2015-08-05T02:39:14.093Z\tHYRX\t7768501691006807692\t2018-01-10T00:01:27.000000Z\t3\t00000000 c0 55 12 44 dc 4b c0 d9 1c 71 cf 5a 8f 21 06\t0x1283140ab775531c12aeb931ef2626592440b62ba8918cce31a10a23dc2e0f60\t\n"
+            );
+        });
+    }
+
+    @Test
+    // this test fails because master and slave cannot reconcile the situation
+    // where column by the same name was first removed and then re-added. We need more information on
+    // column metadata to help us reconcile this. Until this time the test exists but fails. When
+    // new information is added on column metadata - the test can be uncommented and completed
+    public void testOrderedRemoveAndReAddColumnSameNameNotLast() throws Exception {
+        assertMemoryLeak(() -> {
+            compile(
+                    "create table x as  " +
+                            "(select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp" +
+                            "('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(to_timestamp('2018-01-10', 'yyyy-MM-dd'), 3000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n," +
+                            " rnd_long256() o" +
+                            " from long_sequence(100000)" +
+                            ") timestamp(k) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            compile("create table y as (select * from x limit 80000) timestamp(k) partition by DAY", sqlExecutionContext);
+
+            compile("alter table x drop column n", sqlExecutionContext);
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            compile("alter table x add column n long256", sqlExecutionContext);
+
+            try (
+                    TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
+                    TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
+            ) {
+                sink.clear();
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+            }
+
+            TestUtils.assertEquals(
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T11:19:57.000000Z\"},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":16,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":77070},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":244928}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"dataTxn\":0},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"dataTxn\":3}],\"columnMetaData\":[{\"name\":\"n\",\"type\":\"LONG256\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"remove\",\"fromIndex\":15,\"toIndex\":-1},{\"action\":\"move\",\"fromIndex\":16,\"toIndex\":15},{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":16}]}",
+                    sink
             );
         });
     }

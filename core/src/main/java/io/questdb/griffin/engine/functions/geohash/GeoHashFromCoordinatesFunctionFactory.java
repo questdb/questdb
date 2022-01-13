@@ -97,24 +97,9 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
             this.bits = bits;
         }
 
-        private long getLongValue(Record rec) {
-            try {
-                double lon = this.lon.getDouble(rec);
-                double lat = this.lat.getDouble(rec);
-                return GeoHashes.fromCoordinatesDeg(lat, lon, bits);
-            } catch (NumericException e) {
-                return GeoHashes.NULL;
-            }
-        }
-
         @Override
         public byte getGeoByte(Record rec) {
             return (byte) getLongValue(rec);
-        }
-
-        @Override
-        public short getGeoShort(Record rec) {
-            return (short) getLongValue(rec);
         }
 
         @Override
@@ -128,6 +113,11 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public short getGeoShort(Record rec) {
+            return (short) getLongValue(rec);
+        }
+
+        @Override
         public Function getLeft() {
             return lat;
         }
@@ -135,6 +125,16 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return lon;
+        }
+
+        private long getLongValue(Record rec) {
+            try {
+                double lon = this.lon.getDouble(rec);
+                double lat = this.lat.getDouble(rec);
+                return GeoHashes.fromCoordinatesDeg(lat, lon, bits);
+            } catch (NumericException e) {
+                return GeoHashes.NULL;
+            }
         }
     }
 }

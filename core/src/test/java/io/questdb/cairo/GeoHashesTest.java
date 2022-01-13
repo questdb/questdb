@@ -40,7 +40,24 @@ public class GeoHashesTest {
     private static final double lon = 121.473;
     private static final StringConverter toString = GeoHashes::appendChars;
     private static final StringConverter toBitString = GeoHashes::appendBinary;
+    private static final char[] base32 = {
+            '0', '1', '2', '3', '4', '5', '6', '7',
+            '8', '9', 'b', 'c', 'd', 'e', 'f', 'g',
+            'h', 'j', 'k', 'm', 'n', 'p', 'q', 'r',
+            's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+            'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J',
+            'K', 'M', 'N', 'P', 'Q', 'R', 'S', 'T',
+            'U', 'V', 'W', 'X', 'Y', 'Z'
+    };
 
+    @Test
+    public void testBitmask() {
+        for (int i = 0; i < 64; i++) {
+            final long bm = GeoHashes.bitmask(1, i);
+            Assert.assertEquals(1L << i, bm);
+        }
+        Assert.assertEquals(7L << 5, GeoHashes.bitmask(3, 5));
+    }
 
     @Test
     public void testBitsPrecision() {
@@ -53,52 +70,21 @@ public class GeoHashesTest {
     }
 
     @Test
-    public void testGeoHashTypesValuesAreValid() {
-        Assert.assertEquals(ColumnType.GEOBYTE, ColumnType.tagOf(ColumnType.GEOBYTE));
-        Assert.assertEquals(0, ColumnType.getGeoHashBits(ColumnType.GEOBYTE));
+    public void testBuildNormalizedPrefixesAndMasks() throws NumericException {
+        final int cap = 12;
+        LongList bits = new LongList(cap * 2); // hash and mask
+        int columnType = ColumnType.getGeoHashTypeWithBits(5 * cap);
+        for (int i = 0; i < cap; i++) {
+            final int prec = (i % 3) + 3;
+            final long h = rnd_geohash(prec);
+            int type = ColumnType.getGeoHashTypeWithBits(5 * prec);
+            GeoHashes.addNormalizedGeoPrefix(h, type, columnType, bits);
+        }
 
-        Assert.assertEquals(ColumnType.GEOSHORT, ColumnType.tagOf(ColumnType.GEOSHORT));
-        Assert.assertEquals(0, ColumnType.getGeoHashBits(ColumnType.GEOSHORT));
-
-        Assert.assertEquals(ColumnType.GEOINT, ColumnType.tagOf(ColumnType.GEOINT));
-        Assert.assertEquals(0, ColumnType.getGeoHashBits(ColumnType.GEOINT));
-
-        Assert.assertEquals(ColumnType.GEOLONG, ColumnType.tagOf(ColumnType.GEOLONG));
-        Assert.assertEquals(0, ColumnType.getGeoHashBits(ColumnType.GEOLONG));
-    }
-
-    @Test
-    public void testStorageSize() {
-        int geoHashType = ColumnType.getGeoHashTypeWithBits(42);
-        Assert.assertEquals(ColumnType.GEOLONG, ColumnType.tagOf(geoHashType));
-        Assert.assertEquals(42, ColumnType.getGeoHashBits(geoHashType));
-
-        geoHashType = ColumnType.getGeoHashTypeWithBits(16);
-        Assert.assertEquals(ColumnType.GEOINT, ColumnType.tagOf(geoHashType));
-        Assert.assertEquals(16, ColumnType.getGeoHashBits(geoHashType));
-
-        geoHashType = ColumnType.getGeoHashTypeWithBits(8);
-        Assert.assertEquals(ColumnType.GEOSHORT, ColumnType.tagOf(geoHashType));
-        Assert.assertEquals(8, ColumnType.getGeoHashBits(geoHashType));
-
-        geoHashType = ColumnType.getGeoHashTypeWithBits(7);
-        Assert.assertEquals(ColumnType.GEOBYTE, ColumnType.tagOf(geoHashType));
-        Assert.assertEquals(7, ColumnType.getGeoHashBits(geoHashType));
-    }
-
-    @Test
-    public void testStorageSizeWithNull() {
-        for (int i = 1; i < 61; i++) {
-            final int type = ColumnType.getGeoHashTypeWithBits(i);
-            if (i < 8) {
-                Assert.assertEquals(ColumnType.GEOBYTE, ColumnType.tagOf(type));
-            } else if (i < 16) {
-                Assert.assertEquals(ColumnType.GEOSHORT, ColumnType.tagOf(type));
-            } else if (i < 32) {
-                Assert.assertEquals(ColumnType.GEOINT, ColumnType.tagOf(type));
-            } else {
-                Assert.assertEquals(ColumnType.GEOLONG, ColumnType.tagOf(type));
-            }
+        for (int i = 0; i < bits.size() / 2; i += 2) {
+            final long b = bits.get(i);
+            final long m = bits.get(i + 1);
+            Assert.assertEquals(b, b & m);
         }
     }
 
@@ -110,6 +96,256 @@ public class GeoHashesTest {
         Assert.assertEquals(GeoHashes.BYTE_NULL, GeoHashes.encodeChar('ó'));
         Assert.assertEquals(GeoHashes.BYTE_NULL, GeoHashes.encodeChar('㤴'));
 
+    }
+
+    @Test
+    public void testFromBitStringInvalid() {
+        Assert.assertThrows(NumericException.class, () -> GeoHashes.fromBitString("a", 0));
+    }
+
+    @Test
+    public void testFromBitStringNl() throws NumericException {
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromBitStringNl("", 0));
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromBitStringNl("0011", 4));
+        Assert.assertNotEquals(GeoHashes.NULL, GeoHashes.fromBitStringNl("0", 0));
+        Assert.assertEquals(1, GeoHashes.fromBitStringNl( // same as empty string
+                "##000000000000000000000000000000000000000000000000000000000000" + "1", 60));
+        Assert.assertEquals(1, GeoHashes.fromBitStringNl(
+                "##000000000000000000000000000000000000000000000000000000000000" + "1", 59));
+        Assert.assertEquals(0, GeoHashes.fromBitStringNl( // truncates
+                "##000000000000000000000000000000000000000000000000000000000000" + "1", 2));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testFromBitStringNotValid1() throws NumericException {
+        GeoHashes.fromBitStringNl(" ", 0);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testFromBitStringNotValid2() throws NumericException {
+        GeoHashes.fromBitStringNl("012", 0);
+    }
+
+    @Test
+    public void testFromBitStringTruncating() throws NumericException {
+        CharSequence tooLongBitString = Chars.repeat("1", 61); // truncates
+        long maxGeoHash = GeoHashes.fromString("zzzzzzzzzzzz", 0, 12);
+        Assert.assertEquals(maxGeoHash, GeoHashes.fromBitString(tooLongBitString, 0));
+    }
+
+    @Test
+    public void testFromBitStringValid() throws NumericException {
+        Assert.assertEquals(0, GeoHashes.fromBitString("", 0));
+        Assert.assertEquals(0, GeoHashes.fromBitString("", 1));
+        Assert.assertEquals(1, GeoHashes.fromBitString(
+                "##000000000000000000000000000000000000000000000000000000000001", 2));
+        Assert.assertEquals(1, GeoHashes.fromBitString(
+                "##000000000000000000000000000000000000000000000000000000000001", 59));
+    }
+
+    @Test
+    public void testFromCoordinates() throws NumericException {
+        Assert.assertEquals(GeoHashes.fromCoordinatesDeg(lat, lon, 5), GeoHashes.fromBitString("11100", 0));
+        Assert.assertEquals(GeoHashes.fromCoordinatesDeg(lat, lon, 2 * 5), GeoHashes.fromBitString("1110011001", 0));
+        Assert.assertEquals(GeoHashes.fromCoordinatesDeg(lat, lon, 3 * 5), GeoHashes.fromBitString("111001100111100", 0));
+        Assert.assertEquals(GeoHashes.fromCoordinatesDeg(lat, lon, 4 * 5), GeoHashes.fromBitString("11100110011110000011", 0));
+        Assert.assertEquals(GeoHashes.fromCoordinatesDeg(lat, lon, 5 * 5), GeoHashes.fromBitString("1110011001111000001111000", 0));
+        Assert.assertEquals(GeoHashes.fromCoordinatesDeg(lat, lon, 6 * 5), GeoHashes.fromBitString("111001100111100000111100010001", 0));
+        Assert.assertEquals(GeoHashes.fromCoordinatesDeg(lat, lon, 7 * 5), GeoHashes.fromBitString("11100110011110000011110001000110001", 0));
+        Assert.assertEquals(GeoHashes.fromCoordinatesDeg(lat, lon, 8 * 5), GeoHashes.fromBitString("1110011001111000001111000100011000111111", 0));
+    }
+
+    @Test
+    public void testFromCoordinatesEdge() {
+        Assert.assertThrows(NumericException.class, () -> GeoHashes.fromCoordinatesDeg(-91, 0, 10));
+        Assert.assertThrows(NumericException.class, () -> GeoHashes.fromCoordinatesDeg(0, 190, 10));
+    }
+
+    @Test
+    public void testFromCoordinatesToFromStringMatch() throws NumericException {
+        final long gh = GeoHashes.fromCoordinatesDeg(lat, lon, 8 * 5);
+        StringSink sink = Misc.getThreadLocalBuilder();
+        GeoHashes.appendChars(gh, 8, sink);
+        final long gh1 = GeoHashes.fromString(sink, 0, 8);
+        Assert.assertEquals(gh, gh1);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testFromString() throws NumericException {
+        StringSink sink = Misc.getThreadLocalBuilder();
+        sink.put("@s");
+        GeoHashes.fromString(sink.toString(), 0, 2);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testFromStringBadChar() throws NumericException {
+        Assert.assertEquals(27760644473312309L, GeoHashes.fromString("'sp05@w92p1p'", 1, 12));
+    }
+
+    @Test
+    public void testFromStringExcessChars1() throws NumericException {
+        Assert.assertEquals(-8466588206747298559L, GeoHashes.fromString("'sp052w92p1p812'", 1, 14));
+    }
+
+    @Test
+    public void testFromStringIgnoreQuotes() throws NumericException {
+        Assert.assertEquals(27760644473312309L, GeoHashes.fromString("'sp052w92p1p'", 1, 12));
+    }
+
+    @Test
+    public void testFromStringIgnoreQuotesTruncateChars() throws NumericException {
+        Assert.assertEquals(807941, GeoHashes.fromString("'sp052w92p1p'", 1, 5));
+        StringSink sink = Misc.getThreadLocalBuilder();
+        GeoHashes.appendChars(807941, 4, sink);
+        Assert.assertEquals("sp05", sink.toString());
+    }
+
+    @Test
+    public void testFromStringJustOneChar() throws NumericException {
+        Assert.assertEquals(0, GeoHashes.fromString("ast", 1, 1));
+    }
+
+    @Test
+    public void testFromStringNl() throws NumericException {
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromStringNl("123", 0, 0));
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromStringNl("", 0, 0));
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromStringNl("", 0, 1));
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromStringNl("''", 1, 0));
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromStringNl("''", 1, 0));
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromStringNl(null, 0, 1));
+    }
+
+    @Test
+    public void testFromStringNlExcessChars() throws NumericException {
+        Assert.assertEquals(888340623145993896L, GeoHashes.fromStringNl("'sp052w92p1p812'", 1, 14));
+    }
+
+    @Test
+    public void testFromStringNlJustOneChar() throws NumericException {
+        Assert.assertEquals(24, GeoHashes.fromStringNl("ast", 1, 1));
+    }
+
+    @Test
+    public void testFromStringNlYieldsNullDueToZeroRequiredLen() throws NumericException {
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromStringNl("''", 1, 0));
+    }
+
+    @Test(expected = StringIndexOutOfBoundsException.class)
+    public void testFromStringNotEnoughChars() throws NumericException {
+        GeoHashes.fromString("123", 0, 4);
+    }
+
+    @Test
+    public void testFromStringOverMaxCharsLength() throws NumericException {
+        Assert.assertEquals(
+                GeoHashes.fromString("23456789bcde", 0, 12),
+                GeoHashes.fromStringNl("!23456789bcde!", 1, GeoHashes.MAX_STRING_LENGTH + 2)
+        );
+    }
+
+    @Test(expected = StringIndexOutOfBoundsException.class)
+    public void testFromStringShorterThanRequiredLength() throws NumericException {
+        GeoHashes.fromString("123", 1, 7);
+    }
+
+    @Test
+    public void testFromStringTruncatingNl1() throws NumericException {
+        for (int i = 5; i <= 60; i++) {
+            Assert.assertNotEquals(
+                    GeoHashes.fromStringTruncatingNl("123412341234", 0, 12, i - 1),
+                    GeoHashes.fromStringTruncatingNl("123412341234", 0, 12, i));
+        }
+    }
+
+    @Test(expected = NumericException.class)
+    public void testFromStringTruncatingNl2() throws NumericException {
+        GeoHashes.fromStringTruncatingNl("123", 0, 3, ColumnType.GEO_HASH_MAX_BITS_LENGTH + 1);
+    }
+
+    @Test
+    public void testFromStringTruncatingNlIgnoreQuotesTruncateBits1() throws NumericException {
+        Assert.assertEquals(807941, GeoHashes.fromStringTruncatingNl("'sp052w92p1p'", 1, 11, 20));
+        StringSink sink = Misc.getThreadLocalBuilder();
+        GeoHashes.appendChars(807941, 4, sink);
+        Assert.assertEquals("sp05", sink.toString());
+    }
+
+    @Test
+    public void testFromStringTruncatingNlIgnoreQuotesTruncateBits2() {
+        testUnsafeFromStringTruncatingNl("'sp052w92p1p'", (lo, hi) -> {
+            try {
+                Assert.assertEquals(807941, GeoHashes.fromStringTruncatingNl(lo + 1, lo + 5, 20));
+            } catch (NumericException e) {
+                Assert.fail();
+            }
+            return null;
+        });
+    }
+
+    @Test
+    public void testFromStringTruncatingNlIgnoreQuotesTruncateBits3() {
+        testUnsafeFromStringTruncatingNl("23456789bcde", (lo0, hi0) -> {
+            testUnsafeFromStringTruncatingNl("123456789bcdezz", (lo1, hi1) -> {
+                try {
+                    Assert.assertEquals(
+                            GeoHashes.fromStringTruncatingNl(lo0, lo0 + 12, 4),
+                            GeoHashes.fromStringTruncatingNl(lo1 + 1, lo1 + 13, 4));
+
+                    Assert.assertNotEquals(
+                            GeoHashes.fromStringTruncatingNl(lo0, lo0 + 12, 20),
+                            GeoHashes.fromStringTruncatingNl(lo1 + 1, lo1 + 13, 25));
+                } catch (NumericException e) {
+                    Assert.fail();
+                }
+                return null;
+            });
+            return null;
+        });
+    }
+
+    @Test
+    public void testFromStringTruncatingNlJustOneChar() throws NumericException {
+        Assert.assertEquals(24, GeoHashes.fromStringTruncatingNl("ast", 1, 2, 5));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testFromStringTruncatingNlNotEnoughBits() throws NumericException {
+        GeoHashes.fromStringTruncatingNl("123", 0, 3, 16);
+    }
+
+    @Test(expected = StringIndexOutOfBoundsException.class)
+    public void testFromStringTruncatingNlNotEnoughChars() throws NumericException {
+        GeoHashes.fromStringTruncatingNl("123", 0, 4, 15);
+    }
+
+    @Test
+    public void testFromStringTruncatingNlOverMaxCharsLength() throws NumericException {
+        Assert.assertEquals(
+                GeoHashes.fromStringTruncatingNl("23456789bcde", 0, 12, 0),
+                GeoHashes.fromStringTruncatingNl("123456789bcdezz", 1, GeoHashes.MAX_STRING_LENGTH + 2, 0)
+        );
+    }
+
+    @Test(expected = StringIndexOutOfBoundsException.class)
+    public void testFromStringTruncatingNlShorterThanRequiredLength1() throws NumericException {
+        GeoHashes.fromStringTruncatingNl("123", 1, 7, 0);
+    }
+
+    @Test
+    public void testFromStringTruncatingNlShorterThanRequiredLength2() {
+        testUnsafeFromStringTruncatingNl("123", (lo, hi) -> {
+            try {
+                Assert.assertEquals(0, GeoHashes.fromStringTruncatingNl(lo, hi + 7, 1));
+            } catch (NumericException expected) {
+                // beyond hi, we will find whatever, very unlikely that it parses as a geohash char
+            }
+            return null;
+        });
+    }
+
+    @Test
+    public void testFromStringTruncatingNlYieldsNullDueToZeroRequiredLen() throws NumericException {
+        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromStringTruncatingNl("''", 1, 1, 0));
     }
 
     @Test
@@ -191,25 +427,94 @@ public class GeoHashesTest {
     }
 
     @Test
-    public void testBitmask() {
-        for (int i = 0; i < 64; i++) {
-            final long bm = GeoHashes.bitmask(1, i);
-            Assert.assertEquals(1L << i, bm);
-        }
-        Assert.assertEquals(7L << 5, GeoHashes.bitmask(3, 5));
+    public void testGeoHashTypesValuesAreValid() {
+        Assert.assertEquals(ColumnType.GEOBYTE, ColumnType.tagOf(ColumnType.GEOBYTE));
+        Assert.assertEquals(0, ColumnType.getGeoHashBits(ColumnType.GEOBYTE));
+
+        Assert.assertEquals(ColumnType.GEOSHORT, ColumnType.tagOf(ColumnType.GEOSHORT));
+        Assert.assertEquals(0, ColumnType.getGeoHashBits(ColumnType.GEOSHORT));
+
+        Assert.assertEquals(ColumnType.GEOINT, ColumnType.tagOf(ColumnType.GEOINT));
+        Assert.assertEquals(0, ColumnType.getGeoHashBits(ColumnType.GEOINT));
+
+        Assert.assertEquals(ColumnType.GEOLONG, ColumnType.tagOf(ColumnType.GEOLONG));
+        Assert.assertEquals(0, ColumnType.getGeoHashBits(ColumnType.GEOLONG));
     }
 
+    @Test
+    public void testIsValidBits1() {
+        Rnd rnd = new Rnd();
+        StringSink sink = Misc.getThreadLocalBuilder();
+        for (int len = 1; len <= 60; len++) {
+            sink.clear();
+            sink.put("##");
+            rnd_geobits(rnd, sink, len);
+            Assert.assertTrue(GeoHashes.isValidBits(sink, 2));
+        }
+    }
 
     @Test
-    public void testFromCoordinates() throws NumericException {
-        Assert.assertEquals(GeoHashes.fromCoordinatesDeg(lat, lon, 5), GeoHashes.fromBitString("11100", 0));
-        Assert.assertEquals(GeoHashes.fromCoordinatesDeg(lat, lon, 2 * 5), GeoHashes.fromBitString("1110011001", 0));
-        Assert.assertEquals(GeoHashes.fromCoordinatesDeg(lat, lon, 3 * 5), GeoHashes.fromBitString("111001100111100", 0));
-        Assert.assertEquals(GeoHashes.fromCoordinatesDeg(lat, lon, 4 * 5), GeoHashes.fromBitString("11100110011110000011", 0));
-        Assert.assertEquals(GeoHashes.fromCoordinatesDeg(lat, lon, 5 * 5), GeoHashes.fromBitString("1110011001111000001111000", 0));
-        Assert.assertEquals(GeoHashes.fromCoordinatesDeg(lat, lon, 6 * 5), GeoHashes.fromBitString("111001100111100000111100010001", 0));
-        Assert.assertEquals(GeoHashes.fromCoordinatesDeg(lat, lon, 7 * 5), GeoHashes.fromBitString("11100110011110000011110001000110001", 0));
-        Assert.assertEquals(GeoHashes.fromCoordinatesDeg(lat, lon, 8 * 5), GeoHashes.fromBitString("1110011001111000001111000100011000111111", 0));
+    public void testIsValidBitsOutOfBounds() {
+        Assert.assertFalse(GeoHashes.isValidBits("", 0));
+        Assert.assertFalse(GeoHashes.isValidBits("", 1));
+        Assert.assertFalse(GeoHashes.isValidBits("1", 1));
+    }
+
+    @Test
+    public void testIsValidBitsWhenIsNot() {
+        Rnd rnd = new Rnd();
+        StringSink sink = Misc.getThreadLocalBuilder();
+        for (int len = 1; len <= 60; len++) {
+            sink.clear();
+            rnd_geobits(rnd, sink, len);
+            sink.put('@');
+            Assert.assertFalse(GeoHashes.isValidBits(sink, 0));
+        }
+    }
+
+    @Test
+    public void testIsValidChars1() {
+        Rnd rnd = new Rnd();
+        IntHashSet base32Chars = new IntHashSet(base32.length); // upper and lower case
+        for (char ch : base32) {
+            base32Chars.add(ch);
+            Assert.assertTrue(GeoHashes.isValidChars("" + ch, 0));
+        }
+        for (int i = 0; i < 15000; i++) {
+            char ch = (char) rnd.nextPositiveInt();
+            Assert.assertEquals("dis one: " + ch, base32Chars.contains(ch), GeoHashes.isValidChars("" + ch, 0));
+        }
+    }
+
+    @Test
+    public void testIsValidChars2() {
+        Rnd rnd = new Rnd();
+        StringSink sink = Misc.getThreadLocalBuilder();
+        for (int len = 1; len <= 12; len++) {
+            sink.clear();
+            sink.put('@');
+            rnd_geochars(rnd, sink, len);
+            Assert.assertTrue(GeoHashes.isValidChars(sink, 1));
+        }
+    }
+
+    @Test
+    public void testIsValidCharsOutOfBounds() {
+        Assert.assertFalse(GeoHashes.isValidChars("", 0));
+        Assert.assertFalse(GeoHashes.isValidChars("", 1));
+        Assert.assertFalse(GeoHashes.isValidChars("s", 1));
+    }
+
+    @Test
+    public void testIsValidCharsWhenIsNot() {
+        Rnd rnd = new Rnd();
+        StringSink sink = Misc.getThreadLocalBuilder();
+        for (int len = 1; len <= 12; len++) {
+            sink.clear();
+            rnd_geochars(rnd, sink, len);
+            sink.put('@');
+            Assert.assertFalse(GeoHashes.isValidChars(sink, 0));
+        }
     }
 
     @Test
@@ -253,257 +558,10 @@ public class GeoHashesTest {
     }
 
     @Test
-    public void testFromCoordinatesEdge() {
-        Assert.assertThrows(NumericException.class, () -> GeoHashes.fromCoordinatesDeg(-91, 0, 10));
-        Assert.assertThrows(NumericException.class, () -> GeoHashes.fromCoordinatesDeg(0, 190, 10));
-    }
-
-    @Test
-    public void testFromCoordinatesToFromStringMatch() throws NumericException {
-        final long gh = GeoHashes.fromCoordinatesDeg(lat, lon, 8 * 5);
-        StringSink sink = Misc.getThreadLocalBuilder();
-        GeoHashes.appendChars(gh, 8, sink);
-        final long gh1 = GeoHashes.fromString(sink, 0, 8);
-        Assert.assertEquals(gh, gh1);
-    }
-
-    @Test
-    public void testFromStringNl() throws NumericException {
-        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromStringNl("123", 0, 0));
-        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromStringNl("", 0, 0));
-        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromStringNl("", 0, 1));
-        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromStringNl("''", 1, 0));
-        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromStringNl("''", 1, 0));
-        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromStringNl(null, 0, 1));
-    }
-
-    @Test
-    public void testFromStringTruncatingNl1() throws NumericException {
-        for (int i = 5; i <= 60; i++) {
-            Assert.assertNotEquals(
-                    GeoHashes.fromStringTruncatingNl("123412341234", 0, 12, i - 1),
-                    GeoHashes.fromStringTruncatingNl("123412341234", 0, 12, i));
-        }
-    }
-
-    @Test(expected = NumericException.class)
-    public void testFromStringTruncatingNl2() throws NumericException {
-        GeoHashes.fromStringTruncatingNl("123", 0, 3, ColumnType.GEO_HASH_MAX_BITS_LENGTH + 1);
-    }
-
-    @Test(expected = StringIndexOutOfBoundsException.class)
-    public void testFromStringNotEnoughChars() throws NumericException {
-        GeoHashes.fromString("123", 0, 4);
-    }
-
-    @Test(expected = StringIndexOutOfBoundsException.class)
-    public void testFromStringTruncatingNlNotEnoughChars() throws NumericException {
-        GeoHashes.fromStringTruncatingNl("123", 0, 4, 15);
-    }
-
-    @Test(expected = NumericException.class)
-    public void testFromStringTruncatingNlNotEnoughBits() throws NumericException {
-        GeoHashes.fromStringTruncatingNl("123", 0, 3, 16);
-    }
-
-    @Test
-    public void testFromStringOverMaxCharsLength() throws NumericException {
-        Assert.assertEquals(
-                GeoHashes.fromString("23456789bcde", 0, 12),
-                GeoHashes.fromStringNl("!23456789bcde!", 1, GeoHashes.MAX_STRING_LENGTH + 2)
-        );
-    }
-
-    @Test
-    public void testFromStringTruncatingNlOverMaxCharsLength() throws NumericException {
-        Assert.assertEquals(
-                GeoHashes.fromStringTruncatingNl("23456789bcde", 0, 12, 0),
-                GeoHashes.fromStringTruncatingNl("123456789bcdezz", 1, GeoHashes.MAX_STRING_LENGTH + 2, 0)
-        );
-    }
-
-    @Test(expected = StringIndexOutOfBoundsException.class)
-    public void testFromStringShorterThanRequiredLength() throws NumericException {
-        GeoHashes.fromString("123", 1, 7);
-    }
-
-    @Test(expected = StringIndexOutOfBoundsException.class)
-    public void testFromStringTruncatingNlShorterThanRequiredLength1() throws NumericException {
-        GeoHashes.fromStringTruncatingNl("123", 1, 7, 0);
-    }
-
-    @Test
-    public void testFromStringTruncatingNlShorterThanRequiredLength2() {
-        testUnsafeFromStringTruncatingNl("123", (lo, hi) -> {
-            try {
-                Assert.assertEquals(0, GeoHashes.fromStringTruncatingNl(lo, hi + 7, 1));
-            } catch (NumericException expected) {
-                // beyond hi we will find whatever, very unlikely that it parses as a geohash char
-            }
-            return null;
-        });
-    }
-
-    @Test
-    public void testFromStringNlYieldsNullDueToZeroRequiredLen() throws NumericException {
-        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromStringNl("''", 1, 0));
-    }
-
-    @Test
-    public void testFromStringTruncatingNlYieldsNullDueToZeroRequiredLen() throws NumericException {
-        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromStringTruncatingNl("''", 1, 1, 0));
-    }
-
-    @Test
-    public void testFromStringJustOneChar() throws NumericException {
-        Assert.assertEquals(0, GeoHashes.fromString("ast", 1, 1));
-    }
-
-    @Test
-    public void testFromStringNlJustOneChar() throws NumericException {
-        Assert.assertEquals(24, GeoHashes.fromStringNl("ast", 1, 1));
-    }
-
-    @Test
-    public void testFromStringTruncatingNlJustOneChar() throws NumericException {
-        Assert.assertEquals(24, GeoHashes.fromStringTruncatingNl("ast", 1, 2, 5));
-    }
-
-    @Test
-    public void testFromStringIgnoreQuotes() throws NumericException {
-        Assert.assertEquals(27760644473312309L, GeoHashes.fromString("'sp052w92p1p'", 1, 12));
-    }
-
-    @Test(expected = NumericException.class)
-    public void testFromStringBadChar() throws NumericException {
-        Assert.assertEquals(27760644473312309L, GeoHashes.fromString("'sp05@w92p1p'", 1, 12));
-    }
-
-    @Test
-    public void testFromStringExcessChars1() throws NumericException {
-        Assert.assertEquals(-8466588206747298559L, GeoHashes.fromString("'sp052w92p1p812'", 1, 14));
-    }
-
-    @Test
-    public void testFromStringNlExcessChars() throws NumericException {
-        Assert.assertEquals(888340623145993896L, GeoHashes.fromStringNl("'sp052w92p1p812'", 1, 14));
-    }
-
-    @Test
-    public void testFromStringIgnoreQuotesTruncateChars() throws NumericException {
-        Assert.assertEquals(807941, GeoHashes.fromString("'sp052w92p1p'", 1, 5));
-        StringSink sink = Misc.getThreadLocalBuilder();
-        GeoHashes.appendChars(807941, 4, sink);
-        Assert.assertEquals("sp05", sink.toString());
-    }
-
-    @Test
-    public void testFromStringTruncatingNlIgnoreQuotesTruncateBits1() throws NumericException {
-        Assert.assertEquals(807941, GeoHashes.fromStringTruncatingNl("'sp052w92p1p'", 1, 11, 20));
-        StringSink sink = Misc.getThreadLocalBuilder();
-        GeoHashes.appendChars(807941, 4, sink);
-        Assert.assertEquals("sp05", sink.toString());
-    }
-
-    @Test
-    public void testFromStringTruncatingNlIgnoreQuotesTruncateBits2() {
-        testUnsafeFromStringTruncatingNl("'sp052w92p1p'", (lo, hi) -> {
-            try {
-                Assert.assertEquals(807941, GeoHashes.fromStringTruncatingNl(lo + 1, lo + 5, 20));
-            } catch (NumericException e) {
-                Assert.fail();
-            }
-            return null;
-        });
-    }
-
-    @Test
-    public void testFromStringTruncatingNlIgnoreQuotesTruncateBits3() {
-        testUnsafeFromStringTruncatingNl("23456789bcde", (lo0, hi0) -> {
-            testUnsafeFromStringTruncatingNl("123456789bcdezz", (lo1, hi1) -> {
-                try {
-                    Assert.assertEquals(
-                            GeoHashes.fromStringTruncatingNl(lo0, lo0 + 12, 4),
-                            GeoHashes.fromStringTruncatingNl(lo1 + 1, lo1 + 13, 4));
-
-                    Assert.assertNotEquals(
-                            GeoHashes.fromStringTruncatingNl(lo0, lo0 + 12, 20),
-                            GeoHashes.fromStringTruncatingNl(lo1 + 1, lo1 + 13, 25));
-                } catch (NumericException e) {
-                    Assert.fail();
-                }
-                return null;
-            });
-            return null;
-        });
-    }
-
-    @Test
-    public void testFromBitStringValid() throws NumericException {
-        Assert.assertEquals(0, GeoHashes.fromBitString("", 0));
-        Assert.assertEquals(0, GeoHashes.fromBitString("", 1));
-        Assert.assertEquals(1, GeoHashes.fromBitString(
-                "##000000000000000000000000000000000000000000000000000000000001", 2));
-        Assert.assertEquals(1, GeoHashes.fromBitString(
-                "##000000000000000000000000000000000000000000000000000000000001", 59));
-    }
-
-    @Test
-    public void testFromBitStringNl() throws NumericException {
-        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromBitStringNl("", 0));
-        Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromBitStringNl("0011", 4));
-        Assert.assertNotEquals(GeoHashes.NULL, GeoHashes.fromBitStringNl("0", 0));
-        Assert.assertEquals(1, GeoHashes.fromBitStringNl( // same as empty string
-                "##000000000000000000000000000000000000000000000000000000000000" + "1", 60));
-        Assert.assertEquals(1, GeoHashes.fromBitStringNl(
-                "##000000000000000000000000000000000000000000000000000000000000" + "1", 59));
-        Assert.assertEquals(0, GeoHashes.fromBitStringNl( // truncates
-                "##000000000000000000000000000000000000000000000000000000000000" + "1", 2));
-    }
-
-    @Test(expected = NumericException.class)
-    public void testFromBitStringNotValid1() throws NumericException {
-        GeoHashes.fromBitStringNl(" ", 0);
-    }
-
-    @Test(expected = NumericException.class)
-    public void testFromBitStringNotValid2() throws NumericException {
-        GeoHashes.fromBitStringNl("012", 0);
-    }
-
-    @Test(expected = NumericException.class)
-    public void testFromString() throws NumericException {
-        StringSink sink = Misc.getThreadLocalBuilder();
-        sink.put("@s");
-        GeoHashes.fromString(sink.toString(), 0, 2);
-    }
-
-    @Test
-    public void testBuildNormalizedPrefixesAndMasks() throws NumericException {
-        final int cap = 12;
-        LongList bits = new LongList(cap * 2); // hash and mask
-        int columnType = ColumnType.getGeoHashTypeWithBits(5 * cap);
-        for (int i = 0; i < cap; i++) {
-            final int prec = (i % 3) + 3;
-            final long h = rnd_geohash(prec);
-            int type = ColumnType.getGeoHashTypeWithBits(5 * prec);
-            GeoHashes.addNormalizedGeoPrefix(h, type, columnType, bits);
-        }
-
-        for (int i = 0; i < bits.size() / 2; i += 2) {
-            final long b = bits.get(i);
-            final long m = bits.get(i + 1);
-            Assert.assertEquals(b, b & m);
-        }
-    }
-
-    @Test
     public void testPrefixPrecisionMismatch() throws NumericException {
         final int cap = 1;
         LongList bits = new LongList(cap * 2); // hash and mask
         final long h = rnd_geohash(5);
-        final long p = rnd_geohash(7);
-
         int pType = ColumnType.getGeoHashTypeWithBits(5 * 7);
         int hType = ColumnType.getGeoHashTypeWithBits(5 * 5);
         try {
@@ -514,31 +572,43 @@ public class GeoHashesTest {
     }
 
     @Test
-    public void testFromBitStringTruncating() throws NumericException {
-        CharSequence tooLongBitString = Chars.repeat("1", 61); // truncates
-        long maxGeoHash = GeoHashes.fromString("zzzzzzzzzzzz", 0, 12);
-        Assert.assertEquals(maxGeoHash, GeoHashes.fromBitString(tooLongBitString, 0));
+    public void testStorageSize() {
+        int geoHashType = ColumnType.getGeoHashTypeWithBits(42);
+        Assert.assertEquals(ColumnType.GEOLONG, ColumnType.tagOf(geoHashType));
+        Assert.assertEquals(42, ColumnType.getGeoHashBits(geoHashType));
+
+        geoHashType = ColumnType.getGeoHashTypeWithBits(16);
+        Assert.assertEquals(ColumnType.GEOINT, ColumnType.tagOf(geoHashType));
+        Assert.assertEquals(16, ColumnType.getGeoHashBits(geoHashType));
+
+        geoHashType = ColumnType.getGeoHashTypeWithBits(8);
+        Assert.assertEquals(ColumnType.GEOSHORT, ColumnType.tagOf(geoHashType));
+        Assert.assertEquals(8, ColumnType.getGeoHashBits(geoHashType));
+
+        geoHashType = ColumnType.getGeoHashTypeWithBits(7);
+        Assert.assertEquals(ColumnType.GEOBYTE, ColumnType.tagOf(geoHashType));
+        Assert.assertEquals(7, ColumnType.getGeoHashBits(geoHashType));
     }
 
     @Test
-    public void testFromBitStringInvalid() {
-        Assert.assertThrows(NumericException.class, () -> GeoHashes.fromBitString("a", 0));
-    }
-
-    @Test
-    public void testToFromBitString() throws NumericException {
-        long hash = 27760644473312309L;
-        String expected = "1100010101000000010100010111000100100010101010000110101";
-        Assert.assertEquals(expected, Long.toBinaryString(hash));
-        assertSuccess(hash, expected.length(), expected, toBitString);
-        Assert.assertEquals(hash, GeoHashes.fromBitString(expected, 0));
+    public void testStorageSizeWithNull() {
+        for (int i = 1; i < 61; i++) {
+            final int type = ColumnType.getGeoHashTypeWithBits(i);
+            if (i < 8) {
+                Assert.assertEquals(ColumnType.GEOBYTE, ColumnType.tagOf(type));
+            } else if (i < 16) {
+                Assert.assertEquals(ColumnType.GEOSHORT, ColumnType.tagOf(type));
+            } else if (i < 32) {
+                Assert.assertEquals(ColumnType.GEOINT, ColumnType.tagOf(type));
+            } else {
+                Assert.assertEquals(ColumnType.GEOLONG, ColumnType.tagOf(type));
+            }
+        }
     }
 
     @Test
     public void testToBitStringInvalidSizeInBits() {
-        boolean assertsEnable = false;
-        assert assertsEnable = true; // Test only when assertions enabled
-        if (assertsEnable) {
+        if (Misc.isAssertionsEnabled()) {
             StringSink sink = Misc.getThreadLocalBuilder();
             Assert.assertThrows(AssertionError.class, () -> GeoHashes.appendBinary(-0, 0, sink));
             Assert.assertThrows(AssertionError.class, () -> GeoHashes.appendBinary(-31, 0, sink));
@@ -552,6 +622,15 @@ public class GeoHashesTest {
     }
 
     @Test
+    public void testToFromBitString() throws NumericException {
+        long hash = 27760644473312309L;
+        String expected = "1100010101000000010100010111000100100010101010000110101";
+        Assert.assertEquals(expected, Long.toBinaryString(hash));
+        assertSuccess(hash, expected.length(), expected, toBitString);
+        Assert.assertEquals(hash, GeoHashes.fromBitString(expected, 0));
+    }
+
+    @Test
     public void testToString() {
         assertSuccess(-1, Integer.MIN_VALUE, "", toString);
         assertSuccess(-1L, Integer.MAX_VALUE, "", toString);
@@ -560,89 +639,11 @@ public class GeoHashesTest {
 
     @Test
     public void testToStringInvalidSizeInChars() {
-        boolean assertsEnabled = false;
-        assert assertsEnabled = true; // Test only when assertions enabled
-        if (assertsEnabled) {
+        if (Misc.isAssertionsEnabled()) {
             StringSink sink = Misc.getThreadLocalBuilder();
             Assert.assertThrows(AssertionError.class, () -> GeoHashes.appendChars(-0, 0, sink));
             Assert.assertThrows(AssertionError.class, () -> GeoHashes.appendChars(-0, 31, sink));
         }
-    }
-
-    @Test
-    public void testIsValidChars1() {
-        Rnd rnd = new Rnd();
-        IntHashSet base32Chars = new IntHashSet(base32.length); // upper and lower case
-        for (char ch : base32) {
-            base32Chars.add(ch);
-            Assert.assertTrue(GeoHashes.isValidChars("" + ch, 0));
-        }
-        for (int i = 0; i < 15000; i++) {
-            char ch = (char) rnd.nextPositiveInt();
-            Assert.assertEquals("dis one: " + ch, base32Chars.contains(ch), GeoHashes.isValidChars("" + ch, 0));
-        }
-    }
-
-    @Test
-    public void testIsValidChars2() {
-        Rnd rnd = new Rnd();
-        StringSink sink = Misc.getThreadLocalBuilder();
-        for (int len = 1; len <= 12; len++) {
-            sink.clear();
-            sink.put('@');
-            rnd_geochars(rnd, sink, len);
-            Assert.assertTrue(GeoHashes.isValidChars(sink, 1));
-        }
-    }
-
-    @Test
-    public void testIsValidCharsWhenIsNot() {
-        Rnd rnd = new Rnd();
-        StringSink sink = Misc.getThreadLocalBuilder();
-        for (int len = 1; len <= 12; len++) {
-            sink.clear();
-            rnd_geochars(rnd, sink, len);
-            sink.put('@');
-            Assert.assertFalse(GeoHashes.isValidChars(sink, 0));
-        }
-    }
-
-    @Test
-    public void testIsValidCharsOutOfBounds() {
-        Assert.assertFalse(GeoHashes.isValidChars("", 0));
-        Assert.assertFalse(GeoHashes.isValidChars("", 1));
-        Assert.assertFalse(GeoHashes.isValidChars("s", 1));
-    }
-
-    @Test
-    public void testIsValidBits1() {
-        Rnd rnd = new Rnd();
-        StringSink sink = Misc.getThreadLocalBuilder();
-        for (int len = 1; len <= 60; len++) {
-            sink.clear();
-            sink.put("##");
-            rnd_geobits(rnd, sink, len);
-            Assert.assertTrue(GeoHashes.isValidBits(sink, 2));
-        }
-    }
-
-    @Test
-    public void testIsValidBitsWhenIsNot() {
-        Rnd rnd = new Rnd();
-        StringSink sink = Misc.getThreadLocalBuilder();
-        for (int len = 1; len <= 60; len++) {
-            sink.clear();
-            rnd_geobits(rnd, sink, len);
-            sink.put('@');
-            Assert.assertFalse(GeoHashes.isValidBits(sink, 0));
-        }
-    }
-
-    @Test
-    public void testIsValidBitsOutOfBounds() {
-        Assert.assertFalse(GeoHashes.isValidBits("", 0));
-        Assert.assertFalse(GeoHashes.isValidBits("", 1));
-        Assert.assertFalse(GeoHashes.isValidBits("1", 1));
     }
 
     private static void assertSuccess(long hash, int size, String message, StringConverter converter) {
@@ -650,25 +651,10 @@ public class GeoHashesTest {
             StringSink sink = Misc.getThreadLocalBuilder();
             converter.convert(hash, size, sink);
             Assert.assertEquals(message, sink.toString());
-        } catch (IllegalArgumentException | NumericException err) {
+        } catch (IllegalArgumentException err) {
             Assert.fail();
         }
     }
-
-    @FunctionalInterface
-    private interface StringConverter {
-        void convert(long hash, int size, CharSink sink) throws NumericException;
-    }
-
-    private static final char[] base32 = {
-            '0', '1', '2', '3', '4', '5', '6', '7',
-            '8', '9', 'b', 'c', 'd', 'e', 'f', 'g',
-            'h', 'j', 'k', 'm', 'n', 'p', 'q', 'r',
-            's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
-            'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J',
-            'K', 'M', 'N', 'P', 'Q', 'R', 'S', 'T',
-            'U', 'V', 'W', 'X', 'Y', 'Z'
-    };
 
     private static long rnd_geohash(int size) throws NumericException {
         double x = rnd_double(-90, 90);
@@ -705,5 +691,10 @@ public class GeoHashesTest {
         } finally {
             Unsafe.free(lo, len, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    @FunctionalInterface
+    private interface StringConverter {
+        void convert(long hash, int size, CharSink sink);
     }
 }

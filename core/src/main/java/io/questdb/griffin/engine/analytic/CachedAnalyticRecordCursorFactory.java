@@ -45,7 +45,8 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
     private final ObjList<LongTreeChain> orderedSources;
     private final int orderedGroupCount;
     private final ObjList<ObjList<AnalyticFunction>> orderedFunctions;
-    @Nullable private final ObjList<AnalyticFunction> unorderedFunctions;
+    @Nullable
+    private final ObjList<AnalyticFunction> unorderedFunctions;
     private final ObjList<AnalyticFunction> allFunctions;
     private final ObjList<RecordComparator> comparators;
     private final GenericRecordMetadata metadata;
@@ -174,18 +175,6 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
         return recordChain;
     }
 
-    private void resetFunctions() {
-        for (int i = 0, n = allFunctions.size(); i < n; i++) {
-            allFunctions.getQuick(i).reset();
-        }
-    }
-
-    private void clearTrees() {
-        for (int i = 0; i < orderedGroupCount; i++) {
-            orderedSources.getQuick(i).clear();
-        }
-    }
-
     @Override
     public RecordMetadata getMetadata() {
         return metadata;
@@ -199,5 +188,17 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
     @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
+    }
+
+    private void clearTrees() {
+        for (int i = 0; i < orderedGroupCount; i++) {
+            orderedSources.getQuick(i).clear();
+        }
+    }
+
+    private void resetFunctions() {
+        for (int i = 0, n = allFunctions.size(); i < n; i++) {
+            allFunctions.getQuick(i).reset();
+        }
     }
 }

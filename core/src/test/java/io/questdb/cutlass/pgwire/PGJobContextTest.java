@@ -347,7 +347,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 } catch (Exception e) {
                     LOG.error().$(e).$();
                 }
-                //now transaction fail, we should rollback transaction
+                //now transaction fail, we should roll back transaction
                 connection.rollback();
                 connection.setAutoCommit(true);
                 sink.clear();
@@ -1054,14 +1054,14 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 for (int i = 0; i < 10_000; i++) {
                     insert.setInt(1, i);
                     // DATE as jdbc's DATE
-                    // jdbc's DATE takes millis from epoch and i think it removes time element from it, leaving
+                    // jdbc's DATE takes millis from epoch and I think it removes time element from it, leaving
                     // just date
                     insert.setDate(2, new Date(micros / 1000));
 
                     // TIMESTAMP as jdbc's TIMESTAMP, this should keep the micros
                     insert.setTimestamp(3, new Timestamp(micros));
 
-                    // DATE as jdbc's TIMESTAMP, this should keep millis and we need to supply millis
+                    // DATE as jdbc's TIMESTAMP, this should keep millis, and we need to supply millis
                     insert.setTimestamp(4, new Timestamp(micros / 1000L));
 
                     // TIMESTAMP as jdbc's DATE, DATE takes millis and throws them away
@@ -4064,7 +4064,7 @@ create table tab as (
                     final PGWireServer ignored = createPGServer(4);
                     final Connection connection = getConnection(false, true)
             ) {
-                // column does not exits
+                // column does not exit
                 connection.prepareStatement("select x2 from long_sequence(5)").execute();
                 Assert.fail();
             } catch (SQLException e) {
@@ -4101,7 +4101,7 @@ create table tab as (
             ) {
                 // TIME is passed over protocol as UNSPECIFIED type
                 // it will rely on date parser to work out what it is
-                // for now date parser does not parse just time, it could i guess if required.
+                // for now date parser does not parse just time, it could I guess if required.
                 statement.setTime(1, new Time(100L));
 
                 try (ResultSet rs = statement.executeQuery()) {
@@ -5035,14 +5035,14 @@ create table tab as (
                     for (int i = 0; i < 90; i++) {
                         insert.setInt(1, i);
                         // DATE as jdbc's DATE
-                        // jdbc's DATE takes millis from epoch and i think it removes time element from it, leaving
+                        // jdbc's DATE takes millis from epoch and I think it removes time element from it, leaving
                         // just date
                         insert.setDate(2, new Date(micros / 1000));
 
                         // TIMESTAMP as jdbc's TIMESTAMP, this should keep the micros
                         insert.setTimestamp(3, new Timestamp(micros));
 
-                        // DATE as jdbc's TIMESTAMP, this should keep millis and we need to supply millis
+                        // DATE as jdbc's TIMESTAMP, this should keep millis, and we need to supply millis
                         insert.setTimestamp(4, new Timestamp(micros / 1000L));
 
                         // TIMESTAMP as jdbc's DATE, DATE takes millis and throws them away

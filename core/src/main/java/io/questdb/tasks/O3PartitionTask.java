@@ -54,12 +54,20 @@ public class O3PartitionTask {
     private AtomicInteger columnCounter;
     private O3Basket o3Basket;
 
+    public AtomicInteger getColumnCounter() {
+        return columnCounter;
+    }
+
     public ObjList<MemoryMAR> getColumns() {
         return columns;
     }
 
     public long getMaxTimestamp() {
         return maxTimestamp;
+    }
+
+    public O3Basket getO3Basket() {
+        return o3Basket;
     }
 
     public ObjList<MemoryCARW> getO3Columns() {
@@ -114,20 +122,12 @@ public class O3PartitionTask {
         return tableWriter;
     }
 
-    public AtomicInteger getColumnCounter() {
-        return columnCounter;
-    }
-
     public long getTxn() {
         return txn;
     }
 
     public boolean isLast() {
         return last;
-    }
-
-    public O3Basket getO3Basket() {
-        return o3Basket;
     }
 
     public void of(

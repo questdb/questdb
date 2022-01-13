@@ -59,6 +59,13 @@ public class UnionRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
+    public void close() {
+        Misc.free(masterFactory);
+        Misc.free(slaveFactory);
+        Misc.free(map);
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor masterCursor = null;
         RecordCursor slaveCursor = null;
@@ -82,12 +89,5 @@ public class UnionRecordCursorFactory implements RecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
-    }
-
-    @Override
-    public void close() {
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(map);
     }
 }

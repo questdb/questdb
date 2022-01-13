@@ -24,11 +24,11 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -104,24 +104,29 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
+        public Record getRecord() {
+            return virtualRecordA;
+        }
+
+        @Override
         public SymbolTable getSymbolTable(int columnIndex) {
             return (SymbolTable) groupByFunctions.getQuick(columnIndex);
+        }
+
+        @Override
+        public boolean hasNext() {
+            return recordsRemaining-- > 0;
+        }
+
+        @Override
+        public long size() {
+            return 1;
         }
 
         @Override
         public void toTop() {
             recordsRemaining = 1;
             GroupByUtils.toTop(groupByFunctions);
-        }
-
-        @Override
-        public Record getRecord() {
-            return virtualRecordA;
-        }
-
-        @Override
-        public boolean hasNext() {
-            return recordsRemaining-- > 0;
         }
 
         RecordCursor of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
@@ -145,11 +150,6 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
 
             toTop();
             return this;
-        }
-
-        @Override
-        public long size() {
-            return 1;
         }
     }
 }

@@ -42,6 +42,7 @@ import java.util.ServiceLoader;
 
 public class WhereClauseParserTest extends AbstractCairoTest {
 
+    protected static BindVariableService bindVariableService;
     private static TableReader reader;
     private static TableReader noTimestampReader;
     private static TableReader unindexedReader;
@@ -50,6 +51,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private static RecordMetadata noTimestampMetadata;
     private static RecordMetadata unindexedMetadata;
     private static RecordMetadata noDesignatedTimestampNorIdxMetadata;
+    private static SqlCompiler compiler;
+    private static SqlExecutionContext sqlExecutionContext;
     private final RpnBuilder rpn = new RpnBuilder();
     private final WhereClauseParser e = new WhereClauseParser();
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
@@ -59,9 +62,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             configuration,
             new FunctionFactoryCache(configuration, ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader()))
     );
-    protected static BindVariableService bindVariableService;
-    private static SqlCompiler compiler;
-    private static SqlExecutionContext sqlExecutionContext;
 
     @BeforeClass
     public static void setUpStatic() {
@@ -247,45 +247,12 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testBadOperators() {
-        testBadOperator(">","too few arguments for '>' [found=1,expected=2]");
-        testBadOperator(">=","too few arguments for '>=' [found=1,expected=2]");
-        testBadOperator("<","too few arguments for '<' [found=1,expected=2]");
-        testBadOperator("<=","too few arguments for '<=' [found=1,expected=2]");
-        testBadOperator("=","too few arguments for '=' [found=1,expected=2]");
-        testBadOperator("!=","too few arguments for '!=' [found=1,expected=2]");
-    }
-
-    @Test
-    public void testTimestampFollowedByIntrinsicOperatorWithNull0() throws SqlException {
-        assertFilter(modelOf("timestamp = null"), "nulltimestamp=");
-        assertFilter(modelOf("timestamp != null"), "nulltimestamp!=");
-        assertInterval(modelOf("timestamp in (null)"), "[{lo=, hi=}]");
-        assertInterval(modelOf("timestamp in (null, null)"), "[{lo=, hi=}]");
-        assertInterval(modelOf("timestamp not in (null)"), "[{lo=-290308-01-01T19:59:05.224193Z, hi=294247-01-10T04:00:54.775807Z}]");
-        assertInterval(modelOf("timestamp not in (null, null)"), "[{lo=-290308-01-01T19:59:05.224193Z, hi=294247-01-10T04:00:54.775807Z}]");
-        assertFilter(modelOf("timestamp >= null"), "nulltimestamp>=");
-        assertFilter(modelOf("timestamp > null"), "nulltimestamp>");
-        assertFilter(modelOf("timestamp <= null"), "nulltimestamp<=");
-        assertFilter(modelOf("timestamp < null"), "nulltimestamp<");
-        assertInterval(modelOf("timestamp between null and null"), "[]");
-        assertInterval(modelOf("timestamp not between null and null"), "");
-    }
-
-    @Test
-    public void testTimestampFollowedByIntrinsicOperatorWithNull1() throws SqlException {
-        // in this case no designated timestamp column
-        assertFilter(noDesignatedTimestampNotIdxModelOf("timestamp = null"), "nulltimestamp=");
-        assertFilter(noDesignatedTimestampNotIdxModelOf("timestamp != null"), "nulltimestamp!=");
-        assertInterval(noDesignatedTimestampNotIdxModelOf("timestamp in (null)"), "");
-        assertInterval(noDesignatedTimestampNotIdxModelOf("timestamp in (null, null)"), "");
-        assertInterval(noDesignatedTimestampNotIdxModelOf("timestamp not in (null)"), "");
-        assertInterval(noDesignatedTimestampNotIdxModelOf("timestamp not in (null, null)"), "");
-        assertFilter(noDesignatedTimestampNotIdxModelOf("timestamp >= null"), "nulltimestamp>=");
-        assertFilter(noDesignatedTimestampNotIdxModelOf("timestamp > null"), "nulltimestamp>");
-        assertFilter(noDesignatedTimestampNotIdxModelOf("timestamp <= null"), "nulltimestamp<=");
-        assertFilter(noDesignatedTimestampNotIdxModelOf("timestamp < null"), "nulltimestamp<");
-        assertInterval(noDesignatedTimestampNotIdxModelOf("timestamp between null and null"), "");
-        assertInterval(noDesignatedTimestampNotIdxModelOf("timestamp not between null and null"), "");
+        testBadOperator(">", "too few arguments for '>' [found=1,expected=2]");
+        testBadOperator(">=", "too few arguments for '>=' [found=1,expected=2]");
+        testBadOperator("<", "too few arguments for '<' [found=1,expected=2]");
+        testBadOperator("<=", "too few arguments for '<=' [found=1,expected=2]");
+        testBadOperator("=", "too few arguments for '=' [found=1,expected=2]");
+        testBadOperator("!=", "too few arguments for '!=' [found=1,expected=2]");
     }
 
     @Test
@@ -337,13 +304,10 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBetweenInvalidColumn() {
-        try {
-            modelOf("invalidTimestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z");
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "unclosed quoted string?");
-        }
+    public void testBetweenINowAndOneDayBefore() throws SqlException, NumericException {
+        currentMicros = IntervalUtils.parseFloorPartialDate("2014-01-03T12:30:00.000000Z");
+        runWhereTest("timestamp between now() and dateadd('d', -1, now())",
+                "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-03T12:30:00.000000Z}]");
     }
 
     @Test
@@ -351,13 +315,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("func(2, timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z', 'abc')");
         Assert.assertFalse(m.hasIntervalFilters());
         assertFilter(m, "'abc''2014-01-02T12:30:00.000Z''2014-01-01T12:30:00.000Z'timestampbetween2func");
-    }
-
-    @Test
-    public void testTimestampFunctionOfThreeArgs() throws Exception {
-        IntrinsicModel m = modelOf("func(2, timestamp, 'abc')");
-        Assert.assertFalse(m.hasIntervalFilters());
-        assertFilter(m, "'abc'timestamp2func");
     }
 
     @Test
@@ -378,25 +335,28 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBetweenIntervalWithCaseStatementAsParamWIthAndInCase() throws SqlException {
-        runWhereTest("timestamp between case when true and true then '2014-01-04T12:30:00.000Z' else '2014-01-02T12:30:00.000Z' end and '2014-01-02T12:30:00.000Z'",
-                "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-04T12:30:00.000000Z}]");
-    }
-
-    @Test
-    public void testBetweenINowAndOneDayBefore() throws SqlException, NumericException {
-        currentMicros = IntervalUtils.parseFloorPartialDate("2014-01-03T12:30:00.000000Z");
-        runWhereTest("timestamp between now() and dateadd('d', -1, now())",
-                "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-03T12:30:00.000000Z}]");
-    }
-
-    @Test
     public void testBetweenIntervalWithCaseStatementAsParam2() throws SqlException {
         runWhereTest("timestamp between " +
                         "'2014-01-02T12:30:00.000Z' " +
                         "and " +
                         "case when true then '2014-01-02T12:30:00.000Z' else '2014-01-03T12:30:00.000Z' end",
                 "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]");
+    }
+
+    @Test
+    public void testBetweenIntervalWithCaseStatementAsParamWIthAndInCase() throws SqlException {
+        runWhereTest("timestamp between case when true and true then '2014-01-04T12:30:00.000Z' else '2014-01-02T12:30:00.000Z' end and '2014-01-02T12:30:00.000Z'",
+                "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-04T12:30:00.000000Z}]");
+    }
+
+    @Test
+    public void testBetweenInvalidColumn() {
+        try {
+            modelOf("invalidTimestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z");
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "unclosed quoted string?");
+        }
     }
 
     @Test
@@ -434,31 +394,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testComplexInterval5() throws Exception {
         runWhereTest("timestamp in '2015-02-23T10:00:55.000Z;30m' and timestamp != '2015-02-23T10:10:00.000Z'", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:09:59.999999Z},{lo=2015-02-23T10:10:00.000001Z, hi=2015-02-23T10:30:55.000000Z}]");
-    }
-
-    @Test
-    public void testDesTimestampGreaterAndLessOrEqual() throws Exception {
-        runWhereTest("timestamp >= '2015-02-23' and timestamp <= '2015-02-24'",
-                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-24T00:00:00.000000Z}]");
-    }
-
-    @Test
-    public void testEqualsToDateInterval() throws Exception {
-        runWhereTest("timestamp in '2015-02-23'",
-                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T23:59:59.999999Z}]");
-    }
-
-    @Test
-    public void testEqualsToDateTimestamp() throws Exception {
-        runWhereTest("timestamp = '2015-02-23'",
-                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
-    }
-
-
-    @Test
-    public void testEqualsTo2DatesInterval() throws Exception {
-        runWhereTest("timestamp in '2015-02-23'",
-                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T23:59:59.999999Z}]");
     }
 
     @Test
@@ -656,6 +591,12 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDesTimestampGreaterAndLessOrEqual() throws Exception {
+        runWhereTest("timestamp >= '2015-02-23' and timestamp <= '2015-02-24'",
+                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-24T00:00:00.000000Z}]");
+    }
+
+    @Test
     public void testDubiousGreater() throws Exception {
         IntrinsicModel m = modelOf("ts > ts");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
@@ -747,6 +688,24 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         TestUtils.assertEquals("'y'sym='y''x'syminand", toRpn(m.filter));
         Assert.assertEquals("[]", m.keyValues.toString());
         Assert.assertEquals("[]", m.keyValuePositions.toString());
+    }
+
+    @Test
+    public void testEqualsTo2DatesInterval() throws Exception {
+        runWhereTest("timestamp in '2015-02-23'",
+                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T23:59:59.999999Z}]");
+    }
+
+    @Test
+    public void testEqualsToDateInterval() throws Exception {
+        runWhereTest("timestamp in '2015-02-23'",
+                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T23:59:59.999999Z}]");
+    }
+
+    @Test
+    public void testEqualsToDateTimestamp() throws Exception {
+        runWhereTest("timestamp = '2015-02-23'",
+                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
     }
 
     @Test
@@ -852,7 +811,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testIntervalDontIntersect() throws Exception {
         // because of intervals being processed from right to left
-        // code will try to intersect 'not equal' will already  existing positive interval
+        // code will try to intersect 'not equal' with already existing positive interval
         // result must be zero-overlap and FALSE model
         IntrinsicModel m = modelOf("timestamp != '2015-05-11' and timestamp = '2015-05-11'");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
@@ -901,6 +860,23 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testIntervalGreaterOrEq2() throws Exception {
         runWhereCompareToModelTest("timestamp >= '2014-01-01T15:30:00.000Z' and timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z'",
                 "[{lo=2014-01-01T15:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]");
+    }
+
+    @Test
+    public void testIntervalInManyArgs() throws SqlException {
+        runWhereIntervalTest0(
+                "timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z', '2014-01-03T12:30:00.000Z')",
+                "[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-01T12:30:00.000000Z}," +
+                        "{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}," +
+                        "{lo=2014-01-03T12:30:00.000000Z, hi=2014-01-03T12:30:00.000000Z}]"
+        );
+    }
+
+    @Test
+    public void testIntervalInNotFunction() throws SqlException {
+        IntrinsicModel m = modelOf("dateadd(1, 'd', timestamp) in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
+        Assert.assertFalse(m.hasIntervalFilters());
+        TestUtils.assertEquals("'2014-01-02T12:30:00.000Z''2014-01-01T12:30:00.000Z'timestamp'd'1dateaddin", toRpn(m.filter));
     }
 
     @Test
@@ -987,23 +963,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "Too few arg");
         }
-    }
-
-    @Test
-    public void testIntervalInNotFunction() throws SqlException {
-        IntrinsicModel m = modelOf("dateadd(1, 'd', timestamp) in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
-        Assert.assertFalse(m.hasIntervalFilters());
-        TestUtils.assertEquals("'2014-01-02T12:30:00.000Z''2014-01-01T12:30:00.000Z'timestamp'd'1dateaddin", toRpn(m.filter));
-    }
-
-    @Test
-    public void testIntervalInManyArgs() throws SqlException {
-        runWhereIntervalTest0(
-                "timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z', '2014-01-03T12:30:00.000Z')",
-                "[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-01T12:30:00.000000Z}," +
-                        "{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}," +
-                        "{lo=2014-01-03T12:30:00.000000Z, hi=2014-01-03T12:30:00.000000Z}]"
-        );
     }
 
     @Test
@@ -1235,6 +1194,12 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         Assert.assertNull(m.filter);
         Assert.assertEquals("[y]", m.keyExcludedValues.toString());
         Assert.assertEquals("[7]", m.keyExcludedValuePositions.toString());
+    }
+
+    @Test
+    public void testNotIn() throws Exception {
+        IntrinsicModel m = modelOf("bid > 100 and timestamp not in '2014-01-01'");
+        TestUtils.assertEquals("[{lo=, hi=2013-12-31T23:59:59.999999Z},{lo=2014-01-02T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]", intervalToString(m));
     }
 
     @Test
@@ -1535,6 +1500,46 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampFollowedByIntrinsicOperatorWithNull0() throws SqlException {
+        assertFilter(modelOf("timestamp = null"), "nulltimestamp=");
+        assertFilter(modelOf("timestamp != null"), "nulltimestamp!=");
+        assertInterval(modelOf("timestamp in (null)"), "[{lo=, hi=}]");
+        assertInterval(modelOf("timestamp in (null, null)"), "[{lo=, hi=}]");
+        assertInterval(modelOf("timestamp not in (null)"), "[{lo=-290308-01-01T19:59:05.224193Z, hi=294247-01-10T04:00:54.775807Z}]");
+        assertInterval(modelOf("timestamp not in (null, null)"), "[{lo=-290308-01-01T19:59:05.224193Z, hi=294247-01-10T04:00:54.775807Z}]");
+        assertFilter(modelOf("timestamp >= null"), "nulltimestamp>=");
+        assertFilter(modelOf("timestamp > null"), "nulltimestamp>");
+        assertFilter(modelOf("timestamp <= null"), "nulltimestamp<=");
+        assertFilter(modelOf("timestamp < null"), "nulltimestamp<");
+        assertInterval(modelOf("timestamp between null and null"), "[]");
+        assertInterval(modelOf("timestamp not between null and null"), "");
+    }
+
+    @Test
+    public void testTimestampFollowedByIntrinsicOperatorWithNull1() throws SqlException {
+        // in this case no designated timestamp column
+        assertFilter(noDesignatedTimestampNotIdxModelOf("timestamp = null"), "nulltimestamp=");
+        assertFilter(noDesignatedTimestampNotIdxModelOf("timestamp != null"), "nulltimestamp!=");
+        assertInterval(noDesignatedTimestampNotIdxModelOf("timestamp in (null)"), "");
+        assertInterval(noDesignatedTimestampNotIdxModelOf("timestamp in (null, null)"), "");
+        assertInterval(noDesignatedTimestampNotIdxModelOf("timestamp not in (null)"), "");
+        assertInterval(noDesignatedTimestampNotIdxModelOf("timestamp not in (null, null)"), "");
+        assertFilter(noDesignatedTimestampNotIdxModelOf("timestamp >= null"), "nulltimestamp>=");
+        assertFilter(noDesignatedTimestampNotIdxModelOf("timestamp > null"), "nulltimestamp>");
+        assertFilter(noDesignatedTimestampNotIdxModelOf("timestamp <= null"), "nulltimestamp<=");
+        assertFilter(noDesignatedTimestampNotIdxModelOf("timestamp < null"), "nulltimestamp<");
+        assertInterval(noDesignatedTimestampNotIdxModelOf("timestamp between null and null"), "");
+        assertInterval(noDesignatedTimestampNotIdxModelOf("timestamp not between null and null"), "");
+    }
+
+    @Test
+    public void testTimestampFunctionOfThreeArgs() throws Exception {
+        IntrinsicModel m = modelOf("func(2, timestamp, 'abc')");
+        Assert.assertFalse(m.hasIntervalFilters());
+        assertFilter(m, "'abc'timestamp2func");
+    }
+
+    @Test
     public void testTimestampGreaterConstFunction() throws SqlException {
         runWhereIntervalTest0("timestamp > to_date('2015-02-22', 'yyyy-MM-dd')", "[{lo=2015-02-22T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
     }
@@ -1638,12 +1643,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("timestamp in '2014-06-20T13:25:00.000Z;10m;2d;5' and timestamp IN '2015-06-20T13:25:00.000Z;10m;2d;5'");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
         TestUtils.assertEquals("[]", intervalToString(m));
-    }
-
-    @Test
-    public void testNotIn() throws Exception {
-        IntrinsicModel m = modelOf("bid > 100 and timestamp not in '2014-01-01'");
-        TestUtils.assertEquals("[{lo=, hi=2013-12-31T23:59:59.999999Z},{lo=2014-01-02T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]", intervalToString(m));
     }
 
     @Test
@@ -1793,20 +1792,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 false);
     }
 
-    private IntrinsicModel noTimestampModelOf(CharSequence seq) throws SqlException {
-        queryModel.clear();
-        return e.extract(
-                column -> column,
-                compiler.testParseExpression(seq, queryModel),
-                noTimestampMetadata,
-                null,
-                noTimestampMetadata.getTimestampIndex(),
-                functionParser,
-                metadata,
-                sqlExecutionContext,
-                false);
-    }
-
     private IntrinsicModel noDesignatedTimestampNotIdxModelOf(CharSequence seq) throws SqlException {
         queryModel.clear();
         return e.extract(
@@ -1815,6 +1800,20 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 noDesignatedTimestampNorIdxMetadata,
                 null,
                 noDesignatedTimestampNorIdxMetadata.getTimestampIndex(),
+                functionParser,
+                metadata,
+                sqlExecutionContext,
+                false);
+    }
+
+    private IntrinsicModel noTimestampModelOf(CharSequence seq) throws SqlException {
+        queryModel.clear();
+        return e.extract(
+                column -> column,
+                compiler.testParseExpression(seq, queryModel),
+                noTimestampMetadata,
+                null,
+                noTimestampMetadata.getTimestampIndex(),
                 functionParser,
                 metadata,
                 sqlExecutionContext,

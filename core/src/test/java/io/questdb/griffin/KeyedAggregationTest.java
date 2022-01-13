@@ -38,6 +38,108 @@ import org.junit.Test;
 public class KeyedAggregationTest extends AbstractGriffinTest {
 
     @Test
+    public void testCountAggregationWithConst() throws Exception {
+        try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.DAY)) {
+            tt1.col("tts", ColumnType.LONG).timestamp("ts");
+            createPopulateTable(tt1, 100, "2020-01-01", 2);
+        }
+
+        String expected = "ts\tcount\n" +
+                "2020-01-01T00:28:47.990000Z:TIMESTAMP\t51:LONG\n" +
+                "2020-01-02T00:28:47.990000Z:TIMESTAMP\t49:LONG\n";
+
+        String sql = "select ts, count() from tt1 SAMPLE BY d";
+
+        assertSqlWithTypes(sql, expected);
+    }
+
+    @Test
+    public void testCountAggregations() throws Exception {
+        try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.NONE)) {
+            tt1.col("tts", ColumnType.LONG);
+            CairoTestUtils.createTable(tt1);
+        }
+
+        String expected = "max\tcount\n" +
+                "NaN:LONG\t0:LONG\n";
+        String sql = "select max(tts), count() from tt1";
+
+        assertSqlWithTypes(sql, expected);
+        assertSqlWithTypes(sql + " where now() > '1000-01-01'", expected);
+
+        expected = "count\n" +
+                "0:LONG\n";
+        sql = "select count() from tt1";
+        assertSqlWithTypes(sql, expected);
+        assertSqlWithTypes(sql + " where now() > '1000-01-01'", expected);
+    }
+
+    @Test
+    public void testCountAggregationsWithTypes() throws Exception {
+        String[] aggregateFunctions = {"count_distinct"};
+        TypeVal[] aggregateColTypes = {
+                new TypeVal(ColumnType.STRING, "0:LONG"),
+                new TypeVal(ColumnType.SYMBOL, "0:LONG"),
+                new TypeVal(ColumnType.LONG256, "0:LONG"),
+        };
+
+        testAggregations(aggregateFunctions, aggregateColTypes);
+    }
+
+    @Test
+    public void testCountCaseInsensitive() throws Exception {
+        try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.DAY)) {
+            tt1.col("tts", ColumnType.LONG).timestamp("ts")
+                    .col("ID", ColumnType.LONG);
+            createPopulateTable(tt1, 100, "2020-01-01", 2);
+        }
+
+        String expected = "ts\tcount\n" +
+                "2020-01-01T00:28:47.990000Z:TIMESTAMP\t1:LONG\n" +
+                "2020-01-01T00:57:35.980000Z:TIMESTAMP\t1:LONG\n";
+
+        String sql = "select ts, count() from tt1 WHERE id > 0 LIMIT 2";
+
+        assertSqlWithTypes(sql, expected);
+    }
+
+    @Test
+    public void testFirstLastAggregations() throws Exception {
+        String[] aggregateFunctions = {"first", "last"};
+        TypeVal[] aggregateColTypes = {
+                new TypeVal(ColumnType.SYMBOL, ":SYMBOL"),
+                new TypeVal(ColumnType.BYTE, "0:BYTE"),
+                new TypeVal(ColumnType.CHAR, ":CHAR"),
+                new TypeVal(ColumnType.SHORT, "0:SHORT"),
+                new TypeVal(ColumnType.INT, "NaN:INT"),
+                new TypeVal(ColumnType.LONG, "NaN:LONG"),
+                new TypeVal(ColumnType.DATE, ":DATE"),
+                new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP"),
+                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT"),
+                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE"),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(3), ":GEOHASH(3b)"),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(10), ":GEOHASH(2c)"),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(20), ":GEOHASH(4c)"),
+                new TypeVal(ColumnType.getGeoHashTypeWithBits(60), ":GEOHASH(12c)")};
+
+        testAggregations(aggregateFunctions, aggregateColTypes);
+    }
+
+    @Test
+    public void testFirstLastAggregationsNotSupported() {
+        String[] aggregateFunctions = {"first"};
+        TypeVal[] aggregateColTypes = {
+                new TypeVal(ColumnType.STRING, ":STRING"),};
+
+        try {
+            testAggregations(aggregateFunctions, aggregateColTypes);
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument for function: first");
+        }
+    }
+
+    @Test
     public void testHourDouble() throws Exception {
         assertQuery(
                 "hour\tsum\tksum\tnsum\tmin\tmax\tavg\tmax1\tmin1\n" +
@@ -147,46 +249,46 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 Record[] expected = new Record[]{
                         new Record() {
                             @Override
-                            public CharSequence getSym(int col) {
-                                return null;
-                            }
-
-                            @Override
                             public double getDouble(int col) {
                                 return 520447.6629968713;
                             }
-                        },
-                        new Record() {
+
                             @Override
                             public CharSequence getSym(int col) {
-                                return "a1";
+                                return null;
                             }
-
+                        },
+                        new Record() {
                             @Override
                             public double getDouble(int col) {
                                 return 104308.65839619507;
                             }
-                        },
-                        new Record() {
+
                             @Override
                             public CharSequence getSym(int col) {
-                                return "a2";
+                                return "a1";
                             }
-
+                        },
+                        new Record() {
                             @Override
                             public double getDouble(int col) {
                                 return 104559.2867475151;
                             }
+
+                            @Override
+                            public CharSequence getSym(int col) {
+                                return "a2";
+                            }
                         },
                         new Record() {
                             @Override
-                            public CharSequence getSym(int col) {
-                                return "a3";
+                            public double getDouble(int col) {
+                                return 104044.11326997809;
                             }
 
                             @Override
-                            public double getDouble(int col) {
-                                return 104044.11326997809;
+                            public CharSequence getSym(int col) {
+                                return "a3";
                             }
                         },
                 };
@@ -695,13 +797,13 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 Record[] expected = new Record[]{
                         new Record() {
                             @Override
-                            public CharSequence getSym(int col) {
-                                return null;
+                            public double getDouble(int col) {
+                                return 106413.99769604905;
                             }
 
                             @Override
-                            public double getDouble(int col) {
-                                return 106413.99769604905;
+                            public CharSequence getSym(int col) {
+                                return null;
                             }
                         },
                 };
@@ -715,46 +817,46 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 Record[] expected = new Record[]{
                         new Record() {
                             @Override
-                            public CharSequence getSym(int col) {
-                                return null;
-                            }
-
-                            @Override
                             public double getDouble(int col) {
                                 return 15636.977658744854;
                             }
-                        },
-                        new Record() {
+
                             @Override
                             public CharSequence getSym(int col) {
-                                return "a1";
+                                return null;
                             }
-
+                        },
+                        new Record() {
                             @Override
                             public double getDouble(int col) {
                                 return 13073.816187889399;
                             }
-                        },
-                        new Record() {
+
                             @Override
                             public CharSequence getSym(int col) {
-                                return "a2";
+                                return "a1";
                             }
-
+                        },
+                        new Record() {
                             @Override
                             public double getDouble(int col) {
                                 return 13240.269899560482;
                             }
+
+                            @Override
+                            public CharSequence getSym(int col) {
+                                return "a2";
+                            }
                         },
                         new Record() {
                             @Override
-                            public CharSequence getSym(int col) {
-                                return "a3";
+                            public double getDouble(int col) {
+                                return 13223.021189180576;
                             }
 
                             @Override
-                            public double getDouble(int col) {
-                                return 13223.021189180576;
+                            public CharSequence getSym(int col) {
+                                return "a3";
                             }
                         },
                 };
@@ -806,52 +908,69 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 Record[] expected = new Record[]{
                         new Record() {
                             @Override
-                            public CharSequence getSym(int col) {
-                                return null;
-                            }
-
-                            @Override
                             public double getDouble(int col) {
                                 return 520447.6629968692;
                             }
-                        },
-                        new Record() {
+
                             @Override
                             public CharSequence getSym(int col) {
-                                return "a1";
+                                return null;
                             }
-
+                        },
+                        new Record() {
                             @Override
                             public double getDouble(int col) {
                                 return 104308.65839619662;
                             }
-                        },
-                        new Record() {
+
                             @Override
                             public CharSequence getSym(int col) {
-                                return "a2";
+                                return "a1";
                             }
-
+                        },
+                        new Record() {
                             @Override
                             public double getDouble(int col) {
                                 return 104559.28674751727;
                             }
+
+                            @Override
+                            public CharSequence getSym(int col) {
+                                return "a2";
+                            }
                         },
                         new Record() {
                             @Override
-                            public CharSequence getSym(int col) {
-                                return "a3";
+                            public double getDouble(int col) {
+                                return 104044.11326997768;
                             }
 
                             @Override
-                            public double getDouble(int col) {
-                                return 104044.11326997768;
+                            public CharSequence getSym(int col) {
+                                return "a3";
                             }
                         },
                 };
                 assertCursorRawRecords(expected, factory, false, true);
             }
         });
+    }
+
+    @Test
+    public void testMinMaxAggregations() throws Exception {
+        String[] aggregateFunctions = {"max", "min"};
+        TypeVal[] aggregateColTypes = {
+                new TypeVal(ColumnType.BYTE, "NaN:INT"),
+                new TypeVal(ColumnType.CHAR, ":CHAR"),
+                new TypeVal(ColumnType.SHORT, "NaN:INT"),
+                new TypeVal(ColumnType.INT, "NaN:INT"),
+                new TypeVal(ColumnType.LONG, "NaN:LONG"),
+                new TypeVal(ColumnType.DATE, ":DATE"),
+                new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP"),
+                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT"),
+                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE")};
+
+        testAggregations(aggregateFunctions, aggregateColTypes);
     }
 
     @Test
@@ -910,123 +1029,9 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         });
     }
 
-    @Test
-    public void testMinMaxAggregations() throws Exception {
-        String[] aggregateFunctions = {"max", "min"};
-        TypeVal[] aggregateColTypes = {
-                new TypeVal(ColumnType.BYTE, "NaN:INT"),
-                new TypeVal(ColumnType.CHAR, ":CHAR"),
-                new TypeVal(ColumnType.SHORT, "NaN:INT"),
-                new TypeVal(ColumnType.INT, "NaN:INT"),
-                new TypeVal(ColumnType.LONG, "NaN:LONG"),
-                new TypeVal(ColumnType.DATE, ":DATE"),
-                new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP"),
-                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT"),
-                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE")};
-
-        testAggregations(aggregateFunctions, aggregateColTypes);
-    }
-
-    @Test
-    public void testFirstLastAggregations() throws Exception {
-        String[] aggregateFunctions = {"first", "last"};
-        TypeVal[] aggregateColTypes = {
-                new TypeVal(ColumnType.SYMBOL, ":SYMBOL"),
-                new TypeVal(ColumnType.BYTE, "0:BYTE"),
-                new TypeVal(ColumnType.CHAR, ":CHAR"),
-                new TypeVal(ColumnType.SHORT, "0:SHORT"),
-                new TypeVal(ColumnType.INT, "NaN:INT"),
-                new TypeVal(ColumnType.LONG, "NaN:LONG"),
-                new TypeVal(ColumnType.DATE, ":DATE"),
-                new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP"),
-                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT"),
-                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE"),
-                new TypeVal(ColumnType.getGeoHashTypeWithBits(3), ":GEOHASH(3b)"),
-                new TypeVal(ColumnType.getGeoHashTypeWithBits(10), ":GEOHASH(2c)"),
-                new TypeVal(ColumnType.getGeoHashTypeWithBits(20), ":GEOHASH(4c)"),
-                new TypeVal(ColumnType.getGeoHashTypeWithBits(60), ":GEOHASH(12c)")};
-
-        testAggregations(aggregateFunctions, aggregateColTypes);
-    }
-
-    @Test
-    public void testCountAggregationsWithTypes() throws Exception {
-        String[] aggregateFunctions = {"count_distinct"};
-        TypeVal[] aggregateColTypes = {
-                new TypeVal(ColumnType.STRING, "0:LONG"),
-                new TypeVal(ColumnType.SYMBOL, "0:LONG"),
-                new TypeVal(ColumnType.LONG256, "0:LONG"),
-        };
-
-        testAggregations(aggregateFunctions, aggregateColTypes);
-    }
-
-    @Test
-    public void testCountAggregations() throws Exception {
-        try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.NONE)) {
-            tt1.col("tts", ColumnType.LONG);
-            CairoTestUtils.createTable(tt1);
-        }
-
-        String expected = "max\tcount\n" +
-                "NaN:LONG\t0:LONG\n";
-        String sql = "select max(tts), count() from tt1";
-
-        assertSqlWithTypes(sql, expected);
-        assertSqlWithTypes(sql + " where now() > '1000-01-01'", expected);
-
-        expected = "count\n" +
-                "0:LONG\n";
-        sql = "select count() from tt1";
-        assertSqlWithTypes(sql, expected);
-        assertSqlWithTypes(sql + " where now() > '1000-01-01'", expected);
-    }
-
-    @Test
-    public void testCountAggregationWithConst() throws Exception {
-        try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.DAY)) {
-            tt1.col("tts", ColumnType.LONG).timestamp("ts");
-            createPopulateTable(tt1, 100, "2020-01-01", 2);
-        }
-
-        String expected = "ts\tcount\n" +
-                "2020-01-01T00:28:47.990000Z:TIMESTAMP\t51:LONG\n" +
-                "2020-01-02T00:28:47.990000Z:TIMESTAMP\t49:LONG\n";
-
-        String sql = "select ts, count() from tt1 SAMPLE BY d";
-
-        assertSqlWithTypes(sql, expected);
-    }
-
-    @Test
-    public void testCountCaseInsensitive() throws Exception {
-        try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.DAY)) {
-            tt1.col("tts", ColumnType.LONG).timestamp("ts")
-                    .col("ID", ColumnType.LONG);
-            createPopulateTable(tt1, 100, "2020-01-01", 2);
-        }
-
-        String expected = "ts\tcount\n" +
-                "2020-01-01T00:28:47.990000Z:TIMESTAMP\t1:LONG\n" +
-                "2020-01-01T00:57:35.980000Z:TIMESTAMP\t1:LONG\n";
-
-        String sql = "select ts, count() from tt1 WHERE id > 0 LIMIT 2";
-
-        assertSqlWithTypes(sql, expected);
-    }
-
-    @Test
-    public void testFirstLastAggregationsNotSupported() {
-        String[] aggregateFunctions = {"first"};
-        TypeVal[] aggregateColTypes = {
-                new TypeVal(ColumnType.STRING, ":STRING"),};
-
-        try {
-            testAggregations(aggregateFunctions, aggregateColTypes);
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument for function: first");
-        }
+    private static String getColumnName(int type) {
+        String typeStr = ColumnType.nameOf(type);
+        return "c" + typeStr.replace("(", "").replace(")", "");
     }
 
     private void testAggregations(String[] aggregateFunctions, TypeVal[] aggregateColTypes) throws SqlException {
@@ -1060,28 +1065,22 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                 String expected = resultHeader.append("\n").append(resultData).append("\n").toString();
                 assertSqlWithTypes(sql.toString(), expected);
 
-                // Force to go to not-vector execution
+                // Force going to not-vector execution
                 assertSqlWithTypes(sql + " where now() > '1000-01-01'", expected);
             }
         }
     }
 
-    private static String getColumnName(int type) {
-        String typeStr = ColumnType.nameOf(type);
-        return "c" + typeStr.replace("(", "").replace(")", "");
-    }
-
     private static class TypeVal {
+        public final int columnType;
+        public final String emtpyValue;
+        public final String colName;
+        public final String funcArg;
         public TypeVal(int type, String val) {
             columnType = type;
             emtpyValue = val;
             this.colName = getColumnName(type);
             this.funcArg = this.colName;
         }
-
-        public final int columnType;
-        public final String emtpyValue;
-        public final String colName;
-        public final String funcArg;
     }
 }

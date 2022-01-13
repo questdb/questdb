@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
@@ -37,8 +37,8 @@ import io.questdb.std.str.Path;
 
 public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
 
-    private static final Log LOG = LogFactory.getLog(DescriptionCatalogueFunctionFactory.class);
     static final RecordMetadata METADATA;
+    private static final Log LOG = LogFactory.getLog(DescriptionCatalogueFunctionFactory.class);
 
     @Override
     public String getSignature() {
@@ -143,16 +143,16 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public long size() {
+            return -1;
+        }
+
+        @Override
         public void toTop() {
             if (findFileStruct != 0) {
                 ff.findClose(findFileStruct);
                 findFileStruct = 0;
             }
-        }
-
-        @Override
-        public long size() {
-            return -1;
         }
 
         private boolean next0() {

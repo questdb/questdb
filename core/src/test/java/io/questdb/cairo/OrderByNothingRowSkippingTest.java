@@ -50,24 +50,10 @@ public class OrderByNothingRowSkippingTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectMiddleNfromStart() throws Exception {
+    public void testSelectFirstNwithSameLoHiReturnsNoRows() throws Exception {
         prepare_unordered_noTs_table();
 
-        assertQuery("l\n6\n10\n8\n", "select l from tab limit 5,8");
-    }
-
-    @Test
-    public void testSelectNbeyondEndreturnsEmptyResult() throws Exception {
-        prepare_unordered_noTs_table();
-
-        assertQuery("l\n", "select l from tab limit 11,12");
-    }
-
-    @Test
-    public void testSelectNbeforeStartReturnsEmptyResult() throws Exception {
-        prepare_unordered_noTs_table();
-
-        assertQuery("l\n", "select l from tab limit -11,-15");
+        assertQuery("l\n", "select l from tab limit 8,8");
     }
 
     @Test
@@ -78,10 +64,10 @@ public class OrderByNothingRowSkippingTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectMiddleNfromEnd() throws Exception {
+    public void testSelectLastNwithSameLoHiReturnsNoRows() throws Exception {
         prepare_unordered_noTs_table();
 
-        assertQuery("l\n7\n9\n3\n", "select l from tab limit -8,-5");
+        assertQuery("l\n", "select l from tab limit -8,-8");
     }
 
     @Test
@@ -92,17 +78,31 @@ public class OrderByNothingRowSkippingTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectFirstNwithSameLoHiReturnsNoRows() throws Exception {
+    public void testSelectMiddleNfromEnd() throws Exception {
         prepare_unordered_noTs_table();
 
-        assertQuery("l\n", "select l from tab limit 8,8");
+        assertQuery("l\n7\n9\n3\n", "select l from tab limit -8,-5");
     }
 
     @Test
-    public void testSelectLastNwithSameLoHiReturnsNoRows() throws Exception {
+    public void testSelectMiddleNfromStart() throws Exception {
         prepare_unordered_noTs_table();
 
-        assertQuery("l\n", "select l from tab limit -8,-8");
+        assertQuery("l\n6\n10\n8\n", "select l from tab limit 5,8");
+    }
+
+    @Test
+    public void testSelectNbeforeStartReturnsEmptyResult() throws Exception {
+        prepare_unordered_noTs_table();
+
+        assertQuery("l\n", "select l from tab limit -11,-15");
+    }
+
+    @Test
+    public void testSelectNbeyondEndreturnsEmptyResult() throws Exception {
+        prepare_unordered_noTs_table();
+
+        assertQuery("l\n", "select l from tab limit 11,12");
     }
 
     @Test
@@ -117,6 +117,12 @@ public class OrderByNothingRowSkippingTest extends AbstractGriffinTest {
         prepare_unordered_noTs_table();
 
         assertQuery("l\n1\n4\n", "select l from tab limit -12,-8");
+    }
+
+    private void assertQuery(String expected, String query) throws Exception {
+        assertQuery(expected,
+                query,
+                null, null, true, false, true);
     }
 
     //table with x reflecting timestamp position  in descending order
@@ -148,11 +154,5 @@ public class OrderByNothingRowSkippingTest extends AbstractGriffinTest {
                 compiler.compile(query, sqlExecutionContext);
             }
         });
-    }
-
-    private void assertQuery(String expected, String query) throws Exception {
-        assertQuery(expected,
-                query,
-                null, null, true, false, true);
     }
 }

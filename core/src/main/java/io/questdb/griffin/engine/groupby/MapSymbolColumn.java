@@ -67,8 +67,13 @@ public class MapSymbolColumn extends SymbolFunction {
     }
 
     @Override
-    public CharSequence valueOf(int symbolKey) {
-        return symbolTable.valueOf(symbolKey);
+    public @Nullable StaticSymbolTable getStaticSymbolTable() {
+        return symbolTable instanceof StaticSymbolTable ? (StaticSymbolTable) symbolTable : null;
+    }
+
+    @Override
+    public boolean isSymbolTableStatic() {
+        return symbolTableStatic;
     }
 
     @Override
@@ -77,12 +82,7 @@ public class MapSymbolColumn extends SymbolFunction {
     }
 
     @Override
-    public @Nullable StaticSymbolTable getStaticSymbolTable() {
-        return symbolTable instanceof StaticSymbolTable ? (StaticSymbolTable) symbolTable : null;
-    }
-
-    @Override
-    public boolean isSymbolTableStatic() {
-        return symbolTableStatic;
+    public CharSequence valueOf(int symbolKey) {
+        return symbolTable.valueOf(symbolKey);
     }
 }

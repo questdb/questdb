@@ -32,10 +32,8 @@ import java.io.Closeable;
 
 public interface MemoryM extends Closeable {
 
-    FilesFacade getFilesFacade();
-
-    default boolean isOpen() {
-        return getFd() != -1;
+    default void allocate(long size) {
+        TableUtils.allocateDiskSpace(getFilesFacade(), getFd(), size);
     }
 
     @Override
@@ -43,32 +41,35 @@ public interface MemoryM extends Closeable {
 
     long getFd();
 
+    FilesFacade getFilesFacade();
+
     default boolean isDeleted() {
         return !getFilesFacade().exists(getFd());
     }
 
     boolean isMapped(long offset, long len);
 
-    default void allocate(long size) {
-        TableUtils.allocateDiskSpace(getFilesFacade(), getFd(), size);
+    default boolean isOpen() {
+        return getFd() != -1;
     }
 
     /**
      * Maps file to memory
-     *  @param ff                the files facade - an abstraction used to simulate failures
+     *
+     * @param ff                the files' facade - an abstraction used to simulate failures
      * @param name              the name of the file
      * @param extendSegmentSize for those implementations that can need to extend mapped memory beyond available file size
- *                          should use this parameter as the increment size
+     *                          should use this parameter as the increment size
      * @param size              size of the initial mapped memory when smaller than the actual file
-     * @param memoryTag     memory tag for diagnostics
+     * @param memoryTag         memory tag for diagnostics
      */
     void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag);
 
-    default void wholeFile(FilesFacade ff, LPSZ name, int memoryTag) {
-        of(ff, name, ff.getMapPageSize(), ff.length(name), memoryTag);
-    }
-
     default void smallFile(FilesFacade ff, LPSZ name, int memoryTag) {
         of(ff, name, ff.getPageSize(), ff.length(name), memoryTag);
+    }
+
+    default void wholeFile(FilesFacade ff, LPSZ name, int memoryTag) {
+        of(ff, name, ff.getMapPageSize(), ff.length(name), memoryTag);
     }
 }

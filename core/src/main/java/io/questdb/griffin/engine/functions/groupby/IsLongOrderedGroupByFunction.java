@@ -76,12 +76,12 @@ public class IsLongOrderedGroupByFunction extends BooleanFunction implements Gro
     }
 
     @Override
-    public boolean getBool(Record rec) {
-        return rec.getBool(flagIndex);
+    public Function getArg() {
+        return arg;
     }
 
     @Override
-    public Function getArg() {
-        return arg;
+    public boolean getBool(Record rec) {
+        return rec.getBool(flagIndex);
     }
 }

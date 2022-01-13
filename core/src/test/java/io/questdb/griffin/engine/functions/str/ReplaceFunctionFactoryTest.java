@@ -31,13 +31,13 @@ import org.junit.Test;
 
 public class ReplaceFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
-    public void testNullTerm() throws SqlException {
-        call("abc", null, "x").andAssert("abc");
+    public void testNullReplacement() throws SqlException {
+        call("abbbc", "bbb", null).andAssert("ac");
     }
 
     @Test
-    public void testNullReplacement() throws SqlException {
-        call("abbbc", "bbb", null).andAssert("ac");
+    public void testNullTerm() throws SqlException {
+        call("abc", null, "x").andAssert("abc");
     }
 
     @Test
@@ -46,13 +46,18 @@ public class ReplaceFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testReplacementIsSameLength() throws SqlException {
-        call("hello xx ok", "xx", "yy").andAssert("hello yy ok");
+    public void testReplacementEnd() throws SqlException {
+        call("hello xx ok", "ok", "better").andAssert("hello xx better");
     }
 
     @Test
     public void testReplacementIsLonger() throws SqlException {
         call("hello xx ok", "xx", "ooooo").andAssert("hello ooooo ok");
+    }
+
+    @Test
+    public void testReplacementIsSameLength() throws SqlException {
+        call("hello xx ok", "xx", "yy").andAssert("hello yy ok");
     }
 
     @Test
@@ -63,11 +68,6 @@ public class ReplaceFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testReplacementStart() throws SqlException {
         call("hello xx ok", "hello", "bye").andAssert("bye xx ok");
-    }
-
-    @Test
-    public void testReplacementEnd() throws SqlException {
-        call("hello xx ok", "ok", "better").andAssert("hello xx better");
     }
 
     @Override

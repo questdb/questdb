@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.std.str.StringSink;
 import org.junit.Test;
 
 public class PrefixedPgGetKeywordsFunctionFactoryTest extends AbstractGriffinTest {

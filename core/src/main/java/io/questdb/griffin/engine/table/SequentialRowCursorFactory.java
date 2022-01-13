@@ -44,17 +44,17 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
-    public boolean isEntity() {
-        return false;
-    }
-
-    @Override
     public RowCursor getCursor(DataFrame dataFrame) {
         for (int i = 0, n = cursorFactories.size(); i < n; i++) {
             cursors.extendAndSet(i, cursorFactories.getQuick(i).getCursor(dataFrame));
         }
         cursor.init();
         return cursor;
+    }
+
+    @Override
+    public boolean isEntity() {
+        return false;
     }
 
     @Override
@@ -83,16 +83,16 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
             return false;
         }
 
+        @Override
+        public long next() {
+            return currentCursor.next();
+        }
+
         private void init() {
             this.cursorIndex = 0;
             if (cursorIndex < cursorFactories.size() - 1) {
                 currentCursor = cursors.getQuick(cursorIndex);
             }
-        }
-
-        @Override
-        public long next() {
-            return currentCursor.next();
         }
     }
 }

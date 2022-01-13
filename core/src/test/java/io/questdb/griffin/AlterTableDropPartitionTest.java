@@ -130,11 +130,6 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDropPartitionWrongSeparator() throws Exception {
-        assertFailure("alter table x DROP partition list '2018';'2018'", 41, "',' expected");
-    }
-
-    @Test
     public void testDropPartitionNameMissing() throws Exception {
         assertFailure("alter table x drop partition list ,", 34, "partition name missing");
     }
@@ -265,6 +260,11 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     assertPartitionResult(expectedAfterDrop, "2020");
                 }
         );
+    }
+
+    @Test
+    public void testDropPartitionWrongSeparator() throws Exception {
+        assertFailure("alter table x DROP partition list '2018';'2018'", 41, "',' expected");
     }
 
     @Test

@@ -413,7 +413,7 @@ public class CairoMemoryTest {
                 Assert.assertEquals(8L * N, mem.getAppendOffset());
             }
             try (MemoryCMARW mem = Vm.getSmallCMARWInstance(FF, path, MemoryTag.MMAP_DEFAULT)) {
-                final int M = (int) (mem.size()/Long.BYTES);
+                final int M = (int) (mem.size() / Long.BYTES);
                 for (int i = 0; i < M; i++) {
                     Assert.assertEquals(i, mem.getLong(i * 8L));
                 }

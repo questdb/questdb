@@ -31,6 +31,10 @@ import io.questdb.cairo.sql.Record;
 
 public interface GroupByFunction extends Function {
 
+    void computeFirst(MapValue mapValue, Record record);
+
+    void computeNext(MapValue mapValue, Record record);
+
     default void interpolateBoundary(MapValue mapValue1,
                                      MapValue mapValue2,
                                      long boundaryTimestamp,
@@ -44,10 +48,6 @@ public interface GroupByFunction extends Function {
                                 long x) {
         throw new UnsupportedOperationException();
     }
-
-    void computeFirst(MapValue mapValue, Record record);
-
-    void computeNext(MapValue mapValue, Record record);
 
     default boolean isScalar() {
         return true;

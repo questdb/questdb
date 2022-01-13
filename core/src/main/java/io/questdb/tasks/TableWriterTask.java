@@ -89,18 +89,6 @@ public class TableWriterTask implements Closeable {
         this.sequence = sequence;
     }
 
-    public void of(
-            int type,
-            long tableId,
-            String tableName
-    ) {
-        this.tableId = tableId;
-        this.tableName = tableName;
-        this.type = type;
-        this.appendPtr = data;
-        this.ip = 0L;
-    }
-
     public long getAppendOffset() {
         return appendPtr - data;
     }
@@ -149,13 +137,16 @@ public class TableWriterTask implements Closeable {
         return type;
     }
 
-    public void putStr(CharSequence value) {
-        int len = value.length();
-        final int byteLen = len * 2 + 4;
-        ensureCapacity(byteLen);
-        Unsafe.getUnsafe().putInt(appendPtr, len);
-        Chars.copyStrChars(value, 0, len, appendPtr + 4);
-        this.appendPtr += byteLen;
+    public void of(
+            int type,
+            long tableId,
+            String tableName
+    ) {
+        this.tableId = tableId;
+        this.tableName = tableName;
+        this.type = type;
+        this.appendPtr = data;
+        this.ip = 0L;
     }
 
     public void putByte(byte c) {
@@ -169,16 +160,25 @@ public class TableWriterTask implements Closeable {
         appendPtr += 4;
     }
 
+    public void putLong(long value) {
+        ensureCapacity(8);
+        Unsafe.getUnsafe().putLong(appendPtr, value);
+        appendPtr += 8;
+    }
+
     public void putShort(short value) {
         ensureCapacity(2);
         Unsafe.getUnsafe().putShort(appendPtr, value);
         appendPtr += 2;
     }
 
-    public void putLong(long value) {
-        ensureCapacity(8);
-        Unsafe.getUnsafe().putLong(appendPtr, value);
-        appendPtr += 8;
+    public void putStr(CharSequence value) {
+        int len = value.length();
+        final int byteLen = len * 2 + 4;
+        ensureCapacity(byteLen);
+        Unsafe.getUnsafe().putInt(appendPtr, len);
+        Chars.copyStrChars(value, 0, len, appendPtr + 4);
+        this.appendPtr += byteLen;
     }
 
     public void resize(long size) {

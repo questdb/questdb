@@ -29,11 +29,11 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
@@ -137,11 +137,6 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public long size() {
-            return -1;
-        }
-
-        @Override
         public boolean hasNext() {
             if (useSlaveCursor && slaveChain.hasNext()) {
                 return true;
@@ -161,6 +156,11 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
             return false;
+        }
+
+        @Override
+        public long size() {
+            return -1;
         }
 
         @Override

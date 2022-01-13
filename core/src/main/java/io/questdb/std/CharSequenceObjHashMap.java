@@ -53,13 +53,11 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
         list.clear();
     }
 
-    public void putAll(CharSequenceObjHashMap<V> other) {
-        CharSequence[] otherKeys = other.keys;
-        V[] otherValues = other.values;
-        for (int i = 0, n = otherKeys.length; i < n; i++) {
-            if (otherKeys[i] != noEntryKey) {
-                put(otherKeys[i], otherValues[i]);
-            }
+    public void removeAt(int index) {
+        if (index < 0) {
+            CharSequence key = keys[-index - 1];
+            super.removeAt(index);
+            list.remove(key);
         }
     }
 
@@ -69,12 +67,11 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
         values[index] = null;
     }
 
-    public void removeAt(int index) {
-        if (index < 0) {
-            CharSequence key = keys[-index - 1];
-            super.removeAt(index);
-            list.remove(key);
-        }
+    @Override
+    protected void move(int from, int to) {
+        keys[to] = keys[from];
+        values[to] = values[from];
+        erase(from);
     }
 
     public void clearValues() {
@@ -93,11 +90,14 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
         return putAt(keyIndex(key), key, value);
     }
 
-    @Override
-    protected void move(int from, int to) {
-        keys[to] = keys[from];
-        values[to] = values[from];
-        erase(from);
+    public void putAll(CharSequenceObjHashMap<V> other) {
+        CharSequence[] otherKeys = other.keys;
+        V[] otherValues = other.values;
+        for (int i = 0, n = otherKeys.length; i < n; i++) {
+            if (otherKeys[i] != noEntryKey) {
+                put(otherKeys[i], otherValues[i]);
+            }
+        }
     }
 
     public boolean putAt(int index, CharSequence key, V value) {
@@ -107,6 +107,10 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
             return true;
         }
         return false;
+    }
+
+    public void setValueQuick(int keyIndex, V value) {
+        values[-keyIndex - 1] = value;
     }
 
     public void sortKeys(Comparator<CharSequence> comparator) {
@@ -123,10 +127,6 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
 
     public V valueQuick(int index) {
         return get(list.getQuick(index));
-    }
-
-    public void setValueQuick(int keyIndex, V value) {
-        values[-keyIndex - 1] = value;
     }
 
     private boolean putAt0(int index, CharSequence key, V value) {

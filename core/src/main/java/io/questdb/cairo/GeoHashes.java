@@ -26,7 +26,10 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.*;
+import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 
 public class GeoHashes {
@@ -34,7 +37,7 @@ public class GeoHashes {
     // geohash null value: -1
     // we use the highest bit of every storage size (byte, short, int, long)
     // to indicate null value. When a null value is cast down, nullity is
-    // preserved, i.e. highest bit remains set:
+    // preserved, i.e. the highest bit remains set:
     //     long nullLong = -1L;
     //     short nullShort = (short) nullLong;
     //     nullShort == nullLong;
@@ -64,6 +67,24 @@ public class GeoHashes {
             'h', 'j', 'k', 'm', 'n', 'p', 'q', 'r',
             's', 't', 'u', 'v', 'w', 'x', 'y', 'z'
     };
+
+    public static void addNormalizedGeoPrefix(long hash, int prefixType, int columnType, final LongList prefixes) throws NumericException {
+        final int bits = ColumnType.getGeoHashBits(prefixType);
+        final int columnSize = ColumnType.sizeOf(columnType);
+        final int columnBits = ColumnType.getGeoHashBits(columnType);
+
+        if (hash == NULL || bits > columnBits) {
+            throw NumericException.INSTANCE;
+        }
+
+        final int shift = columnBits - bits;
+        long norm = hash << shift;
+        long mask = GeoHashes.bitmask(bits, shift);
+        mask |= 1L << (columnSize * 8 - 1); // set the most significant bit to ignore null from prefix matching
+
+        prefixes.add(norm);
+        prefixes.add(mask);
+    }
 
     public static void appendBinary(long hash, int bits, CharSink sink) {
         if (hash != NULL) {
@@ -131,8 +152,8 @@ public class GeoHashes {
     }
 
     public static long fromCoordinatesDegUnsafe(double lat, double lon, int bits) {
-        long latq = (long)Math.scalb((lat + 90.0) / 180.0, 32);
-        long lngq = (long)Math.scalb((lon + 180.0) / 360.0, 32);
+        long latq = (long) Math.scalb((lat + 90.0) / 180.0, 32);
+        long lngq = (long) Math.scalb((lon + 180.0) / 360.0, 32);
         return Numbers.interleaveBits(latq, lngq) >>> (64 - bits);
     }
 
@@ -154,24 +175,6 @@ public class GeoHashes {
             return GeoHashes.NULL;
         }
         return fromString(geohash, start, start + Math.min(length, MAX_STRING_LENGTH));
-    }
-
-    public static void addNormalizedGeoPrefix(long hash, int prefixType, int columnType, final LongList prefixes) throws NumericException {
-        final int bits = ColumnType.getGeoHashBits(prefixType);
-        final int columnSize = ColumnType.sizeOf(columnType);
-        final int columnBits = ColumnType.getGeoHashBits(columnType);
-
-        if (hash == NULL || bits > columnBits) {
-            throw NumericException.INSTANCE;
-        }
-
-        final int shift = columnBits - bits;
-        long norm = hash << shift;
-        long mask = GeoHashes.bitmask(bits, shift);
-        mask |= 1L << (columnSize * 8 - 1); // set the most significant bit to ignore null from prefix matching
-
-        prefixes.add(norm);
-        prefixes.add(mask);
     }
 
     public static long fromStringTruncatingNl(CharSequence hash, int start, int end, int toBits) throws NumericException {
@@ -239,7 +242,6 @@ public class GeoHashes {
         }
         return start < len;
     }
-
 
 
     private static long fromBitString(CharSequence bits, int start, int limit) throws NumericException {

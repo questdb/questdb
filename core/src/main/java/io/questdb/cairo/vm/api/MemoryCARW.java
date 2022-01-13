@@ -31,6 +31,11 @@ import io.questdb.std.*;
 
 public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
 
+    @Override
+    default long getAddress() {
+        return getPageAddress(0);
+    }
+
     default long putBin(BinarySequence value) {
         if (value != null) {
             final long len = value.length();
@@ -50,11 +55,6 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
             return getAppendOffset();
         }
         return putNullBin();
-    }
-
-    @Override
-    default long getAddress() {
-        return getPageAddress(0);
     }
 
     @Override

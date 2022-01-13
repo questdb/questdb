@@ -92,20 +92,6 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
     }
 
     @Override
-    public boolean supportPageFrameCursor() {
-        return this.convertedToFrame;
-    }
-
-    @Override
-    protected RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        assert !this.convertedToFrame;
-        return super.getCursorInstance(dataFrameCursor, executionContext);
-    }
-
-    @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         assert this.convertedToFrame;
         DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext);
@@ -122,5 +108,19 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
             }
         }
         return pageFrameCursor;
+    }
+
+    @Override
+    public boolean supportPageFrameCursor() {
+        return this.convertedToFrame;
+    }
+
+    @Override
+    protected RecordCursor getCursorInstance(
+            DataFrameCursor dataFrameCursor,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        assert !this.convertedToFrame;
+        return super.getCursorInstance(dataFrameCursor, executionContext);
     }
 }

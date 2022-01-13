@@ -193,6 +193,33 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLessThenJoinForEqTimestamps() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tank(ts timestamp, SequenceNumber int) timestamp(ts)", sqlExecutionContext);
+            executeInsert("insert into tank values('2021-07-26T02:36:02.566000Z',1)");
+            executeInsert("insert into tank values('2021-07-26T02:36:03.094000Z',2)");
+            executeInsert("insert into tank values('2021-07-26T02:36:03.097000Z',3)");
+            executeInsert("insert into tank values('2021-07-26T02:36:03.097000Z',4)");
+            executeInsert("insert into tank values('2021-07-26T02:36:03.097000Z',5)");
+            executeInsert("insert into tank values('2021-07-26T02:36:03.097000Z',6)");
+            executeInsert("insert into tank values('2021-07-26T02:36:03.098000Z',7)");
+            executeInsert("insert into tank values('2021-07-26T02:36:03.098000Z',8)");
+
+            String expected = "ts\tcolumn\n" +
+                    "2021-07-26T02:36:02.566000Z\tNaN\n" +
+                    "2021-07-26T02:36:03.094000Z\t1\n" +
+                    "2021-07-26T02:36:03.097000Z\t1\n" +
+                    "2021-07-26T02:36:03.097000Z\t1\n" +
+                    "2021-07-26T02:36:03.097000Z\t1\n" +
+                    "2021-07-26T02:36:03.097000Z\t1\n" +
+                    "2021-07-26T02:36:03.098000Z\t1\n" +
+                    "2021-07-26T02:36:03.098000Z\t1\n";
+            String query = "select w1.ts ts, w1.SequenceNumber - w2.SequenceNumber from tank w1 lt join tank w2";
+            printSqlResult(expected, query, "ts", false, true);
+        });
+    }
+
+    @Test
     public void testLtJoin() throws Exception {
         final String expected = "tag\thi\tlo\tts\tts1\n" +
                 "AA\t315515118\tNaN\t1970-01-03T00:00:00.000000Z\t\n" +
@@ -297,6 +324,8 @@ public class AsOfJoinTest extends AbstractGriffinTest {
         );
     }
 
+    //select a.seq hi, b.seq lo from tab a lt join b where hi > lo + 1
+
     @Test
     public void testLtJoinFullFat() throws Exception {
         assertMemoryLeak(() -> {
@@ -398,8 +427,6 @@ public class AsOfJoinTest extends AbstractGriffinTest {
             }
         });
     }
-
-    //select a.seq hi, b.seq lo from tab a lt join b where hi > lo + 1
 
     @Test
     public void testLtJoinNoTimestamp() throws Exception {
@@ -631,33 +658,6 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                     "AA\t20\t17\n";
             query = "select a.tag, a.x hi, b.x lo from tab a lt join tab b on (tag)  where a.x > b.x + 1";
             printSqlResult(ex, query, null, false, false);
-        });
-    }
-
-    @Test
-    public void testLessThenJoinForEqTimestamps() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table tank(ts timestamp, SequenceNumber int) timestamp(ts)", sqlExecutionContext);
-            executeInsert("insert into tank values('2021-07-26T02:36:02.566000Z',1)");
-            executeInsert("insert into tank values('2021-07-26T02:36:03.094000Z',2)");
-            executeInsert("insert into tank values('2021-07-26T02:36:03.097000Z',3)");
-            executeInsert("insert into tank values('2021-07-26T02:36:03.097000Z',4)");
-            executeInsert("insert into tank values('2021-07-26T02:36:03.097000Z',5)");
-            executeInsert("insert into tank values('2021-07-26T02:36:03.097000Z',6)");
-            executeInsert("insert into tank values('2021-07-26T02:36:03.098000Z',7)");
-            executeInsert("insert into tank values('2021-07-26T02:36:03.098000Z',8)");
-
-            String expected = "ts\tcolumn\n" +
-                    "2021-07-26T02:36:02.566000Z\tNaN\n" +
-                    "2021-07-26T02:36:03.094000Z\t1\n" +
-                    "2021-07-26T02:36:03.097000Z\t1\n" +
-                    "2021-07-26T02:36:03.097000Z\t1\n" +
-                    "2021-07-26T02:36:03.097000Z\t1\n" +
-                    "2021-07-26T02:36:03.097000Z\t1\n" +
-                    "2021-07-26T02:36:03.098000Z\t1\n" +
-                    "2021-07-26T02:36:03.098000Z\t1\n";
-            String query = "select w1.ts ts, w1.SequenceNumber - w2.SequenceNumber from tank w1 lt join tank w2";
-            printSqlResult(expected, query, "ts", false, true);
         });
     }
 

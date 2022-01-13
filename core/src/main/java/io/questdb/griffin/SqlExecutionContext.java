@@ -41,37 +41,9 @@ import java.io.Closeable;
 
 public interface SqlExecutionContext extends Closeable {
 
-    QueryFutureUpdateListener getQueryFutureUpdateListener();
-
-    BindVariableService getBindVariableService();
-
-    CairoSecurityContext getCairoSecurityContext();
-
-    default @NotNull MessageBus getMessageBus() {
-        return getCairoEngine().getMessageBus();
+    @Override
+    default void close() {
     }
-
-    boolean isTimestampRequired();
-
-    void popTimestampRequiredFlag();
-
-    void pushTimestampRequiredFlag(boolean flag);
-
-    int getWorkerCount();
-
-    Rnd getRandom();
-
-    void setRandom(Rnd rnd);
-
-    CairoEngine getCairoEngine();
-
-    long getRequestFd();
-
-    SqlExecutionCircuitBreaker getCircuitBreaker();
-
-    void storeTelemetry(short event, short origin);
-
-    AnalyticContext getAnalyticContext();
 
     void configureAnalyticContext(
             @Nullable VirtualRecord partitionByRecord,
@@ -81,15 +53,43 @@ public interface SqlExecutionContext extends Closeable {
             boolean baseSupportsRandomAccess
     );
 
-    void initNow();
+    AnalyticContext getAnalyticContext();
 
-    long getNow();
+    BindVariableService getBindVariableService();
+
+    CairoEngine getCairoEngine();
+
+    CairoSecurityContext getCairoSecurityContext();
+
+    SqlExecutionCircuitBreaker getCircuitBreaker();
 
     int getJitMode();
 
     void setJitMode(int jitMode);
 
-    @Override
-    default void close(){
+    default @NotNull MessageBus getMessageBus() {
+        return getCairoEngine().getMessageBus();
     }
+
+    long getNow();
+
+    QueryFutureUpdateListener getQueryFutureUpdateListener();
+
+    Rnd getRandom();
+
+    void setRandom(Rnd rnd);
+
+    long getRequestFd();
+
+    int getWorkerCount();
+
+    void initNow();
+
+    boolean isTimestampRequired();
+
+    void popTimestampRequiredFlag();
+
+    void pushTimestampRequiredFlag(boolean flag);
+
+    void storeTelemetry(short event, short origin);
 }

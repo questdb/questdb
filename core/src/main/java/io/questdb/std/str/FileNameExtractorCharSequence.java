@@ -32,11 +32,6 @@ public class FileNameExtractorCharSequence extends AbstractCharSequence {
             new ThreadLocal<>(FileNameExtractorCharSequence::new);
 
     private static final char separator;
-
-    static {
-        separator = System.getProperty("file.separator").charAt(0);
-    }
-
     private CharSequence base;
     private int lo;
     private int hi;
@@ -66,5 +61,9 @@ public class FileNameExtractorCharSequence extends AbstractCharSequence {
             }
         }
         return this;
+    }
+
+    static {
+        separator = System.getProperty("file.separator").charAt(0);
     }
 }

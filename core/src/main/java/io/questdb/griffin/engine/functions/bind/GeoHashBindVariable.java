@@ -29,7 +29,6 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.AbstractGeoHashFunction;
-import io.questdb.griffin.engine.functions.GeoByteFunction;
 import io.questdb.std.Mutable;
 
 class GeoHashBindVariable extends AbstractGeoHashFunction implements ScalarFunction, Mutable {
@@ -40,8 +39,13 @@ class GeoHashBindVariable extends AbstractGeoHashFunction implements ScalarFunct
     }
 
     @Override
-    public short getGeoShort(Record rec) {
-        return (short) value;
+    public void clear() {
+        this.value = GeoHashes.NULL;
+    }
+
+    @Override
+    public byte getGeoByte(Record rec) {
+        return (byte) value;
     }
 
     @Override
@@ -55,13 +59,8 @@ class GeoHashBindVariable extends AbstractGeoHashFunction implements ScalarFunct
     }
 
     @Override
-    public void clear() {
-        this.value = GeoHashes.NULL;
-    }
-
-    @Override
-    public byte getGeoByte(Record rec) {
-        return (byte) value;
+    public short getGeoShort(Record rec) {
+        return (short) value;
     }
 
     @Override
