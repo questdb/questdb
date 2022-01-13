@@ -104,6 +104,13 @@ class LineTcpWriterJob implements Job, Closeable {
         if (millis > commitDeadLine) {
             for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
                 if (assignedTables.getQuick(n).commitIfTimeoutElapsed(millis)) {
+                    // this return is to avoid holding up ingestion
+                    // after every successful commit we go back to drain the queue
+                    // if the queue is still empty we will come back and other tables will have their chance for a commit too
+                    // obviously tables at the end of the list (assignedTables) are disadvantaged but commits are
+                    // still issued automatically after we reached the max number of uncommitted rows and eventually
+                    // all tables in the list will get their commit after ingestion stops or slows down
+                    // the heap based solution mentioned above will eliminate this problem completely
                     return true;
                 }
             }

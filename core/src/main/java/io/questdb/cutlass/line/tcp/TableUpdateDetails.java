@@ -219,14 +219,22 @@ public class TableUpdateDetails implements Closeable {
         if (millis - lastMeasurementMillis < noAppendInterval || millis - lastCommitMillis < commitTimeout) {
             return false;
         }
+        return commit(millis);
+    }
+
+    private boolean commit(long millis) {
         if (writer != null && writer.getUncommittedRowCount() > 0) {
             LOG.debug().$("timeout-elapsed commit [rows=").$(writer.getUncommittedRowCount()).$(", table=").$(tableNameUtf16).I$();
+            lastCommitMillis = millis;
             try {
-                lastCommitMillis = millis;
                 writer.commit();
             } catch (Throwable e) {
-                LOG.error().$("could not commit [table=").$(writer.getTableName()).I$();
-                writer = Misc.free(writer);
+                LOG.error().$("could not commit [table=").$(writer.getTableName()).$(", msg=").$(e.getMessage()).I$();
+                try {
+                    writer.rollback();
+                } catch (Throwable th) {
+                    LOG.error().$("could not perform emergency rollback [table=").$(writer.getTableName()).I$();
+                }
             }
             return true;
         }
