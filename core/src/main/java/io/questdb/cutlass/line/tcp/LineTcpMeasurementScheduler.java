@@ -356,7 +356,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 pubSeq.done(seq);
             }
             tableUpdateDetails.incrementEventsProcessedSinceReshuffle();
-        return false;
+            return false;
         }
         return true;
     }
