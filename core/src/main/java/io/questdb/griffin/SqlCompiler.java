@@ -2477,6 +2477,7 @@ public class SqlCompiler implements Closeable {
         if (isPartitionsKeyword(tok)) {
             CharSequence tableName = expectToken(lexer, "table name");
             tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tableName), lexer.lastTokenPosition());
+            int tableNamePos = lexer.lastTokenPosition();
             CharSequence eol = SqlUtil.fetchNext(lexer);
             if (eol == null || Chars.equals(eol, ';')) {
                 tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
@@ -2485,7 +2486,7 @@ public class SqlCompiler implements Closeable {
                     if (PartitionBy.isPartitioned(partitionBy)) {
                         if (!TableUtils.schedulePurgeO3Partitions(messageBus, rdr.getTableName(), partitionBy)) {
                             throw SqlException.$(
-                                    lexer.lastTokenPosition(),
+                                    tableNamePos,
                                     "cannot schedule vacuum action, queue is full, please retry " +
                                             "or increase Purge Discovery Queue Capacity"
                             );
