@@ -106,6 +106,9 @@ public class PageFrameDispatchJob implements Job {
                     cursor = reducePubSeq.next();
                     if (cursor > -1) {
                         queue.get(cursor).of(frameSequence, i);
+                        if (frameSequence.getId() == -1) {
+                            System.out.println("ok");
+                        }
                         LOG.info()
                                 .$("dispatched [shard=").$(shard)
                                 .$(", id=").$(frameSequence.getId())
@@ -135,6 +138,10 @@ public class PageFrameDispatchJob implements Job {
                 }
                 break;
             }
+        }
+
+        if (idle && workStealingMode) {
+            stealWork(messageBus, shard, queue, reduceSubSeq, cleanupSubSeq, record);
         }
     }
 

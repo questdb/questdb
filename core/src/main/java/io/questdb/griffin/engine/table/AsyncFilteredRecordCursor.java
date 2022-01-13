@@ -70,6 +70,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         collectCursor();
         if (frameCount > 0) {
             frameSequence.await();
+            frameSequence.clear();
         }
     }
 
@@ -130,6 +131,10 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     @Override
     public void toTop() {
+        // check if we at the top already and there is nothing to do
+        if (frameIndex == 0 && frameRowIndex == 0) {
+            return;
+        }
         filter.toTop();
         frameSequence.toTop();
         if (frameCount > 0) {
@@ -151,16 +156,15 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 this.rows = task.getRows();
                 this.frameRowCount = rows.size();
                 this.frameIndex = task.getFrameIndex();
+                LOG.info()
+                        .$("collected [shard=").$(frameSequence.getShard())
+                        .$(", id=").$(frameSequence.getId())
+                        .$(", frameIndex=").$(task.getFrameIndex())
+                        .$(", frameCount=").$(frameSequence.getFrameCount())
+                        .$(", valid=").$(frameSequence.isValid())
+                        .I$();
                 if (this.frameRowCount > 0) {
                     this.frameRowIndex = 0;
-                    LOG.info()
-                            .$("collected [shard=").$(frameSequence.getShard())
-                            .$(", id=").$(frameSequence.getId())
-                            .$(", frameIndex=").$(task.getFrameIndex())
-                            .$(", frameCount=").$(frameSequence.getFrameCount())
-                            .$(", valid=").$(frameSequence.isValid())
-                            .I$();
-
                     record.setFrameIndex(task.getFrameIndex());
                     break;
                 } else {
