@@ -39,7 +39,9 @@ public final class Unsafe {
     public static final long INT_SCALE;
     public static final long LONG_OFFSET;
     public static final long LONG_SCALE;
+    //#if jdk.version!=8
     public static final Module JAVA_BASE_MODULE = System.class.getModule();
+    //#endif
     static final AtomicLong MEM_USED = new AtomicLong(0);
     private static final sun.misc.Unsafe UNSAFE;
     private static final AtomicLong MALLOC_COUNT = new AtomicLong(0);
@@ -54,6 +56,7 @@ public final class Unsafe {
     private Unsafe() {
     }
 
+    //#if jdk.version!=8
     public static void addExports(Module from, Module to, String packageName) {
         try {
             implAddExports.invoke(from, packageName, to);
@@ -61,6 +64,7 @@ public final class Unsafe {
             e.printStackTrace();
         }
     }
+    //#endif
 
     public static long arrayGetVolatile(long[] array, int index) {
         assert index > -1 && index < array.length;
@@ -71,7 +75,6 @@ public final class Unsafe {
         assert index > -1 && index < array.length;
         Unsafe.getUnsafe().putOrderedLong(array, LONG_OFFSET + ((long) index << LONG_SCALE), value);
     }
-    //#endif
 
     public static long calloc(long size, int memoryTag) {
         long ptr = malloc(size, memoryTag);
@@ -145,6 +148,7 @@ public final class Unsafe {
         return UNSAFE;
     }
 
+    //#if jdk.version!=8
     /**
      * Equivalent to {@link AccessibleObject#setAccessible(boolean) AccessibleObject.setAccessible(true)}, except that
      * it does not produce an illegal access error or warning.
@@ -154,6 +158,7 @@ public final class Unsafe {
     public static void makeAccessible(AccessibleObject accessibleObject) {
         UNSAFE.putBooleanVolatile(accessibleObject, OVERRIDE, true);
     }
+    //#endif
 
     public static long malloc(long size, int memoryTag) {
         long ptr = getUnsafe().allocateMemory(size);
@@ -190,19 +195,23 @@ public final class Unsafe {
         }
         return 16L;
     }
+    //#endif
 
+    //#if jdk.version!=8
     private static boolean isJava8Or11() {
         String javaVersion = System.getProperty("java.version");
         return javaVersion.startsWith("11") || javaVersion.startsWith("1.8");
     }
+    //#endif
 
+    //#if jdk.version!=8
     private static boolean is32BitJVM() {
         String sunArchDataModel = System.getProperty("sun.arch.data.model");
         return sunArchDataModel.equals("32");
     }
+    //#endif
 
     //#if jdk.version!=8
-
     private static boolean getOrdinaryObjectPointersCompressionStatus(boolean is32BitJVM) {
         class Probe {
             private int intField; // Accessed through reflection
@@ -224,6 +233,7 @@ public final class Unsafe {
         }
         return new Probe().probe();
     }
+    //#endif
 
     private static int msb(int value) {
         return 31 - Integer.numberOfLeadingZeros(value);
@@ -232,7 +242,6 @@ public final class Unsafe {
     interface AnonymousClassDefiner {
         Class<?> define(Class<?> hostClass, byte[] data);
     }
-    //#endif
 
     /**
      * Based on {@code Unsafe#defineAnonymousClass}.
