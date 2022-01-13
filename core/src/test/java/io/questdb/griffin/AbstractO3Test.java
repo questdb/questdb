@@ -37,7 +37,6 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
@@ -347,14 +346,7 @@ public class AbstractO3Test {
             try {
                 if (pool != null) {
                     pool.assignCleaner(Path.CLEANER);
-                    pool.assign(new O3CallbackJob(engine.getMessageBus()));
-                    pool.assign(new O3PartitionJob(engine.getMessageBus()));
-                    pool.assign(new O3OpenColumnJob(engine.getMessageBus()));
-                    pool.assign(new O3CopyJob(engine.getMessageBus()));
-                    pool.assign(new O3PurgeDiscoveryJob(engine.getMessageBus(), pool.getWorkerCount()));
-                    pool.assign(new O3PurgeJob(engine.getMessageBus()));
-
-                    O3Utils.initBuf(pool.getWorkerCount() + 1);
+                    O3Utils.setupWorkerPool(pool, engine.getMessageBus());
                     pool.start(LOG);
                 } else {
                     O3Utils.initBuf();
