@@ -673,7 +673,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
         }
     }
 
-    private static class PageAddressCache implements Mutable {
+    public static class PageAddressCache implements Mutable {
 
         private final int cacheSizeThreshold;
         // Index remapping for variable length columns.
