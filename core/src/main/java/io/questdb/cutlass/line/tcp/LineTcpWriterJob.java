@@ -46,23 +46,24 @@ class LineTcpWriterJob implements Job, Closeable {
     private final FloatingDirectCharSink floatingCharSink = new FloatingDirectCharSink();
     private final ObjList<TableUpdateDetails> assignedTables = new ObjList<>();
     private final MillisecondClock millisecondClock;
-    private final long maintenanceInterval;
+    private final long commitInterval;
     private final LineTcpMeasurementScheduler scheduler;
-    private long lastMaintenanceMillis = 0;
+    private long commitDeadLine;
 
     LineTcpWriterJob(
             int workerId,
             RingQueue<LineTcpMeasurementEvent> queue,
             Sequence sequence,
             MillisecondClock millisecondClock,
-            long maintenanceInterval,
+            long commitInterval,
             LineTcpMeasurementScheduler scheduler
     ) {
         this.workerId = workerId;
         this.queue = queue;
         this.sequence = sequence;
         this.millisecondClock = millisecondClock;
-        this.maintenanceInterval = maintenanceInterval;
+        this.commitInterval = commitInterval;
+        this.commitDeadLine = millisecondClock.getTicks() + commitInterval;
         this.scheduler = scheduler;
     }
 
@@ -85,23 +86,35 @@ class LineTcpWriterJob implements Job, Closeable {
     public boolean run(int workerId) {
         assert this.workerId == workerId;
         boolean busy = drainQueue();
-        if (!busy && !doMaintenance()) {
+        // while ILP is hammering the database via multiple connections the writer
+        // is likely to be very busy so commitIfTimeoutElapsed() will run infrequently
+        // commit should run regardless the busy flag but has to finish quickly
+        // idea is to store the tables in a heap data structure being the tables most
+        // desperately need a commit on the top
+        if (!busy && !commitIfTimeoutElapsed()) {
             tickWriters();
         }
         return busy;
     }
 
-    private boolean doMaintenance() {
-        final long ticks = millisecondClock.getTicks();
-        if (ticks - lastMaintenanceMillis < maintenanceInterval) {
-            return false;
+    private boolean commitIfTimeoutElapsed() {
+        final long millis = millisecondClock.getTicks();
+        if (millis > commitDeadLine) {
+            for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
+                if (assignedTables.getQuick(n).commitIfTimeoutElapsed(millis)) {
+                    // this return is to avoid holding up ingestion
+                    // after every successful commit we go back to drain the queue
+                    // if the queue is still empty we will come back and other tables will have their chance for a commit too
+                    // obviously tables at the end of the list (assignedTables) are disadvantaged but commits are
+                    // still issued automatically after we reached the max number of uncommitted rows and eventually
+                    // all tables in the list will get their commit after ingestion stops or slows down
+                    // the heap based solution mentioned above will eliminate this problem completely
+                    return true;
+                }
+            }
+            commitDeadLine = millis + commitInterval;
         }
-
-        lastMaintenanceMillis = ticks;
-        for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
-            assignedTables.getQuick(n).handleWriterThreadMaintenance(ticks, maintenanceInterval);
-        }
-        return true;
+        return false;
     }
 
     private void tickWriters() {
