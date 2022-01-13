@@ -24,31 +24,28 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.std.str.AbstractCharSink;
-import io.questdb.std.str.CharSink;
+import io.questdb.cairo.CairoException;
+import io.questdb.std.Chars;
+import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StringSink;
 
-class MangledUtf8Sink extends AbstractCharSink {
-    private final StringSink tempSink;
-
-    public MangledUtf8Sink(StringSink tempSink) {
-        this.tempSink = tempSink;
+final class LineTcpUtils {
+    static CharSequence utf8ToUtf16(DirectByteCharSequence utf8CharSeq, StringSink tempSink, boolean hasNonAsciiChars) {
+        if (hasNonAsciiChars) {
+            tempSink.clear();
+            if (!Chars.utf8Decode(utf8CharSeq.getLo(), utf8CharSeq.getHi(), tempSink)) {
+                throw CairoException.instance(0).put("invalid UTF8 in value for ").put(utf8CharSeq);
+            }
+            return tempSink;
+        }
+        return utf8CharSeq;
     }
 
-    public CharSequence encodeMangledUtf8(CharSequence value) {
+    static CharSequence utf8BytesToString(DirectByteCharSequence utf8CharSeq, StringSink tempSink) {
         tempSink.clear();
-        encodeUtf8(value);
-        return tempSink;
-    }
-
-    @Override
-    public CharSink put(char c) {
-        tempSink.put((char)((byte)c));
-        return this;
-    }
-
-    @Override
-    public CharSink put(char[] chars, int start, int len) {
-        throw new UnsupportedOperationException();
+        for (int i = 0, n = utf8CharSeq.length(); i < n; i++) {
+            tempSink.put(utf8CharSeq.charAt(i));
+        }
+        return tempSink.toString();
     }
 }
