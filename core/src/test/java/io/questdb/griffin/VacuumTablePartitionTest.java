@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.O3PurgeDiscoveryJob;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -42,8 +41,10 @@ public class VacuumTablePartitionTest extends AbstractGriffinTest {
                     compiler.compile("VACUUM partitions \"таблица\";", sqlExecutionContext);
                 }
                 Assert.fail();
-            } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "cannot schedule vacuum action, queue is full");
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "cannot schedule vacuum action, queue is full, please retry " +
+                        "or increase Purge Discovery Queue Capacity");
+                Assert.assertEquals("VACUUM partitions ".length(), ex.getPosition());
             }
 
             // cleanup
