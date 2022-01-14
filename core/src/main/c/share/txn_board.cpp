@@ -98,18 +98,13 @@ class txn_scoreboard_t {
         }
 
         auto new_min = min.load(std::memory_order_acquire);
-        const auto initial_min = new_min;
         const auto next_max = new_min + size;
-        while (new_min < next_max) {
-            while (new_min < next_max && get_count_unchecked(new_min) == 0) {
-                new_min++;
-            }
-
-            if (new_min > initial_min) {
-                min.store(new_min, std::memory_order_release);
-            }
-            version.store(current_version + 2, std::memory_order_release);
+        while (new_min < next_max && get_count_unchecked(new_min) == 0) {
+            new_min++;
         }
+
+        min.store(new_min, std::memory_order_release);
+        version.store(current_version + 2, std::memory_order_release);
         return new_min;
     }
 
