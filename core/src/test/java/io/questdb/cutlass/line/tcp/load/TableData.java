@@ -49,8 +49,8 @@ public class TableData {
         index.add(rows.size() - 1, line.getTimestamp());
     }
 
-    public boolean await(long seconds) {
-        return readyLatch.await(TimeUnit.SECONDS.toNanos(seconds));
+    public boolean await(long micros) {
+        return readyLatch.await(TimeUnit.MICROSECONDS.toNanos(micros));
     }
 
     public synchronized CharSequence generateRows(TableReaderMetadata metadata) {
