@@ -36,6 +36,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -572,6 +573,7 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Test
+    @Ignore
     public void testMemoryRestrictionsWithUnion() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
@@ -606,6 +608,7 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Test
+    @Ignore
     public void testCircuitBreakerWithUnion() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();

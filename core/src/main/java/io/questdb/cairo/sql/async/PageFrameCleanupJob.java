@@ -86,7 +86,7 @@ public class PageFrameCleanupJob implements Job {
                     LOG.info()
                             .$("cleanup [shard=").$(shard)
                             .$(", id=").$(frameSequence.getId())
-                            .$(", frameIndex=").$(frameIndex)
+                            .$(", frameIndex=").$(frameIndex - 1)
                             .$(", frameCount=").$(frameCount)
                             .I$();
 
@@ -106,9 +106,7 @@ public class PageFrameCleanupJob implements Job {
                                 .$(", id=").$(frameSequence.getId())
                                 .$(", removing=").$(frameSequence.getCollectSubSeq())
                                 .I$();
-
-                        messageBus.getPageFrameCollectFanOut(shard).remove(frameSequence.getCollectSubSeq());
-                        frameSequence.clear();
+                        frameSequence.reset();
                     }
                 } finally {
                     cleanupSubSeq.done(cursor);

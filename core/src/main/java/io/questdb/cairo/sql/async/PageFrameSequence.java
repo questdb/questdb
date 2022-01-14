@@ -75,38 +75,22 @@ public class PageFrameSequence<T> implements Mutable {
 
     public void await() {
         LOG.info()
-                .$("releasing [shard=").$(shard)
+                .$("awaiting completion [shard=").$(shard)
                 .$(", id=").$(id)
                 .$(", frameCount=").$(frameCount)
                 .I$();
-        while (doneLatch.getCount() == 0) {
-            stealWork();
-
-            // this seems necessary
-            PageFrameDispatchJob.stealWork(
-                    messageBus,
-                    shard,
-                    messageBus.getPageFrameReduceQueue(shard),
-                    messageBus.getPageFrameReduceSubSeq(shard),
-                    messageBus.getPageFrameCleanupSubSeq(shard),
-                    records[getWorkerId()]
-            );
-        }
-        frameCount = 0;
+        xxx2();
     }
 
     @Override
     public void clear() {
-        this.id = -1;
-        this.shard = -1;
+        // prepare different frame sequence using the same object instance
+        // todo: call reset from here ?
         this.frameCount = 0;
         pageAddressCache.clear();
-        frameRowCounts.clear();
         pageFrameCursor = Misc.free(pageFrameCursor);
         collectSubSeq.clear();
-        doneLatch.countDown();
         this.dispatchStartIndex = 0;
-        this.owner.set(OWNER_NONE);
     }
 
     public PageFrameSequence<T> dispatch(
@@ -259,6 +243,16 @@ public class PageFrameSequence<T> implements Mutable {
         return owner.get() == OWNER_WORK_STEALING || owner.compareAndSet(OWNER_NONE, OWNER_WORK_STEALING);
     }
 
+    public void reset() {
+        // prepare to resent the same sequence
+        // as it might be required by toTop()
+        this.id = -1;
+        this.shard = -1;
+        frameRowCounts.clear();
+        doneLatch.countDown();
+        this.owner.set(OWNER_NONE);
+    }
+
     public void stealWork() {
         final PageAddressCacheRecord rec = records[getWorkerId()];
         // we were asked to steal work from dispatch queue and beyond, as much as we can
@@ -290,6 +284,12 @@ public class PageFrameSequence<T> implements Mutable {
 
     public void toTop() {
         if (frameCount > 0) {
+            LOG.info().$("toTop [shard=").$(shard)
+                    .$(", id=").$(id)
+                    .I$();
+
+            xxx2();
+
             dispatchStartIndex = 0;
             reduceCounter.set(0);
             this.pageFrameCursor.toTop();
@@ -349,5 +349,37 @@ public class PageFrameSequence<T> implements Mutable {
         this.atom = atom;
         this.dispatchPubSeq = dispatchPubSeq;
         this.pageFrameDispatchQueue = pageFrameDispatchQueue;
+    }
+
+    private void xxx() {
+        while (doneLatch.getCount() == 0) {
+            stealWork();
+        }
+    }
+
+    private void xxx2() {
+        final RingQueue<PageFrameReduceTask> queue = messageBus.getPageFrameReduceQueue(shard);
+        final MCSequence pageFrameReduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
+        final MCSequence pageFrameCleanupSubSeq = messageBus.getPageFrameCleanupSubSeq(shard);
+        while (doneLatch.getCount() == 0) {
+            final PageAddressCacheRecord rec = records[getWorkerId()];
+            // we were asked to steal work from dispatch queue and beyond, as much as we can
+            if (PageFrameReduceJob.consumeQueue(queue, pageFrameReduceSubSeq, rec)) {
+                long cursor = collectSubSeq.next();
+                if (cursor > -1) {
+                    // discard collect items
+                    collectSubSeq.done(cursor);
+                } else if (
+                        PageFrameCleanupJob.consumeQueue(
+                                queue,
+                                pageFrameCleanupSubSeq,
+                                messageBus,
+                                shard,
+                                queue.getCycle()
+                        )
+                )
+                    LockSupport.parkNanos(1);
+            }
+        }
     }
 }
