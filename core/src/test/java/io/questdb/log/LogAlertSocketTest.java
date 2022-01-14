@@ -178,7 +178,7 @@ public class LogAlertSocketTest {
                 // send and fail after a re-connect delay
                 final long start = System.nanoTime();
                 Assert.assertFalse(alertSkt.send(builder.length()));
-                Assert.assertTrue(System.nanoTime() - start >= 2 * LogAlertSocket.RECONNECT_DELAY_NANO);
+                Assert.assertTrue(System.nanoTime() - start >= LogAlertSocket.RECONNECT_DELAY_NANO);
             }
         });
     }
