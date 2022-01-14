@@ -28,6 +28,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
@@ -40,7 +41,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.locks.LockSupport;
 
 public class ConcurrentTest {
     private final static Log LOG = LogFactory.getLog(ConcurrentTest.class);
@@ -235,7 +235,7 @@ public class ConcurrentTest {
 
                         long resp;
                         while ((resp = pongPubSeq.next()) < 0) {
-                            LockSupport.parkNanos(10);
+                            Os.pause();
                         }
                         pongQueue.get(resp).correlationId = requestId;
                         pongPubSeq.done(resp);
@@ -243,7 +243,7 @@ public class ConcurrentTest {
                         // LOG.info().$("pong sent ").$(requestId).$();
                         i++;
                     } else {
-                        LockSupport.parkNanos(10);
+                        Os.pause();
                     }
                 }
                 doneCount.incrementAndGet();
@@ -266,7 +266,7 @@ public class ConcurrentTest {
                         long requestId = idGen.incrementAndGet();
                         long reqSeq;
                         while ((reqSeq = pingPubSeq.next()) < 0) {
-                            LockSupport.parkNanos(10);
+                            Os.pause();
                         }
                         pingQueue.get(reqSeq).correlationId = requestId;
                         pingPubSeq.done(reqSeq);
@@ -276,7 +276,7 @@ public class ConcurrentTest {
                         long responseId, respCursor;
                         do {
                             while ((respCursor = pongSubSeq.next()) < 0) {
-                                LockSupport.parkNanos(10);
+                                Os.pause();
                             }
                             responseId = pongQueue.get(respCursor).correlationId;
                             pongSubSeq.done(respCursor);
@@ -348,7 +348,7 @@ public class ConcurrentTest {
 
                         long pongCursor;
                         while ((pongCursor = pongPubSeq.next()) < 0) {
-                            LockSupport.parkNanos(10);
+                            Os.pause();
                         }
                         pongQueue.get(pongCursor).correlationId = requestId;
                         pongPubSeq.done(pongCursor);
@@ -357,7 +357,7 @@ public class ConcurrentTest {
                         // System.out.println("* pong " + requestId);
                         i++;
                     } else {
-                        LockSupport.parkNanos(10);
+                        Os.pause();
                     }
                 }
                 doneCount.incrementAndGet();
@@ -391,7 +391,7 @@ public class ConcurrentTest {
                         long requestId = idGen.incrementAndGet();
                         long pingCursor;
                         while ((pingCursor = pingPubSeq.next()) < 0) {
-                            LockSupport.parkNanos(10);
+                            Os.pause();
                         }
                         pingQueue.get(pingCursor).correlationId = requestId;
                         pingPubSeq.done(pingCursor);
@@ -403,7 +403,7 @@ public class ConcurrentTest {
                         long responseId, pongCursor;
                         do {
                             while ((pongCursor = pongSubSeq.next()) < 0) {
-                                LockSupport.parkNanos(10);
+                                Os.pause();
                             }
                             pingPong.add(pongCursor);
                             responseId = pongQueue.get(pongCursor).correlationId;
@@ -678,7 +678,7 @@ public class ConcurrentTest {
         while (true) {
             long cursor = pubSeq.next();
             if (cursor < 0) {
-                LockSupport.parkNanos(1);
+                Os.pause();
                 continue;
             }
             queue.get(cursor).value = i++;
@@ -735,7 +735,7 @@ public class ConcurrentTest {
                 while (true) {
                     long cursor = sequence.next();
                     if (cursor < 0) {
-                        LockSupport.parkNanos(1);
+                        Os.pause();
                         continue;
                     }
                     int v = queue.get(cursor).value;

@@ -4437,7 +4437,7 @@ public class IODispatcherTest {
                         if (TimeUnit.NANOSECONDS.toSeconds(endNanos - startNanos) > 30) {
                             Assert.fail("Timed out waiting for despatcher to stop listening");
                         }
-                        LockSupport.parkNanos(1);
+                        Os.pause();
                     }
 
                     final String request = "GET /status?x=1&a=%26b&c&d=x HTTP/1.1\r\n" +
