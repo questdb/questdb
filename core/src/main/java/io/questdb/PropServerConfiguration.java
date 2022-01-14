@@ -346,6 +346,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long lineTcpIOWorkerYieldThreshold;
     private long lineTcpIOWorkerSleepThreshold;
     private long lineTcpMaintenanceInterval;
+    private long lineTcpCommitTimeout;
     private String lineTcpAuthDbPath;
     private int lineDefaultPartitionBy;
     private int lineTcpAggressiveReadRetryCount;
@@ -769,6 +770,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpIOWorkerYieldThreshold = getLong(properties, env, "line.tcp.io.worker.yield.threshold", 10);
                 this.lineTcpIOWorkerSleepThreshold = getLong(properties, env, "line.tcp.io.worker.sleep.threshold", 10000);
                 this.lineTcpMaintenanceInterval = getInt(properties, env, "line.tcp.maintenance.job.interval", 30_000);
+                this.lineTcpCommitTimeout = getInt(properties, env, "line.tcp.commit.timeout", 1000);
                 this.lineTcpAuthDbPath = getString(properties, env, "line.tcp.auth.db.path", null);
                 String defaultPartitionByProperty = getString(properties, env, "line.tcp.default.partition.by", "DAY");
                 this.lineDefaultPartitionBy = PartitionBy.fromString(defaultPartitionByProperty);
@@ -2396,6 +2398,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getMaintenanceInterval() {
             return lineTcpMaintenanceInterval;
+        }
+
+        @Override
+        public long getCommitTimeout() {
+            return lineTcpCommitTimeout;
         }
 
         @Override

@@ -49,7 +49,7 @@ import java.lang.ThreadLocal;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
-public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
+class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(AbstractLineTcpReceiverTest.class);
 
     protected static final int WAIT_NO_WAIT = 0x0;
@@ -97,6 +97,9 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected int msgBufferSize = 256 * 1024;
     protected long minIdleMsBeforeWriterRelease = 30000;
     protected int aggressiveReadRetryCount = 0;
+    protected long maintenanceInterval = 25;
+    protected long commitTimeout = 25;
+
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
         @Override
         public IODispatcherConfiguration getNetDispatcherConfiguration() {
@@ -125,7 +128,12 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
 
         @Override
         public long getMaintenanceInterval() {
-            return 25;
+            return maintenanceInterval;
+        }
+
+        @Override
+        public long getCommitTimeout() {
+            return commitTimeout;
         }
 
         @Override
