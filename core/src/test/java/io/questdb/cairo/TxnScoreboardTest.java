@@ -28,6 +28,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Numbers;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -253,8 +254,8 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                         for (int i = 0; i < expect; i++) {
                             scoreboard1.acquireTxn(i + 134);
                         }
-                        // scoreboard capacity should be exhausted
-                        // and we should be refused to acquire any more slots
+                        // scoreboard capacity should be exhausted,
+                        // we should be refused to acquire any more slots
                         try {
                             scoreboard1.acquireTxn(expect + 134);
                             Assert.fail();
@@ -590,9 +591,18 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             try {
                 barrier.await();
                 for (int i = 0; i < iterations; i++) {
+                    for(int sleepCount = 0; sleepCount < 600 && txn.get() - scoreboard.getMin() > scoreboard.getEntryCount() - 1; sleepCount++) {
+                        // Some readers are slow and don't release transaction yet. Give them a bit more time
+                        Os.sleep(10);
+                    }
+
                     long nextTxn = txn.incrementAndGet();
                     Assert.assertTrue(scoreboard.getActiveReaderCount(nextTxn) <= readers);
-                    LockSupport.parkNanos(1000);
+                    if (Os.type == Os.WINDOWS) {
+                        Thread.yield();
+                    } else {
+                        LockSupport.parkNanos(1);
+                    }
                     Assert.assertTrue(scoreboard.getActiveReaderCount(nextTxn) <= readers);
                 }
             } catch (Exception e) {

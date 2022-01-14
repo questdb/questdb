@@ -39,36 +39,16 @@ void set_max_atomic(std::atomic<T> &slot, T value) {
     } while (true);
 }
 
-const int64_t MIN_VERSION_MASK = 0xFFFF;
-
-class min_version_pair {
-    // first 2 bytes used for update version
-    // and last 6 bytes for minimum of scoreboard
-    int64_t min_version;
-
-public:
-    inline min_version_pair(const int64_t &min, const uint16_t &version) {
-        this->min_version = (min << 16) | (int64_t) version; // TODO: check with uint16_t overflow
-    }
-
-    [[nodiscard]] inline int64_t get_min() const {
-        return min_version >> 16;
-    }
-
-    [[nodiscard]] inline uint16_t get_version() const {
-        return (uint16_t) (min_version & MIN_VERSION_MASK);
-    }
-};
-
 template<typename T>
 class txn_scoreboard_t {
     uint32_t mask = 0;
     uint32_t size = 0;
     std::atomic<int64_t> max = 0;
+    std::atomic<int64_t> min = L_MAX;
     // 1-based min txn that is in-use
     // we have to use 1 based txn to rule out possibility of 0 txn
     // 0 is initial value when shared memory is created
-    std::atomic<min_version_pair> min_version{min_version_pair(L_MAX, 0)};
+    std::atomic<uint64_t> version = 0;
     std::atomic<T> counts[];
 
     inline static T inc(T val) {
@@ -84,19 +64,19 @@ class txn_scoreboard_t {
     }
 
     inline bool increment_count(int64_t txn) {
-        auto curr_min_version = min_version.load(std::memory_order_acquire);
+        uint64_t current_version;
+        while ((current_version = version.load(std::memory_order_acquire)) % 2 == 1) {
+            // Locked by update_min. Spin wait.
+        }
+
         while (true) {
-            auto current_min = curr_min_version.get_min();
+            auto current_min = min.load(std::memory_order_acquire);
             if (current_min > txn) {
                 return false;
             }
             _get_count(txn).fetch_add(1, std::memory_order_acq_rel);
-
-            if (!min_version.compare_exchange_strong(
-                    curr_min_version,
-                    min_version_pair(current_min, curr_min_version.get_version() + 1)
-            )) {
-                // roll back
+            if (min.load(std::memory_order_acquire) != current_version) {
+                // Min has been updated. Roll back and retry.
                 _get_count(txn).fetch_add(-1, std::memory_order_acq_rel);
             } else {
                 return true;
@@ -104,37 +84,45 @@ class txn_scoreboard_t {
         }
     }
 
-    inline void update_min(const int64_t txn) {
-        auto current_min = min_version.load(std::memory_order_acquire);
-        auto new_min = current_min.get_min();
-        while (new_min < txn) {
-            while (new_min < txn && get_count_unchecked(new_min) == 0) {
+    inline int64_t update_min() {
+        uint64_t current_version;
+        while (true) {
+            current_version = version.load(std::memory_order_acquire);
+            if (current_version % 2 == 0) {
+                // Unlocked. Lock it
+                if (version.compare_exchange_strong(current_version, current_version + 1, std::memory_order_acq_rel)) {
+                    break;
+                }
+            }
+            // Locked, someone else updates it. Wait, this call has to return best possible min
+        }
+
+        auto new_min = min.load(std::memory_order_acquire);
+        const auto initial_min = new_min;
+        const auto next_max = new_min + size;
+        while (new_min < next_max) {
+            while (new_min < next_max && get_count_unchecked(new_min) == 0) {
                 new_min++;
             }
 
-            if (current_min.get_min() == new_min
-                || min_version.compare_exchange_strong(
-                    current_min,
-                    min_version_pair(new_min, current_min.get_version() + 1),
-                    std::memory_order_acq_rel)) {
-                return;
+            if (new_min > initial_min) {
+                min.store(new_min, std::memory_order_release);
             }
-            new_min = current_min.get_min();
+            version.store(current_version + 2, std::memory_order_release);
         }
+        return new_min;
     }
 
 public:
 
-    inline int64_t get_min() {
-        return min_version.load().get_min();
-    }
-
-    inline int64_t get_max() {
-        return max.load();
+    inline int64_t get_clean_min() {
+        return update_min();
     }
 
     inline T get_count(int64_t offset) {
-        if (offset < get_min()) {
+        if (offset < min.load()) {
+            // This can be dirty increment below min
+            // everything below min is considered 0
             return 0;
         }
         return get_count_unchecked(offset);
@@ -145,29 +133,32 @@ public:
     }
 
     inline void txn_release(int64_t txn) {
-        const int64_t max_offset = get_max();
         // this is atomic decrement
-        if (_get_count(txn).fetch_add(-1) == 0 && get_min() == txn) {
-            update_min(max_offset);
-        }
+        _get_count(txn)--;
     }
 
     inline int32_t txn_acquire(int64_t txn) {
-        int64_t _min = get_min();
+        int64_t _min = min.load(std::memory_order_acquire);
+        if (_min == L_MAX) {
+            if (min.compare_exchange_weak(_min, txn, std::memory_order_acq_rel)) {
+                _min = txn;
+            }
+        }
+
+        if (txn - _min >= size) {
+            // lazy update min when the range is exhausted
+            _min = update_min();
+        }
+
         if (txn < _min) {
             return -2;
         }
 
-        if (txn - _min >= size) {
-            update_min(txn);
-        }
-
-        if (txn - get_min() < size) {
+        if (txn - _min < size) {
             if (!increment_count(txn)) {
                 // Race lost, someone updated min to higher value. Roll back the increment.
                 return -2;
             }
-            update_min(txn);
             set_max_atomic(max, txn);
             return 0;
         }
@@ -200,12 +191,12 @@ JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getCount
 
 JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getMin
         (JAVA_STATIC, jlong p_txn_scoreboard) {
-    return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->get_min();
+    return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->get_clean_min();
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getScoreboardSize
         (JAVA_STATIC, jlong entryCount) {
-    return sizeof(txn_scoreboard_t<COUNTER_T>) + entryCount * sizeof(std::atomic<COUNTER_T>);
+    return (jlong)sizeof(txn_scoreboard_t<COUNTER_T>) + entryCount * (jlong) sizeof(std::atomic<COUNTER_T>);
 }
 
 JNIEXPORT void JNICALL Java_io_questdb_cairo_TxnScoreboard_init

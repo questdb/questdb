@@ -99,6 +99,10 @@ public class TxnScoreboard implements Closeable, Mutable {
         return getActiveReaderCount(nameTxn) == 0;
     }
 
+    public int getEntryCount() {
+        return pow2EntryCount;
+    }
+
     public TxnScoreboard ofRO(@Transient Path root) {
         clear();
         int rootLen = root.length();
