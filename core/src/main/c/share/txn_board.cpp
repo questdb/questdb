@@ -33,7 +33,7 @@ template<typename T>
 void set_max_atomic(std::atomic<T> &slot, T value) {
     do {
         T current = slot.load();
-        if (value <= current || slot.compare_exchange_strong(current, value, std::memory_order_acq_rel)) {
+        if (value <= current || slot.compare_exchange_strong(current, value)) {
             break;
         }
     } while (true);
@@ -41,11 +41,12 @@ void set_max_atomic(std::atomic<T> &slot, T value) {
 
 const int64_t MIN_VERSION_MASK = 0xFFFF;
 
-struct min_version_pair {
+class min_version_pair {
     // first 2 bytes used for update version
     // and last 6 bytes for minimum of scoreboard
     int64_t min_version;
 
+public:
     inline min_version_pair(const int64_t &min, const uint16_t &version) {
         this->min_version = (min << 16) | (int64_t) version; // TODO: check with uint16_t overflow
     }
@@ -55,7 +56,7 @@ struct min_version_pair {
     }
 
     [[nodiscard]] inline uint16_t get_version() const {
-        return (uint16_t )(min_version & MIN_VERSION_MASK);
+        return (uint16_t) (min_version & MIN_VERSION_MASK);
     }
 };
 
@@ -91,8 +92,10 @@ class txn_scoreboard_t {
             }
             _get_count(txn).fetch_add(1, std::memory_order_acq_rel);
 
-            min_version_pair updated_min_version {current_min, curr_min_version.get_version() + 1};
-            if (!min_version.compare_exchange_strong(curr_min_version, updated_min_version)) {
+            if (!min_version.compare_exchange_strong(
+                    curr_min_version,
+                    min_version_pair(current_min, curr_min_version.get_version() + 1)
+            )) {
                 // roll back
                 _get_count(txn).fetch_add(-1, std::memory_order_acq_rel);
             } else {
@@ -112,7 +115,7 @@ class txn_scoreboard_t {
             if (current_min.get_min() == new_min
                 || min_version.compare_exchange_strong(
                     current_min,
-                    min_version_pair{new_min, current_min.get_version() + 1},
+                    min_version_pair(new_min, current_min.get_version() + 1),
                     std::memory_order_acq_rel)) {
                 return;
             }
