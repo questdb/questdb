@@ -165,7 +165,7 @@ public class SendAndReceiveRequestBuilder {
                     timeoutExpired = true;
                     break;
                 } else {
-                    Os.sleep(10);
+                    Os.pause();
                 }
             }
         }
@@ -279,7 +279,7 @@ public class SendAndReceiveRequestBuilder {
                     timeoutExpired = true;
                     break;
                 } else {
-                    LockSupport.parkNanos(1);
+                    Os.pause();
                 }
             }
         }

@@ -58,7 +58,6 @@ import org.junit.Test;
 
 import java.security.PrivateKey;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.LockSupport;
 
 public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     private final static Log LOG = LogFactory.getLog(LineTcpReceiverTest.class);
@@ -1102,7 +1101,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                                     break;
                                 } catch (EntryLockedException ex) {
                                     LOG.info().$("retrying read for ").$(tableName).$();
-                                    LockSupport.parkNanos(1);
+                                    Os.pause();
                                 }
                             }
                         }

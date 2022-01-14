@@ -371,7 +371,7 @@ public class LogFactoryTest {
                 long cursor = pubSeq.next();
 
                 if (cursor < 0) {
-                    LockSupport.parkNanos(1);
+                    Os.pause();
                     continue;
                 }
 
