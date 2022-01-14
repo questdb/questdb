@@ -26,6 +26,7 @@
 #include "util.h"
 #include "jni.h"
 #include <atomic>
+#include <algorithm>
 
 #define COUNTER_T uint16_t
 
@@ -33,7 +34,7 @@ template<typename T>
 void set_max_atomic(std::atomic<T> &slot, T value) {
     do {
         T current = slot.load();
-        if (value <= current || slot.compare_exchange_strong(current, value)) {
+        if (value <= current || slot.compare_exchange_strong(current, value, std::memory_order_acq_rel)) {
             break;
         }
     } while (true);
@@ -44,11 +45,10 @@ class txn_scoreboard_t {
     uint32_t mask = 0;
     uint32_t size = 0;
     std::atomic<int64_t> max = 0;
-    std::atomic<int64_t> min = L_MAX;
     // 1-based min txn that is in-use
     // we have to use 1 based txn to rule out possibility of 0 txn
     // 0 is initial value when shared memory is created
-    std::atomic<uint64_t> version = 0;
+    std::atomic<int64_t> min = 0;
     std::atomic<T> counts[];
 
     inline static T inc(T val) {
@@ -64,54 +64,39 @@ class txn_scoreboard_t {
     }
 
     inline bool increment_count(int64_t txn) {
-        uint64_t current_version;
-        while ((current_version = version.load(std::memory_order_acquire)) % 2 == 1) {
-            // Locked by update_min. Spin wait.
-        }
-
+        auto current_max = max.load(std::memory_order_acquire);
         while (true) {
-            auto current_min = min.load(std::memory_order_acquire);
-            if (current_min > txn) {
+            if (txn < current_max) {
                 return false;
             }
-            _get_count(txn).fetch_add(1, std::memory_order_acq_rel);
-            if (min.load(std::memory_order_acquire) != current_version) {
-                // Min has been updated. Roll back and retry.
-                _get_count(txn).fetch_add(-1, std::memory_order_acq_rel);
-            } else {
+            _get_count(txn).fetch_add(1);
+
+            if (max.compare_exchange_strong(current_max, txn, std::memory_order_acq_rel)) {
                 return true;
+            }
+
+            if (txn < current_max) {
+                // We cannot increment below max, only max or higher
+                // Roll back the increment
+                _get_count(txn).fetch_sub(1);
+                return false;
             }
         }
     }
 
-    inline int64_t update_min() {
-        uint64_t current_version;
-        while (true) {
-            current_version = version.load(std::memory_order_acquire);
-            if (current_version % 2 == 0) {
-                // Unlocked. Lock it
-                if (version.compare_exchange_strong(current_version, current_version + 1, std::memory_order_acq_rel)) {
-                    break;
-                }
-            }
-            // Locked, someone else updates it. Wait, this call has to return best possible min
+    inline int64_t update_min(int64_t offset) {
+        int64_t o = min.load();
+        while (o < offset && get_count_unchecked(o) == 0) {
+            o++;
         }
-
-        auto new_min = min.load(std::memory_order_acquire);
-        const auto next_max = new_min + size;
-        while (new_min < next_max && get_count_unchecked(new_min) == 0) {
-            new_min++;
-        }
-
-        min.store(new_min, std::memory_order_release);
-        version.store(current_version + 2, std::memory_order_release);
-        return new_min;
+        set_max_atomic(min, o);
+        return o;
     }
 
 public:
 
     inline int64_t get_clean_min() {
-        return update_min();
+        return min;
     }
 
     inline T get_count(int64_t offset) {
@@ -128,33 +113,30 @@ public:
     }
 
     inline void txn_release(int64_t txn) {
-        // this is atomic decrement
-        _get_count(txn)--;
+        if (_get_count(txn).fetch_sub(1) == 1 && min == txn) {
+            update_min(max);
+        }
     }
 
     inline int32_t txn_acquire(int64_t txn) {
         int64_t _min = min.load(std::memory_order_acquire);
-        if (_min == L_MAX) {
-            if (min.compare_exchange_weak(_min, txn, std::memory_order_acq_rel)) {
+        if (_min == 0) {
+            if (min.compare_exchange_strong(_min, txn, std::memory_order_acq_rel)) {
                 _min = txn;
             }
         }
 
         if (txn - _min >= size) {
             // lazy update min when the range is exhausted
-            _min = update_min();
-        }
-
-        if (txn < _min) {
-            return -2;
+            _min = update_min(txn);
         }
 
         if (txn - _min < size) {
             if (!increment_count(txn)) {
-                // Race lost, someone updated min to higher value. Roll back the increment.
+                // Race lost, someone updated max to higher value
                 return -2;
             }
-            set_max_atomic(max, txn);
+            update_min(txn);
             return 0;
         }
         return -1;

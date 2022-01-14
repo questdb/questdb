@@ -51,7 +51,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 TxnScoreboard txnScoreboard = new TxnScoreboard(ff, 2048).ofRW(shmPath.of(root))
         ) {
             // Thread A (reader) - grabs read permit
-            txnScoreboard.acquireTxn(lastCommittedTxn);
+            Assert.assertTrue(txnScoreboard.acquireTxn(lastCommittedTxn));
             // Thread B (reader) - lags behind and grabs read permit for the previous transaction. Acquire rejected
             Assert.assertFalse(txnScoreboard.acquireTxn(lastCommittedTxn - 1));
             // Thread A (reader) - grabs read permit
@@ -183,11 +183,11 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                         final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
                 ) {
                     for (int i = 0; i < 1024; i++) {
-                        scoreboard.acquireTxn(i);
+                        Assert.assertTrue(scoreboard.acquireTxn(i));
                         scoreboard.releaseTxn(i);
                     }
                     for (int i = 1024; i < 1500; i++) {
-                        scoreboard.acquireTxn(i);
+                        Assert.assertTrue(scoreboard.acquireTxn(i));
                         scoreboard.releaseTxn(i);
                     }
                     Assert.assertEquals(1499, scoreboard.getMin());
@@ -274,7 +274,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
                         // now that we release "head" slot we should be able to acquire more
                         scoreboard1.releaseTxn(134);
-                        testMinIs(scoreboard1, 135);
+                        Assert.assertEquals(135, scoreboard1.getMin());
                         // and we should be able to allocate another one
                         scoreboard1.acquireTxn(expect + 134);
 
@@ -419,20 +419,15 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                     scoreboard1.releaseTxn(68);
                     Assert.assertEquals(67, scoreboard1.getMin());
                     scoreboard1.releaseTxn(67);
-
-                    testMinIs(scoreboard1, 69);
+                    Assert.assertEquals(69, scoreboard1.getMin());
 
                     scoreboard1.releaseTxn(69);
-                    scoreboard1.acquireTxn(70);
-                    scoreboard1.releaseTxn(70);
                     Assert.assertEquals(70, scoreboard1.getMin());
-
                     scoreboard1.releaseTxn(71);
                     Assert.assertTrue(scoreboard1.isTxnAvailable(71));
                     Assert.assertEquals(70, scoreboard1.getMin());
                     scoreboard1.releaseTxn(70);
-
-                    testMinIs(scoreboard1, 71);
+                    Assert.assertEquals(71, scoreboard1.getMin());
 
                     scoreboard1.acquireTxn(72);
                 }
@@ -448,10 +443,27 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         });
     }
 
-    private void testMinIs(TxnScoreboard scoreboard1, int txn) {
-        scoreboard1.acquireTxn(txn);
-        scoreboard1.releaseTxn(txn);
-        Assert.assertEquals(txn, scoreboard1.getMin());
+    @Test
+    public void testGetMinOnEmpty() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    final Path shmPath = new Path();
+                    final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
+            ) {
+                Assert.assertEquals(0, scoreboard.getMin());
+                Assert.assertTrue(scoreboard.acquireTxn(2048));
+                Assert.assertEquals(2048, scoreboard.getMin());
+                scoreboard.releaseTxn(2048);
+                Assert.assertEquals(2048, scoreboard.getMin());
+
+                Assert.assertTrue(scoreboard.acquireTxn(10000L));
+                scoreboard.releaseTxn(10000L);
+                Assert.assertEquals(10000L, scoreboard.getMin());
+
+
+                Assert.assertFalse(scoreboard.acquireTxn(4095));
+            }
+        });
     }
 
     @Test
@@ -591,9 +603,9 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             try {
                 barrier.await();
                 for (int i = 0; i < iterations; i++) {
-                    for(int sleepCount = 0; sleepCount < 600 && txn.get() - scoreboard.getMin() > scoreboard.getEntryCount() - 1; sleepCount++) {
+                    for(int sleepCount = 0; sleepCount < 10 && txn.get() - scoreboard.getMin() > scoreboard.getEntryCount() - 1; sleepCount++) {
                         // Some readers are slow and don't release transaction yet. Give them a bit more time
-                        Os.sleep(10);
+                        Os.sleep(1);
                     }
 
                     long nextTxn = txn.incrementAndGet();
