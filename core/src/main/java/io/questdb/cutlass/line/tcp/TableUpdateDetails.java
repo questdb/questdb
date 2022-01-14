@@ -37,8 +37,8 @@ import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
-import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
 import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8BytesToString;
+import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
 
 public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
@@ -78,7 +78,7 @@ public class TableUpdateDetails implements Closeable {
         CairoConfiguration cairoConfiguration = engine.getConfiguration();
         this.millisecondClock = cairoConfiguration.getMillisecondClock();
         this.commitTimeout = configuration.getCommitTimeout();
-        this.noAppendInterval = commitTimeout/4;
+        this.noAppendInterval = commitTimeout / 4;
         this.writerTickRowsCountMod = cairoConfiguration.getWriterTickRowsCountMod();
         this.lastCommitMillis = millisecondClock.getTicks();
         this.writer = writer;
@@ -94,12 +94,6 @@ public class TableUpdateDetails implements Closeable {
                 .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
                 .$(']').$();
 
-    }
-
-    public void tick() {
-        if (writer != null) {
-            writer.tick(false);
-        }
     }
 
     @Override
@@ -176,30 +170,29 @@ public class TableUpdateDetails implements Closeable {
                 .I$();
     }
 
-    int getSymbolIndex(ThreadLocalDetails localDetails, int colIndex, CharSequence symValue) {
-        if (colIndex >= 0) {
-            return localDetails.getSymbolIndex(colIndex, symValue);
+    public void tick() {
+        if (writer != null) {
+            writer.tick(false);
         }
-        return SymbolTable.VALUE_NOT_FOUND;
     }
 
-    ThreadLocalDetails getThreadLocalDetails(int workerId) {
-        lastMeasurementMillis = millisecondClock.getTicks();
-        return localDetailsArray[workerId];
-    }
-
-    int getTimestampIndex() {
-        return timestampIndex;
-    }
-
-    TableWriter getWriter() {
-        return writer;
-    }
-
-    void handleRowAppended() {
-        if (commitIfMaxUncommittedRowsCountReached(writer)) {
-            lastCommitMillis = millisecondClock.getTicks();
+    private boolean commit(long millis) {
+        if (writer != null && writer.getUncommittedRowCount() > 0) {
+            LOG.debug().$("timeout-elapsed commit [rows=").$(writer.getUncommittedRowCount()).$(", table=").$(tableNameUtf16).I$();
+            lastCommitMillis = millis;
+            try {
+                writer.commit();
+            } catch (Throwable e) {
+                LOG.error().$("could not commit [table=").$(writer.getTableName()).$(", msg=").$(e.getMessage()).I$();
+                try {
+                    writer.rollback();
+                } catch (Throwable th) {
+                    LOG.error().$("could not perform emergency rollback [table=").$(writer.getTableName()).I$();
+                }
+            }
+            return true;
         }
+        return false;
     }
 
     private boolean commitIfMaxUncommittedRowsCountReached(TableWriter writer) {
@@ -225,23 +218,30 @@ public class TableUpdateDetails implements Closeable {
         return commit(millis);
     }
 
-    private boolean commit(long millis) {
-        if (writer != null && writer.getUncommittedRowCount() > 0) {
-            LOG.debug().$("timeout-elapsed commit [rows=").$(writer.getUncommittedRowCount()).$(", table=").$(tableNameUtf16).I$();
-            lastCommitMillis = millis;
-            try {
-                writer.commit();
-            } catch (Throwable e) {
-                LOG.error().$("could not commit [table=").$(writer.getTableName()).$(", msg=").$(e.getMessage()).I$();
-                try {
-                    writer.rollback();
-                } catch (Throwable th) {
-                    LOG.error().$("could not perform emergency rollback [table=").$(writer.getTableName()).I$();
-                }
-            }
-            return true;
+    int getSymbolIndex(ThreadLocalDetails localDetails, int colIndex, CharSequence symValue) {
+        if (colIndex >= 0) {
+            return localDetails.getSymbolIndex(colIndex, symValue);
         }
-        return false;
+        return SymbolTable.VALUE_NOT_FOUND;
+    }
+
+    ThreadLocalDetails getThreadLocalDetails(int workerId) {
+        lastMeasurementMillis = millisecondClock.getTicks();
+        return localDetailsArray[workerId];
+    }
+
+    int getTimestampIndex() {
+        return timestampIndex;
+    }
+
+    TableWriter getWriter() {
+        return writer;
+    }
+
+    void handleRowAppended() {
+        if (commitIfMaxUncommittedRowsCountReached(writer)) {
+            lastCommitMillis = millisecondClock.getTicks();
+        }
     }
 
     void releaseWriter(boolean commit) {
@@ -331,6 +331,11 @@ public class TableUpdateDetails implements Closeable {
             columnTypeMeta.add(0);
         }
 
+        String getColName() {
+            assert colName != null;
+            return colName;
+        }
+
         // returns the column index for column name passed in colNameUtf8,
         // or COLUMN_NOT_FOUND if column index cannot be resolved (i.e. new column),
         // or DUPLICATED_COLUMN if the column has already been processed on the current event
@@ -380,29 +385,8 @@ public class TableUpdateDetails implements Closeable {
             }
         }
 
-        private void updateColumnTypeCache(int colIndex, TableReaderMetadata metadata) {
-            if (colIndex < 0) {
-                return;
-            }
-            columnCount = metadata.getColumnCount();
-            final int colType = metadata.getColumnType(colIndex);
-            final int geoHashBits = ColumnType.getGeoHashBits(colType);
-            columnTypeMeta.extendAndSet(colIndex + 1,
-                    geoHashBits == 0 ? 0 : Numbers.encodeLowHighShorts((short) geoHashBits, ColumnType.tagOf(colType)));
-        }
-
         int getColumnTypeMeta(int colIndex) {
             return columnTypeMeta.getQuick(colIndex + 1); // first val accounts for new cols, index -1
-        }
-
-        void resetProcessedColumnsTracking() {
-            processedCols.setAll(columnCount, false);
-            addedColsUtf16.clear();
-        }
-
-        String getColName() {
-            assert colName != null;
-            return colName;
         }
 
         int getSymbolIndex(int colIndex, CharSequence symValue) {
@@ -413,6 +397,11 @@ public class TableUpdateDetails implements Closeable {
             return symCache.getSymbolKey(symValue);
         }
 
+        void resetProcessedColumnsTracking() {
+            processedCols.setAll(columnCount, false);
+            addedColsUtf16.clear();
+        }
+
         private int resolveSymbolIndex(TableReaderMetadata metadata, int colIndex) {
             int symIndex = 0;
             for (int n = 0; n < colIndex; n++) {
@@ -421,6 +410,17 @@ public class TableUpdateDetails implements Closeable {
                 }
             }
             return symIndex;
+        }
+
+        private void updateColumnTypeCache(int colIndex, TableReaderMetadata metadata) {
+            if (colIndex < 0) {
+                return;
+            }
+            columnCount = metadata.getColumnCount();
+            final int colType = metadata.getColumnType(colIndex);
+            final int geoHashBits = ColumnType.getGeoHashBits(colType);
+            columnTypeMeta.extendAndSet(colIndex + 1,
+                    geoHashBits == 0 ? 0 : Numbers.encodeLowHighShorts((short) geoHashBits, ColumnType.tagOf(colType)));
         }
     }
 }
