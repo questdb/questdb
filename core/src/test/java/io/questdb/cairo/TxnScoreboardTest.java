@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -468,14 +469,15 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
     @Test
     public void testHammer() throws Exception {
-        testHammerScoreboard(4, 1, 10_000);
+        testHammerScoreboard(8, 1, 10_000);
     }
 
     @SuppressWarnings("SameParameterValue")
     private void testHammerScoreboard(int readers, int writers, int iterations) throws Exception {
+        int entryCount = Numbers.ceilPow2(iterations) / 4;
         try (
                 final Path shmPath = new Path();
-                final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
+                final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, entryCount).ofRW(shmPath.of(root))
         ) {
             final CyclicBarrier barrier = new CyclicBarrier(readers + writers);
             final CountDownLatch latch = new CountDownLatch(readers + writers);
@@ -495,8 +497,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             latch.await();
 
             Assert.assertEquals(0, anomaly.get());
-            Assert.assertEquals(iterations, scoreboard.getMin());
-            for(long i = scoreboard.getMin() - 1024; i < scoreboard.getMin() + 2 * 1024; i++) {
+            for (long i = scoreboard.getMin() - entryCount; i < scoreboard.getMin() + entryCount; i++) {
                 Assert.assertEquals(0, scoreboard.getActiveReaderCount(i));
             }
         }
@@ -526,12 +527,19 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         public void run() {
             try {
                 barrier.await();
-                for (int i = 0; i < iterations; i++) {
-                    long t = txn.get();
+                long t;
+                while ((t = txn.get()) < iterations) {
                     if (scoreboard.acquireTxn(t)) {
                         long activeReaderCount = scoreboard.getActiveReaderCount(t);
                         if (activeReaderCount > readers || activeReaderCount < 1) {
-                            anomaly.incrementAndGet();
+                            LOG.errorW()
+                                    .$("activeReaderCount=")
+                                    .$(activeReaderCount)
+                                    .$(",txn=").$(t)
+                                    .$(",min=")
+                                    .$(scoreboard.getMin())
+                                    .$();
+                            anomaly.addAndGet(100);
                         }
                         LockSupport.parkNanos(1);
                         scoreboard.releaseTxn(t);
@@ -539,16 +547,18 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                         long prevCount = scoreboard.getActiveReaderCount(t - 1);
                         if (min == t && prevCount > 0) {
                             anomaly.incrementAndGet();
+                            LOG.errorW().$("min=").$(min).$(",prev_count=").$(prevCount).$();
                         }
                         if (prevCount > readers - 1 || prevCount < 0) {
-                            anomaly.incrementAndGet();
+                            LOG.errorW().$("prev_count=").$(prevCount).$();
+                            anomaly.addAndGet(10);
                         }
                         LockSupport.parkNanos(10);
                     }
                 }
-            } catch (Exception e) {
+            } catch (Throwable e) {
+                LOG.errorW().$(e).$();
                 anomaly.incrementAndGet();
-                e.printStackTrace();
             } finally {
                 latch.countDown();
             }
@@ -582,12 +592,12 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 for (int i = 0; i < iterations; i++) {
                     long nextTxn = txn.incrementAndGet();
                     Assert.assertTrue(scoreboard.getActiveReaderCount(nextTxn) <= readers);
-                    LockSupport.parkNanos(50);
+                    LockSupport.parkNanos(1000);
                     Assert.assertTrue(scoreboard.getActiveReaderCount(nextTxn) <= readers);
                 }
             } catch (Exception e) {
+                LOG.errorW().$(e).$();
                 anomaly.incrementAndGet();
-                e.printStackTrace();
             } finally {
                 latch.countDown();
             }
