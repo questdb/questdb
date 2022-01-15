@@ -482,12 +482,71 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
     @Test
     public void testHammer() throws Exception {
-        testHammerScoreboard(8, 1, 10_000);
+        testHammerScoreboard(8, 1, 10000);
+    }
+
+    @Test
+    public void testStartContension() throws Exception {
+        int readers = 8;
+        int iterations = 8;
+        int entryCount = Math.max(Numbers.ceilPow2(readers) * 8, Numbers.ceilPow2(iterations) / 4);
+        try (
+                final Path shmPath = new Path();
+                final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, entryCount).ofRW(shmPath.of(root))
+        ) {
+            final CyclicBarrier barrier = new CyclicBarrier(readers);
+            final CountDownLatch latch = new CountDownLatch(readers);
+            final AtomicInteger anomaly = new AtomicInteger();
+
+            for (int i = 0; i < readers; i++) {
+                final int txn = i;
+                Thread reader = new Thread(() -> {
+                    try {
+                        barrier.await();
+                        long t;
+                        if (scoreboard.acquireTxn(txn)) {
+                            long activeReaderCount = scoreboard.getActiveReaderCount(txn);
+                            if (activeReaderCount > readers || activeReaderCount < 1) {
+                                LOG.errorW()
+                                        .$("activeReaderCount=")
+                                        .$(activeReaderCount)
+                                        .$(",txn=").$(txn)
+                                        .$(",min=")
+                                        .$(scoreboard.getMin())
+                                        .$();
+                                anomaly.addAndGet(100);
+                            }
+                            LockSupport.parkNanos(1);
+                            scoreboard.releaseTxn(txn);
+                            long min = scoreboard.getMin();
+                            long prevCount = scoreboard.getActiveReaderCount(txn - 1);
+                            if (min == txn && prevCount > 0) {
+                                anomaly.incrementAndGet();
+                                LOG.errorW().$("min=").$(min).$(",prev_count=").$(prevCount).$();
+                            }
+                            if (prevCount > readers - 1 || prevCount < 0) {
+                                LOG.errorW().$("prev_count=").$(prevCount).$();
+                                anomaly.addAndGet(10);
+                            }
+                        }
+                    } catch (Throwable e) {
+                        LOG.errorW().$(e).$();
+                        anomaly.incrementAndGet();
+                    } finally {
+                        latch.countDown();
+                    }
+                });
+                reader.start();
+            }
+            latch.await();
+
+            Assert.assertEquals(0, anomaly.get());
+        }
     }
 
     @SuppressWarnings("SameParameterValue")
     private void testHammerScoreboard(int readers, int writers, int iterations) throws Exception {
-        int entryCount = Numbers.ceilPow2(iterations) / 4;
+        int entryCount = Math.max(Numbers.ceilPow2(readers) * 8, Numbers.ceilPow2(iterations) / 4);
         try (
                 final Path shmPath = new Path();
                 final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, entryCount).ofRW(shmPath.of(root))

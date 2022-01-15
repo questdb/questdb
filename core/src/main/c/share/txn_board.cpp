@@ -50,15 +50,19 @@ class txn_scoreboard_t {
     }
 
     inline bool increment_count(int64_t txn) {
+        // Increment txn count
+        // but do not allow to use txn below max value
+        // Once there is count for txn 100
+        // there cannot be increments for txn 99, 98 etc
+        // When an attempt to acquire below max happens
+        // the attempt is rejected and TableReader should re-read _txn file
         auto current_max = max.load();
         if (txn < current_max) {
             return false;
         }
         get_counter(txn)++; // atomic
 
-        if (max.compare_exchange_strong(current_max, txn)) {
-            return true;
-        }
+        while (!max.compare_exchange_weak(current_max, txn) && txn > current_max);
 
         if (txn < current_max) {
             // We cannot increment below max, only max or higher
@@ -66,8 +70,6 @@ class txn_scoreboard_t {
             get_counter(txn)--; //atomic
             return false;
         }
-
-        // current_max == txn
         return true;
     }
 
@@ -86,22 +88,28 @@ public:
         return val == L_MAX ? 0 : val;
     }
 
-    inline T get_count(const int64_t& offset) {
+    inline T get_count(const int64_t &offset) {
         return get_counter(offset);
     }
 
-    inline void txn_release(int64_t txn) {
-        if (get_counter(txn).fetch_sub(1) == 1 && min.load() == txn) {
+    inline T txn_release(int64_t txn) {
+        auto countAfter = get_counter(txn).fetch_sub(1) - 1;
+        if (countAfter == 0 && min.load() == txn) {
             update_min(max);
         }
+        return countAfter;
     }
 
+    // txn should be >= 0
     inline int32_t txn_acquire(int64_t txn) {
         int64_t current_min = min.load();
         if (current_min == L_MAX) {
-            if (min.compare_exchange_weak(current_min, txn)) {
+            if (min.compare_exchange_strong(current_min, txn)) {
                 current_min = txn;
             }
+        }
+        if (txn < current_min) {
+            return -1;
         }
 
         if (txn - current_min >= size) {
@@ -111,19 +119,19 @@ public:
         if (txn - current_min < size) {
             if (!increment_count(txn)) {
                 // Race lost, someone updated max to higher value
-                return -2;
+                return -1;
             }
             update_min(txn);
             return 0;
         }
-        return -1;
+        return -2;
     }
 
     void init(uint32_t entry_count) {
         mask = entry_count - 1;
         size = entry_count;
         int64_t expected = 0;
-        min.compare_exchange_weak(expected, L_MAX);
+        min.compare_exchange_strong(expected, L_MAX);
     }
 };
 
@@ -134,9 +142,9 @@ JNIEXPORT jint JNICALL Java_io_questdb_cairo_TxnScoreboard_acquireTxn0
     return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->txn_acquire(txn);
 }
 
-JNIEXPORT void JNICALL Java_io_questdb_cairo_TxnScoreboard_releaseTxn0
+JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_releaseTxn0
         (JAVA_STATIC, jlong p_txn_scoreboard, jlong txn) {
-    reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->txn_release(txn);
+    return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->txn_release(txn);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getCount
@@ -151,7 +159,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getMin
 
 JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getScoreboardSize
         (JAVA_STATIC, jlong entryCount) {
-    return (jlong)sizeof(txn_scoreboard_t<COUNTER_T>) + entryCount * (jlong) sizeof(std::atomic<COUNTER_T>);
+    return (jlong) sizeof(txn_scoreboard_t<COUNTER_T>) + entryCount * (jlong) sizeof(std::atomic<COUNTER_T>);
 }
 
 JNIEXPORT void JNICALL Java_io_questdb_cairo_TxnScoreboard_init
