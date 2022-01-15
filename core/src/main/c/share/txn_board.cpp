@@ -39,18 +39,10 @@ class txn_scoreboard_t {
     std::atomic<T> counts[];
 
     template<typename TT>
-    TT set_max_atomic(std::atomic<TT> &slot, TT value) {
+    inline static TT set_max_atomic(std::atomic<TT> &slot, TT value) {
         TT current = slot.load(std::memory_order_relaxed);
         while (value > current && !slot.compare_exchange_weak(current, value));
         return std::max(value, current);
-    }
-
-    inline static T inc(T val) {
-        return val + 1;
-    }
-
-    inline static T dec(T val) {
-        return val - 1;
     }
 
     inline std::atomic<T> &get_counter(const int64_t offset) {
