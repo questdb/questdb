@@ -130,7 +130,7 @@ public:
     void init(uint32_t entry_count) {
         mask = entry_count - 1;
         size = entry_count;
-        auto expected = 0L;
+        int64_t expected = 0;
         min.compare_exchange_weak(expected, L_MAX);
     }
 };
