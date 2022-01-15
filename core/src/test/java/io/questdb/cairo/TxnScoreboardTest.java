@@ -605,7 +605,11 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 for (int i = 0; i < iterations; i++) {
                     for(int sleepCount = 0; sleepCount < 10 && txn.get() - scoreboard.getMin() > scoreboard.getEntryCount() - 1; sleepCount++) {
                         // Some readers are slow and don't release transaction yet. Give them a bit more time
-                        Os.sleep(1);
+                        Os.sleep(10);
+                    }
+                    if (txn.get() - scoreboard.getMin() > scoreboard.getEntryCount() - 1) {
+                        anomaly.addAndGet(1000);
+                        return;
                     }
 
                     long nextTxn = txn.incrementAndGet();

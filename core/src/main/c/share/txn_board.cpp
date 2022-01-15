@@ -31,25 +31,19 @@
 #define COUNTER_T uint16_t
 
 template<typename T>
-void set_max_atomic(std::atomic<T> &slot, T value) {
-    do {
-        T current = slot.load();
-        if (value <= current || slot.compare_exchange_strong(current, value, std::memory_order_acq_rel)) {
-            break;
-        }
-    } while (true);
-}
-
-template<typename T>
 class txn_scoreboard_t {
     uint32_t mask = 0;
     uint32_t size = 0;
-    std::atomic<int64_t> max = 0;
-    // 1-based min txn that is in-use
-    // we have to use 1 based txn to rule out possibility of 0 txn
-    // 0 is initial value when shared memory is created
-    std::atomic<int64_t> min = 0;
+    std::atomic<int64_t> max{0};
+    std::atomic<int64_t> min{0};
     std::atomic<T> counts[];
+
+    template<typename TT>
+    TT set_max_atomic(std::atomic<TT> &slot, TT value) {
+        TT current = slot.load(std::memory_order_relaxed);
+        while (value > current && !slot.compare_exchange_weak(current, value));
+        return std::max(value, current);
+    }
 
     inline static T inc(T val) {
         return val + 1;
@@ -59,79 +53,70 @@ class txn_scoreboard_t {
         return val - 1;
     }
 
-    inline std::atomic<T> &_get_count(const int64_t offset) {
+    inline std::atomic<T> &get_counter(const int64_t offset) {
         return counts[offset & mask];
     }
 
     inline bool increment_count(int64_t txn) {
-        auto current_max = max.load(std::memory_order_acquire);
-        while (true) {
-            if (txn < current_max) {
-                return false;
-            }
-            _get_count(txn).fetch_add(1);
-
-            if (max.compare_exchange_strong(current_max, txn, std::memory_order_acq_rel)) {
-                return true;
-            }
-
-            if (txn < current_max) {
-                // We cannot increment below max, only max or higher
-                // Roll back the increment
-                _get_count(txn).fetch_sub(1);
-                return false;
-            }
+        auto current_max = max.load();
+        if (txn < current_max) {
+            return false;
         }
+        get_counter(txn)++; // atomic
+
+        if (max.compare_exchange_strong(current_max, txn)) {
+            return true;
+        }
+
+        if (txn < current_max) {
+            // We cannot increment below max, only max or higher
+            // Roll back the increment
+            get_counter(txn)--; //atomic
+            return false;
+        }
+
+        // current_max == txn
+        return true;
     }
 
     inline int64_t update_min(int64_t offset) {
         int64_t o = min.load();
-        while (o < offset && get_count_unchecked(o) == 0) {
+        while (o < offset && get_count(o) == 0) {
             o++;
         }
-        set_max_atomic(min, o);
-        return o;
+        return set_max_atomic(min, o);
     }
 
 public:
 
     inline int64_t get_clean_min() {
-        return min;
+        int64_t val = min;
+        return val == L_MAX ? 0 : val;
     }
 
-    inline T get_count(int64_t offset) {
-        if (offset < min.load()) {
-            // This can be dirty increment below min
-            // everything below min is considered 0
-            return 0;
-        }
-        return get_count_unchecked(offset);
-    }
-
-    inline T get_count_unchecked(const int64_t offset) {
-        return _get_count(offset).load();
+    inline T get_count(const int64_t& offset) {
+        return get_counter(offset);
     }
 
     inline void txn_release(int64_t txn) {
-        if (_get_count(txn).fetch_sub(1) == 1 && min == txn) {
+        if (get_counter(txn).fetch_sub(1) == 1 && min.load() == txn) {
             update_min(max);
         }
     }
 
     inline int32_t txn_acquire(int64_t txn) {
-        int64_t _min = min.load(std::memory_order_acquire);
-        if (_min == 0) {
-            if (min.compare_exchange_strong(_min, txn, std::memory_order_acq_rel)) {
-                _min = txn;
+        int64_t current_min = min.load();
+        if (current_min == L_MAX) {
+            if (min.compare_exchange_weak(current_min, txn)) {
+                current_min = txn;
             }
         }
 
-        if (txn - _min >= size) {
-            // lazy update min when the range is exhausted
-            _min = update_min(txn);
+        if (txn - current_min >= size) {
+            current_min = update_min(txn);
         }
 
-        if (txn - _min < size) {
+        if (txn - current_min < size) {
             if (!increment_count(txn)) {
                 // Race lost, someone updated max to higher value
                 return -2;
@@ -142,10 +127,11 @@ public:
         return -1;
     }
 
-
     void init(uint32_t entry_count) {
         mask = entry_count - 1;
         size = entry_count;
+        auto expected = 0L;
+        min.compare_exchange_weak(expected, L_MAX);
     }
 };
 
