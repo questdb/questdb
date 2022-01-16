@@ -567,7 +567,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             latch.await();
 
             Assert.assertEquals(0, anomaly.get());
-            for (long i = scoreboard.getMin() - entryCount; i < scoreboard.getMin() + entryCount; i++) {
+            for (long i = 0; i < iterations + 1; i++) {
                 Assert.assertEquals(0, scoreboard.getActiveReaderCount(i));
             }
         }
