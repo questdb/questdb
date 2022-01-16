@@ -73,19 +73,20 @@ class txn_scoreboard_t {
         return true;
     }
 
-    inline int64_t update_min(int64_t offset) {
+    inline int64_t update_min(const int64_t offset) {
         int64_t o = min.load();
-        while (o < offset && get_count(o) == 0) {
+        int64_t check_limit = std::min(offset, o + size);
+        while (o < check_limit && get_count(o) == 0) {
             o++;
         }
-        return set_max_atomic(min, o);
+        return set_max_atomic(min, o == check_limit ? offset : o);
     }
 
 public:
 
     inline int64_t get_clean_min() {
         int64_t val = min;
-        return val == L_MAX ? 0 : val;
+        return val == L_MIN ? 0 : val;
     }
 
     inline T get_count(const int64_t &offset) {
@@ -103,7 +104,7 @@ public:
     // txn should be >= 0
     inline int32_t txn_acquire(int64_t txn) {
         int64_t current_min = min.load();
-        if (current_min == L_MAX) {
+        if (current_min == L_MIN) {
             if (min.compare_exchange_strong(current_min, txn)) {
                 current_min = txn;
             }
@@ -131,7 +132,7 @@ public:
         mask = entry_count - 1;
         size = entry_count;
         int64_t expected = 0;
-        min.compare_exchange_strong(expected, L_MAX);
+        min.compare_exchange_strong(expected, L_MIN);
     }
 };
 
