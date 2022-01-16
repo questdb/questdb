@@ -40,7 +40,7 @@ class txn_scoreboard_t {
 
     template<typename TT>
     inline static TT set_max_atomic(std::atomic<TT> &slot, TT value) {
-        TT current = slot.load(std::memory_order_relaxed);
+        TT current = slot.load();
         while (value > current && !slot.compare_exchange_weak(current, value));
         return std::max(value, current);
     }
@@ -75,7 +75,7 @@ class txn_scoreboard_t {
 
     inline int64_t update_min(const int64_t offset) {
         int64_t o = min.load();
-        int64_t check_limit = std::min(offset, o + size);
+        const int64_t check_limit = std::min(offset, o + size); // If no lock for full size, means not locks at all
         while (o < check_limit && get_count(o) == 0) {
             o++;
         }
@@ -102,7 +102,7 @@ public:
     }
 
     // txn should be >= 0
-    inline int32_t txn_acquire(int64_t txn) {
+    inline int64_t txn_acquire(int64_t txn) {
         int64_t current_min = min.load();
         if (current_min == L_MIN) {
             if (min.compare_exchange_strong(current_min, txn)) {
@@ -125,7 +125,7 @@ public:
             update_min(txn);
             return 0;
         }
-        return -2;
+        return -current_min - 2;
     }
 
     void init(uint32_t entry_count) {
@@ -138,7 +138,7 @@ public:
 
 extern "C" {
 
-JNIEXPORT jint JNICALL Java_io_questdb_cairo_TxnScoreboard_acquireTxn0
+JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_acquireTxn0
         (JAVA_STATIC, jlong p_txn_scoreboard, jlong txn) {
     return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->txn_acquire(txn);
 }

@@ -486,7 +486,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testStartContension() throws Exception {
+    public void testStartContention() throws Exception {
         int readers = 8;
         int iterations = 8;
         int entryCount = Math.max(Numbers.ceilPow2(readers) * 8, Numbers.ceilPow2(iterations) / 4);

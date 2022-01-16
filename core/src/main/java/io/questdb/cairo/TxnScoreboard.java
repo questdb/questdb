@@ -66,7 +66,8 @@ public class TxnScoreboard implements Closeable, Mutable {
             // retry
             return false;
         }
-        throw CairoException.instance(0).put("max txn-inflight limit reached [txn=").put(txn).put(", min=").put(getMin()).put(", size=").put(pow2EntryCount).put(']');
+        long min = -response - 2;
+        throw CairoException.instance(0).put("max txn-inflight limit reached [txn=").put(txn).put(", min=").put(min).put(", size=").put(pow2EntryCount).put(']');
     }
 
     @Override
@@ -143,13 +144,13 @@ public class TxnScoreboard implements Closeable, Mutable {
         assert releaseTxn(mem, txn) > -1;
     }
 
-    private static int acquireTxn(long pTxnScoreboard, long txn) {
+    private static long acquireTxn(long pTxnScoreboard, long txn) {
         assert pTxnScoreboard > 0;
         LOG.debug().$("acquire [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
         return acquireTxn0(pTxnScoreboard, txn);
     }
 
-    private native static int acquireTxn0(long pTxnScoreboard, long txn);
+    private native static long acquireTxn0(long pTxnScoreboard, long txn);
 
     private native static long releaseTxn0(long pTxnScoreboard, long txn);
 
