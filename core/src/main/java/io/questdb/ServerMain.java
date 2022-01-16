@@ -179,7 +179,6 @@ public class ServerMain {
         }
 
         workerPool.assignCleaner(Path.CLEANER);
-<<<<<<<<< Temporary merge branch 1
         workerPool.assign(new O3CallbackJob(cairoEngine.getMessageBus()));
         workerPool.assign(new O3PartitionJob(cairoEngine.getMessageBus()));
         workerPool.assign(new O3OpenColumnJob(cairoEngine.getMessageBus()));

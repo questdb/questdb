@@ -89,7 +89,12 @@ public class PageFrameSequence<T> implements Mutable {
         this.frameCount = 0;
         pageAddressCache.clear();
         pageFrameCursor = Misc.free(pageFrameCursor);
-        collectSubSeq.clear();
+        // collect sequence mau not be set here when
+        // factory is closed without using cursor
+        if (collectSubSeq != null) {
+            messageBus.getPageFrameCollectFanOut(shard).remove(collectSubSeq);
+            collectSubSeq.clear();
+        }
         this.dispatchStartIndex = 0;
     }
 
@@ -109,6 +114,10 @@ public class PageFrameSequence<T> implements Mutable {
         // of queues that we will interact with
         final int shard = 0;//rnd.nextInt(bus.getPageFrameReduceShardCount());
         final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext);
+
+        // todo: hack
+        ((Function)atom).init(pageFrameCursor, executionContext);
+
         final MPSequence dispatchPubSeq = bus.getPageFrameDispatchPubSeq();
         final RingQueue<PageFrameDispatchTask> pageFrameDispatchQueue = bus.getPageFrameDispatchQueue();
 
@@ -247,7 +256,6 @@ public class PageFrameSequence<T> implements Mutable {
         // prepare to resent the same sequence
         // as it might be required by toTop()
         this.id = -1;
-        this.shard = -1;
         frameRowCounts.clear();
         doneLatch.countDown();
         this.owner.set(OWNER_NONE);
@@ -290,6 +298,8 @@ public class PageFrameSequence<T> implements Mutable {
 
             xxx2();
 
+            // done latch is reset by method call above
+            doneLatch.reset();
             dispatchStartIndex = 0;
             reduceCounter.set(0);
             this.pageFrameCursor.toTop();

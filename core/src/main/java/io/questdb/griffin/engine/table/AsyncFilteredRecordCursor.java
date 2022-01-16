@@ -188,7 +188,6 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         this.frameIndex = -1;
         this.frameCount = frameSequence.getFrameCount();
         record.of(frameSequence.getSymbolTableSource(), pageAddressCache);
-        filter.init(this, executionContext);
         // when frameCount is 0 our collect sequence is not subscribed
         // we should not be attempting to fetch queue using it
         if (frameCount > 0) {
