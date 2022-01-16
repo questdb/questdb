@@ -516,7 +516,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                                         .$();
                                 anomaly.addAndGet(100);
                             }
-                            LockSupport.parkNanos(1);
+                            parkNanos();
                             scoreboard.releaseTxn(txn);
                             long min = scoreboard.getMin();
                             long prevCount = scoreboard.getActiveReaderCount(txn - 1);
@@ -575,6 +575,14 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         }
     }
 
+    private static void parkNanos() {
+        if (Os.type == Os.WINDOWS) {
+            Thread.yield();
+        } else {
+            LockSupport.parkNanos(1);
+        }
+    }
+
     private static class Reader extends Thread {
 
         private final TxnScoreboard scoreboard;
@@ -600,7 +608,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             try {
                 barrier.await();
                 long t;
-                while ((t = txn.get()) < iterations) {
+                while ((t = txn.getAcquire()) < iterations) {
                     if (scoreboard.acquireTxn(t)) {
                         long activeReaderCount = scoreboard.getActiveReaderCount(t);
                         if (activeReaderCount > readers || activeReaderCount < 1) {
@@ -613,7 +621,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                                     .$();
                             anomaly.addAndGet(100);
                         }
-                        LockSupport.parkNanos(1);
+                        parkNanos();
                         scoreboard.releaseTxn(t);
                         long min = scoreboard.getMin();
                         long prevCount = scoreboard.getActiveReaderCount(t - 1);
@@ -673,7 +681,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                                 .I$();
                         Os.sleep(100);
                     }
-                    if (txn.get() - scoreboard.getMin() > publishWaitBarrier) {
+                    if (txn.get() - scoreboard.getMin() > scoreboard.getEntryCount()) {
                         // Wait didn't help. Abort the test.
                         anomaly.addAndGet(1000);
                         LOG.errorW().$("slow reader release, abort [txn=")
@@ -687,11 +695,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
                     long nextTxn = txn.incrementAndGet();
                     Assert.assertTrue(scoreboard.getActiveReaderCount(nextTxn) <= readers);
-                    if (Os.type == Os.WINDOWS) {
-                        Thread.yield();
-                    } else {
-                        LockSupport.parkNanos(1);
-                    }
+                    parkNanos();
                     Assert.assertTrue(scoreboard.getActiveReaderCount(nextTxn) <= readers);
                 }
             } catch (Exception e) {
