@@ -660,14 +660,15 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         @Override
         public void run() {
             try {
-                long publishWaitBarrier = scoreboard.getEntryCount() - 1;
+                long publishWaitBarrier = scoreboard.getEntryCount() - 2;
                 barrier.await();
                 for (int i = 0; i < iterations; i++) {
                     for (int sleepCount = 0; sleepCount < 50 && txn.get() - scoreboard.getMin() > publishWaitBarrier; sleepCount++) {
                         // Some readers are slow and haven't release transaction yet. Give them a bit more time
+                        long min = scoreboard.getMin();
                         LOG.infoW().$("slow reader release, waiting... [txn=")
                                 .$(txn)
-                                .$(", min=").$(scoreboard.getMin())
+                                .$(", min=").$(min)
                                 .$(", size=").$(scoreboard.getEntryCount())
                                 .I$();
                         Os.sleep(100);
