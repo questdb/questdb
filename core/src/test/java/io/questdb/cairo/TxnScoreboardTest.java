@@ -546,7 +546,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
     @SuppressWarnings("SameParameterValue")
     private void testHammerScoreboard(int readers, int iterations) throws Exception {
-        int entryCount = Math.max(Numbers.ceilPow2(readers) * 8, Numbers.ceilPow2(iterations) / 4);
+        int entryCount = Math.max(Numbers.ceilPow2(readers) * 8, Numbers.ceilPow2(iterations));
         try (
                 final Path shmPath = new Path();
                 final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, entryCount).ofRW(shmPath.of(root))
