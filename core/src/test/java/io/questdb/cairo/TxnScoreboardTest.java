@@ -38,10 +38,11 @@ import org.junit.Test;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 
 public class TxnScoreboardTest extends AbstractCairoTest {
+    private static volatile long txn;
+
     @Test
     public void testCheckNoLocksBeforeTxn() {
         final long lastCommittedTxn = 2;
@@ -482,7 +483,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
     @Test
     public void testHammer() throws Exception {
-        testHammerScoreboard(8, 1, 10000);
+        testHammerScoreboard(8, 10000);
     }
 
     @Test
@@ -503,7 +504,6 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 Thread reader = new Thread(() -> {
                     try {
                         barrier.await();
-                        long t;
                         if (scoreboard.acquireTxn(txn)) {
                             long activeReaderCount = scoreboard.getActiveReaderCount(txn);
                             if (activeReaderCount > readers || activeReaderCount < 1) {
@@ -545,26 +545,24 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     }
 
     @SuppressWarnings("SameParameterValue")
-    private void testHammerScoreboard(int readers, int writers, int iterations) throws Exception {
+    private void testHammerScoreboard(int readers, int iterations) throws Exception {
         int entryCount = Math.max(Numbers.ceilPow2(readers) * 8, Numbers.ceilPow2(iterations) / 4);
         try (
                 final Path shmPath = new Path();
                 final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, entryCount).ofRW(shmPath.of(root))
         ) {
-            final CyclicBarrier barrier = new CyclicBarrier(readers + writers);
-            final CountDownLatch latch = new CountDownLatch(readers + writers);
-            final AtomicLong txn = new AtomicLong();
+            final CyclicBarrier barrier = new CyclicBarrier(readers + 1);
+            final CountDownLatch latch = new CountDownLatch(readers + 1);
+            txn = 0;
             final AtomicInteger anomaly = new AtomicInteger();
 
             for (int i = 0; i < readers; i++) {
-                Reader reader = new Reader(scoreboard, barrier, latch, txn, anomaly, iterations, readers);
+                Reader reader = new Reader(scoreboard, barrier, latch, anomaly, iterations, readers);
                 reader.start();
             }
 
-            for (int i = 0; i < writers; i++) {
-                Writer writer = new Writer(scoreboard, barrier, latch, txn, anomaly, iterations, readers);
-                writer.start();
-            }
+            Writer writer = new Writer(scoreboard, barrier, latch, anomaly, iterations, readers);
+            writer.start();
 
             latch.await();
 
@@ -588,16 +586,14 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         private final TxnScoreboard scoreboard;
         private final CyclicBarrier barrier;
         private final CountDownLatch latch;
-        private final AtomicLong txn;
         private final AtomicInteger anomaly;
         private final int iterations;
         private final int readers;
 
-        private Reader(TxnScoreboard scoreboard, CyclicBarrier barrier, CountDownLatch latch, AtomicLong txn, AtomicInteger anomaly, int iterations, int readers) {
+        private Reader(TxnScoreboard scoreboard, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger anomaly, int iterations, int readers) {
             this.scoreboard = scoreboard;
             this.barrier = barrier;
             this.latch = latch;
-            this.txn = txn;
             this.anomaly = anomaly;
             this.iterations = iterations;
             this.readers = readers;
@@ -608,7 +604,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             try {
                 barrier.await();
                 long t;
-                while ((t = txn.getAcquire()) < iterations) {
+                while ((t = txn) < iterations) {
                     if (scoreboard.acquireTxn(t)) {
                         long activeReaderCount = scoreboard.getActiveReaderCount(t);
                         if (activeReaderCount > readers || activeReaderCount < 1) {
@@ -650,16 +646,14 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         private final TxnScoreboard scoreboard;
         private final CyclicBarrier barrier;
         private final CountDownLatch latch;
-        private final AtomicLong txn;
         private final AtomicInteger anomaly;
         private final int iterations;
         private final int readers;
 
-        private Writer(TxnScoreboard scoreboard, CyclicBarrier barrier, CountDownLatch latch, AtomicLong txn, AtomicInteger anomaly, int iterations, int readers) {
+        private Writer(TxnScoreboard scoreboard, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger anomaly, int iterations, int readers) {
             this.scoreboard = scoreboard;
             this.barrier = barrier;
             this.latch = latch;
-            this.txn = txn;
             this.anomaly = anomaly;
             this.iterations = iterations;
             this.readers = readers;
@@ -671,7 +665,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 long publishWaitBarrier = scoreboard.getEntryCount() - 2;
                 barrier.await();
                 for (int i = 0; i < iterations; i++) {
-                    for (int sleepCount = 0; sleepCount < 50 && txn.get() - scoreboard.getMin() > publishWaitBarrier; sleepCount++) {
+                    for (int sleepCount = 0; sleepCount < 50 && txn - scoreboard.getMin() > publishWaitBarrier; sleepCount++) {
                         // Some readers are slow and haven't release transaction yet. Give them a bit more time
                         long min = scoreboard.getMin();
                         LOG.infoW().$("slow reader release, waiting... [txn=")
@@ -681,7 +675,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                                 .I$();
                         Os.sleep(100);
                     }
-                    if (txn.get() - scoreboard.getMin() > scoreboard.getEntryCount()) {
+                    if (txn - scoreboard.getMin() > scoreboard.getEntryCount()) {
                         // Wait didn't help. Abort the test.
                         anomaly.addAndGet(1000);
                         LOG.errorW().$("slow reader release, abort [txn=")
@@ -689,11 +683,12 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                                 .$(", min=").$(scoreboard.getMin())
                                 .$(", size=").$(scoreboard.getEntryCount())
                                 .I$();
-                        txn.set(iterations);
+                        txn = iterations;
                         return;
                     }
 
-                    long nextTxn = txn.incrementAndGet();
+                    // This is the only writer
+                    @SuppressWarnings("NonAtomicOperationOnVolatileField") long nextTxn = txn++;
                     Assert.assertTrue(scoreboard.getActiveReaderCount(nextTxn) <= readers);
                     parkNanos();
                     Assert.assertTrue(scoreboard.getActiveReaderCount(nextTxn) <= readers);
