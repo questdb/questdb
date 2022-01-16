@@ -48,6 +48,11 @@ import static io.questdb.cutlass.pgwire.PGOids.*;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_FORMAT;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT;
 
+/**
+ * Useful PostgreSQL documentation links:<br/>
+ * <a href="https://www.postgresql.org/docs/current/protocol-flow.html">Wire protocol</a><br/>
+ * <a href="https://www.postgresql.org/docs/current/protocol-message-formats.html">Message formats</a>
+ */
 public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     public static final String TAG_SET = "SET";
     public static final String TAG_BEGIN = "BEGIN";
@@ -169,6 +174,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private long maxRows;
     private final PGResumeProcessor resumeCursorExecuteRef = this::resumeCursorExecute;
     private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
+    private final BatchCallback batchCallback;
 
     public PGConnectionContext(CairoEngine engine, PGWireConfiguration configuration, SqlExecutionContextImpl sqlExecutionContext) {
         this.engine = engine;
@@ -207,6 +213,39 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         final int blockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1; // 8
         final int rowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1; // 8
         this.typesAndInsertCache = new AssociativeCache<>(blockCount, rowCount);
+        this.batchCallback = new PGConnectionBatchCallback();
+    }
+    
+    class PGConnectionBatchCallback implements BatchCallback {
+        @Override
+        public void preCompile(SqlCompiler compiler) throws SqlException {
+            prepareForNewBatchQuery();
+            PGConnectionContext.this.typesAndInsert = null;
+            PGConnectionContext.this.typesAndSelect = null;
+        }
+
+        @Override
+        public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence text) 
+                throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
+            PGConnectionContext.this.queryText = text;
+            LOG.info().$("parse [fd=").$(fd).$(", q=").utf8(text).I$();
+            processCompiledQuery(compiler, cq);
+
+            if (typesAndSelect != null) {
+                activeSelectColumnTypes = selectColumnTypes;
+                buildSelectColumnTypes();
+                assert queryText != null;
+                queryTag = TAG_SELECT;
+                setupFactoryAndCursor(compiler);
+                prepareRowDescription();
+                sendCursor(0, resumeCursorQueryRef, resumeQueryCompleteRef);
+            } else if (typesAndInsert != null) {
+                executeInsert();
+            } else {
+                executeTag();
+                prepareCommandComplete(false);
+            }
+        }
     }
 
     public static int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
@@ -1047,43 +1086,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             }
 
             // not cached - compile to see what it is
-            final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
-            sqlExecutionContext.storeTelemetry(cc.getType(), Telemetry.ORIGIN_POSTGRES);
+            final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext); //here
+            processCompiledQuery(compiler, cc);
 
-            switch (cc.getType()) {
-                case CompiledQuery.SELECT:
-                    typesAndSelect = typesAndSelectPool.pop();
-                    typesAndSelect.of(cc.getRecordCursorFactory(), bindVariableService);
-                    queryTag = TAG_SELECT;
-                    LOG.debug().$("cache select [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
-                    break;
-                case CompiledQuery.INSERT:
-                    queryTag = TAG_INSERT;
-                    typesAndInsert = typesAndInsertPool.pop();
-                    typesAndInsert.of(cc.getInsertStatement(), bindVariableService);
-                    if (bindVariableService.getIndexedVariableCount() > 0) {
-                        LOG.debug().$("cache insert [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
-                        // we can add insert to cache right away because it is local to the connection
-                        typesAndInsertCache.put(queryText, typesAndInsert);
-                    }
-                    break;
-                case CompiledQuery.COPY_LOCAL:
-                    // uncached
-                    queryTag = TAG_COPY;
-                    sendCopyInResponse(compiler.getEngine(), cc.getTextLoader());
-                    break;
-                case CompiledQuery.SET:
-                    configureContextForSet();
-                    break;
-                case CompiledQuery.ALTER:
-                    try (QueryFuture cf = cc.execute(tempSequence)) {
-                        cf.await();
-                    }
-                default:
-                    // DDL SQL
-                    queryTag = TAG_OK;
-                    break;
-            }
         } else {
             isEmptyQuery = true;
         }
@@ -1091,7 +1096,54 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         return true;
     }
 
+    private void processCompiledQuery(SqlCompiler compiler, CompiledQuery cq) 
+            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+        sqlExecutionContext.storeTelemetry(cq.getType(), Telemetry.ORIGIN_POSTGRES);
+        
+        switch (cq.getType()) {
+            case CompiledQuery.SELECT:
+                typesAndSelect = typesAndSelectPool.pop();
+                typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService);
+                queryTag = TAG_SELECT;
+                LOG.debug().$("cache select [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
+                break;
+            case CompiledQuery.INSERT:
+                queryTag = TAG_INSERT;
+                typesAndInsert = typesAndInsertPool.pop();
+                typesAndInsert.of(cq.getInsertStatement(), bindVariableService);
+                if (bindVariableService.getIndexedVariableCount() > 0) {
+                    LOG.debug().$("cache insert [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
+                    // we can add insert to cache right away because it is local to the connection
+                    typesAndInsertCache.put(queryText, typesAndInsert);
+                }
+                break;
+            case CompiledQuery.COPY_LOCAL:
+                // uncached
+                queryTag = TAG_COPY;
+                sendCopyInResponse(compiler.getEngine(), cq.getTextLoader());
+                break;
+            case CompiledQuery.SET:
+                configureContextForSet();
+                break;
+            case CompiledQuery.ALTER:
+                try (QueryFuture cf = cq.execute(tempSequence)) {
+                    cf.await();
+                }
+            default:
+                // DDL SQL
+                queryTag = TAG_OK;
+                break;
+        }
+    }
+
     private void configureContextForSet() {
+        //TODO: this should be done in sqlcompiler instead of set there should be type for all tx-mgmt query types!!
+        CharSequence queryText = this.queryText;
+        int queryTextLen = queryText.length();
+        if ( queryTextLen > 0 && queryText.charAt(queryTextLen-1) == ';' ){
+            queryText = queryText.subSequence(0, queryTextLen-1);
+        }
+        
         if (SqlKeywords.isBegin(queryText)) {
             queryTag = TAG_BEGIN;
             transactionState = IN_TRANSACTION;
@@ -1341,7 +1393,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     /**
      * returns address of where parsing stopped. If there are remaining bytes left
-     * int the buffer they need to be passed again in parse function along with
+     * in the buffer they need to be passed again in parse function along with
      * any additional bytes received
      */
     private void parse(long address, int len, @Transient SqlCompiler compiler)
@@ -1544,10 +1596,17 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void prepareForNewQuery() {
+        prepareForNewBatchQuery();
+        if(completed) {
+            characterStore.clear();
+        }
+    }
+    
+    //clears whole state except for characterStore because top-level batch text is using it 
+    private void prepareForNewBatchQuery(){
         if (completed) {
             LOG.debug().$("prepare for new query").$();
             isEmptyQuery = false;
-            characterStore.clear();
             bindVariableService.clear();
             currentCursor = Misc.free(currentCursor);
             typesAndInsert = null;
@@ -1999,27 +2058,21 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
         syncActions.add(SYNC_PARSE);
     }
-
+    
+    //process one or more queries (batch/script) . "Simple Query" in PostgreSQL docs.  
     private void processQuery(long lo, long limit, @Transient SqlCompiler compiler)
             throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
-        // simple query, typically a script, which we don't yet support
-        prepareForNewQuery();
-        parseQueryText(lo, limit - 1, compiler);
-
-        if (typesAndSelect != null) {
-            activeSelectColumnTypes = selectColumnTypes;
-            buildSelectColumnTypes();
-            assert queryText != null;
-            queryTag = TAG_SELECT;
-            setupFactoryAndCursor(compiler);
-            prepareRowDescription();
-            sendCursor(0, resumeCursorQueryRef, resumeQueryCompleteRef);
-        } else if (typesAndInsert != null) {
-            executeInsert();
+        prepareForNewQuery(); 
+        CharacterStoreEntry e = characterStore.newEntry();
+        
+        if (Chars.utf8Decode(lo, limit - 1, e)) {
+            queryText = characterStore.toImmutable();
+            compiler.compileBatch(queryText, sqlExecutionContext, batchCallback );
         } else {
-            executeTag();
-            prepareCommandComplete(false);
+            LOG.error().$("invalid UTF8 bytes in parse query").$();
+            throw BadProtocolException.INSTANCE;
         }
+
         sendReadyForNewQuery();
     }
 

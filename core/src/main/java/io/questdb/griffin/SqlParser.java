@@ -772,7 +772,7 @@ public final class SqlParser {
             }
 
             CharSequence tok = optTok(lexer);
-            if (tok == null || setOperations.excludes(tok)) {
+            if (tok == null || Chars.equals(tok, ';') || setOperations.excludes(tok)) {
                 lexer.unparse();
                 return model;
             }
@@ -829,7 +829,7 @@ public final class SqlParser {
                 tok = null;
             }
 
-            if (tok == null) {
+            if (tok == null || Chars.equals(tok, ';')) { //token can also be ';' on query boundary
                 QueryModel nestedModel = queryModelPool.next();
                 nestedModel.setModelPosition(modelPosition);
                 ExpressionNode func = expressionNodePool.next().of(ExpressionNode.FUNCTION, "long_sequence", 0, lexer.lastTokenPosition());
@@ -1401,7 +1401,7 @@ public final class SqlParser {
 
             if (tok != null && Chars.equals(tok, ';')) {
                 alias = createColumnAlias(expr, model);
-                tok = optTok(lexer);
+                //tok = optTok(lexer);
             } else if (tok != null && columnAliasStop.excludes(tok)) {
                 assertNotDot(lexer, tok);
 
@@ -1418,7 +1418,7 @@ public final class SqlParser {
             col.setAlias(alias);
             model.addBottomUpColumn(col);
 
-            if (tok == null) {
+            if (tok == null || Chars.equals(tok, ';') ) {
                 lexer.unparse();
                 break;
             }

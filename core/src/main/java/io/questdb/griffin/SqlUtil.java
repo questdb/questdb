@@ -32,7 +32,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 public class SqlUtil {
 
     static final CharSequenceHashSet disallowedAliases = new CharSequenceHashSet();
-
+    /** Fetches next non-whitespace token that's not part of single or multiline comment.  */
     public static CharSequence fetchNext(GenericLexer lexer) {
         int blockCount = 0;
         boolean lineComment = false;

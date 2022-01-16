@@ -46,6 +46,8 @@ import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.Path;
@@ -95,6 +97,15 @@ public class SqlCompiler implements Closeable {
     private final TextLoader textLoader;
     private final FilesFacade ff;
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
+    
+    //null object used to skip null checks in batch method
+    private static final BatchCallback EMPTY_CALLBACK = new BatchCallback() {
+        @Override
+        public void preCompile(SqlCompiler compiler) {}
+
+        @Override
+        public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence queryText) {}
+    };
 
     public SqlCompiler(CairoEngine engine) {
         this(engine, null);
@@ -153,6 +164,12 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("ROLLBACK", compileSet);
         keywordBasedExecutors.put("discard", compileSet);
         keywordBasedExecutors.put("DISCARD", compileSet);
+        keywordBasedExecutors.put("close", compileSet); //no-op
+        keywordBasedExecutors.put("CLOSE", compileSet);  //no-op
+        keywordBasedExecutors.put("unlisten", compileSet);  //no-op
+        keywordBasedExecutors.put("UNLISTEN", compileSet);  //no-op
+        keywordBasedExecutors.put("reset", compileSet);  //no-op
+        keywordBasedExecutors.put("RESET", compileSet);  //no-op
         keywordBasedExecutors.put("drop", dropTable);
         keywordBasedExecutors.put("DROP", dropTable);
         keywordBasedExecutors.put("backup", sqlBackup);
@@ -896,11 +913,13 @@ public class SqlCompiler implements Closeable {
     @NotNull
     public CompiledQuery compile(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext) throws SqlException {
         clear();
-        //
         // these are quick executions that do not require building of a model
-        //
         lexer.of(query);
 
+        return compileInner(executionContext);
+    }
+
+    private CompiledQuery compileInner(@NotNull SqlExecutionContext executionContext) throws SqlException {
         final CharSequence tok = SqlUtil.fetchNext(lexer);
 
         if (tok == null) {
@@ -915,6 +934,79 @@ public class SqlCompiler implements Closeable {
             return compileUsingModel(executionContext);
         }
         return executor.execute(executionContext);
+    }
+
+    /**
+     *  Allows processing of batches of sql statements (sql scripts) separated by ';' . 
+     *  Each query is processed in sequence and processing stops on first error and whole batch gets discarded .
+     *  Noteworthy difference between this and 'normal' query is that all empty queries get ignored, e.g.
+     *  <br/>
+     *  select 1;<br/>
+     *  ; ;/* comment \*\/;--comment\n; <- these get ignored <br/>
+     *  update a set b=c  ; <br/>
+     *
+     *  Useful PG doc link :
+     *  @see <a href=" https://www.postgresql.org/docs/current/protocol-flow.html#id-1.10.5.7.4">PostgreSQL documentation</a>
+     *  
+     * @param callback - callback to perform actions prior to or after batch part compilation, e.g. clear caches or execute command  
+     */
+    public void compileBatch(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext, BatchCallback callback ) 
+            throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
+        clear();
+        lexer.of(query);
+
+        if ( callback == null ){
+            callback = EMPTY_CALLBACK;
+        }
+        
+        int position;
+
+        while (lexer.hasNext()){
+            //skip over empty statements that'd cause error in parser
+            position = getNextValidTokenPosition();
+            if ( position == -1 ){
+                return;
+            }
+
+            callback.preCompile(this);
+            clear();//we don't use normal compile here because we can't reset existing lexer
+            CompiledQuery current = compileInner(executionContext);
+            //We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
+            //some code in postCompile might need full text of current query
+            CharSequence currentQuery = query.subSequence(position, goToQueryEnd());
+            callback.postCompile(this, current, currentQuery);
+        }
+    }
+    
+    private int getNextValidTokenPosition(){
+        while (lexer.hasNext()){
+            CharSequence token = SqlUtil.fetchNext(lexer);
+            if ( token == null ){
+                return -1;
+            } else if (!isSemicolon(token)) {
+                lexer.unparse();
+                return lexer.lastTokenPosition();
+            }
+        }
+        
+        return -1;
+    }
+
+    private  int goToQueryEnd() {
+        CharSequence token;
+        lexer.unparse();
+        while ( lexer.hasNext() ){
+            token = SqlUtil.fetchNext(lexer);
+            if (token == null || isSemicolon(token)) {
+                break;
+            }
+        }
+        
+        return lexer.getPosition();
+    }
+
+    private boolean isSemicolon(CharSequence token) {
+        return Chars.equals(token, ';');
     }
 
     public CairoEngine getEngine() {
@@ -1044,7 +1136,7 @@ public class SqlCompiler implements Closeable {
                             tok = SqlUtil.fetchNext(lexer);
                             int indexValueCapacity = -1;
 
-                            if (tok != null) {
+                            if (tok != null && !isSemicolon(tok)) {
                                 if (!SqlKeywords.isCapacityKeyword(tok)) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "'capacity' expected");
                                 } else {
@@ -1332,10 +1424,7 @@ public class SqlCompiler implements Closeable {
             );
 
             if (tok == null || Chars.equals(tok, ';')) {
-                tok = SqlUtil.fetchNext(lexer);
-                if (tok == null) {
-                    break;
-                }
+                break;
             }
 
             semicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
@@ -1415,7 +1504,7 @@ public class SqlCompiler implements Closeable {
             dropColumnStatement.ofDropColumn(columnName);
             tok = SqlUtil.fetchNext(lexer);
 
-            if (tok == null) {
+            if (tok == null || isSemicolon(tok)) {
                 break;
             }
 
@@ -1521,7 +1610,7 @@ public class SqlCompiler implements Closeable {
             partitions.ofPartition(timestamp);
             tok = SqlUtil.fetchNext(lexer);
 
-            if (tok == null) {
+            if (tok == null|| isSemicolon(tok)) {
                 break;
             }
 
@@ -1575,7 +1664,7 @@ public class SqlCompiler implements Closeable {
 
             tok = SqlUtil.fetchNext(lexer);
 
-            if (tok == null) {
+            if (tok == null || isSemicolon(tok)) {
                 break;
             }
 
@@ -2226,7 +2315,7 @@ public class SqlCompiler implements Closeable {
                 }
             }
         }
-        return compiledQuery.ofInsertAsSelect();
+        return compiledQuery.ofInsertAsSelect(); //TODO: add updated row count here
     }
 
     private ExecutionModel lightlyValidateInsertModel(InsertModel model) throws SqlException {
