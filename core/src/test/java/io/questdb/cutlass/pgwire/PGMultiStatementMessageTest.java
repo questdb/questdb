@@ -584,8 +584,10 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 Statement statement = test.statement;
 
                 boolean hasResult = statement.execute(
-                        "CREATE TABLE TEST(l long, de string); INSERT INTO TEST VALUES(3,'c'); " +
-                            "ALTER TABLE TEST set param maxUncommittedRows = 150; SELECT l,de from TEST;");
+                        "CREATE TABLE test(l long, de string); " +
+                            "INSERT INTO test VALUES(3,'c'); " +
+                            "ALTER TABLE test set param maxUncommittedRows = 150; " +
+                            "SELECT l,de from test;");
                 assertResults( statement, hasResult, Result.ZERO, result(1), Result.ZERO, result(row(3L, "c")) );
             }
         });
@@ -598,8 +600,10 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 Statement statement = test.statement;
 
                 boolean hasResult = statement.execute(
-                        "CREATE TABLE test(l long, s symbol); INSERT INTO test VALUES(4,'d'); " +
-                            "ALTER TABLE test ALTER COLUMN s ADD INDEX; SELECT l,s from TEST;");
+                        "CREATE TABLE test(l long, s symbol); " +
+                            "INSERT INTO test VALUES(4,'d'); " +
+                            "ALTER TABLE test ALTER COLUMN s ADD INDEX; " +
+                            "SELECT l,s from test;");
                 assertResults( statement, hasResult, Result.ZERO, result(1), Result.ZERO, result(row(4L, "d")) );
             }
         });
@@ -612,8 +616,10 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 Statement statement = test.statement;
 
                 boolean hasResult = statement.execute(
-                        "CREATE TABLE test(l long, s symbol); INSERT INTO test VALUES(5,'e'); " +
-                                "ALTER TABLE test ALTER COLUMN s cache; SELECT l,s from TEST;");
+                        "CREATE TABLE test(l long, s symbol); " +
+                            "INSERT INTO test VALUES(5,'e'); " +
+                            "ALTER TABLE test ALTER COLUMN s cache; " +
+                            "SELECT l,s from test;");
                 assertResults( statement, hasResult, Result.ZERO, result(1), Result.ZERO, result(row(5L, "e")) );
             }
         });
@@ -626,8 +632,10 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 Statement statement = test.statement;
 
                 boolean hasResult = statement.execute(
-                        "CREATE TABLE test(l long, s symbol); INSERT INTO test VALUES(6,'f'); " +
-                                "ALTER TABLE test ALTER COLUMN s nocache; SELECT l,s from TEST;");
+                        "CREATE TABLE test(l long, s symbol); " +
+                            "INSERT INTO test VALUES(6,'f'); " +
+                            "ALTER TABLE test ALTER COLUMN s nocache; " +
+                            "SELECT l,s from test;");
                 assertResults( statement, hasResult, Result.ZERO, result(1), Result.ZERO, result(row(6L, "f")) );
             }
         });
@@ -640,8 +648,11 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 Statement statement = test.statement;
 
                 boolean hasResult = statement.execute(
-                        "CREATE TABLE test(l long, s symbol); INSERT INTO test VALUES(7,'g'); " +
-                            "ALTER SYSTEM LOCK WRITER test; ALTER SYSTEM UNLOCK WRITER test; SELECT l,s from TEST;");
+                        "CREATE TABLE test(l long, s symbol); " +
+                            "INSERT INTO test VALUES(7,'g'); " +
+                            "ALTER SYSTEM LOCK WRITER test; " +
+                            "ALTER SYSTEM UNLOCK WRITER test; " +
+                            "SELECT l,s from test;");
                 assertResults( statement, hasResult, Result.ZERO, result(1), Result.ZERO, Result.ZERO, result(row(7L, "g")) );
             }
         });
@@ -658,7 +669,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "INSERT INTO test VALUES(1970, 0); " +
                             "INSERT INTO test VALUES(2020, to_timestamp('2020-03-01', 'yyyy-MM-dd'));" +
                             "ALTER TABLE test DROP PARTITION LIST '1970'; " +
-                            "SELECT l from TEST;");
+                            "SELECT l from test;");
                 assertResults( statement, hasResult, Result.ZERO, result(1), result(1), Result.ZERO, result(row(2020L)) );
             }
         });
@@ -676,7 +687,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "INSERT INTO test VALUES(2020, to_timestamp('2020-03-01', 'yyyy-MM-dd'));" +
                             "INSERT INTO test VALUES(2021, to_timestamp('2021-03-01', 'yyyy-MM-dd'));" +
                             "ALTER TABLE test DROP PARTITION LIST '1970', '2020'; " +
-                            "SELECT l from TEST;");
+                            "SELECT l from test;");
                 assertResults( statement, hasResult, Result.ZERO, result(1), result(1),
                         result(1), Result.ZERO, result(row(2021L)) );
             }
@@ -695,7 +706,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                 "INSERT INTO test VALUES(2020, to_timestamp('2020-03-01', 'yyyy-MM-dd'));" +
                                 "INSERT INTO test VALUES(2021, to_timestamp('2021-03-01', 'yyyy-MM-dd'));" +
                                 "ALTER TABLE test DROP PARTITION WHERE ts <= to_timestamp('2020', 'yyyy'); " +
-                                "SELECT l from TEST;");
+                                "SELECT l from test;");
                 assertResults( statement, hasResult, Result.ZERO, result(1), result(1),
                                                                   result(1), Result.ZERO, result(row(2021L)) );
             }
