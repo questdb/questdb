@@ -92,6 +92,10 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(4, configuration.getHttpServerConfiguration().getQueryCacheBlockCount());
         Assert.assertEquals(16, configuration.getHttpServerConfiguration().getQueryCacheRowCount());
 
+        Assert.assertEquals(100, configuration.getWorkerPoolConfiguration().getYieldThreshold());
+        Assert.assertEquals(10000, configuration.getWorkerPoolConfiguration().getSleepThreshold());
+        Assert.assertEquals(100, configuration.getWorkerPoolConfiguration().getSleepMs());
+
         // this is going to need interesting validation logic
         // configuration path is expected to be relative, and we need to check if absolute path is good
         Assert.assertEquals(new File(root, "public").getAbsolutePath(),
@@ -473,6 +477,10 @@ public class PropServerConfigurationTest {
             Assert.assertFalse(configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getCircuitBreakerConfiguration().isEnabled());
             Assert.assertEquals(500, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
             Assert.assertEquals(32, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getCircuitBreakerConfiguration().getBufferSize());
+
+            Assert.assertEquals(100, configuration.getWorkerPoolConfiguration().getYieldThreshold());
+            Assert.assertEquals(100000, configuration.getWorkerPoolConfiguration().getSleepThreshold());
+            Assert.assertEquals(1000, configuration.getWorkerPoolConfiguration().getSleepMs());
 
             Assert.assertEquals(new File(root, "public_ok").getAbsolutePath(),
                     configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getPublicDirectory());
