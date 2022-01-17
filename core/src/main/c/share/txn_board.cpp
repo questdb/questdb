@@ -100,7 +100,7 @@ public:
     inline int64_t txn_release(int64_t txn) {
         auto last_min = min.load();
         if (txn < last_min) {
-            return -last_min;
+            return -last_min - 1;
         }
         auto countAfter = get_counter(txn).fetch_sub(1) - 1;
         if (countAfter == 0 && last_min == txn) {
@@ -121,29 +121,29 @@ public:
             return -1;
         }
 
-        while (txn - current_min >= size) {
-            // We need to move min closer to txn
-            // Updating min directly will create a race condition
-            // instead move min size by size
-            auto dummy_txn = current_min + size - 1;
-            if (increment_count(dummy_txn)) {
-                current_min = update_min(txn);
-                // release dummy txn
-                get_counter(dummy_txn)--;
-                if (current_min != dummy_txn) {
-                    // No point trying to move forward, this is best min we can get
-                    break;
-                }
-            } else {
-                // Someone else pushed max, check if the updated min is better than current one
-                dummy_txn = calculate_min(dummy_txn);
-                if (dummy_txn > current_min) {
-                    current_min = dummy_txn;
+        if (txn - current_min >= size) {
+            while (txn - current_min >= size) {
+                // We need to move min closer to txn
+                // Updating min directly will create a race condition
+                // instead move min size by size
+                auto dummy_txn = current_min + size - 1;
+                if (increment_count(dummy_txn)) {
+                    current_min = update_min(txn);
+                    // release dummy txn
+                    get_counter(dummy_txn)--;
                 } else {
-                    // min hasn't moved even with updated max. No luck to move min any farther
-                    break;
+                    // Someone else pushed max, check if the updated min is better than current one
+                    current_min = calculate_min(dummy_txn);
+                }
+
+                if (current_min != dummy_txn && txn - current_min >= size) {
+                    // No luck to move min any farther
+                    return -current_min - 2;
                 };
             }
+            // After pushing min as far as possible, take the clean value for next steps
+            current_min = min.load();
+
         }
 
         if (txn - current_min < size) {
