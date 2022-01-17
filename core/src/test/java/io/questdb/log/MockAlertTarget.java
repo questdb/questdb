@@ -37,11 +37,13 @@ class MockAlertTarget extends Thread {
 
 
     private final int portNumber;
+    private final Runnable onTargetStart;
     private final Runnable onTargetEnd;
     private final AtomicBoolean isRunning;
 
-    MockAlertTarget(int portNumber, Runnable onTargetEnd) {
+    MockAlertTarget(int portNumber, Runnable onTargetEnd, Runnable onTargetStart) {
         this.portNumber = portNumber;
+        this.onTargetStart = onTargetStart;
         this.onTargetEnd = onTargetEnd;
         this.isRunning = new AtomicBoolean();
     }
@@ -63,6 +65,7 @@ class MockAlertTarget extends Thread {
                 serverSkt = new ServerSocket(portNumber);
                 serverSkt.setReuseAddress(true);
                 serverSkt.setSoTimeout(5000);
+                onTargetStart.run();
                 clientSkt = serverSkt.accept();
                 in = new BufferedReader(new InputStreamReader(clientSkt.getInputStream()));
                 out = new PrintWriter(clientSkt.getOutputStream(), true);

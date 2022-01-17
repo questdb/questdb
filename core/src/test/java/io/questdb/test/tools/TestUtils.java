@@ -46,6 +46,8 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 
 import java.io.*;
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class TestUtils {
@@ -76,6 +78,13 @@ public final class TestUtils {
             Net.configureNoLinger(fd);
         }
         return Net.connect(fd, sockAddr);
+    }
+
+    public static void await(CyclicBarrier barrier) {
+        try {
+            barrier.await();
+        } catch (Throwable ignore) {
+        }
     }
 
     public static void assertConnect(long fd, long sockAddr, boolean noLinger) {

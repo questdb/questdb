@@ -6691,7 +6691,7 @@ public class IODispatcherTest {
             final Rnd rnd = new Rnd();
             try {
                 new SendAndReceiveRequestBuilder().executeMany(requester -> {
-                    barrier.await();
+                    TestUtils.await(barrier);
                     for (int i = 0; i < count; i++) {
                         int index = rnd.nextPositiveInt() % requests.length;
                         try {

@@ -204,7 +204,6 @@ public class LogAlertSocket implements Closeable {
                         .$(" millis (as it is the same alert manager)")
                         .$();
                 onReconnect.run();
-//                LockSupport.parkNanos(reconnectDelay);
             } else {
                 logFailOver.$();
             }
