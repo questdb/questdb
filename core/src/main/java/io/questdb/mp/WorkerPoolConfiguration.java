@@ -46,4 +46,8 @@ public interface WorkerPoolConfiguration {
     default long getSleepThreshold() {
         return 10000;
     }
+
+    default long getSleepMs() {
+        return 100;
+    }
 }

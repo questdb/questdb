@@ -47,6 +47,7 @@ public class WorkerPool {
     private final String poolName;
     private final long yieldThreshold;
     private final long sleepThreshold;
+    private final long sleepMs;
 
     public WorkerPool(WorkerPoolConfiguration configuration) {
         this.workerCount = configuration.getWorkerCount();
@@ -57,6 +58,7 @@ public class WorkerPool {
         this.poolName = configuration.getPoolName();
         this.yieldThreshold = configuration.getYieldThreshold();
         this.sleepThreshold = configuration.getSleepThreshold();
+        this.sleepMs = configuration.getSleepMs();
 
         assert workerAffinity.length == workerCount;
 
@@ -141,7 +143,8 @@ public class WorkerPool {
                         i,
                         poolName,
                         yieldThreshold,
-                        sleepThreshold
+                        sleepThreshold,
+                        sleepMs
                 );
                 worker.setDaemon(daemons);
                 workers.add(worker);
