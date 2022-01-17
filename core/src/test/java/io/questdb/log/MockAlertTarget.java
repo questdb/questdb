@@ -70,7 +70,7 @@ class MockAlertTarget extends Thread {
                 clientSkt.setReuseAddress(true);
                 clientSkt.setTcpNoDelay(true);
                 clientSkt.setKeepAlive(false);
-                clientSkt.setSoLinger(false, 0);
+                clientSkt.setSoLinger(true, 0);
 
                 // read until end or until death pill is read
                 String line = in.readLine();
