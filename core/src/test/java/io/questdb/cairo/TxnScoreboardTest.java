@@ -490,7 +490,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     public void testStartContention() throws Exception {
         int readers = 8;
         int iterations = 8;
-        int entryCount = Math.max(Numbers.ceilPow2(readers) * 8, Numbers.ceilPow2(iterations) / 4);
+        int entryCount = Math.max(Numbers.ceilPow2(readers) * 8, Numbers.ceilPow2(iterations));
         try (
                 final Path shmPath = new Path();
                 final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, entryCount).ofRW(shmPath.of(root))
@@ -528,6 +528,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                                 LOG.errorW().$("prev_count=").$(prevCount).$();
                                 anomaly.addAndGet(10);
                             }
+                            Thread.yield();
                         }
                     } catch (Throwable e) {
                         LOG.errorW().$(e).$();
@@ -557,10 +558,12 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             final AtomicInteger anomaly = new AtomicInteger();
 
             for (int i = 0; i < readers; i++) {
+                // Readers acq/release every txn number and check invariants
                 Reader reader = new Reader(scoreboard, barrier, latch, anomaly, iterations, readers);
                 reader.start();
             }
 
+            // Writer constantly increments txn number
             Writer writer = new Writer(scoreboard, barrier, latch, anomaly, iterations, readers);
             writer.start();
 
