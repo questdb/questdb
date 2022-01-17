@@ -162,11 +162,6 @@ public class IODispatcherTest {
                         public int getInitialBias() {
                             return IODispatcherConfiguration.BIAS_WRITE;
                         }
-
-                        @Override
-                        public boolean getPeerNoLinger() {
-                            return false;
-                        }
                     },
                     (fd, dispatcher1) -> {
                         connectLatch.countDown();
@@ -6034,11 +6029,6 @@ public class IODispatcherTest {
                             // 0.5s idle timeout
                             return 500;
                         }
-
-                        @Override
-                        public boolean getPeerNoLinger() {
-                            return false;
-                        }
                     },
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
@@ -6257,10 +6247,6 @@ public class IODispatcherTest {
     }
 
     @Test
-    // this test is ignored for the time being because it is unstable on OSX and I
-    // have not figured out the reason yet. I would like to see if this test
-    // runs any different on Linux, just to narrow the problem down to either
-    // dispatcher or Http parser.
     public void testTwoThreadsSendTwoThreadsRead() throws Exception {
 
         LOG.info().$("started testSendHttpGet").$();

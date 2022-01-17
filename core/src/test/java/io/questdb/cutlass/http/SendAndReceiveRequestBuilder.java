@@ -206,7 +206,6 @@ public class SendAndReceiveRequestBuilder {
 
     public void executeMany(RequestAction action) throws InterruptedException, BrokenBarrierException {
         final long fd = nf.socketTcp(true);
-        nf.configureNoLinger(fd);
         try {
             long sockAddr = nf.sockaddr("127.0.0.1", 9001);
             Assert.assertTrue(fd > -1);

@@ -957,11 +957,11 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     private void send(LineTcpReceiver receiver, String lineData, String tableName, int wait) {
-        send(receiver, tableName, wait, () -> sendToSocket(lineData, true));
+        send(receiver, tableName, wait, () -> sendToSocket(lineData));
     }
 
     private void sendLinger(LineTcpReceiver receiver, String lineData, String tableName) {
-        send(receiver, tableName, LineTcpReceiverTest.WAIT_ENGINE_TABLE_RELEASE, () -> sendToSocket(lineData, false));
+        send(receiver, tableName, LineTcpReceiverTest.WAIT_ENGINE_TABLE_RELEASE, () -> sendToSocket(lineData));
     }
 
     private void send(LineTcpReceiver receiver, String lineData, String tableName) {
