@@ -92,7 +92,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(4, configuration.getHttpServerConfiguration().getQueryCacheBlockCount());
         Assert.assertEquals(16, configuration.getHttpServerConfiguration().getQueryCacheRowCount());
 
-        Assert.assertEquals(10, configuration.getWorkerPoolConfiguration().getYieldThreshold());
+        Assert.assertEquals(100, configuration.getWorkerPoolConfiguration().getYieldThreshold());
         Assert.assertEquals(10000, configuration.getWorkerPoolConfiguration().getSleepThreshold());
         Assert.assertEquals(100, configuration.getWorkerPoolConfiguration().getSleepMs());
 

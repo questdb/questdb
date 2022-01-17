@@ -793,8 +793,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sharedWorkerCount = getInt(properties, env, "shared.worker.count", Math.max(1, (cpuAvailable - 1) / 2 - cpuUsed));
             this.sharedWorkerAffinity = getAffinity(properties, env, "shared.worker.affinity", sharedWorkerCount);
             this.sharedWorkerHaltOnError = getBoolean(properties, env, "shared.worker.haltOnError", false);
-            this.sharedWorkerYieldThreshold = getLong(properties, env, "shared.worker.yield.threshold", 10);
-            this.sharedWorkerSleepThreshold = getLong(properties, env, "shared.worker.sleep.threshold", 10000);
+            this.sharedWorkerYieldThreshold = getLong(properties, env, "shared.worker.yield.threshold", 100);
+            this.sharedWorkerSleepThreshold = getLong(properties, env, "shared.worker.sleep.threshold", 10_000);
             this.sharedWorkerSleepMs = getLong(properties, env, "shared.worker.sleep.ms", 100);
 
             this.metricsEnabled = getBoolean(properties, env, "metrics.enabled", false);
