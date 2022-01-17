@@ -68,7 +68,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     private TimestampAdapter timestampAdapter;
     private final TextLexer.Listener partitionedListener = this::onFieldsPartitioned;
     private int warnings;
-    private final IntIntHashMap remapIndex = new IntIntHashMap();
+    private final IntList remapIndex = new IntList();
 
     public CairoTextWriter(
             CairoEngine engine,
@@ -270,12 +270,12 @@ public class CairoTextWriter implements Closeable, Mutable {
         this.types = detectedTypes;
 
         // now overwrite detected types with actual table column types
-        remapIndex.clear();
+        remapIndex.ensureCapacity(this.types.size());
         for (int i = 0, n = this.types.size(); i < n; i++) {
 
             final int columnIndex = metadata.getColumnIndexQuiet(names.getQuick(i));
             final int idx = (columnIndex > -1 && columnIndex != i) ? columnIndex : i; // check for strict match ?
-            remapIndex.put(i, idx);
+            remapIndex.set(i, idx);
 
             final int columnType = metadata.getColumnType(idx);
             final TypeAdapter detectedAdapter = this.types.getQuick(i);
