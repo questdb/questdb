@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
@@ -185,13 +184,23 @@ public interface Record {
     }
 
     /**
-     * Gets the numeric ID of this row
+     * Gets the numeric ID of this row. This can be not real table row id
      *
      * @return numeric ID of the current row
      */
     default long getRowId() {
         throw new UnsupportedOperationException();
     }
+
+    /**
+     * Gets the numeric ID of this row. This must be real table row id
+     *
+     * @return numeric ID of the current row
+     */
+    default long getUpdateRowId() {
+        throw new UnsupportedOperationException();
+    }
+
 
     /**
      * Gets the value of a short column by index

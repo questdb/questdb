@@ -469,6 +469,72 @@ public class UpdateBasicTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUpdateMultipartitionedTableSamePartitionManyFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel tml = new TableModel(configuration, "up", PartitionBy.DAY)) {
+                tml.col("xint", ColumnType.INT)
+                        .col("xsym", ColumnType.SYMBOL).indexed(true, 256)
+                        .timestamp("ts");
+                createPopulateTable(tml, 10, "2020-01-01", 2);
+            }
+
+            executeUpdate("UPDATE up SET xint = -1000 WHERE ts in '2020-01-01T00;6h;12h;24'");
+            assertSql(
+                    "up",
+                    "xint\txsym\tts\n" +
+                            "-1000\tCPSW\t2020-01-01T04:47:59.900000Z\n" +
+                            "2\tHYRX\t2020-01-01T09:35:59.800000Z\n" +
+                            "-1000\t\t2020-01-01T14:23:59.700000Z\n" +
+                            "4\tVTJW\t2020-01-01T19:11:59.600000Z\n" +
+                            "5\tPEHN\t2020-01-01T23:59:59.500000Z\n" +
+                            "-1000\t\t2020-01-02T04:47:59.400000Z\n" +
+                            "7\tVTJW\t2020-01-02T09:35:59.300000Z\n" +
+                            "-1000\t\t2020-01-02T14:23:59.200000Z\n" +
+                            "9\tCPSW\t2020-01-02T19:11:59.100000Z\n" +
+                            "10\t\t2020-01-02T23:59:59.000000Z\n"
+            );
+
+            executeUpdate("UPDATE up SET xint = -1000 WHERE ts in '2020-01-01T06;6h;12h;24' and xint > 7");
+            assertSql(
+                    "up",
+                    "xint\txsym\tts\n" +
+                            "-1000\tCPSW\t2020-01-01T04:47:59.900000Z\n" +
+                            "2\tHYRX\t2020-01-01T09:35:59.800000Z\n" +
+                            "-1000\t\t2020-01-01T14:23:59.700000Z\n" +
+                            "4\tVTJW\t2020-01-01T19:11:59.600000Z\n" +
+                            "5\tPEHN\t2020-01-01T23:59:59.500000Z\n" +
+                            "-1000\t\t2020-01-02T04:47:59.400000Z\n" +
+                            "7\tVTJW\t2020-01-02T09:35:59.300000Z\n" +
+                            "-1000\t\t2020-01-02T14:23:59.200000Z\n" +
+                            "-1000\tCPSW\t2020-01-02T19:11:59.100000Z\n" +
+                            "-1000\t\t2020-01-02T23:59:59.000000Z\n"
+            );
+        });
+    }
+
+    @Test
+    public void testManyFrames2() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel tml = new TableModel(configuration, "up", PartitionBy.DAY)) {
+                tml.col("xint", ColumnType.INT)
+                        .col("xsym", ColumnType.SYMBOL).indexed(true, 256)
+                        .timestamp("ts");
+                createPopulateTable(tml, 20, "2020-01-01", 2);
+            }
+
+            assertSql(
+                    "up WHERE ts in '2020-01-01T00:00:00.000000Z;6h;12h;24'",
+                    "xint\txsym\tts\n" +
+                            "1\tCPSW\t2020-01-01T09:35:59.800000Z\n" +
+                            "2\tHYRX\t2020-01-01T19:11:59.600000Z\n" +
+                            "3\t\t2020-01-02T04:47:59.400000Z\n" +
+                            "-1000\tVTJW\t2020-01-02T14:23:59.200000Z\n" +  // Updated
+                            "-1000\tPEHN\t2020-01-02T23:59:59.000000Z\n"    // Updated
+            );
+        });
+    }
+
+    @Test
     public void testUpdateNoFilter() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +

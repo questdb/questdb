@@ -128,7 +128,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     }
 
     @Override
-    public boolean supportTableRowId(CharSequence tableName) {
+    public boolean supportsUpdateRowId(CharSequence tableName) {
         return dataFrameCursorFactory.supportTableRowId(tableName);
     }
 

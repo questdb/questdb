@@ -1939,7 +1939,7 @@ class SqlOptimiser {
 
                 ExpressionNode rhs = queryColumn.getAst();
                 if (rhs.type == FUNCTION) {
-                    if (functionParser.isGroupBy(rhs.token)) {
+                    if (functionParser.getFunctionFactoryCache().isGroupBy(rhs.token)) {
                         throw SqlException.$(rhs.position, "Unsupported function in SET clause");
                     }
                 }

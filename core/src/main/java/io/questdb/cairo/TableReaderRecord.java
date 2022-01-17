@@ -127,6 +127,11 @@ public class TableReaderRecord implements Record, Sinkable {
     }
 
     @Override
+    public long getUpdateRowId() {
+        return getRowId();
+    }
+
+    @Override
     public short getShort(int col) {
         final long offset = getAdjustedRecordIndex(col) * Short.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(

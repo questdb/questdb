@@ -106,7 +106,7 @@ public class InplaceUpdateExecution implements Closeable {
 
             long lastRowId = -1;
             while (recordCursor.hasNext()) {
-                long rowId = masterRecord.getRowId();
+                long rowId = masterRecord.getUpdateRowId();
 
                 // Some joins expand results set and returns same row multiple times
                 if (rowId == lastRowId) {
@@ -220,6 +220,7 @@ public class InplaceUpdateExecution implements Closeable {
             for (int i = 0, n = columnMap.size(); i < n; i++) {
                 CharSequence name = metadata.getColumnName(columnMap.get(i));
                 MemoryCMARW colMem = updateMemory.get(i);
+                colMem.close(false);
                 colMem.of(ff, dFile(path.trimTo(pathTrimToLen), name), dataAppendPageSize, -1, MemoryTag.MMAP_TABLE_WRITER);
             }
         } finally {

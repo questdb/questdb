@@ -157,6 +157,11 @@ public class JoinRecord implements Record {
     }
 
     @Override
+    public long getUpdateRowId() {
+        return master.getUpdateRowId();
+    }
+
+    @Override
     public short getShort(int col) {
         if (col < split) {
             return master.getShort(col);

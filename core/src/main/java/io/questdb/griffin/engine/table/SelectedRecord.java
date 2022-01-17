@@ -109,6 +109,11 @@ class SelectedRecord implements Record {
     }
 
     @Override
+    public long getUpdateRowId() {
+        return base.getUpdateRowId();
+    }
+
+    @Override
     public short getShort(int col) {
         return base.getShort(getColumnIndex(col));
     }
