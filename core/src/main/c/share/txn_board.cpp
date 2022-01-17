@@ -67,7 +67,7 @@ class txn_scoreboard_t {
 
         if (txn < current_max || txn - min.load() >= size) {
             // We cannot increment below max, only max or higher
-            // Also incrementing beyond size is
+            // Also incrementing beyond size is not allowed
             // Roll back the increment
             get_counter(txn)--; //atomic
             return false;
