@@ -141,7 +141,8 @@ public class TxnScoreboard implements Closeable, Mutable {
     }
 
     public void releaseTxn(long txn) {
-        assert releaseTxn(mem, txn) > -1;
+        long released = releaseTxn(mem, txn);
+        assert released > -1 : "released count " + txn + " must be positive: " + released;
     }
 
     private static long acquireTxn(long pTxnScoreboard, long txn) {

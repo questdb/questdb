@@ -57,15 +57,16 @@ class txn_scoreboard_t {
         // When an attempt to acquire below max happens
         // the attempt is rejected and TableReader should re-read _txn file
         auto current_max = max.load();
-        if (txn < current_max) {
+        if (txn < current_max || txn - min.load() >= size) {
             return false;
         }
         get_counter(txn)++; // atomic
 
         while (!max.compare_exchange_weak(current_max, txn) && txn > current_max);
 
-        if (txn < current_max) {
+        if (txn < current_max || txn - min.load() >= size) {
             // We cannot increment below max, only max or higher
+            // Also incrementing beyond size is
             // Roll back the increment
             get_counter(txn)--; //atomic
             return false;
@@ -74,12 +75,15 @@ class txn_scoreboard_t {
     }
 
     inline int64_t update_min(const int64_t offset) {
+        return set_max_atomic(min, calculate_min(offset));
+    }
+
+    inline int64_t calculate_min(const int64_t &offset) {
         int64_t o = min.load();
-        const int64_t check_limit = std::min(offset, o + size); // If no lock for full size, means not locks at all
-        while (o < check_limit && get_count(o) == 0) {
+        while (o < offset && get_count(o) == 0) {
             o++;
         }
-        return set_max_atomic(min, o == check_limit ? offset : o);
+        return o;
     }
 
 public:
@@ -93,9 +97,13 @@ public:
         return get_counter(offset);
     }
 
-    inline T txn_release(int64_t txn) {
+    inline int64_t txn_release(int64_t txn) {
+        auto last_min = min.load();
+        if (txn < last_min) {
+            return -last_min;
+        }
         auto countAfter = get_counter(txn).fetch_sub(1) - 1;
-        if (countAfter == 0 && min.load() == txn) {
+        if (countAfter == 0 && last_min == txn) {
             update_min(max);
         }
         return countAfter;
@@ -113,8 +121,29 @@ public:
             return -1;
         }
 
-        if (txn - current_min >= size) {
-            current_min = update_min(txn);
+        while (txn - current_min >= size) {
+            // We need to move min closer to txn
+            // Updating min directly will create a race condition
+            // instead move min size by size
+            auto dummy_txn = current_min + size - 1;
+            if (increment_count(dummy_txn)) {
+                current_min = update_min(txn);
+                // release dummy txn
+                get_counter(dummy_txn)--;
+                if (current_min != dummy_txn) {
+                    // No point trying to move forward, this is best min we can get
+                    break;
+                }
+            } else {
+                // Someone else pushed max, check if the updated min is better than current one
+                dummy_txn = calculate_min(dummy_txn);
+                if (dummy_txn > current_min) {
+                    current_min = dummy_txn;
+                } else {
+                    // min hasn't moved even with updated max. No luck to move min any farther
+                    break;
+                };
+            }
         }
 
         if (txn - current_min < size) {
