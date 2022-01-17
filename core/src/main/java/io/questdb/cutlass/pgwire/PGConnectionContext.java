@@ -1123,7 +1123,21 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 sendCopyInResponse(compiler.getEngine(), cq.getTextLoader());
                 break;
             case CompiledQuery.SET:
-                configureContextForSet();
+                queryTag = TAG_SET;
+                break;
+            case CompiledQuery.BEGIN:
+                queryTag = TAG_BEGIN;
+                transactionState = IN_TRANSACTION;
+                break;
+            case CompiledQuery.COMMIT:
+                queryTag = TAG_COMMIT;
+                if (transactionState != ERROR_TRANSACTION) {
+                    transactionState = COMMIT_TRANSACTION;
+                }
+                break;
+            case CompiledQuery.ROLLBACK:
+                queryTag = TAG_ROLLBACK;
+                transactionState = ROLLING_BACK_TRANSACTION;
                 break;
             case CompiledQuery.ALTER:
                 try (QueryFuture cf = cq.execute(tempSequence)) {
@@ -1133,30 +1147,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 // DDL SQL
                 queryTag = TAG_OK;
                 break;
-        }
-    }
-
-    private void configureContextForSet() {
-        //TODO: this should be done in sqlcompiler instead of set there should be type for all tx-mgmt query types!!
-        CharSequence queryText = this.queryText;
-        int queryTextLen = queryText.length();
-        if ( queryTextLen > 0 && queryText.charAt(queryTextLen-1) == ';' ){
-            queryText = queryText.subSequence(0, queryTextLen-1);
-        }
-        
-        if (SqlKeywords.isBegin(queryText)) {
-            queryTag = TAG_BEGIN;
-            transactionState = IN_TRANSACTION;
-        } else if (SqlKeywords.isCommit(queryText)) {
-            queryTag = TAG_COMMIT;
-            if (transactionState != ERROR_TRANSACTION) {
-                transactionState = COMMIT_TRANSACTION;
-            }
-        } else if (SqlKeywords.isRollback(queryText)) {
-            queryTag = TAG_ROLLBACK;
-            transactionState = ROLLING_BACK_TRANSACTION;
-        } else {
-            queryTag = TAG_SET;
         }
     }
 

@@ -98,6 +98,11 @@ public class SqlCompiler implements Closeable {
     private final FilesFacade ff;
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
     
+    //determines how compiler parses query text
+    //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
+    //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing. 
+    private boolean isSingleQueryMode = true;  
+    
     //null object used to skip null checks in batch method
     private static final BatchCallback EMPTY_CALLBACK = new BatchCallback() {
         @Override
@@ -141,6 +146,9 @@ public class SqlCompiler implements Closeable {
         // For each 'this::method' reference java compiles a class
         // We need to minimize repetition of this syntax as each site generates garbage
         final KeywordBasedExecutor compileSet = this::compileSet;
+        final KeywordBasedExecutor compileBegin = this::compileBegin;
+        final KeywordBasedExecutor compileCommit = this::compileCommit;
+        final KeywordBasedExecutor compileRollback = this::compileRollback;
         final KeywordBasedExecutor truncateTables = this::truncateTables;
         final KeywordBasedExecutor alterTable = this::alterTable;
         final KeywordBasedExecutor repairTables = this::repairTables;
@@ -156,12 +164,12 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("REPAIR", repairTables);
         keywordBasedExecutors.put("set", compileSet);
         keywordBasedExecutors.put("SET", compileSet);
-        keywordBasedExecutors.put("begin", compileSet);
-        keywordBasedExecutors.put("BEGIN", compileSet);
-        keywordBasedExecutors.put("commit", compileSet);
-        keywordBasedExecutors.put("COMMIT", compileSet);
-        keywordBasedExecutors.put("rollback", compileSet);
-        keywordBasedExecutors.put("ROLLBACK", compileSet);
+        keywordBasedExecutors.put("begin", compileBegin);
+        keywordBasedExecutors.put("BEGIN", compileBegin);
+        keywordBasedExecutors.put("commit", compileCommit);
+        keywordBasedExecutors.put("COMMIT", compileCommit);
+        keywordBasedExecutors.put("rollback", compileRollback);
+        keywordBasedExecutors.put("ROLLBACK", compileRollback);
         keywordBasedExecutors.put("discard", compileSet);
         keywordBasedExecutors.put("DISCARD", compileSet);
         keywordBasedExecutors.put("close", compileSet); //no-op
@@ -915,7 +923,8 @@ public class SqlCompiler implements Closeable {
         clear();
         // these are quick executions that do not require building of a model
         lexer.of(query);
-
+        isSingleQueryMode = true;
+        
         return compileInner(executionContext);
     }
 
@@ -954,6 +963,7 @@ public class SqlCompiler implements Closeable {
             throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
         clear();
         lexer.of(query);
+        isSingleQueryMode = false;
 
         if ( callback == null ){
             callback = EMPTY_CALLBACK;
@@ -1136,7 +1146,7 @@ public class SqlCompiler implements Closeable {
                             tok = SqlUtil.fetchNext(lexer);
                             int indexValueCapacity = -1;
 
-                            if (tok != null && !isSemicolon(tok)) {
+                            if (tok != null && (!isSemicolon(tok))) {
                                 if (!SqlKeywords.isCapacityKeyword(tok)) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "'capacity' expected");
                                 } else {
@@ -1423,7 +1433,7 @@ public class SqlCompiler implements Closeable {
                     Numbers.ceilPow2(indexValueBlockCapacity)
             );
 
-            if (tok == null || Chars.equals(tok, ';')) {
+            if (tok == null || (!isSingleQueryMode && isSemicolon(tok)) ) {
                 break;
             }
 
@@ -1504,7 +1514,7 @@ public class SqlCompiler implements Closeable {
             dropColumnStatement.ofDropColumn(columnName);
             tok = SqlUtil.fetchNext(lexer);
 
-            if (tok == null || isSemicolon(tok)) {
+            if (tok == null || (!isSingleQueryMode && isSemicolon(tok))) {
                 break;
             }
 
@@ -1513,6 +1523,7 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
             }
         } while (true);
+
         return compiledQuery.ofAlter(alterQueryBuilder.build());
     }
 
@@ -1610,7 +1621,7 @@ public class SqlCompiler implements Closeable {
             partitions.ofPartition(timestamp);
             tok = SqlUtil.fetchNext(lexer);
 
-            if (tok == null|| isSemicolon(tok)) {
+            if (tok == null|| (!isSingleQueryMode && isSemicolon(tok))) {
                 break;
             }
 
@@ -1664,7 +1675,7 @@ public class SqlCompiler implements Closeable {
 
             tok = SqlUtil.fetchNext(lexer);
 
-            if (tok == null || isSemicolon(tok)) {
+            if (tok == null || (!isSingleQueryMode && isSemicolon(tok))) {
                 break;
             }
 
@@ -1708,6 +1719,18 @@ public class SqlCompiler implements Closeable {
 
     private CompiledQuery compileSet(SqlExecutionContext executionContext) {
         return compiledQuery.ofSet();
+    }
+
+    private CompiledQuery compileBegin(SqlExecutionContext executionContext) {
+        return compiledQuery.ofBegin();
+    }
+
+    private CompiledQuery compileCommit(SqlExecutionContext executionContext) {
+        return compiledQuery.ofCommit();
+    }
+
+    private CompiledQuery compileRollback(SqlExecutionContext executionContext) {
+        return compiledQuery.ofRollback();
     }
 
     @NotNull

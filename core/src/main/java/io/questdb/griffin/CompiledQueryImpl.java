@@ -198,6 +198,18 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(SET);
     }
 
+    CompiledQuery ofBegin() {
+        return of(BEGIN);
+    }
+
+    CompiledQuery ofCommit() {
+        return of(COMMIT);
+    }
+
+    CompiledQuery ofRollback() {
+        return of(ROLLBACK);
+    }
+
     CompiledQuery ofTruncate() {
         return of(TRUNCATE);
     }

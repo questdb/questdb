@@ -45,6 +45,9 @@ public interface CompiledQuery {
     short BACKUP_TABLE = 13;
     short LOCK = 14;
     short UNLOCK = 14;
+    short BEGIN = 15;
+    short COMMIT = 16;
+    short ROLLBACK = 17;
 
     RecordCursorFactory getRecordCursorFactory();
 

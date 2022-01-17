@@ -322,7 +322,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         assertMemoryLeak(() -> {
             try ( PGTestSetup test = new PGTestSetup() ) {
                 Statement statement = test.statement;
-                boolean hasResult = statement.execute("COMMIT TRANSACTION; select 4");
+                boolean hasResult = statement.execute("ROLLBACK TRANSACTION; select 4");
                 assertResults( statement, hasResult, Result.ZERO, result(row(4L)) );
             }
         });
@@ -333,7 +333,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         assertMemoryLeak(() -> {
             try ( PGTestSetup test = new PGTestSetup() ) {
                 Statement statement = test.statement;
-                boolean hasResult = statement.execute("COMMIT");
+                boolean hasResult = statement.execute("ROLLBACK");
                 assertResults( statement, hasResult, Result.ZERO );
             }
         });
@@ -874,7 +874,6 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         assertMemoryLeak(() -> {
             try ( PGTestSetup test = new PGTestSetup() ) {
                 test.connection.setAutoCommit(false);
-                test.connection.beginRequest();
                 Statement statement = test.statement;
 
                 try {
@@ -891,6 +890,48 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
                 boolean hasResult = statement.execute("select * from test; ");
                 assertResults( statement, hasResult, result(row(19L, "k")) );
+            }
+        });
+    }
+
+    @Test //implicit transaction + rollback
+    public void testCreateInsertRollback() throws Exception {
+        assertMemoryLeak(() -> {
+            try ( PGTestSetup test = new PGTestSetup() ) {
+                test.connection.setAutoCommit(false);
+                Statement statement = test.statement;
+
+                boolean hasResult = 
+                    statement.execute( "CREATE TABLE test(l long,s string); " +
+                            "INSERT INTO test VALUES (19, 'k'); " +
+                            "ROLLBACK TRANSACTION; " +
+                            "INSERT INTO test VALUES (27, 'f');" +
+                            "SELECT * from test;");
+                
+                assertResults( statement, hasResult, result(0), result(1), result(0), 
+                                                     result(1), result(row(27L, "f")) );
+            }
+        });
+    }
+
+    @Test //explicit transaction + rollback
+    public void testBeginCreateInsertRollback() throws Exception {
+        assertMemoryLeak(() -> {
+            try ( PGTestSetup test = new PGTestSetup() ) {
+                test.connection.setAutoCommit(false);
+                Statement statement = test.statement;
+
+                boolean hasResult =
+                        statement.execute(
+                                "BEGIN; " + 
+                                "CREATE TABLE test(l long,s string); " +
+                                "INSERT INTO test VALUES (19, 'k'); " +
+                                "ROLLBACK TRANSACTION; " +
+                                "INSERT INTO test VALUES (27, 'f');" +
+                                "SELECT * from test;");
+
+                assertResults( statement, hasResult, result(0), result(0), result(1), result(0),
+                        result(1), result(row(27L, "f")) );
             }
         });
     }
