@@ -70,7 +70,6 @@ public class SendAndReceiveRequestBuilder {
 
     public long connectAndSendRequest(String request) {
         final long fd = nf.socketTcp(true);
-        nf.configureNoLinger(fd);
         long sockAddr = nf.sockaddr("127.0.0.1", 9001);
         try {
             TestUtils.assertConnect(fd, sockAddr);
@@ -91,7 +90,6 @@ public class SendAndReceiveRequestBuilder {
             CharSequence response
     ) throws InterruptedException {
         final long fd = nf.socketTcp(true);
-        nf.configureNoLinger(fd);
         try {
             long sockAddr = nf.sockaddr("127.0.0.1", 9001);
             try {
