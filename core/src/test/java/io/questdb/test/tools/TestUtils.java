@@ -99,7 +99,6 @@ public final class TestUtils {
     }
 
     public static void assertConnect(NetworkFacade nf, long fd, long ilpSockAddr) {
-        nf.configureNoLinger(fd);
         long rc = nf.connect(fd, ilpSockAddr);
         if (rc != 0) {
             Assert.fail("could not connect, errno=" + nf.errno());

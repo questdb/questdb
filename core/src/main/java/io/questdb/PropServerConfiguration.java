@@ -130,6 +130,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sharedWorkerHaltOnError;
     private final long sharedWorkerYieldThreshold;
     private final long sharedWorkerSleepThreshold;
+    private final long sharedWorkerSleepMs;
     private final WorkerPoolConfiguration workerPoolConfiguration = new PropWorkerPoolConfiguration();
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final InputFormatConfiguration inputFormatConfiguration;
@@ -240,6 +241,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean httpWorkerHaltOnError;
     private long httpWorkerYieldThreshold;
     private long httpWorkerSleepThreshold;
+    private long httpWorkerSleepMs;
     private boolean httpServerKeepAlive;
     private int sendBufferSize;
     private CharSequence indexFileName;
@@ -453,6 +455,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.httpWorkerHaltOnError = getBoolean(properties, env, "http.worker.haltOnError", false);
                 this.httpWorkerYieldThreshold = getLong(properties, env, "http.worker.yield.threshold", 10);
                 this.httpWorkerSleepThreshold = getLong(properties, env, "http.worker.sleep.threshold", 10000);
+                this.httpWorkerSleepMs = getLong(properties, env, "http.worker.sleep.ms", 100);
                 this.sendBufferSize = getIntSize(properties, env, "http.send.buffer.size", 2 * 1024 * 1024);
                 this.indexFileName = getString(properties, env, "http.static.index.file.name", "index.html");
                 this.httpFrozenClock = getBoolean(properties, env, "http.frozen.clock", false);
@@ -790,8 +793,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sharedWorkerCount = getInt(properties, env, "shared.worker.count", Math.max(1, (cpuAvailable - 1) / 2 - cpuUsed));
             this.sharedWorkerAffinity = getAffinity(properties, env, "shared.worker.affinity", sharedWorkerCount);
             this.sharedWorkerHaltOnError = getBoolean(properties, env, "shared.worker.haltOnError", false);
-            this.sharedWorkerYieldThreshold = getLong(properties, env, "shared.worker.yield.threshold", 10);
-            this.sharedWorkerSleepThreshold = getLong(properties, env, "shared.worker.sleep.threshold", 10000);
+            this.sharedWorkerYieldThreshold = getLong(properties, env, "shared.worker.yield.threshold", 100);
+            this.sharedWorkerSleepThreshold = getLong(properties, env, "shared.worker.sleep.threshold", 10_000);
+            this.sharedWorkerSleepMs = getLong(properties, env, "shared.worker.sleep.ms", 100);
 
             this.metricsEnabled = getBoolean(properties, env, "metrics.enabled", false);
             this.writerAsyncCommandBusyWaitTimeout = getLong(properties, env, "cairo.writer.alter.busy.wait.timeout.micro", 500_000);
@@ -1541,6 +1545,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSleepThreshold() {
             return httpWorkerSleepThreshold;
+        }
+
+        @Override
+        public long getSleepMs() {
+            return httpWorkerSleepMs;
         }
     }
 
@@ -2545,6 +2554,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSleepThreshold() {
             return sharedWorkerSleepThreshold;
+        }
+
+        @Override
+        public long getSleepMs() {
+            return sharedWorkerSleepMs;
         }
     }
 
