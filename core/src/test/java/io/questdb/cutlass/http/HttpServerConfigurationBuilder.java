@@ -61,7 +61,7 @@ public class HttpServerConfigurationBuilder {
 
             @Override
             public boolean getPeerNoLinger() {
-                return serverKeepAlive;
+                return false;
             }
         };
 

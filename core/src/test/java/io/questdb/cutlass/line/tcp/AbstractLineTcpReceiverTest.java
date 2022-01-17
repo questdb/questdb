@@ -24,16 +24,21 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.*;
+import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.Net;
+import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
@@ -41,29 +46,41 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
 
+import java.lang.ThreadLocal;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
-public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
+class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(AbstractLineTcpReceiverTest.class);
-    protected final WorkerPool sharedWorkerPool = new WorkerPool(new WorkerPoolConfiguration() {
-        private final int[] affinity = {-1};
 
-        @Override
-        public int[] getWorkerAffinity() {
-            return affinity;
-        }
+    protected static final int WAIT_NO_WAIT = 0x0;
+    protected static final int WAIT_ENGINE_TABLE_RELEASE = 0x1;
+    protected static final int WAIT_ILP_TABLE_RELEASE = 0x2;
+    protected static final int WAIT_ALTER_TABLE_RELEASE = 0x4;
 
-        @Override
-        public int getWorkerCount() {
-            return 1;
-        }
+    private final ThreadLocal<Socket> tlSocket = new ThreadLocal<>();
 
-        @Override
-        public boolean haltOnError() {
-            return true;
-        }
-    });
+    protected final WorkerPool sharedWorkerPool = new WorkerPool(getWorkerPoolConfiguration());
+    protected WorkerPoolConfiguration getWorkerPoolConfiguration() {
+        return new WorkerPoolConfiguration() {
+            private final int[] affinity = {-1};
+
+            @Override
+            public int[] getWorkerAffinity() {
+                return affinity;
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return 1;
+            }
+
+            @Override
+            public boolean haltOnError() {
+                return true;
+            }
+        };
+    }
     protected final int bindPort = 9002; // Don't clash with other tests since they may run in parallel
     private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
         @Override
@@ -76,11 +93,14 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             return bindPort;
         }
     };
-    protected int maxMeasurementSize = 50;
+    protected int maxMeasurementSize = 256;
     protected String authKeyId = null;
-    protected int msgBufferSize = 1024;
+    protected int msgBufferSize = 256 * 1024;
     protected long minIdleMsBeforeWriterRelease = 30000;
     protected int aggressiveReadRetryCount = 0;
+    protected long maintenanceInterval = 25;
+    protected long commitTimeout = 25;
+
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
         @Override
         public IODispatcherConfiguration getNetDispatcherConfiguration() {
@@ -109,7 +129,12 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
 
         @Override
         public long getMaintenanceInterval() {
-            return 25;
+            return maintenanceInterval;
+        }
+
+        @Override
+        public long getCommitTimeout() {
+            return commitTimeout;
         }
 
         @Override
@@ -135,24 +160,25 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
 
     @After
     public void cleanup() {
-        maxMeasurementSize = 50;
+        maxMeasurementSize = 256;
     }
 
     @FunctionalInterface
     public interface LineTcpServerAwareContext {
-        void run(LineTcpReceiver receiver);
+        void run(LineTcpReceiver receiver) throws Exception;
     }
 
-    protected void runInContext(LineTcpReceiverTest.LineTcpServerAwareContext r) throws Exception {
+    protected void runInContext(LineTcpServerAwareContext r) throws Exception {
         runInContext(r, false);
     }
 
-    protected void runInContext(LineTcpReceiverTest.LineTcpServerAwareContext r, boolean needMaintenanceJob) throws Exception {
+    protected void runInContext(LineTcpServerAwareContext r, boolean needMaintenanceJob) throws Exception {
         minIdleMsBeforeWriterRelease = 250;
         assertMemoryLeak(() -> {
             final Path path = new Path(4096);
             try (LineTcpReceiver receiver = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine)) {
                 sharedWorkerPool.assignCleaner(Path.CLEANER);
+                O3Utils.setupWorkerPool(sharedWorkerPool, messageBus);
                 if (needMaintenanceJob) {
                     sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
                 }
@@ -164,6 +190,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                     throw err;
                 } finally {
                     sharedWorkerPool.halt();
+                    O3Utils.freeBuf();
                     Path.clearThreadLocals();
                 }
             } catch (Throwable err) {
@@ -175,26 +202,113 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         });
     }
 
-    protected void sendToSocket(String lineData, boolean noLinger) {
+    protected void send(LineTcpReceiver receiver, CharSequence tableName, int wait, Runnable sendToSocket) {
+        SOCountDownLatch releaseLatch = new SOCountDownLatch(1);
+        final CharSequence t = tableName;
+        switch (wait) {
+            case WAIT_ENGINE_TABLE_RELEASE:
+                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                    if (Chars.equals(tableName, name)) {
+                        if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(tableName, t) ) {
+                            releaseLatch.countDown();
+                        }
+                    }
+                });
+                break;
+            case WAIT_ILP_TABLE_RELEASE:
+                receiver.setSchedulerListener((tableName1, event) -> {
+                    if (Chars.equals(tableName1, tableName1)) {
+                        releaseLatch.countDown();
+                    }
+                });
+                break;
+        }
+
+        try {
+            sendToSocket.run();
+            if (wait != WAIT_NO_WAIT) {
+                releaseLatch.await();
+            }
+        } finally {
+            switch (wait) {
+                case WAIT_ENGINE_TABLE_RELEASE:
+                    engine.setPoolListener(null);
+                    break;
+                case WAIT_ILP_TABLE_RELEASE:
+                    receiver.setSchedulerListener(null);
+                    break;
+            }
+        }
+    }
+
+    protected Socket getSocket(boolean noLinger) {
+        Socket socket = tlSocket.get();
+        if (socket != null) {
+            return socket;
+        }
+
         int ipv4address = Net.parseIPv4("127.0.0.1");
         long sockaddr = Net.sockaddr(ipv4address, bindPort);
         long fd = Net.socketTcp(true);
+        socket = new Socket(sockaddr, fd);
+
+        if (TestUtils.connect(fd, sockaddr, noLinger) != 0) {
+            throw new RuntimeException("could not connect, errno=" + Os.errno());
+        }
+
+        tlSocket.set(socket);
+        return socket;
+    }
+
+    protected void sendToSocket(String lineData, boolean noLinger) {
+        try (Socket socket = getSocket(noLinger)) {
+            sendToSocket(socket, lineData);
+        } catch (Exception e) {
+            Assert.fail("Data sending failed [e=" + e + "]");
+            LOG.error().$(e).$();
+        }
+    }
+
+    protected void sendToSocket(Socket socket, String lineData) {
+        byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
+        long bufaddr = Unsafe.malloc(lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
         try {
-            TestUtils.assertConnect(fd, sockaddr, noLinger);
-            byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
-            long bufaddr = Unsafe.malloc(lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
-            try {
-                for (int n = 0; n < lineDataBytes.length; n++) {
-                    Unsafe.getUnsafe().putByte(bufaddr + n, lineDataBytes[n]);
+            for (int n = 0; n < lineDataBytes.length; n++) {
+                Unsafe.getUnsafe().putByte(bufaddr + n, lineDataBytes[n]);
+            }
+            int sent = 0;
+            while (sent != lineDataBytes.length) {
+                int rc = Net.send(socket.fd, bufaddr + sent, lineDataBytes.length - sent);
+                if (rc < 0) {
+                    throw new RuntimeException("Data sending failed [rc=" + rc + "]");
                 }
-                int rc = Net.send(fd, bufaddr, lineDataBytes.length);
-                Assert.assertEquals(lineDataBytes.length, rc);
-            } finally {
-                Unsafe.free(bufaddr, lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
+                sent += rc;
             }
         } finally {
+            Unsafe.free(bufaddr, lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    protected class Socket implements AutoCloseable {
+        private final long sockaddr;
+        private final long fd;
+
+        private Socket(long sockaddr, long fd) {
+            this.sockaddr = sockaddr;
+            this.fd = fd;
+        }
+
+        @Override
+        public void close() throws Exception {
+            tlSocket.set(null);
             Net.close(fd);
             Net.freeSockAddr(sockaddr);
+        }
+    }
+
+    protected void assertTable(CharSequence expected, CharSequence tableName) {
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
         }
     }
 }
