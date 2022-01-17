@@ -38,6 +38,7 @@ import org.junit.Test;
 
 import java.io.File;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.log.HttpLogRecordSink.CRLF;
 
@@ -138,13 +139,15 @@ public class LogAlertSocketTest {
                 }
 
                 // connect to a server and send something
-                alertSkt.send(builder
+                alertSkt.send(
+                        builder
                         .rewindToMark()
                         .put("Something")
                         .put(CRLF)
                         .put(MockAlertTarget.DEATH_PILL)
                         .put(CRLF)
-                        .$());
+                        .$()
+                );
                 Assert.assertTrue(firstServerCompleted.await(20_000_000_000L));
 
                 // by now there is only one server surviving, and we are connected to the other.
@@ -194,9 +197,9 @@ public class LogAlertSocketTest {
                 Assert.assertFalse(server.isRunning());
 
                 // send and fail after a re-connect delay
-                final long start = System.nanoTime();
-                Assert.assertFalse(alertSkt.send(builder.length()));
-                Assert.assertTrue(System.nanoTime() - start >= 2 * LogAlertSocket.RECONNECT_DELAY_NANO);
+                AtomicInteger reconnectCounter = new AtomicInteger();
+                Assert.assertFalse(alertSkt.send(builder.length(), reconnectCounter::incrementAndGet));
+                Assert.assertEquals(2,reconnectCounter.get());
             }
         });
     }
