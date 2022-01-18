@@ -638,7 +638,9 @@ public class RetryIODispatcherTest {
                                     Os.sleep(threadI * 5);
                                     String request = "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(" + threadI +
                                             "%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" + SendAndReceiveRequestBuilder.RequestHeaders;
-                                    long fd = new SendAndReceiveRequestBuilder().connectAndSendRequest(request);
+                                    long fd = new SendAndReceiveRequestBuilder()
+                                            .withClientLinger(60)
+                                            .connectAndSendRequest(request);
                                     fds[threadI] = fd;
                                 } catch (Exception e) {
                                     LOG.error().$("Failed execute insert http request. Server error ").$(e);
@@ -650,12 +652,22 @@ public class RetryIODispatcherTest {
                         threads[i].start();
                     }
                     countDownLatch.await();
+
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=SELECT+1 HTTP/1.1\r\n",
                             "54\r\n" +
                                     "{\"query\":\"SELECT 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"dataset\":[[1]],\"count\":1}\r\n" +
                                     "00\r\n" +
                                     "\r\n");
+
+                    // Now that done latch releases quicker than before we seem to need
+                    // this is a hack to let connections sink in
+                    // before closing them. We're using default linger timeout,
+                    // which is undetermined.
+                    // With correct linger timeout set this test will complete in 4s vs 14 with sleep
+
+                    Os.sleep(500);
+
                     for (int n = 0; n < fds.length; n++) {
                         Assert.assertNotEquals(fds[n], -1);
                         NetworkFacadeImpl.INSTANCE.close(fds[n]);

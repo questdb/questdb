@@ -208,6 +208,14 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureNoLinger
     return setsockopt((int) fd, SOL_SOCKET, SO_LINGER, &sl, sizeof(sl));
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureLinger
+        (JNIEnv *e, jclass cl, jlong fd, jint seconds) {
+    struct linger sl;
+    sl.l_onoff = 1;
+    sl.l_linger = seconds;
+    return setsockopt((int) fd, SOL_SOCKET, SO_LINGER, &sl, sizeof(sl));
+}
+
 JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_connect
         (JNIEnv *e, jclass cl, jlong fd, jlong sockAddr) {
     return connect((int) fd, (const struct sockaddr *) sockAddr, sizeof(struct sockaddr));

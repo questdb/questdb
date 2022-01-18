@@ -85,6 +85,8 @@ public final class Net {
 
     public native static int configureNoLinger(long fd);
 
+    public native static int configureLinger(long fd, int seconds);
+
     public static native int configureNonBlocking(long fd);
 
     public native static long connect(long fd, long sockaddr);
