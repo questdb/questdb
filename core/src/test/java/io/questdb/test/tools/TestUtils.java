@@ -422,7 +422,6 @@ public final class TestUtils {
         if (fileCount != Files.getOpenFileCount()) {
             Assert.assertEquals(Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
         }
-        Assert.assertEquals(mem, Unsafe.getMemUsed());
 
         // Checks that the same tag used for allocation and freeing native memory
         for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
@@ -431,6 +430,7 @@ public final class TestUtils {
                 Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i), memoryUsageByTag[i], actualMemByTag);
             }
         }
+        Assert.assertEquals(mem, Unsafe.getMemUsed());
     }
 
     public static void assertReader(CharSequence expected, TableReader reader, MutableCharSink sink) {

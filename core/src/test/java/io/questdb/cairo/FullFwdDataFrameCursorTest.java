@@ -61,7 +61,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 CairoTestUtils.create(model);
             }
 
-            TableReader reader = new TableReader(configuration, "x");
+            TableReader reader = new TableReader(configuration, "x", null);
             FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
             cursor.of(reader);
             cursor.close();
@@ -93,7 +93,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
                 // create partition on disk but do not commit transaction nor row
 
-                try (TableReader reader = new TableReader(configuration, "x")) {
+                try (TableReader reader = new TableReader(configuration, "x", null)) {
                     FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
 
                     int frameCount = 0;
@@ -765,7 +765,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     writer.commit();
                 }
 
-                try (TableReader reader = new TableReader(configuration, "ABC")) {
+                try (TableReader reader = createTableReader(configuration, "ABC")) {
 
                     Assert.assertTrue(reader.getPartitionCount() > 0);
 
@@ -783,6 +783,10 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private TableReader createTableReader(CairoConfiguration configuration, String name) {
+        return new TableReader(configuration, name, null);
     }
 
     @Test
@@ -1068,7 +1072,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             Assert.assertTrue(ff.wasCalled());
 
             // lets see what we can read after this catastrophe
-            try (TableReader reader = new TableReader(AbstractCairoTest.configuration, "ABC")) {
+            try (TableReader reader = createTableReader(AbstractCairoTest.configuration, "ABC")) {
                 FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                 TableReaderRecord record = new TableReaderRecord();
 
@@ -1209,7 +1213,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             }
 
             // lets see what we can read after this catastrophe
-            try (TableReader reader = new TableReader(AbstractCairoTest.configuration, "ABC")) {
+            try (TableReader reader = createTableReader(AbstractCairoTest.configuration, "ABC")) {
                 FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                 TableReaderRecord record = new TableReaderRecord();
 
@@ -1420,7 +1424,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     workerPool.halt();
                 }
 
-                try (TableReader reader = new TableReader(configuration, "ABC")) {
+                try (TableReader reader = createTableReader(configuration, "ABC")) {
 
                     Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
@@ -1583,7 +1587,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 workerPool.halt();
 
                 // lets see what we can read after this catastrophe
-                try (TableReader reader = new TableReader(AbstractCairoTest.configuration, "ABC")) {
+                try (TableReader reader = createTableReader(AbstractCairoTest.configuration, "ABC")) {
                     FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                     TableReaderRecord record = new TableReaderRecord();
 
@@ -1664,7 +1668,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
                 writer.commit();
 
-                try (TableReader reader = new TableReader(configuration, "x")) {
+                try (TableReader reader = createTableReader(configuration, "x")) {
                     TableReaderRecord record = new TableReaderRecord();
 
                     Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
@@ -1740,7 +1744,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
                 writer.commit();
 
-                try (TableReader reader = new TableReader(configuration, "x")) {
+                try (TableReader reader = createTableReader(configuration, "x")) {
                     FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                     TableReaderRecord record = new TableReaderRecord();
 
@@ -1811,7 +1815,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
                 writer.commit();
 
-                try (TableReader reader = new TableReader(configuration, "x")) {
+                try (TableReader reader = createTableReader(configuration, "x")) {
                     FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                     TableReaderRecord record = new TableReaderRecord();
 
@@ -1888,7 +1892,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
                 writer.commit();
 
-                try (TableReader reader = new TableReader(configuration, "x")) {
+                try (TableReader reader = createTableReader(configuration, "x")) {
 
                     final FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                     final TableReaderRecord record = new TableReaderRecord();
@@ -1964,7 +1968,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
                 writer.commit();
 
-                try (TableReader reader = new TableReader(configuration, "x")) {
+                try (TableReader reader = createTableReader(configuration, "x")) {
 
                     writer.truncate();
                     writer.addColumn(
@@ -2068,7 +2072,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
                 writer.commit();
 
-                try (TableReader reader = new TableReader(configuration, "x")) {
+                try (TableReader reader = createTableReader(configuration, "x")) {
 
                     final FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                     final TableReaderRecord record = new TableReaderRecord();
@@ -2146,7 +2150,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
                 writer.commit();
 
-                try (TableReader reader = new TableReader(configuration, "x")) {
+                try (TableReader reader = createTableReader(configuration, "x")) {
 
                     final FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                     final TableReaderRecord record = new TableReaderRecord();
@@ -2217,7 +2221,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             // check that each symbol in table exists in index as well
             // and current row is collection of index rows
-            try (TableReader reader = new TableReader(configuration, "x")) {
+            try (TableReader reader = createTableReader(configuration, "x")) {
 
                 // Open data frame cursor. This one will frame table as collection of
                 // partitions, each partition is a frame.
@@ -2270,7 +2274,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             // check that each symbol in table exists in index as well
             // and current row is collection of index rows
-            try (TableReader reader = new TableReader(configuration, "x")) {
+            try (TableReader reader = createTableReader(configuration, "x")) {
 
                 // Open data frame cursor. This one will frame table as collection of
                 // partitions, each partition is a frame.
@@ -2325,7 +2329,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             // check that each symbol in table exists in index as well
             // and current row is collection of index rows
-            try (TableReader reader = new TableReader(configuration, "x")) {
+            try (TableReader reader = createTableReader(configuration, "x")) {
 
                 // Open data frame cursor. This one will frame table as collection of
                 // partitions, each partition is a frame.
@@ -2388,7 +2392,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             // check that each symbol in table exists in index as well
             // and current row is collection of index rows
-            try (TableReader reader = new TableReader(configuration, "x")) {
+            try (TableReader reader = createTableReader(configuration, "x")) {
 
                 // Open data frame cursor. This one will frame table as collection of
                 // partitions, each partition is a frame.
