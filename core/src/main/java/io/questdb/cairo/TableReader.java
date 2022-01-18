@@ -842,6 +842,12 @@ public class TableReader implements Closeable, SymbolTableSource {
         return symbolMapReaders.getQuick(columnIndex).isCached();
     }
 
+    private boolean isMetaFileMissingFileSystemError(CairoException ex) {
+        return Chars.contains(ex.getFlyweightMessage(), "File not found")
+                || Chars.contains(ex.getFlyweightMessage(), "cannot map negative length")
+                || Chars.contains(ex.getFlyweightMessage(), "could not open read-only");
+    }
+
     private TableReaderMetadata openMetaFile() {
         try {
             return new TableReaderMetadata(ff, path.concat(TableUtils.META_FILE_NAME).$());
@@ -1176,12 +1182,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                 }
             }
         }
-    }
-
-    private boolean isMetaFileMissingFileSystemError(CairoException ex) {
-        return Chars.contains(ex.getFlyweightMessage(), "File not found")
-                || Chars.contains(ex.getFlyweightMessage(), "cannot map negative length")
-                || Chars.contains(ex.getFlyweightMessage(), "could not open read-only");
     }
 
     /**

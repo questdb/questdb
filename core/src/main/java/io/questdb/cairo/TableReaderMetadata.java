@@ -36,10 +36,10 @@ import java.io.Closeable;
 
 public class TableReaderMetadata extends BaseRecordMetadata implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableReaderMetadata.class);
-    private MemoryMR metaMem;
     private final Path path;
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
+    private MemoryMR metaMem;
     private int id;
     private MemoryMR transitionMeta;
 
