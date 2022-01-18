@@ -436,7 +436,9 @@ public class RetryIODispatcherTest {
                                 for (int r = 0; r < insertCount; r++) {
                                     // insert one record
                                     try {
-                                        new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                        new SendAndReceiveRequestBuilder()
+                                                .withClientLinger(60)
+                                                .executeWithStandardHeaders(
                                                 "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n",
                                                 IODispatcherTest.JSON_DDL_RESPONSE
                                         );
@@ -496,7 +498,9 @@ public class RetryIODispatcherTest {
                                 for (int r = 0; r < insertCount; r++) {
                                     // insert one record
                                     try {
-                                        new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                        new SendAndReceiveRequestBuilder()
+                                                .withClientLinger(60)
+                                                .executeWithStandardHeaders(
                                                 "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n",
                                                 IODispatcherTest.JSON_DDL_RESPONSE
                                         );
@@ -558,7 +562,8 @@ public class RetryIODispatcherTest {
                                     try {
                                         SendAndReceiveRequestBuilder sendAndReceiveRequestBuilder = new SendAndReceiveRequestBuilder()
                                                 .withNetworkFacade(getSendDelayNetworkFacade(slowServerReceiveNetAfterSending))
-                                                .withCompareLength(importResponse.length());
+                                                .withCompareLength(importResponse.length())
+                                                .withClientLinger(60);
                                         sendAndReceiveRequestBuilder
                                                 .execute(importRequest, importResponse);
                                         successRequests.incrementAndGet();
@@ -777,7 +782,9 @@ public class RetryIODispatcherTest {
                         try {
                             try {
                                 // Rename table
-                                new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                new SendAndReceiveRequestBuilder()
+                                        .withClientLinger(60)
+                                        .executeWithStandardHeaders(
                                         "GET /query?query=rename+table+%27balances_x%27+to+%27balances_y%27&limit=0%2C1000&count=true HTTP/1.1\r\n",
                                         IODispatcherTest.JSON_DDL_RESPONSE
                                 );
