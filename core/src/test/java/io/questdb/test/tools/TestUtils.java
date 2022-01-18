@@ -46,6 +46,8 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 
 import java.io.*;
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class TestUtils {
@@ -70,23 +72,23 @@ public final class TestUtils {
         return true;
     }
 
-    public static long connect(long fd, long sockAddr, boolean noLinger) {
+    public static long connect(long fd, long sockAddr) {
         Assert.assertTrue(fd > -1);
-        if (noLinger) {
-            Net.configureNoLinger(fd);
-        }
         return Net.connect(fd, sockAddr);
     }
 
-    public static void assertConnect(long fd, long sockAddr, boolean noLinger) {
-        long rc = connect(fd, sockAddr, noLinger);
-        if (rc != 0) {
-            Assert.fail("could not connect, errno=" + Os.errno());
+    public static void await(CyclicBarrier barrier) {
+        try {
+            barrier.await();
+        } catch (Throwable ignore) {
         }
     }
 
     public static void assertConnect(long fd, long sockAddr) {
-        assertConnect(fd, sockAddr, true);
+        long rc = connect(fd, sockAddr);
+        if (rc != 0) {
+            Assert.fail("could not connect, errno=" + Os.errno());
+        }
     }
 
     public static void assertConnect(NetworkFacade nf, long fd, long ilpSockAddr) {
@@ -420,7 +422,6 @@ public final class TestUtils {
         if (fileCount != Files.getOpenFileCount()) {
             Assert.assertEquals(Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
         }
-        Assert.assertEquals(mem, Unsafe.getMemUsed());
 
         // Checks that the same tag used for allocation and freeing native memory
         for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
@@ -429,6 +430,7 @@ public final class TestUtils {
                 Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i), memoryUsageByTag[i], actualMemByTag);
             }
         }
+        Assert.assertEquals(mem, Unsafe.getMemUsed());
     }
 
     public static void assertReader(CharSequence expected, TableReader reader, MutableCharSink sink) {

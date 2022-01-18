@@ -70,7 +70,7 @@ public class TxnTest extends AbstractCairoTest {
                 try (Path path = new Path()) {
                     path.of(configuration.getRoot()).concat(tableName);
                     int testPartitionCount = 3000;
-                    try (TxWriter txWriter = new TxWriter(cleanFf, path, PartitionBy.DAY)) {
+                    try (TxWriter txWriter = new TxWriter(cleanFf).ofRW(path, PartitionBy.DAY)) {
                         // Add lots of partitions
                         for (int i = 0; i < testPartitionCount; i++) {
                             txWriter.updatePartitionSizeByTimestamp(i * Timestamps.DAY_MICROS, i + 1);
@@ -81,7 +81,7 @@ public class TxnTest extends AbstractCairoTest {
                     }
 
                     // Reopen without OS errors
-                    try (TxWriter txWriter = new TxWriter(cleanFf, path, PartitionBy.DAY)) {
+                    try (TxWriter txWriter = new TxWriter(cleanFf).ofRW(path, PartitionBy.DAY)) {
                         // Read lots of partitions
                         Assert.assertEquals(testPartitionCount, txWriter.getPartitionCount());
                         for (int i = 0; i < testPartitionCount - 1; i++) {
@@ -90,14 +90,14 @@ public class TxnTest extends AbstractCairoTest {
                     }
 
                     // Open with OS error to file extend
-                    try (TxWriter ignored = new TxWriter(errorFf, path, PartitionBy.DAY)) {
+                    try (TxWriter ignored = new TxWriter(errorFf).ofRW(path, PartitionBy.DAY)) {
                         Assert.fail("Should not be able to extend on opening");
                     } catch (CairoException ex) {
                         // expected
                     }
 
                     // Reopen without OS errors
-                    try (TxWriter txWriter = new TxWriter(cleanFf, path, PartitionBy.DAY)) {
+                    try (TxWriter txWriter = new TxWriter(cleanFf).ofRW(path, PartitionBy.DAY)) {
                         // Read lots of partitions
                         Assert.assertEquals(testPartitionCount, txWriter.getPartitionCount());
                         for (int i = 0; i < testPartitionCount - 1; i++) {
@@ -108,4 +108,5 @@ public class TxnTest extends AbstractCairoTest {
             });
         });
     }
+
 }

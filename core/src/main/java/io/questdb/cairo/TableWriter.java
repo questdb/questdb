@@ -128,11 +128,9 @@ public class TableWriter implements Closeable {
     private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<>(O3MutableAtomicInteger::new, 64);
     private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<>(O3Basket::new, 64);
     private final TxnScoreboard txnScoreboard;
-    private final StringSink o3Sink = new StringSink();
     private final StringSink fileNameSink = new StringSink();
     private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
-    private final StringSink o3FileNameSink = new StringSink();
     private final RingQueue<O3PartitionUpdateTask> o3PartitionUpdateQueue;
     private final MPSequence o3PartitionUpdatePubSeq;
     private final SCSequence o3PartitionUpdateSubSeq;
@@ -145,6 +143,7 @@ public class TableWriter implements Closeable {
     // Latest command sequence per command source.
     // Publisher source is identified by a long value
     private final LongLongHashMap cmdSequences = new LongLongHashMap();
+    private final AlterStatement alterTableStatement = new AlterStatement();
     private Row row = regularRow;
     private long todoTxn;
     private MemoryMAT o3TimestampMem;
@@ -177,7 +176,6 @@ public class TableWriter implements Closeable {
     private ObjList<? extends MemoryA> activeColumns;
     private ObjList<Runnable> activeNullSetters;
     private int rowActon = ROW_ACTION_OPEN_PARTITION;
-    private final AlterStatement alterTableStatement = new AlterStatement();
     private long committedMasterRef;
 
 
@@ -265,8 +263,8 @@ public class TableWriter implements Closeable {
             openMetaFile(ff, path, rootLen, metaMem);
             this.metadata = new TableWriterMetadata(ff, metaMem);
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
-            this.txWriter = new TxWriter(ff, path, partitionBy);
-            this.txnScoreboard = new TxnScoreboard(ff, path.trimTo(rootLen), configuration.getTxnScoreboardEntryCount());
+            this.txWriter = new TxWriter(ff).ofRW(path, partitionBy);
+            this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
             path.trimTo(rootLen);
             // we have to do truncate repair at this stage of constructor
             // because this operation requires metadata
@@ -669,10 +667,6 @@ public class TableWriter implements Closeable {
         txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
     }
 
-    public long getUncommittedRowCount() {
-        return (masterRef - committedMasterRef) >> 1;
-    }
-
     @Override
     public void close() {
         if (isOpen() && lifecycleManager.close()) {
@@ -770,6 +764,10 @@ public class TableWriter implements Closeable {
         return txnScoreboard;
     }
 
+    public long getUncommittedRowCount() {
+        return (masterRef - committedMasterRef) >> 1;
+    }
+
     public boolean inTransaction() {
         return txWriter != null && (txWriter.inTransaction() || hasO3());
     }
@@ -839,6 +837,26 @@ public class TableWriter implements Closeable {
 
     public void o3BumpErrorCount() {
         o3ErrorCount.incrementAndGet();
+    }
+
+    public void processCommandQueue(TableWriterTask cmd, Sequence commandSubSeq, long cursor, boolean acceptStructureChange) {
+        if (cmd.getTableId() == getMetadata().getId()) {
+            switch (cmd.getType()) {
+                case TableWriterTask.TSK_SLAVE_SYNC:
+                    replPublishSyncEvent(cmd, cursor, commandSubSeq);
+                    break;
+                case TableWriterTask.TSK_ALTER_TABLE:
+                    processAlterTableEvent(cmd, cursor, commandSubSeq, acceptStructureChange);
+                    break;
+                default:
+                    LOG.error().$("unknown TableWriterTask type, ignored: ").$(cmd.getType()).$();
+                    // Don't block the queue even if command is unknown
+                    commandSubSeq.done(cursor);
+                    break;
+            }
+        } else {
+            commandSubSeq.done(cursor);
+        }
     }
 
     public void removeColumn(CharSequence name) {
@@ -1217,98 +1235,6 @@ public class TableWriter implements Closeable {
         }
 
         return model;
-    }
-
-    private void replPublishSyncEvent(TableWriterTask cmd, long cursor, Sequence sequence) {
-        long dst = cmd.getInstance();
-        long dstIP = cmd.getIp();
-        long tableId = cmd.getTableId();
-        TableSyncModel syncModel;
-
-        try {
-            LOG.info()
-                    .$("received replication SYNC cmd [tableName=").$(tableName)
-                    .$(", tableId=").$(tableId)
-                    .$(", src=").$(dst)
-                    .$(", srcIP=").$ip(dstIP)
-                    .I$();
-            syncModel = replHandleSyncCmd(cmd);
-        } finally {
-            // release command queue slot not to hold queues
-            sequence.done(cursor);
-        }
-        if (syncModel != null) {
-            replPublishSyncEvent0(syncModel, tableId, dst, dstIP);
-        }
-    }
-
-    private void processAlterTableEvent(TableWriterTask cmd, long cursor, Sequence sequence, boolean acceptStructureChange) {
-        final long instance = cmd.getInstance();
-        final long tableId = cmd.getTableId();
-
-        CharSequence error = null;
-        try {
-            replAlterTableEvent0(tableId, instance, null, TableWriterTask.TSK_ALTER_TABLE_BEGIN);
-            LOG.info()
-                    .$("received ASYNC ALTER TABLE cmd [tableName=").$(tableName)
-                    .$(", tableId=").$(tableId)
-                    .$(", instance=").$(instance)
-                    .I$();
-            alterTableStatement.deserialize(cmd);
-            alterTableStatement.apply(this, acceptStructureChange);
-        } catch (TableStructureChangesException ex) {
-            LOG.info()
-                    .$("cannot complete ASYNC ALTER TABLE cmd, table structure change is not allowed atm [tableName=").$(tableName)
-                    .$(", tableId=").$(tableId)
-                    .$(", src=").$(instance)
-                    .I$();
-            error = "ALTER TABLE cannot change table structure while Writer is busy";
-        } catch (SqlException | CairoException ex ) {
-            error = ex.getFlyweightMessage();
-        } catch (Throwable ex) {
-            LOG.error().$("error on processing ALTER table [tableName=").$(tableName).$(", ex=").$(ex).I$();
-            error = "error on processing ALTER table, see QuestDB server logs for details";
-        } finally {
-            sequence.done(cursor);
-        }
-        replAlterTableEvent0(tableId, instance, error, TableWriterTask.TSK_ALTER_TABLE_COMPLETE);
-    }
-
-    private void replAlterTableEvent0(long tableId, long instance, CharSequence error, int eventType) {
-        final long pubCursor = messageBus.getTableWriterEventPubSeq().next();
-        if (pubCursor > -1) {
-            try {
-                final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
-                event.of(eventType, tableId, tableName);
-                if (error != null) {
-                    event.putStr(error);
-                } else {
-                    event.putInt(-1);
-                }
-                event.setInstance(instance);
-            } finally {
-                messageBus.getTableWriterEventPubSeq().done(pubCursor);
-            }
-
-            // Log result
-            if (eventType == TableWriterTask.TSK_ALTER_TABLE_COMPLETE) {
-                LogRecord lg = LOG.info()
-                        .$("published alter table complete event [table=").$(tableName)
-                        .$(",tableId=").$(tableId)
-                        .$(",instance=").$(instance);
-                if (error != null) {
-                    lg.$(",error=").$(error);
-                }
-                lg.I$();
-            }
-        } else if (pubCursor == -1) {
-            // Queue is full
-            LOG.error()
-                    .$("cannot publish alter table complete event [table=").$(tableName)
-                    .$(",tableId=").$(tableId)
-                    .$(",instance=").$(instance)
-                    .I$();
-        }
     }
 
     public void rollback() {
@@ -1777,6 +1703,25 @@ public class TableWriter implements Closeable {
         throw new CairoError("Table '" + tableName + "' is distressed");
     }
 
+    private boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
+        long lastCommittedTxn = txWriter.getTxn();
+        try {
+            if (txnScoreboard.acquireTxn(lastCommittedTxn)) {
+                txnScoreboard.releaseTxn(lastCommittedTxn);
+            }
+        } catch (CairoException ex) {
+            // Scoreboard can be over allocated, don't stall writing because of that.
+            // Schedule async purge and continue
+            LOG.error().$("cannot lock last txn in scoreboard, partition purge will be scheduled [table=")
+                    .$(tableName)
+                    .$(", txn=").$(lastCommittedTxn)
+                    .$(", error=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno()).I$();
+        }
+
+        return txnScoreboard.getMin() != lastCommittedTxn;
+    }
+
     private void clearO3() {
         this.o3MasterRef = -1; // clears o3 flag, hasO3() will be returning false
         rowActon = ROW_ACTION_SWITCH_PARTITION;
@@ -1981,61 +1926,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void consumeO3PartitionRemoveTasks() {
-        // consume discovery jobs
-        final RingQueue<O3PurgeDiscoveryTask> discoveryQueue = messageBus.getO3PurgeDiscoveryQueue();
-        final Sequence discoverySubSeq = messageBus.getO3PurgeDiscoverySubSeq();
-        final RingQueue<O3PurgeTask> purgeQueue = messageBus.getO3PurgeQueue();
-        final Sequence purgePubSeq = messageBus.getO3PurgePubSeq();
-        final Sequence purgeSubSeq = messageBus.getO3PurgeSubSeq();
-
-        if (discoverySubSeq != null) {
-            while (true) {
-                long cursor = discoverySubSeq.next();
-                if (cursor > -1) {
-                    O3PurgeDiscoveryTask task = discoveryQueue.get(cursor);
-                    O3PurgeDiscoveryJob.discoverPartitions(
-                            ff,
-                            o3Sink,
-                            o3FileNameSink,
-                            rowValueIsNotNull, // reuse, this is only called from writer close
-                            purgeQueue,
-                            purgePubSeq,
-                            path,
-                            tableName,
-                            task.getPartitionBy(),
-                            task.getTimestamp(),
-                            txnScoreboard,
-                            task.getMostRecentTxn()
-                    );
-                } else if (cursor == -1) {
-                    break;
-                }
-            }
-        }
-
-        // consume purge jobs
-        if (purgeSubSeq != null) {
-            while (true) {
-                long cursor = purgeSubSeq.next();
-                if (cursor > -1) {
-                    O3PurgeTask task = purgeQueue.get(cursor);
-                    O3PurgeJob.purgePartitionDir(
-                            ff,
-                            other,
-                            task.getPartitionBy(),
-                            task.getTimestamp(),
-                            txnScoreboard,
-                            task.getNameTxnToRemove(),
-                            task.getMinTxnToExpect()
-                    );
-                } else if (cursor == -1) {
-                    break;
-                }
-            }
-        }
-    }
-
     private int copyMetadataAndSetIndexed(int columnIndex, int indexValueBlockSize) {
         try {
             int index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
@@ -2168,7 +2058,6 @@ public class TableWriter implements Closeable {
     }
 
     private void doClose(boolean truncate) {
-        consumeO3PartitionRemoveTasks();
         boolean tx = inTransaction();
         freeSymbolMapWriters();
         freeIndexers();
@@ -3340,13 +3229,15 @@ public class TableWriter implements Closeable {
     }
 
     private void o3ProcessPartitionRemoveCandidates0(int n) {
-        final long readerTxn = txnScoreboard.getMin();
-        final long readerTxnCount = txnScoreboard.getActiveReaderCount(readerTxn);
-        if (txnScoreboard.isTxnAvailable(txWriter.getTxn() - 1)) {
+        boolean anyReadersBeforeCommittedTxn = checkScoreboardHasReadersBeforeLastCommittedTxn();
+        // This flag will determine to schedule O3PurgeDiscoveryJob at the end or all done already.
+        boolean scheduleAsyncPurge = anyReadersBeforeCommittedTxn;
+
+        if (!anyReadersBeforeCommittedTxn) {
             for (int i = 0; i < n; i += 2) {
-                final long timestamp = o3PartitionRemoveCandidates.getQuick(i);
-                final long txn = o3PartitionRemoveCandidates.getQuick(i + 1);
                 try {
+                    final long timestamp = o3PartitionRemoveCandidates.getQuick(i);
+                    final long txn = o3PartitionRemoveCandidates.getQuick(i + 1);
                     setPathForPartition(
                             other,
                             partitionBy,
@@ -3354,34 +3245,30 @@ public class TableWriter implements Closeable {
                             false
                     );
                     TableUtils.txnPartitionConditionally(other, txn);
-                    other.slash$();
-                    int errno;
-                    if ((errno = ff.rmdir(other)) == 0) {
-                        LOG.info()
-                                .$("purged [path=").$(other)
-                                .$(", readerTxn=").$(readerTxn)
-                                .$(", readerTxnCount=").$(readerTxnCount)
-                                .$(']').$();
+                    long errno = ff.rmdir(other.$());
+                    if (errno == 0 || errno == -1) {
+                        // Successfully deleted or async purge has already swept it up
+                        LOG.info().$("purged [path=").$(other).I$();
                     } else {
                         LOG.info()
-                                .$("queued to purge [errno=").$(errno)
-                                .$(", table=").$(tableName)
-                                .$(", ts=").$ts(timestamp)
-                                .$(", txn=").$(txn)
-                                .$(']').$();
-                        o3QueuePartitionForPurge(timestamp, txn);
+                                .$("cannot purge partition version, async purge will be scheduled [path=")
+                                .$(other)
+                                .$(", errno=").$(errno).I$();
+                        scheduleAsyncPurge = true;
                     }
                 } finally {
                     other.trimTo(rootLen);
                 }
             }
-        } else {
-            // queue all updated partitions
-            for (int i = 0; i < n; i += 2) {
-                o3QueuePartitionForPurge(
-                        o3PartitionRemoveCandidates.getQuick(i),
-                        o3PartitionRemoveCandidates.getQuick(i + 1)
-                );
+        }
+
+        if (scheduleAsyncPurge) {
+            // Any more complicated case involve looking at what folders are present on disk before removing
+            // do it async in O3PurgeDiscoveryJob
+            if (schedulePurgeO3Partitions(messageBus, tableName, partitionBy)) {
+                LOG.info().$("scheduled to purge partitions").$(", table=").$(tableName).$(']').$();
+            } else {
+                LOG.error().$("could not queue for purge, queue is full [table=").$(tableName).I$();
             }
         }
     }
@@ -3393,29 +3280,6 @@ public class TableWriter implements Closeable {
             LOG.error().$((Sinkable) e).$();
         } catch (Throwable e) {
             LOG.error().$(e).$();
-        }
-    }
-
-    private void o3QueuePartitionForPurge(long timestamp, long txn) {
-        final MPSequence seq = messageBus.getO3PurgeDiscoveryPubSeq();
-        long cursor = seq.next();
-        if (cursor > -1) {
-            O3PurgeDiscoveryTask task = messageBus.getO3PurgeDiscoveryQueue().get(cursor);
-            task.of(
-                    tableName,
-                    partitionBy,
-                    txnScoreboard,
-                    timestamp,
-                    txn
-            );
-            seq.done(cursor);
-        } else {
-            LOG.error()
-                    .$("could not purge [errno=").$(ff.errno())
-                    .$(", table=").$(tableName)
-                    .$(", ts=").$ts(timestamp)
-                    .$(", txn=").$(txn)
-                    .$(']').$();
         }
     }
 
@@ -3855,31 +3719,43 @@ public class TableWriter implements Closeable {
         indexCount = denseIndexers.size();
     }
 
+    private void processAlterTableEvent(TableWriterTask cmd, long cursor, Sequence sequence, boolean acceptStructureChange) {
+        final long instance = cmd.getInstance();
+        final long tableId = cmd.getTableId();
+
+        CharSequence error = null;
+        try {
+            replAlterTableEvent0(tableId, instance, null, TableWriterTask.TSK_ALTER_TABLE_BEGIN);
+            LOG.info()
+                    .$("received ASYNC ALTER TABLE cmd [tableName=").$(tableName)
+                    .$(", tableId=").$(tableId)
+                    .$(", instance=").$(instance)
+                    .I$();
+            alterTableStatement.deserialize(cmd);
+            alterTableStatement.apply(this, acceptStructureChange);
+        } catch (TableStructureChangesException ex) {
+            LOG.info()
+                    .$("cannot complete ASYNC ALTER TABLE cmd, table structure change is not allowed atm [tableName=").$(tableName)
+                    .$(", tableId=").$(tableId)
+                    .$(", src=").$(instance)
+                    .I$();
+            error = "ALTER TABLE cannot change table structure while Writer is busy";
+        } catch (SqlException | CairoException ex) {
+            error = ex.getFlyweightMessage();
+        } catch (Throwable ex) {
+            LOG.error().$("error on processing ALTER table [tableName=").$(tableName).$(", ex=").$(ex).I$();
+            error = "error on processing ALTER table, see QuestDB server logs for details";
+        } finally {
+            sequence.done(cursor);
+        }
+        replAlterTableEvent0(tableId, instance, error, TableWriterTask.TSK_ALTER_TABLE_COMPLETE);
+    }
+
     private void processCommandQueue(boolean acceptStructureChange) {
         long cursor;
         while ((cursor = commandSubSeq.next()) > -1) {
             TableWriterTask cmd = messageBus.getTableWriterCommandQueue().get(cursor);
             processCommandQueue(cmd, commandSubSeq, cursor, acceptStructureChange);
-        }
-    }
-
-    public void processCommandQueue(TableWriterTask cmd, Sequence commandSubSeq, long cursor, boolean acceptStructureChange) {
-        if (cmd.getTableId() == getMetadata().getId()) {
-            switch (cmd.getType()) {
-                case TableWriterTask.TSK_SLAVE_SYNC:
-                    replPublishSyncEvent(cmd, cursor, commandSubSeq);
-                    break;
-                case TableWriterTask.TSK_ALTER_TABLE:
-                    processAlterTableEvent(cmd, cursor, commandSubSeq, acceptStructureChange);
-                    break;
-                default:
-                    LOG.error().$("unknown TableWriterTask type, ignored: ").$(cmd.getType()).$();
-                    // Don't block the queue even if command is unknown
-                    commandSubSeq.done(cursor);
-                    break;
-            }
-        } else {
-            commandSubSeq.done(cursor);
         }
     }
 
@@ -4401,6 +4277,43 @@ public class TableWriter implements Closeable {
         clearTodoLog();
     }
 
+    private void replAlterTableEvent0(long tableId, long instance, CharSequence error, int eventType) {
+        final long pubCursor = messageBus.getTableWriterEventPubSeq().next();
+        if (pubCursor > -1) {
+            try {
+                final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
+                event.of(eventType, tableId, tableName);
+                if (error != null) {
+                    event.putStr(error);
+                } else {
+                    event.putInt(-1);
+                }
+                event.setInstance(instance);
+            } finally {
+                messageBus.getTableWriterEventPubSeq().done(pubCursor);
+            }
+
+            // Log result
+            if (eventType == TableWriterTask.TSK_ALTER_TABLE_COMPLETE) {
+                LogRecord lg = LOG.info()
+                        .$("published alter table complete event [table=").$(tableName)
+                        .$(",tableId=").$(tableId)
+                        .$(",instance=").$(instance);
+                if (error != null) {
+                    lg.$(",error=").$(error);
+                }
+                lg.I$();
+            }
+        } else if (pubCursor == -1) {
+            // Queue is full
+            LOG.error()
+                    .$("cannot publish alter table complete event [table=").$(tableName)
+                    .$(",tableId=").$(tableId)
+                    .$(",instance=").$(instance)
+                    .I$();
+        }
+    }
+
     @Nullable TableSyncModel replHandleSyncCmd(TableWriterTask cmd) {
         final long instance = cmd.getInstance();
         final long sequence = cmd.getSequence();
@@ -4415,6 +4328,29 @@ public class TableWriter implements Closeable {
                 cmd.getData() + txMemSize + 16,
                 Unsafe.getUnsafe().getLong(cmd.getData() + txMemSize + 8)
         );
+    }
+
+    private void replPublishSyncEvent(TableWriterTask cmd, long cursor, Sequence sequence) {
+        long dst = cmd.getInstance();
+        long dstIP = cmd.getIp();
+        long tableId = cmd.getTableId();
+        TableSyncModel syncModel;
+
+        try {
+            LOG.info()
+                    .$("received replication SYNC cmd [tableName=").$(tableName)
+                    .$(", tableId=").$(tableId)
+                    .$(", src=").$(dst)
+                    .$(", srcIP=").$ip(dstIP)
+                    .I$();
+            syncModel = replHandleSyncCmd(cmd);
+        } finally {
+            // release command queue slot not to hold queues
+            sequence.done(cursor);
+        }
+        if (syncModel != null) {
+            replPublishSyncEvent0(syncModel, tableId, dst, dstIP);
+        }
     }
 
     void replPublishSyncEvent0(TableSyncModel model, long tableId, long dst, long dstIP) {

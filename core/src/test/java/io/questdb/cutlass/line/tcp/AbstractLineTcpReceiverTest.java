@@ -24,7 +24,9 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.O3Utils;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.log.Log;
@@ -35,17 +37,14 @@ import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.Net;
-import io.questdb.std.Chars;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
-import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
 
+import java.io.Closeable;
 import java.lang.ThreadLocal;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -178,20 +177,21 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             final Path path = new Path(4096);
             try (LineTcpReceiver receiver = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine)) {
                 sharedWorkerPool.assignCleaner(Path.CLEANER);
-                O3Utils.setupWorkerPool(sharedWorkerPool, messageBus);
-                if (needMaintenanceJob) {
-                    sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
-                }
-                sharedWorkerPool.start(LOG);
-                try {
-                    r.run(receiver);
-                } catch (Throwable err) {
-                    LOG.error().$("Stopping ILP worker pool because of an error").$();
-                    throw err;
-                } finally {
-                    sharedWorkerPool.halt();
-                    O3Utils.freeBuf();
-                    Path.clearThreadLocals();
+                try (Closeable ignored = O3Utils.setupWorkerPool(sharedWorkerPool, engine.getMessageBus())) {
+                    if (needMaintenanceJob) {
+                        sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
+                    }
+                    sharedWorkerPool.start(LOG);
+                    try {
+                        r.run(receiver);
+                    } catch (Throwable err) {
+                        LOG.error().$("Stopping ILP worker pool because of an error").$();
+                        throw err;
+                    } finally {
+                        sharedWorkerPool.halt();
+                        O3Utils.freeBuf();
+                        Path.clearThreadLocals();
+                    }
                 }
             } catch (Throwable err) {
                 LOG.error().$("Stopping ILP receiver because of an error").$();
@@ -241,7 +241,7 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
     }
 
-    protected Socket getSocket(boolean noLinger) {
+    protected Socket getSocket() {
         Socket socket = tlSocket.get();
         if (socket != null) {
             return socket;
@@ -252,7 +252,7 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         long fd = Net.socketTcp(true);
         socket = new Socket(sockaddr, fd);
 
-        if (TestUtils.connect(fd, sockaddr, noLinger) != 0) {
+        if (TestUtils.connect(fd, sockaddr) != 0) {
             throw new RuntimeException("could not connect, errno=" + Os.errno());
         }
 
@@ -260,8 +260,8 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         return socket;
     }
 
-    protected void sendToSocket(String lineData, boolean noLinger) {
-        try (Socket socket = getSocket(noLinger)) {
+    protected void sendToSocket(String lineData) {
+        try (Socket socket = getSocket()) {
             sendToSocket(socket, lineData);
         } catch (Exception e) {
             Assert.fail("Data sending failed [e=" + e + "]");

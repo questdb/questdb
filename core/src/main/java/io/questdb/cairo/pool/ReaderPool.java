@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.pool;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
@@ -36,6 +37,7 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Unsafe;
 
 import java.util.Arrays;
+import java.util.Iterator;
 import java.util.Map;
 
 public class ReaderPool extends AbstractPool implements ResourcePool<TableReader> {
@@ -50,11 +52,13 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
     private static final int NEXT_LOCKED = 2;
     private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
     private final int maxSegments;
+    private final MessageBus messageBus;
     private final int maxEntries;
 
-    public ReaderPool(CairoConfiguration configuration) {
+    public ReaderPool(CairoConfiguration configuration, MessageBus messageBus) {
         super(configuration, configuration.getInactiveReaderTTL());
         this.maxSegments = configuration.getReaderPoolMaxSegments();
+        this.messageBus = messageBus;
         this.maxEntries = maxSegments * ENTRY_SIZE;
     }
 
@@ -82,7 +86,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                                     .$("open '").utf8(name)
                                     .$("' [at=").$(e.index).$(':').$(i)
                                     .$(']').$();
-                            r = new R(this, e, i, name);
+                            r = new R(this, e, i, name, messageBus);
                         } catch (CairoException ex) {
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                             throw ex;
@@ -230,9 +234,9 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         int casFailures = 0;
         int closeReason = deadline < Long.MAX_VALUE ? PoolConstants.CR_IDLE : PoolConstants.CR_POOL_CLOSE;
 
-        for (Map.Entry<CharSequence, Entry> me : entries.entrySet()) {
-
-            Entry e = me.getValue();
+        Iterator<Entry> iterator = entries.values().iterator();
+        while (iterator.hasNext()) {
+            Entry e = iterator.next();
 
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
@@ -351,8 +355,8 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         private ReaderPool pool;
         private Entry entry;
 
-        public R(ReaderPool pool, Entry entry, int index, CharSequence name) {
-            super(pool.getConfiguration(), name);
+        public R(ReaderPool pool, Entry entry, int index, CharSequence name, MessageBus messageBus) {
+            super(pool.getConfiguration(), name, messageBus);
             this.pool = pool;
             this.entry = entry;
             this.index = index;
