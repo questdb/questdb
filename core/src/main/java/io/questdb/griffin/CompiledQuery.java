@@ -47,6 +47,7 @@ public interface CompiledQuery {
     short UPDATE = 14;
     short LOCK = 14;
     short UNLOCK = 14;
+    short VACUUM = 15;
 
     RecordCursorFactory getRecordCursorFactory();
 
