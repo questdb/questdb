@@ -127,12 +127,13 @@ public class LatestByRecordCursorFactory implements RecordCursorFactory {
 
             if (value.isNew()) {
                 value.putLong(RECORD_INDEX_VALUE_IDX, index);
+                value.putTimestamp(TIMESTAMP_VALUE_IDX, baseRecord.getTimestamp(timestampIndex));
             } else {
                 long prevTimestamp = value.getTimestamp(TIMESTAMP_VALUE_IDX);
                 long newTimestamp = baseRecord.getTimestamp(timestampIndex);
                 if (newTimestamp >= prevTimestamp) {
                     value.putLong(RECORD_INDEX_VALUE_IDX, index);
-                    value.putTimestamp(TIMESTAMP_VALUE_IDX, baseRecord.getTimestamp(timestampIndex));
+                    value.putTimestamp(TIMESTAMP_VALUE_IDX, newTimestamp);
                 }
             }
 

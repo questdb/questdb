@@ -130,7 +130,7 @@ public class LatestByLightRecordCursorFactory implements RecordCursorFactory {
                 long newTimestamp = baseRecord.getTimestamp(timestampIndex);
                 if (newTimestamp >= prevTimestamp) {
                     value.putLong(ROW_ID_VALUE_IDX, baseRecord.getRowId());
-                    value.putTimestamp(TIMESTAMP_VALUE_IDX, baseRecord.getTimestamp(timestampIndex));
+                    value.putTimestamp(TIMESTAMP_VALUE_IDX, newTimestamp);
                 }
             }
         }
