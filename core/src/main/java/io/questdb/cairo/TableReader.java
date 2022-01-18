@@ -1110,27 +1110,53 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void reloadColumnChanges() {
         // create transition index, which will help us reuse already open resources
-        long pTransitionIndex = metadata.createTransitionIndex();
-        try {
-            metadata.applyTransitionIndex(pTransitionIndex);
-            final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
+        final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
+        while (true) {
+            try {
+                long pTransitionIndex = metadata.createTransitionIndex();
+                try {
+                    metadata.applyTransitionIndex(pTransitionIndex);
+                    final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
 
-            int columnCountBits = getColumnBits(columnCount);
-            // when a column is added we cannot easily reshuffle columns in-place
-            // the reason is that we'd have to create gaps in columns list between
-            // partitions. It is possible in theory, but this could be an algo for
-            // another day.
-            if (columnCountBits > this.columnCountBits) {
-                createNewColumnList(columnCount, pTransitionIndex, columnCountBits);
-            } else {
-                reshuffleColumns(columnCount, pTransitionIndex);
+                    int columnCountBits = getColumnBits(columnCount);
+                    // when a column is added we cannot easily reshuffle columns in-place
+                    // the reason is that we'd have to create gaps in columns list between
+                    // partitions. It is possible in theory, but this could be an algo for
+                    // another day.
+                    if (columnCountBits > this.columnCountBits) {
+                        createNewColumnList(columnCount, pTransitionIndex, columnCountBits);
+                    } else {
+                        reshuffleColumns(columnCount, pTransitionIndex);
+                    }
+                    // rearrange symbol map reader list
+                    reshuffleSymbolMapReaders(pTransitionIndex);
+                    this.columnCount = columnCount;
+                    return;
+                } finally {
+                    TableUtils.freeTransitionIndex(pTransitionIndex);
+                }
+            } catch (CairoException ex) {
+                // This is temporary solution until we can get multiple version of metadata not ovewriting each other
+                if (isMetaFileMissingFileSystemError(ex)) {
+                    if (configuration.getMicrosecondClock().getTicks() > deadline) {
+                        LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeoutUs()).utf8("μs]").$();
+                        throw CairoException.instance(0).put("Metadata read timeout");
+                    }
+                    LOG.info().$("error reloading metadata [table=").$(tableName)
+                            .$(", errno=").$(ex.getErrno())
+                            .$(", error=").$(ex.getFlyweightMessage()).I$();
+                    Os.pause();
+                } else {
+                    throw ex;
+                }
             }
-            // rearrange symbol map reader list
-            reshuffleSymbolMapReaders(pTransitionIndex);
-            this.columnCount = columnCount;
-        } finally {
-            TableUtils.freeTransitionIndex(pTransitionIndex);
         }
+    }
+
+    private boolean isMetaFileMissingFileSystemError(CairoException ex) {
+        return Chars.contains(ex.getFlyweightMessage(), "File not found")
+                || Chars.contains(ex.getFlyweightMessage(), "cannot map negative length")
+                || Chars.contains(ex.getFlyweightMessage(), "could not open read-only");
     }
 
     /**

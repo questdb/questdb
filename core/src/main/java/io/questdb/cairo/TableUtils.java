@@ -682,6 +682,9 @@ public final class TableUtils {
             int expectedVersion
     ) {
         try {
+            if (metaMem.size() < META_OFFSET_COLUMN_TYPES) {
+                throw CairoException.instance(0).put("_meta file is too small ").put(metaMem.size());
+            }
             final int metaVersion = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
             if (expectedVersion != metaVersion) {
                 throw validationException(metaMem)
@@ -692,10 +695,32 @@ public final class TableUtils {
 
             final int columnCount = metaMem.getInt(META_OFFSET_COUNT);
             long offset = getColumnNameOffset(columnCount);
+            if (metaMem.size() < offset) {
+                throw validationException(metaMem).put("_meta file is too small, column types are not written ").put(metaMem.size());
+            }
 
             if (offset < columnCount || (
                     columnCount > 0 && (offset < 0 || offset >= ff.length(metaMem.getFd())))) {
                 throw validationException(metaMem).put("Incorrect columnCount: ").put(columnCount);
+            }
+
+            long colNameOffset = offset;
+            for (int i = 0; i <= columnCount; i++) {
+                if (colNameOffset >= metaMem.size()) {
+                    throw validationException(metaMem).put("_meta file is too small, column names are missing ").put(metaMem.size());
+                }
+                int strLen = Unsafe.getUnsafe().getInt(metaMem.addressOf(colNameOffset));
+                colNameOffset += 4;
+                if (strLen != TableUtils.NULL_LEN) {
+                    if (colNameOffset > 0) {
+                        colNameOffset += strLen * 2L;
+                    } else {
+                        throw validationException(metaMem).put("_meta file is too small, column names are missing ").put(metaMem.size());
+                    }
+                }
+            }
+            if (colNameOffset >= metaMem.size()) {
+                throw validationException(metaMem).put("_meta file is too small, column names are missing ").put(metaMem.size());
             }
 
             final int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
@@ -849,10 +874,8 @@ public final class TableUtils {
             int l = path.length();
             int index = 0;
             do {
-                if (index > 0) {
-                    path.trimTo(l).put('.').put(index);
-                    path.$();
-                }
+                path.trimTo(l).put('.').put(index);
+                path.$();
 
                 if (!ff.exists(path) || ff.remove(path)) {
                     try {

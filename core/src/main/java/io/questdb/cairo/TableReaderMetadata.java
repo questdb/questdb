@@ -27,13 +27,16 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
 public class TableReaderMetadata extends BaseRecordMetadata implements Closeable {
-    private final MemoryMR metaMem;
+    private static final Log LOG = LogFactory.getLog(TableReaderMetadata.class);
+    private MemoryMR metaMem;
     private final Path path;
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
@@ -57,9 +60,9 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         this.path.of(path).$();
         try {
             this.metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-            this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             this.columnNameIndexMap.clear();
             TableUtils.validate(ff, metaMem, this.columnNameIndexMap, expectedVersion);
+            this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             this.id = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
             this.columnMetadata.clear();
@@ -90,10 +93,13 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     }
 
     public void applyTransitionIndex(long pTransitionIndex) {
-        // re-open _meta file
-        this.metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-        this.columnNameIndexMap.clear();
+        //  swap meta and transitionMeta
+        MemoryMR temp = this.metaMem;
+        this.metaMem = this.transitionMeta;
+        transitionMeta = temp;
+        transitionMeta.close();
 
+        this.columnNameIndexMap.clear();
         final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
         final long index = pTransitionIndex + 8;
         final long stateAddress = index + columnCount * 8L;
@@ -186,6 +192,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     public void close() {
         Misc.free(metaMem);
         Misc.free(path);
+        Misc.free(transitionMeta);
     }
 
     public long createTransitionIndex() {
@@ -194,11 +201,9 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         }
 
         transitionMeta.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-        try (MemoryMR metaMem = transitionMeta) {
-            tmpValidationMap.clear();
-            TableUtils.validate(ff, metaMem, tmpValidationMap, ColumnType.VERSION);
-            return TableUtils.createTransitionIndex(metaMem, this.metaMem, this.columnCount, this.columnNameIndexMap);
-        }
+        tmpValidationMap.clear();
+        TableUtils.validate(ff, transitionMeta, tmpValidationMap, ColumnType.VERSION);
+        return TableUtils.createTransitionIndex(transitionMeta, this.metaMem, this.columnCount, this.columnNameIndexMap);
     }
 
     @Override

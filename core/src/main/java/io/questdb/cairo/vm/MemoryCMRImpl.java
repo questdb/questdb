@@ -85,7 +85,9 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
                 throw e;
             }
         } else {
-            assert size > -1;
+            if (size < 0) {
+                throw CairoException.instance(0).put("cannot map negative length");
+            }
             this.pageAddress = 0;
         }
 
