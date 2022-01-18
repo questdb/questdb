@@ -62,7 +62,7 @@ class txn_scoreboard_t {
         }
         get_counter(txn)++; // atomic
 
-        current_max = max.load(std::memory_order_acquire);
+        current_max = max.load();
         while (txn > current_max && !max.compare_exchange_weak(current_max, txn));
 
         if (txn < current_max || txn - min.load() >= size) {
