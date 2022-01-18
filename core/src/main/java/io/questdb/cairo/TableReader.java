@@ -593,7 +593,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
 
             LOG.error()
-                    .$("could queue purge partition task, queue is full [")
+                    .$("could not queue purge partition task, queue is full [")
                     .$("table=").$(this.tableName)
                     .$(", txn=").$(txn)
                     .$(']').$();
