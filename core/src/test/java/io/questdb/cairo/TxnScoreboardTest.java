@@ -25,19 +25,49 @@
 package io.questdb.cairo;
 
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.LockSupport;
 
 public class TxnScoreboardTest extends AbstractCairoTest {
+    private static volatile long txn;
+
     @Test
-    public void testCleanFailsNoResourceLeak() throws Exception {
+    public void testCheckNoLocksBeforeTxn() {
+        final long lastCommittedTxn = 2;
+        ff = new FilesFacadeImpl();
+        try (
+                final Path shmPath = new Path();
+                TxnScoreboard txnScoreboard = new TxnScoreboard(ff, 2048).ofRW(shmPath.of(root))
+        ) {
+            // Thread A (reader) - grabs read permit
+            Assert.assertTrue(txnScoreboard.acquireTxn(lastCommittedTxn));
+            // Thread B (reader) - lags behind and grabs read permit for the previous transaction. Acquire rejected
+            Assert.assertFalse(txnScoreboard.acquireTxn(lastCommittedTxn - 1));
+            // Thread A (reader) - grabs read permit
+            txnScoreboard.acquireTxn(lastCommittedTxn);
+            // txnScoreboard.getMin() equals to 2 and will stay so
+            Assert.assertEquals(0, txnScoreboard.getActiveReaderCount(lastCommittedTxn - 1));
+            Assert.assertEquals(2, txnScoreboard.getActiveReaderCount(lastCommittedTxn));
+
+            // Thread C (writer) - checkScoreboardHasReadersBeforeLastCommittedTxn
+            txnScoreboard.acquireTxn(lastCommittedTxn + 1);
+            txnScoreboard.releaseTxn(lastCommittedTxn + 1);
+            // The assertion fails while there are readers
+            Assert.assertEquals(lastCommittedTxn, txnScoreboard.getMin());
+        }
+    }
+
+    @Test
+    public void testCleanFailsNoResourceLeakRO() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = new FilesFacadeImpl() {
                 @Override
@@ -48,7 +78,29 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
             assertMemoryLeak(() -> {
                 try (final Path shmPath = new Path()) {
-                    try (TxnScoreboard ignored = new TxnScoreboard(ff, shmPath.of(root), 2048)) {
+                    try (TxnScoreboard ignored = new TxnScoreboard(ff, 2048).ofRO(shmPath.of(root))) {
+                        Assert.fail();
+                    } catch (CairoException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-write with clean allocation");
+                    }
+                }
+            });
+        });
+    }
+
+    @Test
+    public void testCleanFailsNoResourceLeakRW() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            FilesFacade ff = new FilesFacadeImpl() {
+                @Override
+                public long openCleanRW(LPSZ name, long fd) {
+                    return -1;
+                }
+            };
+
+            assertMemoryLeak(() -> {
+                try (final Path shmPath = new Path()) {
+                    try (TxnScoreboard ignored = new TxnScoreboard(ff, 2048).ofRW(shmPath.of(root))) {
                         Assert.fail();
                     } catch (CairoException ex) {
                         TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-write with clean allocation");
@@ -63,7 +115,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final Path shmPath = new Path()) {
                 try (
-                        final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)
+                        final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
                 ) {
                     for (int i = 0; i < 1500; i++) {
                         scoreboard.acquireTxn(i);
@@ -75,7 +127,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
                 // second open is exclusive, file should be truncated
                 try (
-                        final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)
+                        final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 2048).ofRW(shmPath.of(root))
                 ) {
                     Assert.assertEquals(0, scoreboard2.getMin());
                 }
@@ -89,7 +141,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             try (final Path shmPath = new Path()) {
                 FilesFacade ff = FilesFacadeImpl.INSTANCE;
                 try (
-                        final TxnScoreboard scoreboard = new TxnScoreboard(ff, shmPath.of(root), 1024)
+                        final TxnScoreboard scoreboard = new TxnScoreboard(ff, 1024).ofRW(shmPath.of(root))
                 ) {
                     for (int i = 0; i < 1500; i++) {
                         scoreboard.acquireTxn(i);
@@ -100,7 +152,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
                 // second open is exclusive, file should be truncated
                 try (
-                        final TxnScoreboard scoreboard2 = new TxnScoreboard(ff, shmPath.of(root), 2048)
+                        final TxnScoreboard scoreboard2 = new TxnScoreboard(ff, 2048).ofRW(shmPath.of(root))
                 ) {
                     Assert.assertEquals(0, scoreboard2.getMin());
                     for (int i = 0; i < 10; i++) {
@@ -110,7 +162,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
                     // This should not obtain exclusive lock even though file was empty when scoreboard2 put shared lock
                     try (
-                            final TxnScoreboard scoreboard3 = new TxnScoreboard(ff, shmPath.of(root), 2048)
+                            final TxnScoreboard scoreboard3 = new TxnScoreboard(ff, 2048).ofRO(shmPath.of(root))
                     ) {
                         Assert.assertEquals(9, scoreboard2.getMin());
                         Assert.assertEquals(9, scoreboard3.getMin());
@@ -126,17 +178,21 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final Path shmPath = new Path()) {
                 try (
-                        final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)
+                        final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
                 ) {
-                    for (int i = 0; i < 1500; i++) {
-                        scoreboard.acquireTxn(i);
+                    for (int i = 0; i < 1024; i++) {
+                        Assert.assertTrue(scoreboard.acquireTxn(i));
+                        scoreboard.releaseTxn(i);
+                    }
+                    for (int i = 1024; i < 1500; i++) {
+                        Assert.assertTrue(scoreboard.acquireTxn(i));
                         scoreboard.releaseTxn(i);
                     }
                     Assert.assertEquals(1499, scoreboard.getMin());
 
                     // increase scoreboard size
                     try (
-                            final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)
+                            final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 2048).ofRW(shmPath.of(root))
                     ) {
                         Assert.assertEquals(1499, scoreboard2.getMin());
                         for (int i = 1500; i < 3000; i++) {
@@ -156,10 +212,10 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final Path shmPath = new Path()) {
                 try (
-                        final TxnScoreboard rootBoard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)
+                        final TxnScoreboard rootBoard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 2048).ofRW(shmPath.of(root))
                 ) {
                     try (
-                            final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)
+                            final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
                     ) {
                         for (int i = 0; i < 1500; i++) {
                             scoreboard.acquireTxn(i);
@@ -169,7 +225,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                     }
 
                     try (
-                            final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 2048)
+                            final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 2048).ofRW(shmPath.of(root))
                     ) {
                         Assert.assertEquals(1499, scoreboard2.getMin());
                         for (int i = 1500; i < 3000; i++) {
@@ -186,18 +242,46 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGetMinOnEmpty() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    final Path shmPath = new Path();
+                    final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
+            ) {
+                Assert.assertEquals(0, scoreboard.getMin());
+                Assert.assertTrue(scoreboard.acquireTxn(2048));
+                Assert.assertEquals(2048, scoreboard.getMin());
+                scoreboard.releaseTxn(2048);
+                Assert.assertEquals(2048, scoreboard.getMin());
+
+                Assert.assertTrue(scoreboard.acquireTxn(10000L));
+                scoreboard.releaseTxn(10000L);
+                Assert.assertEquals(10000L, scoreboard.getMin());
+
+
+                Assert.assertFalse(scoreboard.acquireTxn(4095));
+            }
+        });
+    }
+
+    @Test
+    public void testHammer() throws Exception {
+        testHammerScoreboard(8, 10000);
+    }
+
+    @Test
     public void testLimits() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int expect = 2048;
             try (final Path shmPath = new Path()) {
-                try (TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), expect)) {
-                    try (TxnScoreboard scoreboard1 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), expect)) {
+                try (TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, expect).ofRW(shmPath.of(root))) {
+                    try (TxnScoreboard scoreboard1 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, expect).ofRW(shmPath.of(root))) {
                         // we should successfully acquire expected number of entries
                         for (int i = 0; i < expect; i++) {
                             scoreboard1.acquireTxn(i + 134);
                         }
-                        // scoreboard capacity should be exhausted
-                        // and we should be refused to acquire any more slots
+                        // scoreboard capacity should be exhausted,
+                        // we should be refused to acquire any more slots
                         try {
                             scoreboard1.acquireTxn(expect + 134);
                             Assert.fail();
@@ -243,10 +327,171 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLimitsLoop() throws Exception {
+    public void testLimitsO3Acquire() throws Exception {
         LOG.debug().$("starting testLimitsLoop").$();
         for (int i = 0; i < 10000; i++) {
             testLimits();
+        }
+    }
+
+    @Test
+    public void testMapFailsNoResourceLeakRO() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            FilesFacade ff = new FilesFacadeImpl() {
+                @Override
+                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                    return -1;
+                }
+            };
+
+            assertMemoryLeak(() -> {
+                try (final Path shmPath = new Path()) {
+                    try (TxnScoreboard ignored = new TxnScoreboard(ff, 2048).ofRO(shmPath.of(root))) {
+                        Assert.fail();
+                    } catch (CairoException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "could not mmap");
+                    }
+                }
+            });
+        });
+    }
+
+    @Test
+    public void testMapFailsNoResourceLeakRW() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            FilesFacade ff = new FilesFacadeImpl() {
+                @Override
+                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                    return -1;
+                }
+            };
+
+            assertMemoryLeak(() -> {
+                try (final Path shmPath = new Path()) {
+                    try (TxnScoreboard ignored = new TxnScoreboard(ff, 2048).ofRW(shmPath.of(root))) {
+                        Assert.fail();
+                    } catch (CairoException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "could not mmap");
+                    }
+                }
+            });
+        });
+    }
+
+    @Test
+    public void testMoveToNextPageContention() throws Exception {
+        int readers = 8;
+        int iterations = 8;
+        int entryCount = Math.max(Numbers.ceilPow2(readers) * 8, Numbers.ceilPow2(iterations));
+        try (
+                final Path shmPath = new Path();
+                final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, entryCount).ofRW(shmPath.of(root))
+        ) {
+            final CyclicBarrier barrier = new CyclicBarrier(readers);
+            final CountDownLatch latch = new CountDownLatch(readers);
+            final AtomicInteger anomaly = new AtomicInteger();
+            for (int i = 0; i < readers; i++) {
+                final int txn = i;
+                Thread reader = new Thread(() -> {
+                    try {
+                        barrier.await();
+                        for (int s = 0; s < 100; s++) {
+                            try {
+                                if (scoreboard.acquireTxn(txn + (long) s * entryCount)) {
+                                    scoreboard.releaseTxn(txn + (long) s * entryCount);
+                                    Thread.yield();
+                                }
+                            } catch (CairoException e) {
+                                if (Chars.contains(e.getFlyweightMessage(), "max txn-inflight limit reached")) {
+                                    LOG.info().$(e.getFlyweightMessage()).$();
+                                } else {
+                                    throw e;
+                                }
+                            }
+                        }
+                    } catch (Throwable e) {
+                        LOG.errorW().$(e).$();
+                        anomaly.incrementAndGet();
+                    } finally {
+                        latch.countDown();
+                    }
+                });
+                reader.start();
+            }
+            latch.await();
+
+            Assert.assertEquals(0, anomaly.get());
+        }
+    }
+
+    @Test
+    public void testO3AcquireRejected() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int size = 64;
+            int start = 134;
+            try (final Path shmPath = new Path()) {
+                try (TxnScoreboard scoreboard1 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, size).ofRW(shmPath.of(root))) {
+                    // first 2 go out of order
+                    scoreboard1.acquireTxn(1 + start);
+                    Assert.assertFalse(scoreboard1.acquireTxn(start));
+                    Assert.assertEquals(0, scoreboard1.getActiveReaderCount(start));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testStartContention() throws Exception {
+        int readers = 8;
+        int iterations = 8;
+        int entryCount = Math.max(Numbers.ceilPow2(readers) * 8, Numbers.ceilPow2(iterations));
+        try (
+                final Path shmPath = new Path();
+                final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, entryCount).ofRW(shmPath.of(root))
+        ) {
+            final CyclicBarrier barrier = new CyclicBarrier(readers);
+            final CountDownLatch latch = new CountDownLatch(readers);
+            final AtomicInteger anomaly = new AtomicInteger();
+
+            for (int i = 0; i < readers; i++) {
+                final int txn = i;
+                Thread reader = new Thread(() -> {
+                    try {
+                        barrier.await();
+                        if (scoreboard.acquireTxn(txn)) {
+                            long activeReaderCount = scoreboard.getActiveReaderCount(txn);
+                            if (activeReaderCount > readers || activeReaderCount < 1) {
+                                LOG.errorW()
+                                        .$("activeReaderCount=")
+                                        .$(activeReaderCount)
+                                        .$(",txn=").$(txn)
+                                        .$(",min=")
+                                        .$(scoreboard.getMin())
+                                        .$();
+                                anomaly.addAndGet(100);
+                            }
+                            Os.pause();
+                            scoreboard.releaseTxn(txn);
+                            long min = scoreboard.getMin();
+                            long prevCount = scoreboard.getActiveReaderCount(min - 1);
+                            if (prevCount > 0) {
+                                // This one also fails, but those could be readers that didn't roll back yet
+                                anomaly.incrementAndGet();
+                            }
+                            Thread.yield();
+                        }
+                    } catch (Throwable e) {
+                        LOG.errorW().$(e).$();
+                        anomaly.incrementAndGet();
+                    } finally {
+                        latch.countDown();
+                    }
+                });
+                reader.start();
+            }
+            latch.await();
+
+            Assert.assertEquals(0, anomaly.get());
         }
     }
 
@@ -262,7 +507,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                     try (final Path shmPath = new Path()) {
                         for (int j = 0; j < iterations; j++) {
                             //noinspection EmptyTryBlock
-                            try (TxnScoreboard ignored = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)) {
+                            try (TxnScoreboard ignored = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))) {
                                 // empty body because we need to close this
                             } catch (Exception ex) {
                                 ex.printStackTrace();
@@ -285,9 +530,9 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (
                     final Path shmPath = new Path();
-                    final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)
+                    final TxnScoreboard scoreboard2 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
             ) {
-                try (TxnScoreboard scoreboard1 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)) {
+                try (TxnScoreboard scoreboard1 = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))) {
                     scoreboard1.acquireTxn(67);
                     scoreboard1.acquireTxn(68);
                     scoreboard1.acquireTxn(68);
@@ -330,12 +575,164 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (
                     final Path shmPath = new Path();
-                    final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, shmPath.of(root), 1024)
+                    final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
             ) {
                 scoreboard.acquireTxn(15);
                 scoreboard.releaseTxn(15);
                 scoreboard.acquireTxn(900992);
             }
         });
+    }
+
+    @SuppressWarnings("SameParameterValue")
+    private void testHammerScoreboard(int readers, int iterations) throws Exception {
+        int entryCount = Math.max(Numbers.ceilPow2(readers) * 8, Numbers.ceilPow2(iterations));
+        try (
+                final Path shmPath = new Path();
+                final TxnScoreboard scoreboard = new TxnScoreboard(FilesFacadeImpl.INSTANCE, entryCount).ofRW(shmPath.of(root))
+        ) {
+            final CyclicBarrier barrier = new CyclicBarrier(readers + 1);
+            final CountDownLatch latch = new CountDownLatch(readers + 1);
+            txn = 0;
+            final AtomicInteger anomaly = new AtomicInteger();
+
+            for (int i = 0; i < readers; i++) {
+                // Readers acq/release every txn number and check invariants
+                Reader reader = new Reader(scoreboard, barrier, latch, anomaly, iterations, readers);
+                reader.start();
+            }
+
+            // Writer constantly increments txn number
+            Writer writer = new Writer(scoreboard, barrier, latch, anomaly, iterations, readers);
+            writer.start();
+
+            latch.await();
+
+            Assert.assertEquals(0, anomaly.get());
+            for (long i = 0; i < iterations + 1; i++) {
+                Assert.assertEquals(0, scoreboard.getActiveReaderCount(i));
+            }
+        }
+    }
+
+    private static class Reader extends Thread {
+
+        private final TxnScoreboard scoreboard;
+        private final CyclicBarrier barrier;
+        private final CountDownLatch latch;
+        private final AtomicInteger anomaly;
+        private final int iterations;
+        private final int readers;
+
+        private Reader(TxnScoreboard scoreboard, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger anomaly, int iterations, int readers) {
+            this.scoreboard = scoreboard;
+            this.barrier = barrier;
+            this.latch = latch;
+            this.anomaly = anomaly;
+            this.iterations = iterations;
+            this.readers = readers;
+        }
+
+        @Override
+        public void run() {
+            try {
+                barrier.await();
+                long t;
+                while ((t = txn) < iterations) {
+                    if (scoreboard.acquireTxn(t)) {
+                        long activeReaderCount = scoreboard.getActiveReaderCount(t);
+                        if (activeReaderCount > readers || activeReaderCount < 1) {
+                            LOG.errorW()
+                                    .$("activeReaderCount=")
+                                    .$(activeReaderCount)
+                                    .$(",txn=").$(t)
+                                    .$(",min=")
+                                    .$(scoreboard.getMin())
+                                    .$();
+                            anomaly.addAndGet(100);
+                        }
+                        Os.pause();
+                        scoreboard.releaseTxn(t);
+                        long min = scoreboard.getMin();
+                        long prevCount = scoreboard.getActiveReaderCount(t - 1);
+                        if (min == t && prevCount > 0) {
+                            anomaly.incrementAndGet();
+                            LOG.errorW().$("min=").$(min).$(",prev_count=").$(prevCount).$();
+                        }
+                        if (prevCount > readers - 1 || prevCount < 0) {
+                            LOG.errorW().$("prev_count=").$(prevCount).$();
+                            anomaly.addAndGet(10);
+                        }
+                        LockSupport.parkNanos(10);
+                    }
+                }
+            } catch (Throwable e) {
+                LOG.errorW().$(e).$();
+                anomaly.incrementAndGet();
+            } finally {
+                latch.countDown();
+            }
+        }
+    }
+
+    private static class Writer extends Thread {
+
+        private final TxnScoreboard scoreboard;
+        private final CyclicBarrier barrier;
+        private final CountDownLatch latch;
+        private final AtomicInteger anomaly;
+        private final int iterations;
+        private final int readers;
+
+        private Writer(TxnScoreboard scoreboard, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger anomaly, int iterations, int readers) {
+            this.scoreboard = scoreboard;
+            this.barrier = barrier;
+            this.latch = latch;
+            this.anomaly = anomaly;
+            this.iterations = iterations;
+            this.readers = readers;
+        }
+
+        @Override
+        public void run() {
+            try {
+                long publishWaitBarrier = scoreboard.getEntryCount() - 2;
+                barrier.await();
+                for (int i = 0; i < iterations; i++) {
+                    for (int sleepCount = 0; sleepCount < 50 && txn - scoreboard.getMin() > publishWaitBarrier; sleepCount++) {
+                        // Some readers are slow and haven't release transaction yet. Give them a bit more time
+                        long min = scoreboard.getMin();
+                        LOG.infoW().$("slow reader release, waiting... [txn=")
+                                .$(txn)
+                                .$(", min=").$(min)
+                                .$(", size=").$(scoreboard.getEntryCount())
+                                .I$();
+                        Os.sleep(100);
+                    }
+                    if (txn - scoreboard.getMin() > scoreboard.getEntryCount()) {
+                        // Wait didn't help. Abort the test.
+                        anomaly.addAndGet(1000);
+                        LOG.errorW().$("slow reader release, abort [txn=")
+                                .$(txn)
+                                .$(", min=").$(scoreboard.getMin())
+                                .$(", size=").$(scoreboard.getEntryCount())
+                                .I$();
+                        txn = iterations;
+                        return;
+                    }
+
+                    // This is the only writer
+                    @SuppressWarnings("NonAtomicOperationOnVolatileField") long nextTxn = txn++;
+                    Assert.assertTrue(scoreboard.getActiveReaderCount(nextTxn) <= readers);
+                    Os.pause();
+                    Assert.assertTrue(scoreboard.getActiveReaderCount(nextTxn) <= readers);
+                }
+            } catch (Exception e) {
+                LOG.errorW().$(e).$();
+                anomaly.incrementAndGet();
+            } finally {
+                latch.countDown();
+            }
+        }
     }
 }

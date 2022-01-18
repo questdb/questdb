@@ -158,9 +158,9 @@ public interface CairoConfiguration {
 
     int getO3PurgeDiscoveryQueueCapacity();
 
-    int getO3PurgeQueueCapacity();
-
     int getParallelIndexThreshold();
+
+    int getPartitionPurgeListCapacity();
 
     default Rnd getRandom() {
         Rnd rnd = RANDOM.get();
@@ -277,8 +277,6 @@ public interface CairoConfiguration {
     int getSqlJitPageAddressCacheThreshold();
 
     boolean isSqlJitDebugEnabled();
-
-    int getTableBlockWriterQueueCapacity();
 
     TelemetryConfiguration getTelemetryConfiguration();
 
