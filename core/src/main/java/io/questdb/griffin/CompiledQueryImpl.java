@@ -53,6 +53,8 @@ public class CompiledQueryImpl implements CompiledQuery {
     private AlterStatement alterStatement;
     private short type;
     private SqlExecutionContext sqlExecutionContext;
+    //count of rows affected by this statement ; currently works only for insert as select
+    private long insertCount;
 
     public CompiledQueryImpl(CairoEngine engine) {
         this.engine = engine;
@@ -114,6 +116,11 @@ public class CompiledQueryImpl implements CompiledQuery {
         return QueryFuture.DONE;
     }
 
+    @Override
+    public long getInsertCount() {
+        return this.insertCount;
+    }
+
     public CompiledQuery of(short type) {
         return of(type, null);
     }
@@ -147,6 +154,7 @@ public class CompiledQueryImpl implements CompiledQuery {
     private CompiledQuery of(short type, RecordCursorFactory factory) {
         this.type = type;
         this.recordCursorFactory = factory;
+        this.insertCount = -1;
         return this;
     }
 
@@ -182,8 +190,10 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(INSERT);
     }
 
-    CompiledQuery ofInsertAsSelect() {
-        return of(INSERT_AS_SELECT);
+    CompiledQuery ofInsertAsSelect(long updateCount) {
+        of(INSERT_AS_SELECT);
+        this.insertCount = updateCount;
+        return this;
     }
 
     CompiledQuery ofRenameTable() {

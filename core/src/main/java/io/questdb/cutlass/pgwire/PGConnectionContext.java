@@ -62,6 +62,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     public static final String TAG_OK = "OK";
     public static final String TAG_COPY = "COPY";
     public static final String TAG_INSERT = "INSERT";
+    public static final String TAG_INSERT_AS_SELECT = "INSERT_AS_SELECT";
     public static final char STATUS_IN_TRANSACTION = 'T';
     public static final char STATUS_IN_ERROR = 'E';
     public static final char STATUS_IDLE = 'I';
@@ -241,6 +242,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 sendCursor(0, resumeCursorQueryRef, resumeQueryCompleteRef);
             } else if (typesAndInsert != null) {
                 executeInsert();
+            } else if (queryTag == TAG_INSERT_AS_SELECT) {
+                prepareCommandComplete(true);
             } else {
                 executeTag();
                 prepareCommandComplete(false);
@@ -1116,6 +1119,10 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     // we can add insert to cache right away because it is local to the connection
                     typesAndInsertCache.put(queryText, typesAndInsert);
                 }
+                break;
+            case CompiledQuery.INSERT_AS_SELECT:
+                queryTag = TAG_INSERT_AS_SELECT;
+                rowCount = cq.getInsertCount();
                 break;
             case CompiledQuery.COPY_LOCAL:
                 // uncached

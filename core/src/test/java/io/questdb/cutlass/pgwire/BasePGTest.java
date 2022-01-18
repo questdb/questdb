@@ -116,6 +116,8 @@ public class BasePGTest extends AbstractGriffinTest {
         }
 
         TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+        //use this line to switch to local postgres
+        //return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
         return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:8812/qdb", properties);
     }
 

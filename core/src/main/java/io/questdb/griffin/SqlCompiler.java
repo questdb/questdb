@@ -1774,25 +1774,33 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void copyOrdered(TableWriter writer, RecordMetadata metadata, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex) {
+    private long copyOrdered(TableWriter writer, RecordMetadata metadata, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex) {
+        long rowCount;
+
         if (ColumnType.isSymbolOrString(metadata.getColumnType(cursorTimestampIndex))) {
-            copyOrderedStrTimestamp(writer, cursor, copier, cursorTimestampIndex);
+            rowCount = copyOrderedStrTimestamp(writer, cursor, copier, cursorTimestampIndex);
         } else {
-            copyOrdered0(writer, cursor, copier, cursorTimestampIndex);
+            rowCount = copyOrdered0(writer, cursor, copier, cursorTimestampIndex);
         }
         writer.commit();
+
+        return rowCount;
     }
 
-    private void copyOrdered0(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex) {
+    private long copyOrdered0(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex) {
+        long rowCount = 0;
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
             copier.copy(record, row);
             row.append();
+            rowCount++;
         }
+
+        return rowCount;
     }
 
-    private void copyOrderedBatched(
+    private long copyOrderedBatched(
             TableWriter writer,
             RecordMetadata metadata,
             RecordCursor cursor,
@@ -1801,15 +1809,19 @@ public class SqlCompiler implements Closeable {
             long batchSize,
             long commitLag
     ) {
+        long rowCount;
         if (ColumnType.isSymbolOrString(metadata.getColumnType(cursorTimestampIndex))) {
-            copyOrderedBatchedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, commitLag);
+            rowCount = copyOrderedBatchedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, commitLag);
         } else {
-            copyOrderedBatched0(writer, cursor, copier, cursorTimestampIndex, batchSize, commitLag);
+            rowCount = copyOrderedBatched0(writer, cursor, copier, cursorTimestampIndex, batchSize, commitLag);
         }
         writer.commit();
+
+        return rowCount;
     }
 
-    private void copyOrderedBatched0(
+    //returns number of copied rows
+    private long copyOrderedBatched0(
             TableWriter writer,
             RecordCursor cursor,
             RecordToRowCopier copier,
@@ -1829,9 +1841,12 @@ public class SqlCompiler implements Closeable {
                 deadline = rowCount + batchSize;
             }
         }
+
+        return rowCount;
     }
 
-    private void copyOrderedBatchedStrTimestamp(
+    //returns number of copied rows
+    private long copyOrderedBatchedStrTimestamp(
             TableWriter writer,
             RecordCursor cursor,
             RecordToRowCopier copier,
@@ -1857,9 +1872,13 @@ public class SqlCompiler implements Closeable {
                 throw CairoException.instance(0).put("Invalid timestamp: ").put(str);
             }
         }
+
+        return rowCount;
     }
 
-    private void copyOrderedStrTimestamp(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex) {
+    //returns number of copied rows
+    private long copyOrderedStrTimestamp(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex) {
+        long rowCount = 0;
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             final CharSequence str = record.getStr(cursorTimestampIndex);
@@ -1868,10 +1887,13 @@ public class SqlCompiler implements Closeable {
                 TableWriter.Row row = writer.newRow(IntervalUtils.parseFloorPartialDate(str));
                 copier.copy(record, row);
                 row.append();
+                rowCount++;
             } catch (NumericException numericException) {
                 throw CairoException.instance(0).put("Invalid timestamp: ").put(str);
             }
         }
+
+        return rowCount;
     }
 
     private void copyTable(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
@@ -1941,14 +1963,19 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void copyUnordered(RecordCursor cursor, TableWriter writer, RecordToRowCopier copier) {
+    //returns number of copied rows
+    private long copyUnordered(RecordCursor cursor, TableWriter writer, RecordToRowCopier copier) {
+        long rowCount = 0;
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             TableWriter.Row row = writer.newRow();
             copier.copy(record, row);
             row.append();
+            rowCount++;
         }
         writer.commit();
+
+        return rowCount;
     }
 
     private CompiledQuery createTable(final ExecutionModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -2209,6 +2236,7 @@ public class SqlCompiler implements Closeable {
         final InsertModel model = (InsertModel) executionModel;
         final ExpressionNode name = model.getTableName();
         tableExistsOrFail(name.position, name.token, executionContext);
+        long insertCount;
 
         try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), name.token, "insertAsSelect");
              RecordCursorFactory factory = generate(model.getQueryModel(), executionContext)) {
@@ -2315,10 +2343,10 @@ public class SqlCompiler implements Closeable {
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 try {
                     if (writerTimestampIndex == -1) {
-                        copyUnordered(cursor, writer, copier);
+                        insertCount = copyUnordered(cursor, writer, copier);
                     } else {
                         if (model.getBatchSize() != -1) {
-                            copyOrderedBatched(
+                            insertCount = copyOrderedBatched(
                                     writer,
                                     factory.getMetadata(),
                                     cursor,
@@ -2328,7 +2356,7 @@ public class SqlCompiler implements Closeable {
                                     model.getCommitLag()
                             );
                         } else {
-                            copyOrdered(writer, factory.getMetadata(), cursor, copier, timestampIndexFound);
+                            insertCount = copyOrdered(writer, factory.getMetadata(), cursor, copier, timestampIndexFound);
                         }
                     }
                 } catch (Throwable e) {
@@ -2338,7 +2366,7 @@ public class SqlCompiler implements Closeable {
                 }
             }
         }
-        return compiledQuery.ofInsertAsSelect(); //TODO: add updated row count here
+        return compiledQuery.ofInsertAsSelect(insertCount);
     }
 
     private ExecutionModel lightlyValidateInsertModel(InsertModel model) throws SqlException {

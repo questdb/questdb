@@ -68,6 +68,8 @@ public interface CompiledQuery {
      * @throws SqlException - throws exception if command execution fails
      */
     QueryFuture execute(SCSequence eventSubSeq) throws SqlException;
+
+    long getInsertCount();
 }
 
 
