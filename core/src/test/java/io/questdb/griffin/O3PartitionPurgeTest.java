@@ -134,7 +134,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                             readers.get(i).openPartition(0);
                             readers.get(i).reload();
                         }
-                        LockSupport.parkNanos(0);
+                        Os.pause();
                         Path.clearThreadLocals();
                     }
                 } catch (Throwable ex) {
@@ -149,7 +149,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             barrier.await();
             while (done.get() == 0) {
                 runPartitionPurgeJobs();
-                LockSupport.parkNanos(0);
+                Os.pause();
             }
             runPartitionPurgeJobs();
 

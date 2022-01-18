@@ -230,7 +230,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int writerAsyncCommandQueueCapacity;
     private final int writerTickRowsCountMod;
     private final long writerAsyncCommandMaxWaitTimeout;
-    private final long o3PartitionPurgeListCapacity;
+    private final int o3PartitionPurgeListCapacity;
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int[] httpMinWorkerAffinity;
@@ -1824,7 +1824,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getPartitionPurgeListCapacity() {
+        public int getPartitionPurgeListCapacity() {
             return o3PartitionPurgeListCapacity;
         }
 

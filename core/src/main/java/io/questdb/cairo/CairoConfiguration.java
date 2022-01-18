@@ -160,7 +160,7 @@ public interface CairoConfiguration {
 
     int getParallelIndexThreshold();
 
-    long getPartitionPurgeListCapacity();
+    int getPartitionPurgeListCapacity();
 
     default Rnd getRandom() {
         Rnd rnd = RANDOM.get();

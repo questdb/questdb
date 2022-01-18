@@ -390,7 +390,6 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             final CyclicBarrier barrier = new CyclicBarrier(readers);
             final CountDownLatch latch = new CountDownLatch(readers);
             final AtomicInteger anomaly = new AtomicInteger();
-            int increment = entryCount;
             for (int i = 0; i < readers; i++) {
                 final int txn = i;
                 Thread reader = new Thread(() -> {
@@ -398,8 +397,8 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                         barrier.await();
                         for (int s = 0; s < 100; s++) {
                             try {
-                                if (scoreboard.acquireTxn(txn + s * increment)) {
-                                    scoreboard.releaseTxn(txn + s * increment);
+                                if (scoreboard.acquireTxn(txn + (long) s * entryCount)) {
+                                    scoreboard.releaseTxn(txn + (long) s * entryCount);
                                     Thread.yield();
                                 }
                             } catch (CairoException e) {
@@ -471,7 +470,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                                         .$();
                                 anomaly.addAndGet(100);
                             }
-                            parkNanos();
+                            Os.pause();
                             scoreboard.releaseTxn(txn);
                             long min = scoreboard.getMin();
                             long prevCount = scoreboard.getActiveReaderCount(min - 1);
@@ -585,14 +584,6 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         });
     }
 
-    private static void parkNanos() {
-        if (Os.type == Os.WINDOWS) {
-            Thread.yield();
-        } else {
-            LockSupport.parkNanos(1);
-        }
-    }
-
     @SuppressWarnings("SameParameterValue")
     private void testHammerScoreboard(int readers, int iterations) throws Exception {
         int entryCount = Math.max(Numbers.ceilPow2(readers) * 8, Numbers.ceilPow2(iterations));
@@ -660,7 +651,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                                     .$();
                             anomaly.addAndGet(100);
                         }
-                        parkNanos();
+                        Os.pause();
                         scoreboard.releaseTxn(t);
                         long min = scoreboard.getMin();
                         long prevCount = scoreboard.getActiveReaderCount(t - 1);
@@ -733,7 +724,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                     // This is the only writer
                     @SuppressWarnings("NonAtomicOperationOnVolatileField") long nextTxn = txn++;
                     Assert.assertTrue(scoreboard.getActiveReaderCount(nextTxn) <= readers);
-                    parkNanos();
+                    Os.pause();
                     Assert.assertTrue(scoreboard.getActiveReaderCount(nextTxn) <= readers);
                 }
             } catch (Exception e) {

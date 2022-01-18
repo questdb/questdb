@@ -321,7 +321,6 @@ public class O3CommitLagTest extends AbstractO3Test {
         int multiplier = Numbers.ceilPow2(rndPagesMultiplier);
 
         dataAppendPageSize = (int) Files.PAGE_SIZE * multiplier;
-        dataAppendPageSize = 262144;
         LOG.info().$("Testing with random pages size of ").$(dataAppendPageSize).$();
 
         executeWithPool(0,

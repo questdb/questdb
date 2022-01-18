@@ -164,7 +164,7 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public long getPartitionPurgeListCapacity() {
+            public int getPartitionPurgeListCapacity() {
                 // Bump it to high number so that test don't fail with memory leak if LongList
                 // re-allocates
                 return 512;

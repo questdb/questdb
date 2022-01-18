@@ -329,7 +329,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getPartitionPurgeListCapacity() {
+    public int getPartitionPurgeListCapacity() {
         return 64;
     }
 
