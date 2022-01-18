@@ -2336,6 +2336,25 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByWithEmptyCursor() throws Exception {
+        assertQuery("to_timezone\ts\tlat\tlon\n",
+                "select to_timezone(k, 'Europe/London'), s, lat, lon from (select k, s, first(lat) lat, last(k) lon " +
+                        "from x " +
+                        "where s in ('d') " +
+                        "sample by 1d align to calendar time zone 'Europe/London')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
+                        "   from" +
+                        "   long_sequence(120)" +
+                        ") timestamp(k)", null, false);
+    }
+
+    @Test
     public void testSampleByDayNoFillNotKeyedAlignToCalendarTimezone() throws Exception {
         assertQuery(
                 "k\tc\ta\tlk\n" +
