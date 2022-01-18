@@ -155,7 +155,7 @@ public class LatestByLightRecordCursorFactory implements RecordCursorFactory {
 
         private RecordCursor baseCursor;
         private Record baseRecord;
-        // contains <[latest_by columns...], [timestamp column, rowd]> pairs
+        // contains <[latest_by columns...], [timestamp column, row id]> pairs
         private Map map;
         private RecordCursor mapCursor;
         private MapRecord mapRecord;

@@ -213,7 +213,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         nestedModel = null;
         tableName = null;
         alias = null;
-        clearLatestBy();
+        latestByType = LATEST_BY_NONE;
+        latestBy.clear();
         joinCriteria = null;
         joinType = JOIN_INNER;
         joinKeywordPosition = 0;
@@ -264,11 +265,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         sampleByFill.clear();
         sampleByTimezoneName = null;
         sampleByOffset = null;
-    }
-
-    public void clearLatestBy() {
-        latestByType = LATEST_BY_NONE;
-        latestBy.clear();
     }
 
     public void copyColumnsFrom(
@@ -697,15 +693,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         model.clearSampleBy();
     }
 
-    public void moveLatestByFrom(QueryModel model) {
-        this.latestBy.addAll(model.latestBy);
-        this.latestByType = model.latestByType;
-        this.timestamp = model.timestamp;
-
-        // clear the source
-        model.clearLatestBy();
-    }
-
     /**
      * Optimiser may be attempting to order join clauses several times.
      * Every time ordering takes place optimiser will keep at most two lists:
@@ -964,9 +951,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
         if (getLatestByType() == LATEST_BY_NEW && getLatestBy().size() > 0) {
             sink.put(" latest on ");
-            if (timestamp != null) {
-                timestamp.toSink(sink);
-            }
+            timestamp.toSink(sink);
             sink.put(" partition by ");
             for (int i = 0, n = getLatestBy().size(); i < n; i++) {
                 if (i > 0) {

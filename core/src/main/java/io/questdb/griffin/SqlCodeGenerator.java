@@ -1071,7 +1071,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final boolean indexed = metadata.isColumnIndexed(latestByIndex);
 
         // 'latest by' clause takes over the filter and the latest by nodes,
-        // so that generateFilter() and generateLatestBy() are no-op
+        // so that the later generateFilter() and generateLatestBy() are no-op
         model.setWhereClause(null);
         model.getLatestBy().clear();
 
@@ -2683,7 +2683,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (latestByColumnCount > 0) {
                     Function f = compileFilter(intrinsicModel, myMeta, executionContext);
                     if (f != null && f.isConstant() && !f.getBool(null)) {
-                        // 'latest by' clause takes over the filter and the latest by nodes, so that generateLatestBy() is no-op
+                        // 'latest by' clause takes over the latest by nodes, so that the later generateLatestBy() is no-op
                         model.getLatestBy().clear();
 
                         return new EmptyTableRecordCursorFactory(myMeta);
@@ -2984,7 +2984,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
-            // 'latest by' clause takes over the filter and the latest by nodes, so that generateLatestBy() is no-op
+            // 'latest by' clause takes over the latest by nodes, so that the later generateLatestBy() is no-op
             model.getLatestBy().clear();
 
             // listColumnFilterA = latest by column indexes
