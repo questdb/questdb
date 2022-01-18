@@ -83,7 +83,9 @@ public final class Net {
         return Files.close(fd);
     }
 
-    public native static int configureNoLinger(long fd);
+    public static int configureNoLinger(long fd) {
+        return configureLinger(fd, 0);
+    }
 
     public native static int configureLinger(long fd, int seconds);
 
