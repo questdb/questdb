@@ -30,6 +30,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -43,7 +44,7 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
     private long lim;
     private long buf;
     private long _wptr;
-    private final QueueConsumer<LogRecordSink> myConsumer = this::copyToBuffer;
+    private QueueConsumer<LogRecordSink> myConsumer = this::copyToBuffer;
     private String location;
     // can be set via reflection
     @SuppressWarnings("unused")
@@ -139,5 +140,15 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
     private void flush() {
         Files.append(fd, buf, (int) (_wptr - buf));
         _wptr = buf;
+    }
+
+    @TestOnly
+    QueueConsumer<LogRecordSink> getMyConsumer() {
+        return myConsumer;
+    }
+
+    @TestOnly
+    void setMyConsumer(QueueConsumer<LogRecordSink> myConsumer) {
+        this.myConsumer = myConsumer;
     }
 }

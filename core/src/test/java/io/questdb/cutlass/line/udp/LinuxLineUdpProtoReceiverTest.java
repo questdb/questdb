@@ -271,7 +271,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
                         while (true) {
                             if (count-- > 0 && reader.size() < 10) {
                                 reader.reload();
-                                LockSupport.parkNanos(1);
+                                Os.pause();
                             } else {
                                 break;
                             }

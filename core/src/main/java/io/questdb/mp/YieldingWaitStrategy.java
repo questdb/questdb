@@ -24,7 +24,7 @@
 
 package io.questdb.mp;
 
-import java.util.concurrent.locks.LockSupport;
+import io.questdb.std.Os;
 
 public class YieldingWaitStrategy extends AbstractWaitStrategy {
     @Override
@@ -34,7 +34,7 @@ public class YieldingWaitStrategy extends AbstractWaitStrategy {
 
     @Override
     public void await() {
-        LockSupport.parkNanos(1L);
+        Os.pause();
     }
 
     @Override
