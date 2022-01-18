@@ -30,6 +30,7 @@ import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -72,7 +73,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                         if (i == 1) {
                             barrier.await();
                         } else {
-                            LockSupport.parkNanos(1L);
+                            Os.pause();
                         }
                     }
                 } catch (Exception e) {
@@ -89,7 +90,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
                     for (int i = 0; i < 1000; i++) {
                         pool.releaseInactive();
-                        LockSupport.parkNanos(1L);
+                        Os.pause();
                     }
 
                 } catch (Exception e) {
@@ -731,7 +732,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                         try {
                             barrier.await();
                             if (pool.lock("z", "testing") == WriterPool.OWNERSHIP_REASON_NONE) {
-                                LockSupport.parkNanos(1);
+                                Os.pause();
                                 pool.unlock("z");
                             } else {
                                 Thread.yield();

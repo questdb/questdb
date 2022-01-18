@@ -37,6 +37,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.tasks.TableWriterTask;
@@ -298,7 +299,7 @@ public class CompiledQueryImpl implements CompiledQuery {
                     if (clock.getTicks() - start > writerAsyncCommandBusyWaitTimeout) {
                         return status;
                     }
-                    LockSupport.parkNanos(1);
+                    Os.pause();
                     continue;
                 }
 
@@ -311,7 +312,7 @@ public class CompiledQueryImpl implements CompiledQuery {
                                 .$(", type=").$(type)
                                 .$(", expectedInstance=").$(commandId)
                                 .I$();
-                        LockSupport.parkNanos(1);
+                        Os.pause();
                     } else if (type == TableWriterTask.TSK_ALTER_TABLE_COMPLETE) {
                         // If writer failed to execute the ALTER command it will send back string error
                         // in the event data

@@ -162,11 +162,6 @@ public class IODispatcherTest {
                         public int getInitialBias() {
                             return IODispatcherConfiguration.BIAS_WRITE;
                         }
-
-                        @Override
-                        public boolean getPeerNoLinger() {
-                            return false;
-                        }
                     },
                     (fd, dispatcher1) -> {
                         connectLatch.countDown();
@@ -4654,7 +4649,7 @@ public class IODispatcherTest {
                         if (TimeUnit.NANOSECONDS.toSeconds(endNanos - startNanos) > 30) {
                             Assert.fail("Timed out waiting for despatcher to stop listening");
                         }
-                        LockSupport.parkNanos(1);
+                        Os.pause();
                     }
 
                     final String request = "GET /status?x=1&a=%26b&c&d=x HTTP/1.1\r\n" +
@@ -6034,11 +6029,6 @@ public class IODispatcherTest {
                             // 0.5s idle timeout
                             return 500;
                         }
-
-                        @Override
-                        public boolean getPeerNoLinger() {
-                            return false;
-                        }
                     },
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
@@ -6257,10 +6247,6 @@ public class IODispatcherTest {
     }
 
     @Test
-    // this test is ignored for the time being because it is unstable on OSX and I
-    // have not figured out the reason yet. I would like to see if this test
-    // runs any different on Linux, just to narrow the problem down to either
-    // dispatcher or Http parser.
     public void testTwoThreadsSendTwoThreadsRead() throws Exception {
 
         LOG.info().$("started testSendHttpGet").$();
@@ -6691,7 +6677,7 @@ public class IODispatcherTest {
             final Rnd rnd = new Rnd();
             try {
                 new SendAndReceiveRequestBuilder().executeMany(requester -> {
-                    barrier.await();
+                    TestUtils.await(barrier);
                     for (int i = 0; i < count; i++) {
                         int index = rnd.nextPositiveInt() % requests.length;
                         try {
