@@ -36,6 +36,7 @@ public class SOCountDownLatch implements CountDownLatchSPI {
     private static final long VALUE_OFFSET;
     private volatile int count = 0;
     private volatile Thread waiter = null;
+
     public SOCountDownLatch(int count) {
         this.count = count;
     }

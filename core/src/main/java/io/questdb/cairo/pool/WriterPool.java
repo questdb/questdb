@@ -40,7 +40,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Iterator;
-import java.util.concurrent.locks.LockSupport;
 
 /**
  * This class maintains cache of open writers to avoid OS overhead of

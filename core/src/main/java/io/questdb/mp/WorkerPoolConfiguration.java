@@ -29,6 +29,10 @@ public interface WorkerPoolConfiguration {
         return "worker";
     }
 
+    default long getSleepMs() {
+        return 100;
+    }
+
     default long getSleepThreshold() {
         return 10000;
     }
@@ -45,9 +49,5 @@ public interface WorkerPoolConfiguration {
 
     default boolean isDaemonPool() {
         return false;
-    }
-
-    default long getSleepMs() {
-        return 100;
     }
 }

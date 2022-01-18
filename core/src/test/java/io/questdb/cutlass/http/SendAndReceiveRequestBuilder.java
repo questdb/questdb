@@ -87,10 +87,7 @@ public class SendAndReceiveRequestBuilder {
         return fd;
     }
 
-    public void execute(
-            String request,
-            CharSequence response
-    ) throws InterruptedException {
+    public void execute(String request, CharSequence response) {
         final long fd = nf.socketTcp(true);
         try {
             long sockAddr = nf.sockaddr("127.0.0.1", 9001);
@@ -220,13 +217,13 @@ public class SendAndReceiveRequestBuilder {
             try {
                 RequestExecutor executor = new RequestExecutor() {
                     @Override
-                    public void executeWithStandardHeaders(String request, String response) {
-                        executeWithSocket(request + RequestHeaders, ResponseHeaders + response, fd);
+                    public void execute(String request, String response) {
+                        executeWithSocket(request, response, fd);
                     }
 
                     @Override
-                    public void execute(String request, String response) {
-                        executeWithSocket(request, response, fd);
+                    public void executeWithStandardHeaders(String request, String response) {
+                        executeWithSocket(request + RequestHeaders, ResponseHeaders + response, fd);
                     }
                 };
 
@@ -307,6 +304,11 @@ public class SendAndReceiveRequestBuilder {
         execute(request + RequestHeaders, ResponseHeaders + response);
     }
 
+    public SendAndReceiveRequestBuilder withClientLinger(int seconds) {
+        this.clientLingerSeconds = seconds;
+        return this;
+    }
+
     public SendAndReceiveRequestBuilder withCompareLength(int compareLength) {
         this.compareLength = compareLength;
         return this;
@@ -334,11 +336,6 @@ public class SendAndReceiveRequestBuilder {
 
     public SendAndReceiveRequestBuilder withPrintOnly(boolean printOnly) {
         this.printOnly = printOnly;
-        return this;
-    }
-
-    public SendAndReceiveRequestBuilder withClientLinger(int seconds) {
-        this.clientLingerSeconds = seconds;
         return this;
     }
 

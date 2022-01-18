@@ -313,6 +313,15 @@ public class LongList implements Mutable, LongVec {
         data[index] = data[index] + 1;
     }
 
+    public int indexOf(long o) {
+        for (int i = 0, n = pos; i < n; i++) {
+            if (o == getQuick(i)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     public void insert(int index, int length) {
         ensureCapacity(pos + length);
         if (pos > index) {
@@ -417,15 +426,6 @@ public class LongList implements Mutable, LongVec {
             }
         }
         return false;
-    }
-
-    public int indexOf(long o) {
-        for (int i = 0, n = pos; i < n; i++) {
-            if (o == getQuick(i)) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     private int scanDown(long v, int low, int high) {
