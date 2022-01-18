@@ -56,42 +56,6 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         of(path, ColumnType.VERSION);
     }
 
-    public TableReaderMetadata of(Path path, int expectedVersion) {
-        this.path.of(path).$();
-        try {
-            this.metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-            this.columnNameIndexMap.clear();
-            TableUtils.validate(ff, metaMem, this.columnNameIndexMap, expectedVersion);
-            this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
-            this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
-            this.id = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
-            this.columnMetadata.clear();
-            long offset = TableUtils.getColumnNameOffset(columnCount);
-
-            // don't create strings in this loop, we already have them in columnNameIndexMap
-            for (int i = 0; i < columnCount; i++) {
-                CharSequence name = metaMem.getStr(offset);
-                assert name != null;
-                columnMetadata.add(
-                        new TableColumnMetadata(
-                                Chars.toString(name),
-                                TableUtils.getColumnHash(metaMem, i),
-                                TableUtils.getColumnType(metaMem, i),
-                                TableUtils.isColumnIndexed(metaMem, i),
-                                TableUtils.getIndexBlockCapacity(metaMem, i),
-                                true,
-                                null
-                        )
-                );
-                offset += Vm.getStorageLength(name);
-            }
-        } catch (Throwable e) {
-            close();
-            throw e;
-        }
-        return this;
-    }
-
     public void applyTransitionIndex(long pTransitionIndex) {
         //  swap meta and transitionMeta
         MemoryMR temp = this.metaMem;
@@ -211,8 +175,16 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         return columnCount;
     }
 
+    public long getCommitLag() {
+        return metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
+    }
+
     public int getId() {
         return id;
+    }
+
+    public int getMaxUncommittedRows() {
+        return metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
     }
 
     public int getPartitionBy() {
@@ -223,12 +195,40 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         return metaMem.getInt(TableUtils.META_OFFSET_VERSION);
     }
 
-    public int getMaxUncommittedRows() {
-        return metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
-    }
+    public TableReaderMetadata of(Path path, int expectedVersion) {
+        this.path.of(path).$();
+        try {
+            this.metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+            this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+            this.columnNameIndexMap.clear();
+            TableUtils.validate(ff, metaMem, this.columnNameIndexMap, expectedVersion);
+            this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
+            this.id = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
+            this.columnMetadata.clear();
+            long offset = TableUtils.getColumnNameOffset(columnCount);
 
-    public long getCommitLag() {
-        return metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
+            // don't create strings in this loop, we already have them in columnNameIndexMap
+            for (int i = 0; i < columnCount; i++) {
+                CharSequence name = metaMem.getStr(offset);
+                assert name != null;
+                columnMetadata.add(
+                        new TableColumnMetadata(
+                                Chars.toString(name),
+                                TableUtils.getColumnHash(metaMem, i),
+                                TableUtils.getColumnType(metaMem, i),
+                                TableUtils.isColumnIndexed(metaMem, i),
+                                TableUtils.getIndexBlockCapacity(metaMem, i),
+                                true,
+                                null
+                        )
+                );
+                offset += Vm.getStorageLength(name);
+            }
+        } catch (Throwable e) {
+            close();
+            throw e;
+        }
+        return this;
     }
 
     private TableColumnMetadata moveMetadata(int index, TableColumnMetadata metadata) {

@@ -24,16 +24,19 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.MPSequence;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.O3PurgeDiscoveryTask;
 import org.jetbrains.annotations.Nullable;
 
 public final class TableUtils {
@@ -646,6 +649,21 @@ public final class TableUtils {
         // make sure we put append pointer behind our data so that
         // files does not get truncated when closing
         txMem.setTruncateSize(getPartitionTableIndexOffset(symbolMapCount, 0));
+    }
+
+    public static boolean schedulePurgeO3Partitions(MessageBus messageBus, String tableName, int partitionBy) {
+        final MPSequence seq = messageBus.getO3PurgeDiscoveryPubSeq();
+        while (true) {
+            long cursor = seq.next();
+            if (cursor > -1) {
+                O3PurgeDiscoveryTask task = messageBus.getO3PurgeDiscoveryQueue().get(cursor);
+                task.of(tableName, partitionBy);
+                seq.done(cursor);
+                return true;
+            } else if (cursor == -1) {
+                return false;
+            }
+        }
     }
 
     /**
