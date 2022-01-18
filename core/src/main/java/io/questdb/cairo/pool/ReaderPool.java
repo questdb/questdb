@@ -37,6 +37,7 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Unsafe;
 
 import java.util.Arrays;
+import java.util.Iterator;
 import java.util.Map;
 
 public class ReaderPool extends AbstractPool implements ResourcePool<TableReader> {
@@ -233,9 +234,9 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         int casFailures = 0;
         int closeReason = deadline < Long.MAX_VALUE ? PoolConstants.CR_IDLE : PoolConstants.CR_POOL_CLOSE;
 
-        for (Map.Entry<CharSequence, Entry> me : entries.entrySet()) {
-
-            Entry e = me.getValue();
+        Iterator<Entry> iterator = entries.values().iterator();
+        while (iterator.hasNext()) {
+            Entry e = iterator.next();
 
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
