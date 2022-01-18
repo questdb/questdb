@@ -639,7 +639,7 @@ public class RetryIODispatcherTest {
                                     String request = "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(" + threadI +
                                             "%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" + SendAndReceiveRequestBuilder.RequestHeaders;
                                     long fd = new SendAndReceiveRequestBuilder()
-                                            .withClientLinger(60)
+//                                            .withClientLinger(60)
                                             .connectAndSendRequest(request);
                                     fds[threadI] = fd;
                                 } catch (Exception e) {
