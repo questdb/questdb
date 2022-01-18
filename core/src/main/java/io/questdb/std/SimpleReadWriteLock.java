@@ -31,7 +31,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReadWriteLock;
 
 /**
@@ -68,7 +67,7 @@ public class SimpleReadWriteLock implements ReadWriteLock {
         public void lock() {
             while (nReaders.incrementAndGet() >= MAX_READERS) {
                 nReaders.decrementAndGet();
-                LockSupport.parkNanos(10);
+                Os.pause();
             }
         }
 
@@ -102,7 +101,7 @@ public class SimpleReadWriteLock implements ReadWriteLock {
         @Override
         public void lock() {
             while (!lock.compareAndSet(false, true)) {
-                LockSupport.parkNanos(10);
+                Os.pause();
             }
             int n = nReaders.addAndGet(MAX_READERS);
             while (n != MAX_READERS) {

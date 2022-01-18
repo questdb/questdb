@@ -27,6 +27,7 @@ package io.questdb.cutlass.http;
 import io.questdb.cutlass.http.ex.RetryFailedOperationException;
 import io.questdb.mp.*;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.Nullable;
 
@@ -210,7 +211,7 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
             long cursor = outPubSequence.next();
             // -2 = there was a contest for queue index and this thread has lost
             if (cursor < -1) {
-                LockSupport.parkNanos(1);
+                Os.pause();
                 continue;
             }
 
