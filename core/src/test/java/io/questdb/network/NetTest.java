@@ -41,7 +41,6 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.LockSupport;
 
 public class NetTest {
     private int port = 9992;
@@ -168,7 +167,7 @@ public class NetTest {
                 ipCollectedLatch.countDown();
                 Net.configureNoLinger(clientfd);
                 while (!Net.isDead(clientfd)) {
-                    LockSupport.parkNanos(1);
+                    Os.pause();
                 }
                 Net.close(clientfd);
                 haltLatch.countDown();

@@ -26,7 +26,6 @@ package io.questdb.log;
 
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.StringSink;
@@ -40,22 +39,12 @@ import java.util.concurrent.locks.LockSupport;
 public class LogAlertSocket implements Closeable {
 
     public static final String localHostIp;
-
-    static {
-        try {
-            localHostIp = InetAddress.getLocalHost().getHostAddress();
-        } catch (UnknownHostException e) {
-            throw new LogError("Cannot access our ip address info");
-        }
-    }
-
     public static final String DEFAULT_HOST = "127.0.0.1";
     public static final int DEFAULT_PORT = 9093;
     public static final int IN_BUFFER_SIZE = 2 * 1024 * 1024;
     public static final int OUT_BUFFER_SIZE = 4 * 1024 * 1024;
     public static final long RECONNECT_DELAY_NANO = 250_000_000; // 1/4th sec
     private static final int HOSTS_LIMIT = 12;
-
     private final Log log;
     private final Rnd rand;
     private final NetworkFacade nf;
@@ -67,6 +56,7 @@ public class LogAlertSocket implements Closeable {
     private final long reconnectDelay;
     private final String defaultHost;
     private final int defaultPort;
+    private final Runnable onReconnectRef = this::onReconnect;
     private long outBufferPtr;
     private long inBufferPtr;
     private int alertHostsCount;
@@ -112,6 +102,19 @@ public class LogAlertSocket implements Closeable {
         this.reconnectDelay = reconnectDelay;
     }
 
+    @Override
+    public void close() {
+        freeSocketAndAddress();
+        if (outBufferPtr != 0) {
+            Unsafe.free(outBufferPtr, outBufferSize, MemoryTag.NATIVE_DEFAULT);
+            outBufferPtr = 0;
+        }
+        if (inBufferPtr != 0) {
+            Unsafe.free(inBufferPtr, inBufferSize, MemoryTag.NATIVE_DEFAULT);
+            inBufferPtr = 0;
+        }
+    }
+
     public void connect() {
         fdSocketAddress = nf.sockaddr(alertHosts[alertHostIdx], alertPorts[alertHostIdx]);
         fdSocket = nf.socketTcp(true);
@@ -126,7 +129,23 @@ public class LogAlertSocket implements Closeable {
         }
     }
 
-    public boolean send(int len) {
+    public long getInBufferPtr() {
+        return inBufferPtr;
+    }
+
+    public int getInBufferSize() {
+        return inBufferSize;
+    }
+
+    public long getOutBufferPtr() {
+        return outBufferPtr;
+    }
+
+    public int getOutBufferSize() {
+        return outBufferSize;
+    }
+
+    public boolean send(int len, Runnable onReconnect) {
         if (len < 1) {
             return false;
         }
@@ -184,7 +203,7 @@ public class LogAlertSocket implements Closeable {
                         .$(reconnectDelay / 1000000)
                         .$(" millis (as it is the same alert manager)")
                         .$();
-                LockSupport.parkNanos(reconnectDelay);
+                onReconnect.run();
             } else {
                 logFailOver.$();
             }
@@ -204,38 +223,45 @@ public class LogAlertSocket implements Closeable {
         return success;
     }
 
-    @Override
-    public void close() {
-        freeSocketAndAddress();
-        if (outBufferPtr != 0) {
-            Unsafe.free(outBufferPtr, outBufferSize, MemoryTag.NATIVE_DEFAULT);
-            outBufferPtr = 0;
+    public boolean send(int len) {
+        return send(len, onReconnectRef);
+    }
+
+    private static boolean isContentLength(CharSequence tok, int lo, int hi) {
+        return hi - lo > 13 &&
+                (tok.charAt(lo++) | 32) == 'c' &&
+                (tok.charAt(lo++) | 32) == 'o' &&
+                (tok.charAt(lo++) | 32) == 'n' &&
+                (tok.charAt(lo++) | 32) == 't' &&
+                (tok.charAt(lo++) | 32) == 'e' &&
+                (tok.charAt(lo++) | 32) == 'n' &&
+                (tok.charAt(lo++) | 32) == 't' &&
+                (tok.charAt(lo++) | 32) == '-' &&
+                (tok.charAt(lo++) | 32) == 'l' &&
+                (tok.charAt(lo++) | 32) == 'e' &&
+                (tok.charAt(lo++) | 32) == 'n' &&
+                (tok.charAt(lo++) | 32) == 'g' &&
+                (tok.charAt(lo++) | 32) == 't' &&
+                (tok.charAt(lo) | 32) == 'h';
+    }
+
+    private LogRecord $alertHost(int idx, LogRecord logRecord) {
+        return logRecord.$(" [").$(idx).$("] ").$(alertHosts[idx]).$(':').$(alertPorts[idx]);
+    }
+
+    private LogRecord $currentAlertHost(LogRecord logRecord) {
+        return $alertHost(alertHostIdx, logRecord);
+    }
+
+    private void freeSocketAndAddress() {
+        if (fdSocketAddress != -1) {
+            Net.freeSockAddr(fdSocketAddress);
+            fdSocketAddress = -1;
         }
-        if (inBufferPtr != 0) {
-            Unsafe.free(inBufferPtr, inBufferSize, MemoryTag.NATIVE_DEFAULT);
-            inBufferPtr = 0;
+        if (fdSocket != -1) {
+            Net.close(fdSocket);
+            fdSocket = -1;
         }
-    }
-
-    public long getOutBufferPtr() {
-        return outBufferPtr;
-    }
-
-    public int getOutBufferSize() {
-        return outBufferSize;
-    }
-
-    public long getInBufferPtr() {
-        return inBufferPtr;
-    }
-
-    public int getInBufferSize() {
-        return inBufferSize;
-    }
-
-    @TestOnly
-    String getAlertTargets() {
-        return alertTargets;
     }
 
     @TestOnly
@@ -244,18 +270,18 @@ public class LogAlertSocket implements Closeable {
     }
 
     @TestOnly
-    int[] getAlertPorts() {
-        return alertPorts;
-    }
-
-    @TestOnly
     int getAlertHostsCount() {
         return alertHostsCount;
     }
 
     @TestOnly
-    long getReconnectDelay() {
-        return reconnectDelay;
+    int[] getAlertPorts() {
+        return alertPorts;
+    }
+
+    @TestOnly
+    String getAlertTargets() {
+        return alertTargets;
     }
 
     @TestOnly
@@ -268,15 +294,74 @@ public class LogAlertSocket implements Closeable {
         return defaultPort;
     }
 
-    private void freeSocketAndAddress() {
-        if (fdSocketAddress != -1) {
-            Net.freeSockAddr(fdSocketAddress);
-            fdSocketAddress = -1;
+    @TestOnly
+    long getReconnectDelay() {
+        return reconnectDelay;
+    }
+
+    private void logNetworkConnectError(CharSequence message) {
+        $currentAlertHost(log.info().$(message)).$(" [errno=").$(nf.errno()).I$();
+    }
+
+    @TestOnly
+    void logResponse(int len) {
+        responseSink.clear();
+        Chars.utf8Decode(inBufferPtr, inBufferPtr + len, responseSink);
+        final int responseLen = responseSink.length();
+        int contentLength = 0;
+        int lineStart = 0;
+        int colonIdx = -1;
+        boolean headerEndFound = false;
+        for (int i = 0; i < responseLen; i++) {
+            switch (responseSink.charAt(i)) {
+                case ':':
+                    if (colonIdx == -1) { // values may contain ':', e.g. Date: Thu, 09 Dec 2021 09:37:22 GMT
+                        colonIdx = i;
+                    }
+                    break;
+
+                case '\n':
+                    if (colonIdx != -1) {
+                        if (isContentLength(responseSink, lineStart, colonIdx)) {
+                            int startSize = colonIdx + 1;
+                            int limSize = i - 1;
+                            while (startSize < responseLen && responseSink.charAt(startSize) == ' ') {
+                                startSize++;
+                            }
+                            while (limSize > startSize) {
+                                char c = responseSink.charAt(limSize);
+                                if (c == '\r' || c == ' ') {
+                                    limSize--;
+                                } else {
+                                    break;
+                                }
+                            }
+                            try {
+                                contentLength = Numbers.parseInt(responseSink, startSize, limSize + 1);
+                            } catch (NumericException e) {
+                                $currentAlertHost(log.info().$("Received")).$(": ").$(responseSink).$();
+                                return;
+                            }
+                        }
+                        colonIdx = -1;
+                    } else if (i - lineStart == 1 && responseSink.charAt(i - 1) == '\r') {
+                        lineStart = i + 1;
+                        headerEndFound = true;
+                        break; // for loop
+                    }
+                    lineStart = i + 1;
+                    break;
+            }
         }
-        if (fdSocket != -1) {
-            Net.close(fdSocket);
-            fdSocket = -1;
-        }
+        int start = headerEndFound && contentLength == responseLen - lineStart ? lineStart : 0;
+        $currentAlertHost(log.info().$("Received"))
+                .$(": ")
+                .$(responseSink, start, responseLen)
+                .$();
+    }
+
+    private void onReconnect() {
+        LockSupport.parkNanos(reconnectDelay);
     }
 
     private void parseAlertTargets() {
@@ -411,90 +496,11 @@ public class LogAlertSocket implements Closeable {
         }
     }
 
-    private static boolean isContentLength(CharSequence tok, int lo, int hi) {
-        return hi - lo > 13 &&
-                (tok.charAt(lo++) | 32) == 'c' &&
-                (tok.charAt(lo++) | 32) == 'o' &&
-                (tok.charAt(lo++) | 32) == 'n' &&
-                (tok.charAt(lo++) | 32) == 't' &&
-                (tok.charAt(lo++) | 32) == 'e' &&
-                (tok.charAt(lo++) | 32) == 'n' &&
-                (tok.charAt(lo++) | 32) == 't' &&
-                (tok.charAt(lo++) | 32) == '-' &&
-                (tok.charAt(lo++) | 32) == 'l' &&
-                (tok.charAt(lo++) | 32) == 'e' &&
-                (tok.charAt(lo++) | 32) == 'n' &&
-                (tok.charAt(lo++) | 32) == 'g' &&
-                (tok.charAt(lo++) | 32) == 't' &&
-                (tok.charAt(lo) | 32) == 'h';
-    }
-
-    @TestOnly
-    void logResponse(int len) {
-        responseSink.clear();
-        Chars.utf8Decode(inBufferPtr, inBufferPtr + len, responseSink);
-        final int responseLen = responseSink.length();
-        int contentLength = 0;
-        int lineStart = 0;
-        int colonIdx = -1;
-        boolean headerEndFound = false;
-        for (int i = 0; i < responseLen; i++) {
-            switch (responseSink.charAt(i)) {
-                case ':':
-                    if (colonIdx == -1) { // values may contain ':', e.g. Date: Thu, 09 Dec 2021 09:37:22 GMT
-                        colonIdx = i;
-                    }
-                    break;
-
-                case '\n':
-                    if (colonIdx != -1) {
-                        if (isContentLength(responseSink, lineStart, colonIdx)) {
-                            int startSize = colonIdx + 1;
-                            int limSize = i - 1;
-                            while (startSize < responseLen && responseSink.charAt(startSize) == ' ') {
-                                startSize++;
-                            }
-                            while (limSize > startSize) {
-                                char c = responseSink.charAt(limSize);
-                                if (c == '\r' || c == ' ') {
-                                    limSize--;
-                                } else {
-                                    break;
-                                }
-                            }
-                            try {
-                                contentLength = Numbers.parseInt(responseSink, startSize, limSize + 1);
-                            } catch (NumericException e) {
-                                $currentAlertHost(log.info().$("Received")).$(": ").$(responseSink).$();
-                                return;
-                            }
-                        }
-                        colonIdx = -1;
-                    } else if (i - lineStart == 1 && responseSink.charAt(i - 1) == '\r') {
-                        lineStart = i + 1;
-                        headerEndFound = true;
-                        break; // for loop
-                    }
-                    lineStart = i + 1;
-                    break;
-            }
+    static {
+        try {
+            localHostIp = InetAddress.getLocalHost().getHostAddress();
+        } catch (UnknownHostException e) {
+            throw new LogError("Cannot access our ip address info");
         }
-        int start = headerEndFound && contentLength == responseLen - lineStart ? lineStart : 0;
-        $currentAlertHost(log.info().$("Received"))
-                .$(": ")
-                .$(responseSink, start, responseLen)
-                .$();
-    }
-
-    private void logNetworkConnectError(CharSequence message) {
-        $currentAlertHost(log.info().$(message)).$(" [errno=").$(nf.errno()).I$();
-    }
-
-    private LogRecord $currentAlertHost(LogRecord logRecord) {
-        return $alertHost(alertHostIdx, logRecord);
-    }
-
-    private LogRecord $alertHost(int idx, LogRecord logRecord) {
-        return logRecord.$(" [").$(idx).$("] ").$(alertHosts[idx]).$(':').$(alertPorts[idx]);
     }
 }

@@ -111,6 +111,6 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
 
     @Override
     public boolean getPeerNoLinger() {
-        return true;
+        return false;
     }
 }

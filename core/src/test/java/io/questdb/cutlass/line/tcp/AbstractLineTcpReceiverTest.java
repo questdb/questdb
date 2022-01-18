@@ -241,7 +241,7 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
     }
 
-    protected Socket getSocket(boolean noLinger) {
+    protected Socket getSocket() {
         Socket socket = tlSocket.get();
         if (socket != null) {
             return socket;
@@ -252,7 +252,7 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         long fd = Net.socketTcp(true);
         socket = new Socket(sockaddr, fd);
 
-        if (TestUtils.connect(fd, sockaddr, noLinger) != 0) {
+        if (TestUtils.connect(fd, sockaddr) != 0) {
             throw new RuntimeException("could not connect, errno=" + Os.errno());
         }
 
@@ -260,8 +260,8 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         return socket;
     }
 
-    protected void sendToSocket(String lineData, boolean noLinger) {
-        try (Socket socket = getSocket(noLinger)) {
+    protected void sendToSocket(String lineData) {
+        try (Socket socket = getSocket()) {
             sendToSocket(socket, lineData);
         } catch (Exception e) {
             Assert.fail("Data sending failed [e=" + e + "]");
