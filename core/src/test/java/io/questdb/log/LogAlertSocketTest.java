@@ -38,6 +38,8 @@ import org.junit.Test;
 
 import java.io.File;
 import java.util.Arrays;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.log.HttpLogRecordSink.CRLF;
 
@@ -128,23 +130,32 @@ public class LogAlertSocketTest {
                 final SOCountDownLatch haltLatch = new SOCountDownLatch(numHosts);
                 final SOCountDownLatch firstServerCompleted = new SOCountDownLatch(1);
                 final MockAlertTarget[] servers = new MockAlertTarget[numHosts];
+                final CyclicBarrier startBarrier = new CyclicBarrier(numHosts + 1);
                 for (int i = 0; i < numHosts; i++) {
                     final int portNumber = alertSkt.getAlertPorts()[i];
-                    servers[i] = new MockAlertTarget(portNumber, () -> {
-                        firstServerCompleted.countDown();
-                        haltLatch.countDown();
-                    });
+                    servers[i] = new MockAlertTarget(
+                            portNumber,
+                            () -> {
+                                firstServerCompleted.countDown();
+                                haltLatch.countDown();
+                            },
+                            () -> TestUtils.await(startBarrier)
+                    );
                     servers[i].start();
                 }
 
+                startBarrier.await();
+
                 // connect to a server and send something
-                alertSkt.send(builder
-                        .rewindToMark()
-                        .put("Something")
-                        .put(CRLF)
-                        .put(MockAlertTarget.DEATH_PILL)
-                        .put(CRLF)
-                        .$());
+                alertSkt.send(
+                        builder
+                                .rewindToMark()
+                                .put("Something")
+                                .put(CRLF)
+                                .put(MockAlertTarget.DEATH_PILL)
+                                .put(CRLF)
+                                .$()
+                );
                 Assert.assertTrue(firstServerCompleted.await(20_000_000_000L));
 
                 // by now there is only one server surviving, and we are connected to the other.
@@ -173,8 +184,15 @@ public class LogAlertSocketTest {
 
                 // start server
                 final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
-                final MockAlertTarget server = new MockAlertTarget(port, haltLatch::countDown);
+                final CyclicBarrier startBarrier = new CyclicBarrier(2);
+                final MockAlertTarget server = new MockAlertTarget(
+                        port,
+                        haltLatch::countDown,
+                        () -> TestUtils.await(startBarrier)
+                );
                 server.start();
+
+                startBarrier.await();
 
                 // connect to server
                 alertSkt.connect();
@@ -194,9 +212,9 @@ public class LogAlertSocketTest {
                 Assert.assertFalse(server.isRunning());
 
                 // send and fail after a re-connect delay
-                final long start = System.nanoTime();
-                Assert.assertFalse(alertSkt.send(builder.length()));
-                Assert.assertTrue(System.nanoTime() - start >= 2 * LogAlertSocket.RECONNECT_DELAY_NANO);
+                AtomicInteger reconnectCounter = new AtomicInteger();
+                Assert.assertFalse(alertSkt.send(builder.length(), reconnectCounter::incrementAndGet));
+                Assert.assertEquals(2, reconnectCounter.get());
             }
         });
     }

@@ -39,7 +39,6 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
-import java.util.concurrent.locks.LockSupport;
 
 public class TableReader implements Closeable, SymbolTableSource {
     private static final Log LOG = LogFactory.getLog(TableReader.class);
@@ -968,7 +967,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 LOG.error().$("tx read timeout [timeout=").$(configuration.getSpinLockTimeoutUs()).utf8("μs]").$();
                 throw CairoException.instance(0).put("Transaction read timeout");
             }
-            LockSupport.parkNanos(1);
+            Os.pause();
         }
     }
 
