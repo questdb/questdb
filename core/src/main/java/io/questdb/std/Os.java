@@ -119,6 +119,13 @@ public final class Os {
     public static void init() {
     }
 
+    public static void pause() {
+        try {
+            Thread.sleep(0);
+        } catch (InterruptedException ignore) {
+        }
+    }
+
     public static int setCurrentThreadAffinity(int cpu) {
         if (cpu == -1) {
             return 0;

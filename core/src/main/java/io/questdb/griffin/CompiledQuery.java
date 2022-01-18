@@ -45,9 +45,10 @@ public interface CompiledQuery {
     short BACKUP_TABLE = 13;
     short LOCK = 14;
     short UNLOCK = 14;
-    short BEGIN = 15;
-    short COMMIT = 16;
-    short ROLLBACK = 17;
+    short VACUUM = 15;
+    short BEGIN = 16;
+    short COMMIT = 17;
+    short ROLLBACK = 18;
 
     RecordCursorFactory getRecordCursorFactory();
 
@@ -69,6 +70,9 @@ public interface CompiledQuery {
      */
     QueryFuture execute(SCSequence eventSubSeq) throws SqlException;
 
+    /**
+     * Returns number of rows inserted by this command . Used e.g. in pg wire protocol .
+     */
     long getInsertCount();
 }
 
