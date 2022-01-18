@@ -1217,6 +1217,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
             // it could happen that a new column with SYMBOL type has been added since we loaded symbol counts
             // if the index would go beyond the current size of symbolCountSnapshot we need to reload symbol counts
+            // the above problem is specific to ILP and this reload will not fix other issues where the symbol map
+            // reader and symbol count lists go out of sync, such as a column has been removed
             if (symbolMapIndex >= symbolCountSnapshotSize) {
                 LOG.debug().$("reloadSymbolCountSnapshot [symbolMapIndex=").$(symbolMapIndex)
                         .$(", symbolCountSnapshotSize=").$(symbolCountSnapshotSize).I$();
