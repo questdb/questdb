@@ -940,8 +940,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 Unsafe.getUnsafe().loadFence();
                 txFile.unsafeLoadAll();
 
-                this.symbolCountSnapshot.clear();
-                this.txFile.unsafeLoadSymbolCounts(this.symbolCountSnapshot);
+                reloadSymbolCountSnapshot();
 
                 Unsafe.getUnsafe().loadFence();
                 // ok, we have snapshot, check if our snapshot is stable
@@ -1205,11 +1204,24 @@ public class TableReader implements Closeable, SymbolTableSource {
         reloadSymbolMapCounts();
     }
 
+    private void reloadSymbolCountSnapshot() {
+        this.symbolCountSnapshot.clear();
+        this.txFile.unsafeLoadSymbolCounts(this.symbolCountSnapshot);
+    }
+
     private void reloadSymbolMapCounts() {
         int symbolMapIndex = 0;
+        int symbolCountSnapshotSize = symbolCountSnapshot.size();
         for (int i = 0; i < columnCount; i++) {
             if (!ColumnType.isSymbol(metadata.getColumnType(i))) {
                 continue;
+            }
+            // it could happen that a new column with SYMBOL type has been added since we loaded symbol counts
+            // if the index would go beyond the current size of symbolCountSnapshot we need to reload symbol counts
+            if (symbolMapIndex >= symbolCountSnapshotSize) {
+                LOG.debug().$("reloadSymbolCountSnapshot [symbolMapIndex=").$(symbolMapIndex)
+                        .$(", symbolCountSnapshotSize=").$(symbolCountSnapshotSize).I$();
+                reloadSymbolCountSnapshot();
             }
             symbolMapReaders.getQuick(i).updateSymbolCount(symbolCountSnapshot.getQuick(symbolMapIndex++));
         }
