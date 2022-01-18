@@ -130,6 +130,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sharedWorkerHaltOnError;
     private final long sharedWorkerYieldThreshold;
     private final long sharedWorkerSleepThreshold;
+    private final long sharedWorkerSleepMs;
     private final WorkerPoolConfiguration workerPoolConfiguration = new PropWorkerPoolConfiguration();
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final InputFormatConfiguration inputFormatConfiguration;
@@ -184,7 +185,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean httpMinServerEnabled;
     private final PropHttpMinIODispatcherConfiguration httpMinIODispatcherConfiguration = new PropHttpMinIODispatcherConfiguration();
     private final PropSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new PropSqlExecutionCircuitBreakerConfiguration();
-    private final int tableBlockWriterQueueCapacity;
     private final int sqlAnalyticStorePageSize;
     private final int sqlAnalyticStoreMaxPages;
     private final int sqlAnalyticRowIdPageSize;
@@ -207,7 +207,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3CopyQueueCapacity;
     private final int o3UpdPartitionSizeQueueCapacity;
     private final int o3PurgeDiscoveryQueueCapacity;
-    private final int o3PurgeQueueCapacity;
     private final int o3ColumnMemorySize;
     private final int maxUncommittedRows;
     private final long commitLag;
@@ -231,6 +230,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int writerAsyncCommandQueueCapacity;
     private final int writerTickRowsCountMod;
     private final long writerAsyncCommandMaxWaitTimeout;
+    private final int o3PartitionPurgeListCapacity;
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int[] httpMinWorkerAffinity;
@@ -244,6 +244,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean httpWorkerHaltOnError;
     private long httpWorkerYieldThreshold;
     private long httpWorkerSleepThreshold;
+    private long httpWorkerSleepMs;
     private boolean httpServerKeepAlive;
     private int sendBufferSize;
     private CharSequence indexFileName;
@@ -453,6 +454,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.httpWorkerHaltOnError = getBoolean(properties, env, "http.worker.haltOnError", false);
                 this.httpWorkerYieldThreshold = getLong(properties, env, "http.worker.yield.threshold", 10);
                 this.httpWorkerSleepThreshold = getLong(properties, env, "http.worker.sleep.threshold", 10000);
+                this.httpWorkerSleepMs = getLong(properties, env, "http.worker.sleep.ms", 100);
                 this.sendBufferSize = getIntSize(properties, env, "http.send.buffer.size", 2 * 1024 * 1024);
                 this.indexFileName = getString(properties, env, "http.static.index.file.name", "index.html");
                 this.httpFrozenClock = getBoolean(properties, env, "http.frozen.clock", false);
@@ -682,7 +684,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.backupDirTimestampFormat = getTimestampFormat(properties, env);
             this.backupTempDirName = getString(properties, env, "cairo.sql.backup.dir.tmp.name", "tmp");
             this.backupMkdirMode = getInt(properties, env, "cairo.sql.backup.mkdir.mode", 509);
-            this.tableBlockWriterQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.table.block.writer.queue.capacity", 256));
             this.columnIndexerQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.column.indexer.queue.capacity", 64));
             this.vectorAggregateQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.vector.aggregate.queue.capacity", 128));
             this.o3CallbackQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.callback.queue.capacity", 128));
@@ -691,7 +692,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3CopyQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.copy.queue.capacity", 128));
             this.o3UpdPartitionSizeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.upd.partition.size.queue.capacity", 128));
             this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.discovery.queue.capacity", 128));
-            this.o3PurgeQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.o3.purge.queue.capacity", 128));
             this.o3ColumnMemorySize = (int) Files.ceilPageSize(getIntSize(properties, env, "cairo.o3.column.memory.size", 16 * Numbers.SIZE_1MB));
             this.maxUncommittedRows = getInt(properties, env, "cairo.max.uncommitted.rows", 500_000);
             this.commitLag = getLong(properties, env, "cairo.commit.lag", 300_000) * 1_000;
@@ -707,6 +707,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.telemetryEnabled = getBoolean(properties, env, "telemetry.enabled", true);
             this.telemetryDisableCompletely = getBoolean(properties, env, "telemetry.disable.completely", false);
             this.telemetryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "telemetry.queue.capacity", 512));
+            this.o3PartitionPurgeListCapacity = getInt(properties, env, "cairo.o3.partition.purge.list.initial.capacity", 1);
 
             parseBindTo(properties, env, "line.udp.bind.to", "0.0.0.0:9009", (a, p) -> {
                 this.lineUdpBindIPV4Address = a;
@@ -790,8 +791,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sharedWorkerCount = getInt(properties, env, "shared.worker.count", Math.max(1, (cpuAvailable - 1) / 2 - cpuUsed));
             this.sharedWorkerAffinity = getAffinity(properties, env, "shared.worker.affinity", sharedWorkerCount);
             this.sharedWorkerHaltOnError = getBoolean(properties, env, "shared.worker.haltOnError", false);
-            this.sharedWorkerYieldThreshold = getLong(properties, env, "shared.worker.yield.threshold", 10);
-            this.sharedWorkerSleepThreshold = getLong(properties, env, "shared.worker.sleep.threshold", 10000);
+            this.sharedWorkerYieldThreshold = getLong(properties, env, "shared.worker.yield.threshold", 100);
+            this.sharedWorkerSleepThreshold = getLong(properties, env, "shared.worker.sleep.threshold", 10_000);
+            this.sharedWorkerSleepMs = getLong(properties, env, "shared.worker.sleep.ms", 100);
 
             this.metricsEnabled = getBoolean(properties, env, "metrics.enabled", false);
             this.writerAsyncCommandBusyWaitTimeout = getLong(properties, env, "cairo.writer.alter.busy.wait.timeout.micro", 500_000);
@@ -835,18 +837,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public HttpMinServerConfiguration getHttpMinServerConfiguration() {
-        return httpMinServerConfiguration;
-    }
-
-    @Override
     public HttpServerConfiguration getHttpServerConfiguration() {
         return httpServerConfiguration;
     }
 
     @Override
-    public LineTcpReceiverConfiguration getLineTcpReceiverConfiguration() {
-        return lineTcpReceiverConfiguration;
+    public HttpMinServerConfiguration getHttpMinServerConfiguration() {
+        return httpMinServerConfiguration;
     }
 
     @Override
@@ -855,8 +852,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public MetricsConfiguration getMetricsConfiguration() {
-        return metricsConfiguration;
+    public LineTcpReceiverConfiguration getLineTcpReceiverConfiguration() {
+        return lineTcpReceiverConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getWorkerPoolConfiguration() {
+        return workerPoolConfiguration;
     }
 
     @Override
@@ -865,8 +867,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getWorkerPoolConfiguration() {
-        return workerPoolConfiguration;
+    public MetricsConfiguration getMetricsConfiguration() {
+        return metricsConfiguration;
     }
 
     private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, String key, int httpWorkerCount) throws ServerConfigurationException {
@@ -1099,11 +1101,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public String getKeepAliveHeader() {
-            return keepAliveHeader;
-        }
-
-        @Override
         public MimeTypesCache getMimeTypesCache() {
             return mimeTypesCache;
         }
@@ -1116,6 +1113,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public CharSequence getPublicDirectory() {
             return publicDirectory;
+        }
+
+        @Override
+        public String getKeepAliveHeader() {
+            return keepAliveHeader;
         }
     }
 
@@ -1186,11 +1188,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getQueuedConnectionTimeout() {
-            return httpQueuedConnectionTimeout;
-        }
-
-        @Override
         public int getRcvBufSize() {
             return httpRcvBufSize;
         }
@@ -1203,6 +1200,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSndBufSize() {
             return httpSndBufSize;
+        }
+
+        @Override
+        public long getQueuedConnectionTimeout() {
+            return httpQueuedConnectionTimeout;
         }
     }
 
@@ -1273,11 +1275,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getQueuedConnectionTimeout() {
-            return httpMinQueuedConnectionTimeout;
-        }
-
-        @Override
         public int getRcvBufSize() {
             return httpMinRcvBufSize;
         }
@@ -1291,6 +1288,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         public int getSndBufSize() {
             return httpMinSndBufSize;
         }
+
+        @Override
+        public long getQueuedConnectionTimeout() {
+            return httpMinQueuedConnectionTimeout;
+        }
     }
 
     private class PropTextConfiguration implements TextConfiguration {
@@ -1298,16 +1300,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getDateAdapterPoolCapacity() {
             return dateAdapterPoolCapacity;
-        }
-
-        @Override
-        public DateLocale getDefaultDateLocale() {
-            return locale;
-        }
-
-        @Override
-        public InputFormatConfiguration getInputFormatConfiguration() {
-            return inputFormatConfiguration;
         }
 
         @Override
@@ -1364,6 +1356,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         public int getUtf8SinkSize() {
             return utf8SinkSize;
         }
+
+        @Override
+        public InputFormatConfiguration getInputFormatConfiguration() {
+            return inputFormatConfiguration;
+        }
+
+        @Override
+        public DateLocale getDefaultDateLocale() {
+            return locale;
+        }
     }
 
     private class PropSqlExecutionCircuitBreakerConfiguration implements SqlExecutionCircuitBreakerConfiguration {
@@ -1378,16 +1380,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public MicrosecondClock getClock() {
-            return MicrosecondClockImpl.INSTANCE;
-        }
-
-        @Override
-        public long getMaxTime() {
-            return circuitBreakerMaxTime;
-        }
-
-        @Override
         public NetworkFacade getNetworkFacade() {
             return NetworkFacadeImpl.INSTANCE;
         }
@@ -1395,6 +1387,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isEnabled() {
             return interruptOnClosedConnection;
+        }
+
+        @Override
+        public MicrosecondClock getClock() {
+            return MicrosecondClockImpl.INSTANCE;
+        }
+
+        @Override
+        public long getMaxTime() {
+            return circuitBreakerMaxTime;
         }
     }
 
@@ -1484,13 +1486,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public WaitProcessorConfiguration getWaitProcessorConfiguration() {
-            return httpWaitProcessorConfiguration;
+        public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
+            return jsonQueryProcessorConfiguration;
         }
 
         @Override
-        public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
-            return jsonQueryProcessorConfiguration;
+        public boolean isQueryCacheEnabled() {
+            return httpSqlCacheEnabled;
         }
 
         @Override
@@ -1504,6 +1506,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public WaitProcessorConfiguration getWaitProcessorConfiguration() {
+            return httpWaitProcessorConfiguration;
+        }
+
+        @Override
         public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
             return staticContentProcessorConfiguration;
         }
@@ -1511,16 +1518,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isEnabled() {
             return httpServerEnabled;
-        }
-
-        @Override
-        public boolean isQueryCacheEnabled() {
-            return httpSqlCacheEnabled;
-        }
-
-        @Override
-        public long getSleepThreshold() {
-            return httpWorkerSleepThreshold;
         }
 
         @Override
@@ -1534,13 +1531,23 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean haltOnError() {
+            return httpWorkerHaltOnError;
+        }
+
+        @Override
         public long getYieldThreshold() {
             return httpWorkerYieldThreshold;
         }
 
         @Override
-        public boolean haltOnError() {
-            return httpWorkerHaltOnError;
+        public long getSleepThreshold() {
+            return httpWorkerSleepThreshold;
+        }
+
+        @Override
+        public long getSleepMs() {
+            return httpWorkerSleepMs;
         }
     }
 
@@ -1554,6 +1561,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getAnalyticColumnPoolCapacity() {
             return sqlAnalyticColumnPoolCapacity;
+        }
+
+        @Override
+        public long getDataAppendPageSize() {
+            return writerDataAppendPageSize;
         }
 
         @Override
@@ -1629,11 +1641,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getCreateTableModelPoolCapacity() {
             return sqlCreateTableModelPoolCapacity;
-        }
-
-        @Override
-        public long getDataAppendPageSize() {
-            return writerDataAppendPageSize;
         }
 
         @Override
@@ -1772,11 +1779,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getMiscAppendPageSize() {
-            return writerMiscAppendPageSize;
-        }
-
-        @Override
         public int getMkDirMode() {
             return mkdirMode;
         }
@@ -1817,13 +1819,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getO3PurgeQueueCapacity() {
-            return o3PurgeQueueCapacity;
+        public int getParallelIndexThreshold() {
+            return parallelIndexThreshold;
         }
 
         @Override
-        public int getParallelIndexThreshold() {
-            return parallelIndexThreshold;
+        public int getPartitionPurgeListCapacity() {
+            return o3PartitionPurgeListCapacity;
         }
 
         @Override
@@ -1844,6 +1846,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSampleByIndexSearchPageSize() {
             return sampleByIndexSearchPageSize;
+        }
+
+        @Override
+        public long getMiscAppendPageSize() {
+            return writerMiscAppendPageSize;
         }
 
         @Override
@@ -1947,41 +1954,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlJitBindVarsMemoryMaxPages() {
-            return sqlJitBindVarsMemoryMaxPages;
-        }
-
-        @Override
-        public int getSqlJitBindVarsMemoryPageSize() {
-            return sqlJitBindVarsMemoryPageSize;
-        }
-
-        @Override
-        public int getSqlJitIRMemoryMaxPages() {
-            return sqlJitIRMemoryMaxPages;
-        }
-
-        @Override
-        public int getSqlJitIRMemoryPageSize() {
-            return sqlJitIRMemoryPageSize;
-        }
-
-        @Override
-        public int getSqlJitMode() {
-            return sqlJitMode;
-        }
-
-        @Override
-        public int getSqlJitPageAddressCacheThreshold() {
-            return sqlJitPageAddressCacheThreshold;
-        }
-
-        @Override
-        public int getSqlJitRowsThreshold() {
-            return sqlJitRowsThreshold;
-        }
-
-        @Override
         public int getSqlJoinContextPoolCapacity() {
             return sqlJoinContextPoolCapacity;
         }
@@ -2032,11 +2004,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlPageFrameMaxSize() {
-            return sqlPageFrameMaxSize;
-        }
-
-        @Override
         public int getSqlSortKeyMaxPages() {
             return sqlSortKeyMaxPages;
         }
@@ -2067,11 +2034,50 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getTableBlockWriterQueueCapacity() {
-            return tableBlockWriterQueueCapacity;
+        public int getSqlPageFrameMaxSize() {
+            return sqlPageFrameMaxSize;
         }
 
         @Override
+        public int getSqlJitMode() {
+            return sqlJitMode;
+        }
+
+        @Override
+        public int getSqlJitIRMemoryPageSize() {
+            return sqlJitIRMemoryPageSize;
+        }
+
+        @Override
+        public int getSqlJitIRMemoryMaxPages() {
+            return sqlJitIRMemoryMaxPages;
+        }
+
+        @Override
+        public int getSqlJitBindVarsMemoryPageSize() {
+            return sqlJitBindVarsMemoryPageSize;
+        }
+
+        @Override
+        public int getSqlJitBindVarsMemoryMaxPages() {
+            return sqlJitBindVarsMemoryMaxPages;
+        }
+
+        @Override
+        public int getSqlJitRowsThreshold() {
+            return sqlJitRowsThreshold;
+        }
+
+        @Override
+        public int getSqlJitPageAddressCacheThreshold() {
+            return sqlJitPageAddressCacheThreshold;
+        }
+
+        @Override
+        public boolean isSqlJitDebugEnabled() {
+            return sqlJitDebugEnabled;
+        }
+
         public TelemetryConfiguration getTelemetryConfiguration() {
             return telemetryConfiguration;
         }
@@ -2130,27 +2136,17 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean isParallelIndexingEnabled() {
             return parallelIndexingEnabled;
         }
-
-        @Override
-        public boolean isSqlJitDebugEnabled() {
-            return sqlJitDebugEnabled;
-        }
     }
 
     private class PropLineUdpReceiverConfiguration implements LineUdpReceiverConfiguration {
         @Override
-        public int getBindIPv4Address() {
-            return lineUdpBindIPV4Address;
-        }
-
-        @Override
-        public CairoSecurityContext getCairoSecurityContext() {
-            return AllowAllCairoSecurityContext.INSTANCE;
-        }
-
-        @Override
         public int getCommitMode() {
             return lineUdpCommitMode;
+        }
+
+        @Override
+        public int getBindIPv4Address() {
+            return lineUdpBindIPV4Address;
         }
 
         @Override
@@ -2189,8 +2185,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public LineProtoTimestampAdapter getTimestampAdapter() {
-            return lineUdpTimestampAdapter;
+        public CairoSecurityContext getCairoSecurityContext() {
+            return AllowAllCairoSecurityContext.INSTANCE;
         }
 
         @Override
@@ -2211,6 +2207,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int ownThreadAffinity() {
             return lineUdpOwnThreadAffinity;
+        }
+
+        @Override
+        public LineProtoTimestampAdapter getTimestampAdapter() {
+            return lineUdpTimestampAdapter;
         }
     }
 
@@ -2282,11 +2283,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getQueuedConnectionTimeout() {
-            return lineTcpNetQueuedConnectionTimeout;
-        }
-
-        @Override
         public int getRcvBufSize() {
             return lineTcpNetRcvBufSize;
         }
@@ -2300,19 +2296,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         public int getSndBufSize() {
             return -1;
         }
+
+        @Override
+        public long getQueuedConnectionTimeout() {
+            return lineTcpNetQueuedConnectionTimeout;
+        }
     }
 
     private class PropLineTcpWriterWorkerPoolConfiguration implements WorkerPoolAwareConfiguration {
-        @Override
-        public String getPoolName() {
-            return "ilpwriter";
-        }
-
-        @Override
-        public long getSleepThreshold() {
-            return lineTcpWriterWorkerSleepThreshold;
-        }
-
         @Override
         public int[] getWorkerAffinity() {
             return lineTcpWriterWorkerAffinity;
@@ -2324,13 +2315,23 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean haltOnError() {
+            return lineTcpWriterWorkerPoolHaltOnError;
+        }
+
+        @Override
+        public String getPoolName() {
+            return "ilpwriter";
+        }
+
+        @Override
         public long getYieldThreshold() {
             return lineTcpWriterWorkerYieldThreshold;
         }
 
         @Override
-        public boolean haltOnError() {
-            return lineTcpWriterWorkerPoolHaltOnError;
+        public long getSleepThreshold() {
+            return lineTcpWriterWorkerSleepThreshold;
         }
 
         @Override
@@ -2340,16 +2341,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropLineTcpIOWorkerPoolConfiguration implements WorkerPoolAwareConfiguration {
-        @Override
-        public String getPoolName() {
-            return "ilpio";
-        }
-
-        @Override
-        public long getSleepThreshold() {
-            return lineTcpIOWorkerSleepThreshold;
-        }
-
         @Override
         public int[] getWorkerAffinity() {
             return lineTcpIOWorkerAffinity;
@@ -2361,13 +2352,23 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean haltOnError() {
+            return lineTcpIOWorkerPoolHaltOnError;
+        }
+
+        @Override
+        public String getPoolName() {
+            return "ilpio";
+        }
+
+        @Override
         public long getYieldThreshold() {
             return lineTcpIOWorkerYieldThreshold;
         }
 
         @Override
-        public boolean haltOnError() {
-            return lineTcpIOWorkerPoolHaltOnError;
+        public long getSleepThreshold() {
+            return lineTcpIOWorkerSleepThreshold;
         }
 
         @Override
@@ -2377,11 +2378,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
-
-        @Override
-        public int getAggressiveReadRetryCount() {
-            return lineTcpAggressiveReadRetryCount;
-        }
 
         @Override
         public String getAuthDbPath() {
@@ -2434,6 +2430,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getWriterIdleTimeout() {
+            return minIdleMsBeforeWriterRelease;
+        }
+
+        @Override
         public IODispatcherConfiguration getNetDispatcherConfiguration() {
             return lineTcpReceiverDispatcherConfiguration;
         }
@@ -2449,18 +2450,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getSymbolCacheWaitUsBeforeReload() {
-            return symbolCacheWaitUsBeforeReload;
-        }
-
-        @Override
         public LineProtoTimestampAdapter getTimestampAdapter() {
             return lineTcpTimestampAdapter;
-        }
-
-        @Override
-        public long getWriterIdleTimeout() {
-            return minIdleMsBeforeWriterRelease;
         }
 
         @Override
@@ -2477,14 +2468,19 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean isEnabled() {
             return lineTcpEnabled;
         }
+
+        @Override
+        public int getAggressiveReadRetryCount() {
+            return lineTcpAggressiveReadRetryCount;
+        }
+
+        @Override
+        public long getSymbolCacheWaitUsBeforeReload() {
+            return symbolCacheWaitUsBeforeReload;
+        }
     }
 
     private class PropJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {
-        @Override
-        public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
-            return circuitBreakerConfiguration;
-        }
-
         @Override
         public MillisecondClock getClock() {
             return httpFrozenClock ? StationaryMillisClock.INSTANCE : MillisecondClockImpl.INSTANCE;
@@ -2493,11 +2489,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getConnectionCheckFrequency() {
             return jsonQueryConnectionCheckFrequency;
-        }
-
-        @Override
-        public int getDoubleScale() {
-            return jsonQueryDoubleScale;
         }
 
         @Override
@@ -2511,6 +2502,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getDoubleScale() {
+            return jsonQueryDoubleScale;
+        }
+
+        @Override
         public CharSequence getKeepAliveHeader() {
             return keepAliveHeader;
         }
@@ -2519,14 +2515,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         public long getMaxQueryResponseRowLimit() {
             return maxHttpQueryResponseRowLimit;
         }
+
+        @Override
+        public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+            return circuitBreakerConfiguration;
+        }
     }
 
     private class PropWorkerPoolConfiguration implements WorkerPoolConfiguration {
-        @Override
-        public long getSleepThreshold() {
-            return sharedWorkerSleepThreshold;
-        }
-
         @Override
         public int[] getWorkerAffinity() {
             return sharedWorkerAffinity;
@@ -2538,13 +2534,23 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean haltOnError() {
+            return sharedWorkerHaltOnError;
+        }
+
+        @Override
         public long getYieldThreshold() {
             return sharedWorkerYieldThreshold;
         }
 
         @Override
-        public boolean haltOnError() {
-            return sharedWorkerHaltOnError;
+        public long getSleepThreshold() {
+            return sharedWorkerSleepThreshold;
+        }
+
+        @Override
+        public long getSleepMs() {
+            return sharedWorkerSleepMs;
         }
     }
 
@@ -2553,6 +2559,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public MillisecondClock getClock() {
             return MillisecondClockImpl.INSTANCE;
+        }
+
+        @Override
+        public long getMaxWaitCapMs() {
+            return maxRerunWaitCapMs;
         }
 
         @Override
@@ -2568,11 +2579,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMaxProcessingQueueSize() {
             return rerunMaxProcessingQueueSize;
-        }
-
-        @Override
-        public long getMaxWaitCapMs() {
-            return maxRerunWaitCapMs;
         }
     }
 
@@ -2644,11 +2650,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getQueuedConnectionTimeout() {
-            return pgNetQueuedConnectionTimeout;
-        }
-
-        @Override
         public int getRcvBufSize() {
             return pgNetRcvBufSize;
         }
@@ -2661,6 +2662,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSndBufSize() {
             return pgNetSndBufSize;
+        }
+
+        @Override
+        public long getQueuedConnectionTimeout() {
+            return pgNetQueuedConnectionTimeout;
         }
     }
 
@@ -2681,18 +2687,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
-            return circuitBreakerConfiguration;
-        }
-
-        @Override
         public int getConnectionPoolInitialCapacity() {
             return pgConnectionPoolInitialCapacity;
-        }
-
-        @Override
-        public DateLocale getDefaultDateLocale() {
-            return pgDefaultLocale;
         }
 
         @Override
@@ -2718,6 +2714,26 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getIdleSendCountBeforeGivingUp() {
             return pgIdleSendCountBeforeGivingUp;
+        }
+
+        @Override
+        public boolean isSelectCacheEnabled() {
+            return pgSelectCacheEnabled;
+        }
+
+        @Override
+        public int getSelectCacheBlockCount() {
+            return pgSelectCacheBlockCount;
+        }
+
+        @Override
+        public int getSelectCacheRowCount() {
+            return pgSelectCacheRowCount;
+        }
+
+        @Override
+        public boolean isInsertCacheEnabled() {
+            return pgInsertCacheEnabled;
         }
 
         @Override
@@ -2766,16 +2782,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSelectCacheBlockCount() {
-            return pgSelectCacheBlockCount;
-        }
-
-        @Override
-        public int getSelectCacheRowCount() {
-            return pgSelectCacheRowCount;
-        }
-
-        @Override
         public int getSendBufferSize() {
             return pgSendBufferSize;
         }
@@ -2786,18 +2792,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isInsertCacheEnabled() {
-            return pgInsertCacheEnabled;
+        public DateLocale getDefaultDateLocale() {
+            return pgDefaultLocale;
         }
 
         @Override
-        public boolean isSelectCacheEnabled() {
-            return pgSelectCacheEnabled;
-        }
-
-        @Override
-        public long getSleepThreshold() {
-            return pgWorkerSleepThreshold;
+        public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+            return circuitBreakerConfiguration;
         }
 
         @Override
@@ -2811,11 +2812,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getYieldThreshold() {
-            return pgWorkerYieldThreshold;
-        }
-
-        @Override
         public boolean haltOnError() {
             return pgHaltOnError;
         }
@@ -2823,6 +2819,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isDaemonPool() {
             return pgDaemonPool;
+        }
+
+        @Override
+        public long getYieldThreshold() {
+            return pgWorkerYieldThreshold;
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return pgWorkerSleepThreshold;
         }
 
         @Override
@@ -2867,11 +2873,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getSleepThreshold() {
-            return httpMinWorkerSleepThreshold;
-        }
-
-        @Override
         public int[] getWorkerAffinity() {
             return httpMinWorkerAffinity;
         }
@@ -2882,13 +2883,18 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean haltOnError() {
+            return httpMinWorkerHaltOnError;
+        }
+
+        @Override
         public long getYieldThreshold() {
             return httpMinWorkerYieldThreshold;
         }
 
         @Override
-        public boolean haltOnError() {
-            return httpMinWorkerHaltOnError;
+        public long getSleepThreshold() {
+            return httpMinWorkerSleepThreshold;
         }
 
         @Override

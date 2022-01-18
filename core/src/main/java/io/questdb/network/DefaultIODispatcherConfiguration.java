@@ -50,11 +50,6 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     }
 
     @Override
-    public EpollFacade getEpollFacade() {
-        return EpollFacadeImpl.INSTANCE;
-    }
-
-    @Override
     public int getEventCapacity() {
         return 256;
     }
@@ -67,11 +62,6 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     @Override
     public long getIdleConnectionTimeout() {
         return 5 * 60 * 1000L;
-    }
-
-    @Override
-    public int getInitialBias() {
-        return BIAS_READ;
     }
 
     @Override
@@ -90,18 +80,8 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     }
 
     @Override
-    public boolean getPeerNoLinger() {
-        return true;
-    }
-
-    @Override
-    public long getQueuedConnectionTimeout() {
-        return 300_000;
-    }
-
-    @Override
-    public int getRcvBufSize() {
-        return -1; // use system default
+    public EpollFacade getEpollFacade() {
+        return EpollFacadeImpl.INSTANCE;
     }
 
     @Override
@@ -110,7 +90,27 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     }
 
     @Override
+    public int getInitialBias() {
+        return BIAS_READ;
+    }
+
+    @Override
     public int getSndBufSize() {
         return -1; // use system default
+    }
+
+    @Override
+    public int getRcvBufSize() {
+        return -1; // use system default
+    }
+
+    @Override
+    public long getQueuedConnectionTimeout() {
+        return 300_000;
+    }
+
+    @Override
+    public boolean getPeerNoLinger() {
+        return false;
     }
 }

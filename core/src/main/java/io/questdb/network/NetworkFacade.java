@@ -44,6 +44,8 @@ public interface NetworkFacade {
 
     void configureNoLinger(long fd);
 
+    int configureLinger(long fd, int seconds);
+
     int configureNonBlocking(long fd);
 
     long connect(long fd, long sockaddr);

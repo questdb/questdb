@@ -42,7 +42,6 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.locks.LockSupport;
 
 public class ReaderPoolTest extends AbstractCairoTest {
     @Before
@@ -73,7 +72,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         if (i == 1) {
                             barrier.await();
                         }
-                        LockSupport.parkNanos(10L);
+                        Os.pause();
                     }
                 } catch (Exception e) {
                     e.printStackTrace();
@@ -89,7 +88,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
                     for (int i = 0; i < 1000; i++) {
                         pool.releaseInactive();
-                        LockSupport.parkNanos(10L);
+                        Os.pause();
                     }
 
                 } catch (Exception e) {
@@ -213,7 +212,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                             String m = names[rnd.nextPositiveInt() % readerCount];
 
                             try (TableReader ignored = pool.get(m)) {
-                                LockSupport.parkNanos(100);
+                                Os.pause();
                             }
                         }
 
@@ -875,7 +874,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
     private void assertWithPool(PoolAwareCode code, final CairoConfiguration configuration) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (ReaderPool pool = new ReaderPool(configuration)) {
+            try (ReaderPool pool = new ReaderPool(configuration, null)) {
                 code.run(pool);
             }
         });

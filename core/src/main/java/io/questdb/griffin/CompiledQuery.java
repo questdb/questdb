@@ -45,6 +45,7 @@ public interface CompiledQuery {
     short BACKUP_TABLE = 13;
     short LOCK = 14;
     short UNLOCK = 14;
+    short VACUUM = 15;
 
     /***
      * Executes the query.

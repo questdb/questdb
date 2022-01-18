@@ -41,6 +41,7 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
+import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.net.URISyntaxException;
@@ -263,13 +264,13 @@ public class AbstractO3Test {
 
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                     @Override
-                    public long getDataAppendPageSize() {
-                        return dataAppendPageSize > 0 ? dataAppendPageSize : super.getDataAppendPageSize();
+                    public FilesFacade getFilesFacade() {
+                        return ff;
                     }
 
                     @Override
-                    public FilesFacade getFilesFacade() {
-                        return ff;
+                    public long getDataAppendPageSize() {
+                        return dataAppendPageSize > 0 ? dataAppendPageSize : super.getDataAppendPageSize();
                     }
 
                     @Override
@@ -283,8 +284,8 @@ public class AbstractO3Test {
                 // we need to create entire engine
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                     @Override
-                    public long getDataAppendPageSize() {
-                        return dataAppendPageSize > 0 ? dataAppendPageSize : super.getDataAppendPageSize();
+                    public int getO3PurgeDiscoveryQueueCapacity() {
+                        return 0;
                     }
 
                     @Override
@@ -298,12 +299,7 @@ public class AbstractO3Test {
                     }
 
                     @Override
-                    public int getO3ColumnMemorySize() {
-                        return dataAppendPageSize > 0 ? dataAppendPageSize : super.getO3ColumnMemorySize();
-                    }
-
-                    @Override
-                    public int getO3CopyQueueCapacity() {
+                    public int getO3PartitionQueueCapacity() {
                         return 0;
                     }
 
@@ -313,7 +309,7 @@ public class AbstractO3Test {
                     }
 
                     @Override
-                    public int getO3PartitionQueueCapacity() {
+                    public int getO3CopyQueueCapacity() {
                         return 0;
                     }
 
@@ -323,13 +319,13 @@ public class AbstractO3Test {
                     }
 
                     @Override
-                    public int getO3PurgeDiscoveryQueueCapacity() {
-                        return 0;
+                    public long getDataAppendPageSize() {
+                        return dataAppendPageSize > 0 ? dataAppendPageSize : super.getDataAppendPageSize();
                     }
 
                     @Override
-                    public int getO3PurgeQueueCapacity() {
-                        return 0;
+                    public int getO3ColumnMemorySize() {
+                        return dataAppendPageSize > 0 ? dataAppendPageSize : super.getO3ColumnMemorySize();
                     }
                 };
                 execute(null, runnable, configuration);
@@ -346,8 +342,9 @@ public class AbstractO3Test {
             try {
                 if (pool != null) {
                     pool.assignCleaner(Path.CLEANER);
-                    O3Utils.setupWorkerPool(pool, engine.getMessageBus());
-                    pool.start(LOG);
+                    try (Closeable ignored = O3Utils.setupWorkerPool(pool, engine.getMessageBus())) {
+                        pool.start(LOG);
+                    }
                 } else {
                     O3Utils.initBuf();
                 }

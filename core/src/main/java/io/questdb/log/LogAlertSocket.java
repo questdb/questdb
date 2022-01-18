@@ -56,6 +56,7 @@ public class LogAlertSocket implements Closeable {
     private final long reconnectDelay;
     private final String defaultHost;
     private final int defaultPort;
+    private final Runnable onReconnectRef = this::onReconnect;
     private long outBufferPtr;
     private long inBufferPtr;
     private int alertHostsCount;
@@ -63,6 +64,7 @@ public class LogAlertSocket implements Closeable {
     private long fdSocketAddress = -1; // tcp/ip host:port address
     private long fdSocket = -1;
     private String alertTargets; // host[:port](,host[:port])*
+
     public LogAlertSocket(NetworkFacade nf, String alertTargets, Log log) {
         this(
                 nf,
@@ -143,7 +145,7 @@ public class LogAlertSocket implements Closeable {
         return outBufferSize;
     }
 
-    public boolean send(int len) {
+    public boolean send(int len, Runnable onReconnect) {
         if (len < 1) {
             return false;
         }
@@ -201,7 +203,7 @@ public class LogAlertSocket implements Closeable {
                         .$(reconnectDelay / 1000000)
                         .$(" millis (as it is the same alert manager)")
                         .$();
-                LockSupport.parkNanos(reconnectDelay);
+                onReconnect.run();
             } else {
                 logFailOver.$();
             }
@@ -219,6 +221,10 @@ public class LogAlertSocket implements Closeable {
                     .I$();
         }
         return success;
+    }
+
+    public boolean send(int len) {
+        return send(len, onReconnectRef);
     }
 
     private static boolean isContentLength(CharSequence tok, int lo, int hi) {
@@ -352,6 +358,10 @@ public class LogAlertSocket implements Closeable {
                 .$(": ")
                 .$(responseSink, start, responseLen)
                 .$();
+    }
+
+    private void onReconnect() {
+        LockSupport.parkNanos(reconnectDelay);
     }
 
     private void parseAlertTargets() {

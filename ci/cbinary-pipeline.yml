@@ -110,6 +110,12 @@ stages:
             displayName: "Build source-code $(Agent.OS) for Windows"
             condition: eq(variables['Agent.OS'], 'Linux')
 
+          - bash: |
+              x86_64-w64-mingw32-objdump -p core/src/main/resources/io/questdb/bin/windows/libquestdb.dll | grep libstdc++
+              if [ $? -eq 0 ]; then echo "Failure: C++ runtime dependency detected"; exit 1; fi
+            condition: eq(variables['Agent.OS'], 'Linux')
+            displayName: "Check C++ runtime dependency"
+
           - task: S3Upload@1
             inputs:
               awsCredentials: "ondemand-dev"

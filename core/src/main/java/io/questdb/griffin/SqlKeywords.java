@@ -1000,6 +1000,24 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'n';
     }
 
+    public static boolean isPartitionsKeyword(CharSequence tok) {
+        if (tok.length() != 10) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'p'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 'r'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == 'n'
+                && (tok.charAt(i) | 32) == 's';
+    }
+
     public static boolean isPrecisionKeyword(CharSequence tok) {
         if (tok.length() != 9) {
             return false;

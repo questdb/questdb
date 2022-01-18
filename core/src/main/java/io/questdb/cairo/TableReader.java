@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.MemoryCMRImpl;
@@ -37,9 +38,9 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
-import java.util.concurrent.locks.LockSupport;
 
 public class TableReader implements Closeable, SymbolTableSource {
     private static final Log LOG = LogFactory.getLog(TableReader.class);
@@ -51,6 +52,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final ColumnCopyStruct tempCopyStruct = new ColumnCopyStruct();
     private final FilesFacade ff;
     private final Path path;
+    private final int partitionBy;
     private final int rootLen;
     private final TableReaderMetadata metadata;
     private final DateFormat partitionDirFormatMethod;
@@ -58,6 +60,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final TableReaderRecordCursor recordCursor = new TableReaderRecordCursor();
     private final PartitionBy.PartitionFloorMethod partitionFloorMethod;
     private final String tableName;
+    private final MessageBus messageBus;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final CairoConfiguration configuration;
     private final IntList symbolCountSnapshot = new IntList();
@@ -73,13 +76,17 @@ public class TableReader implements Closeable, SymbolTableSource {
     private long rowCount;
     private long txn = TableUtils.INITIAL_TXN;
     private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
-    private boolean active;
     private boolean txnAcquired = false;
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
+        this(configuration, tableName, null);
+    }
+
+    public TableReader(CairoConfiguration configuration, CharSequence tableName, @Nullable MessageBus messageBus) {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.tableName = Chars.toString(tableName);
+        this.messageBus = messageBus;
         this.path = new Path();
         this.path.of(configuration.getRoot()).concat(this.tableName);
         this.rootLen = path.length();
@@ -87,14 +94,14 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.metadata = openMetaFile();
             this.columnCount = this.metadata.getColumnCount();
             this.columnCountBits = getColumnBits(columnCount);
-            int partitionBy = this.metadata.getPartitionBy();
-            this.txnScoreboard = new TxnScoreboard(ff, path.trimTo(rootLen), configuration.getTxnScoreboardEntryCount());
+            this.partitionBy = this.metadata.getPartitionBy();
+            this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
             path.trimTo(rootLen);
             LOG.debug()
                     .$("open [id=").$(metadata.getId())
                     .$(", table=").$(this.tableName)
                     .I$();
-            this.txFile = new TxReader(ff, path, partitionBy);
+            this.txFile = new TxReader(ff).ofRO(path, partitionBy);
             path.trimTo(rootLen);
             readTxnSlow();
             openSymbolMaps();
@@ -158,11 +165,10 @@ public class TableReader implements Closeable, SymbolTableSource {
     @Override
     public void close() {
         if (isOpen()) {
-            releaseTxn();
+            goPassive();
             freeSymbolMapReaders();
             freeBitmapIndexCache();
             Misc.free(metadata);
-            goPassive();
             Misc.free(txFile);
             Misc.free(todoMem);
             freeColumns();
@@ -305,19 +311,15 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public void goActive() {
-        if (active) {
-            return;
-        }
-        reload(true);
-        active = true;
+        reload();
     }
 
     public void goPassive() {
-        // check for double-close
-        if (active) {
-            active = false;
+        if (releaseTxn() && PartitionBy.isPartitioned(this.partitionBy)) {
+            // check if reader unlocks a transaction in scoreboard
+            // to house keep the partition versions
+            checkSchedulePurgeO3Partitions();
         }
-        releaseTxn();
     }
 
     public boolean isOpen() {
@@ -444,7 +446,16 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public boolean reload() {
-        return reload(false);
+        if (acquireTxn()) {
+            return false;
+        }
+        try {
+            reloadSlow();
+            return true;
+        } catch (Throwable e) {
+            releaseTxn();
+            throw e;
+        }
     }
 
     public void reshuffleSymbolMapReaders(long pTransitionIndex) {
@@ -556,12 +567,37 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void acquireTxn() {
-        if (txnAcquired) {
-            return;
+    private boolean acquireTxn() {
+        if (!txnAcquired) {
+            if (txnScoreboard.acquireTxn(txn)) {
+                txnAcquired = true;
+            } else {
+                return false;
+            }
         }
-        txnScoreboard.acquireTxn(txn);
-        txnAcquired = true;
+
+        // We have to be sure last txn is acquired in Scoreboard
+        // otherwise writer can delete partition version files
+        // between reading txn file and acquiring txn in the Scoreboard.
+        Unsafe.getUnsafe().loadFence();
+        return txn == txFile.unsafeReadTxn();
+    }
+
+    private void checkSchedulePurgeO3Partitions() {
+        long txnLocks = txnScoreboard.getActiveReaderCount(txn);
+        if (txnLocks == 0 && txFile.unsafeReadPartitionTableVersion() > txFile.getPartitionTableVersion()) {
+            // Last lock for this txn is released and this is not latest txn number
+            // Schedule a job to clean up partition versions this reader may held
+            if (TableUtils.schedulePurgeO3Partitions(messageBus, tableName, partitionBy)) {
+                return;
+            }
+
+            LOG.error()
+                    .$("could not queue purge partition task, queue is full [")
+                    .$("table=").$(this.tableName)
+                    .$(", txn=").$(txn)
+                    .$(']').$();
+        }
     }
 
     private void closeColumn(int columnBase, int columnIndex) {
@@ -949,17 +985,19 @@ public class TableReader implements Closeable, SymbolTableSource {
                     // good, very stable, congrats
                     releaseTxn();
                     this.txn = txn;
-                    acquireTxn();
-                    this.rowCount = txFile.getFixedRowCount() + txFile.getTransientRowCount();
-                    LOG.debug()
-                            .$("new transaction [txn=").$(txn)
-                            .$(", transientRowCount=").$(txFile.getTransientRowCount())
-                            .$(", fixedRowCount=").$(txFile.getFixedRowCount())
-                            .$(", maxTimestamp=").$ts(txFile.getMaxTimestamp())
-                            .$(", attempts=").$(count)
-                            .$(", thread=").$(Thread.currentThread().getName())
-                            .$(']').$();
-                    break;
+
+                    if (acquireTxn()) {
+                        this.rowCount = txFile.getFixedRowCount() + txFile.getTransientRowCount();
+                        LOG.debug()
+                                .$("new transaction [txn=").$(txn)
+                                .$(", transientRowCount=").$(txFile.getTransientRowCount())
+                                .$(", fixedRowCount=").$(txFile.getFixedRowCount())
+                                .$(", maxTimestamp=").$ts(txFile.getMaxTimestamp())
+                                .$(", attempts=").$(count)
+                                .$(", thread=").$(Thread.currentThread().getName())
+                                .$(']').$();
+                        break;
+                    }
                 }
                 // This is unlucky, sequences have changed while we were reading transaction data
                 // We must discard and try again
@@ -969,7 +1007,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 LOG.error().$("tx read timeout [timeout=").$(configuration.getSpinLockTimeoutUs()).utf8("μs]").$();
                 throw CairoException.instance(0).put("Transaction read timeout");
             }
-            LockSupport.parkNanos(1);
+            Os.pause();
         }
     }
 
@@ -1014,27 +1052,13 @@ public class TableReader implements Closeable, SymbolTableSource {
         reconcileOpenPartitionsFrom(0);
     }
 
-    private void releaseTxn() {
+    private boolean releaseTxn() {
         if (txnAcquired) {
             txnScoreboard.releaseTxn(txn);
             txnAcquired = false;
-        }
-    }
-
-    private boolean reload(boolean activation) {
-        if (this.txn == txFile.unsafeReadTxn()) {
-            if (activation) {
-                acquireTxn();
-            }
-            return false;
-        }
-        try {
-            reloadSlow();
             return true;
-        } catch (Throwable e) {
-            releaseTxn();
-            throw e;
         }
+        return false;
     }
 
     private void reloadColumnAt(

@@ -128,11 +128,9 @@ public class TableWriter implements Closeable {
     private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<>(O3MutableAtomicInteger::new, 64);
     private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<>(O3Basket::new, 64);
     private final TxnScoreboard txnScoreboard;
-    private final StringSink o3Sink = new StringSink();
     private final StringSink fileNameSink = new StringSink();
     private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
-    private final StringSink o3FileNameSink = new StringSink();
     private final RingQueue<O3PartitionUpdateTask> o3PartitionUpdateQueue;
     private final MPSequence o3PartitionUpdatePubSeq;
     private final SCSequence o3PartitionUpdateSubSeq;
@@ -265,8 +263,8 @@ public class TableWriter implements Closeable {
             openMetaFile(ff, path, rootLen, metaMem);
             this.metadata = new TableWriterMetadata(ff, metaMem);
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
-            this.txWriter = new TxWriter(ff, path, partitionBy);
-            this.txnScoreboard = new TxnScoreboard(ff, path.trimTo(rootLen), configuration.getTxnScoreboardEntryCount());
+            this.txWriter = new TxWriter(ff).ofRW(path, partitionBy);
+            this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
             path.trimTo(rootLen);
             // we have to do truncate repair at this stage of constructor
             // because this operation requires metadata
@@ -1705,6 +1703,25 @@ public class TableWriter implements Closeable {
         throw new CairoError("Table '" + tableName + "' is distressed");
     }
 
+    private boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
+        long lastCommittedTxn = txWriter.getTxn();
+        try {
+            if (txnScoreboard.acquireTxn(lastCommittedTxn)) {
+                txnScoreboard.releaseTxn(lastCommittedTxn);
+            }
+        } catch (CairoException ex) {
+            // Scoreboard can be over allocated, don't stall writing because of that.
+            // Schedule async purge and continue
+            LOG.error().$("cannot lock last txn in scoreboard, partition purge will be scheduled [table=")
+                    .$(tableName)
+                    .$(", txn=").$(lastCommittedTxn)
+                    .$(", error=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno()).I$();
+        }
+
+        return txnScoreboard.getMin() != lastCommittedTxn;
+    }
+
     private void clearO3() {
         this.o3MasterRef = -1; // clears o3 flag, hasO3() will be returning false
         rowActon = ROW_ACTION_SWITCH_PARTITION;
@@ -1909,61 +1926,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void consumeO3PartitionRemoveTasks() {
-        // consume discovery jobs
-        final RingQueue<O3PurgeDiscoveryTask> discoveryQueue = messageBus.getO3PurgeDiscoveryQueue();
-        final Sequence discoverySubSeq = messageBus.getO3PurgeDiscoverySubSeq();
-        final RingQueue<O3PurgeTask> purgeQueue = messageBus.getO3PurgeQueue();
-        final Sequence purgePubSeq = messageBus.getO3PurgePubSeq();
-        final Sequence purgeSubSeq = messageBus.getO3PurgeSubSeq();
-
-        if (discoverySubSeq != null) {
-            while (true) {
-                long cursor = discoverySubSeq.next();
-                if (cursor > -1) {
-                    O3PurgeDiscoveryTask task = discoveryQueue.get(cursor);
-                    O3PurgeDiscoveryJob.discoverPartitions(
-                            ff,
-                            o3Sink,
-                            o3FileNameSink,
-                            rowValueIsNotNull, // reuse, this is only called from writer close
-                            purgeQueue,
-                            purgePubSeq,
-                            path,
-                            tableName,
-                            task.getPartitionBy(),
-                            task.getTimestamp(),
-                            txnScoreboard,
-                            task.getMostRecentTxn()
-                    );
-                } else if (cursor == -1) {
-                    break;
-                }
-            }
-        }
-
-        // consume purge jobs
-        if (purgeSubSeq != null) {
-            while (true) {
-                long cursor = purgeSubSeq.next();
-                if (cursor > -1) {
-                    O3PurgeTask task = purgeQueue.get(cursor);
-                    O3PurgeJob.purgePartitionDir(
-                            ff,
-                            other,
-                            task.getPartitionBy(),
-                            task.getTimestamp(),
-                            txnScoreboard,
-                            task.getNameTxnToRemove(),
-                            task.getMinTxnToExpect()
-                    );
-                } else if (cursor == -1) {
-                    break;
-                }
-            }
-        }
-    }
-
     private int copyMetadataAndSetIndexed(int columnIndex, int indexValueBlockSize) {
         try {
             int index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
@@ -2096,7 +2058,6 @@ public class TableWriter implements Closeable {
     }
 
     private void doClose(boolean truncate) {
-        consumeO3PartitionRemoveTasks();
         boolean tx = inTransaction();
         freeSymbolMapWriters();
         freeIndexers();
@@ -3268,13 +3229,15 @@ public class TableWriter implements Closeable {
     }
 
     private void o3ProcessPartitionRemoveCandidates0(int n) {
-        final long readerTxn = txnScoreboard.getMin();
-        final long readerTxnCount = txnScoreboard.getActiveReaderCount(readerTxn);
-        if (txnScoreboard.isTxnAvailable(txWriter.getTxn() - 1)) {
+        boolean anyReadersBeforeCommittedTxn = checkScoreboardHasReadersBeforeLastCommittedTxn();
+        // This flag will determine to schedule O3PurgeDiscoveryJob at the end or all done already.
+        boolean scheduleAsyncPurge = anyReadersBeforeCommittedTxn;
+
+        if (!anyReadersBeforeCommittedTxn) {
             for (int i = 0; i < n; i += 2) {
-                final long timestamp = o3PartitionRemoveCandidates.getQuick(i);
-                final long txn = o3PartitionRemoveCandidates.getQuick(i + 1);
                 try {
+                    final long timestamp = o3PartitionRemoveCandidates.getQuick(i);
+                    final long txn = o3PartitionRemoveCandidates.getQuick(i + 1);
                     setPathForPartition(
                             other,
                             partitionBy,
@@ -3282,34 +3245,30 @@ public class TableWriter implements Closeable {
                             false
                     );
                     TableUtils.txnPartitionConditionally(other, txn);
-                    other.slash$();
-                    int errno;
-                    if ((errno = ff.rmdir(other)) == 0) {
-                        LOG.info()
-                                .$("purged [path=").$(other)
-                                .$(", readerTxn=").$(readerTxn)
-                                .$(", readerTxnCount=").$(readerTxnCount)
-                                .$(']').$();
+                    long errno = ff.rmdir(other.$());
+                    if (errno == 0 || errno == -1) {
+                        // Successfully deleted or async purge has already swept it up
+                        LOG.info().$("purged [path=").$(other).I$();
                     } else {
                         LOG.info()
-                                .$("queued to purge [errno=").$(errno)
-                                .$(", table=").$(tableName)
-                                .$(", ts=").$ts(timestamp)
-                                .$(", txn=").$(txn)
-                                .$(']').$();
-                        o3QueuePartitionForPurge(timestamp, txn);
+                                .$("cannot purge partition version, async purge will be scheduled [path=")
+                                .$(other)
+                                .$(", errno=").$(errno).I$();
+                        scheduleAsyncPurge = true;
                     }
                 } finally {
                     other.trimTo(rootLen);
                 }
             }
-        } else {
-            // queue all updated partitions
-            for (int i = 0; i < n; i += 2) {
-                o3QueuePartitionForPurge(
-                        o3PartitionRemoveCandidates.getQuick(i),
-                        o3PartitionRemoveCandidates.getQuick(i + 1)
-                );
+        }
+
+        if (scheduleAsyncPurge) {
+            // Any more complicated case involve looking at what folders are present on disk before removing
+            // do it async in O3PurgeDiscoveryJob
+            if (schedulePurgeO3Partitions(messageBus, tableName, partitionBy)) {
+                LOG.info().$("scheduled to purge partitions").$(", table=").$(tableName).$(']').$();
+            } else {
+                LOG.error().$("could not queue for purge, queue is full [table=").$(tableName).I$();
             }
         }
     }
@@ -3321,29 +3280,6 @@ public class TableWriter implements Closeable {
             LOG.error().$((Sinkable) e).$();
         } catch (Throwable e) {
             LOG.error().$(e).$();
-        }
-    }
-
-    private void o3QueuePartitionForPurge(long timestamp, long txn) {
-        final MPSequence seq = messageBus.getO3PurgeDiscoveryPubSeq();
-        long cursor = seq.next();
-        if (cursor > -1) {
-            O3PurgeDiscoveryTask task = messageBus.getO3PurgeDiscoveryQueue().get(cursor);
-            task.of(
-                    tableName,
-                    partitionBy,
-                    txnScoreboard,
-                    timestamp,
-                    txn
-            );
-            seq.done(cursor);
-        } else {
-            LOG.error()
-                    .$("could not purge [errno=").$(ff.errno())
-                    .$(", table=").$(tableName)
-                    .$(", ts=").$ts(timestamp)
-                    .$(", txn=").$(txn)
-                    .$(']').$();
         }
     }
 

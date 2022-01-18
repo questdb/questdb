@@ -25,8 +25,8 @@
 package io.questdb.test.tools;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -46,6 +46,8 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 
 import java.io.*;
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class TestUtils {
@@ -70,19 +72,26 @@ public final class TestUtils {
         return true;
     }
 
-    public static void assertConnect(long fd, long sockAddr, boolean noLinger) {
-        long rc = connect(fd, sockAddr, noLinger);
+    public static long connect(long fd, long sockAddr) {
+        Assert.assertTrue(fd > -1);
+        return Net.connect(fd, sockAddr);
+    }
+
+    public static void await(CyclicBarrier barrier) {
+        try {
+            barrier.await();
+        } catch (Throwable ignore) {
+        }
+    }
+
+    public static void assertConnect(long fd, long sockAddr) {
+        long rc = connect(fd, sockAddr);
         if (rc != 0) {
             Assert.fail("could not connect, errno=" + Os.errno());
         }
     }
 
-    public static void assertConnect(long fd, long sockAddr) {
-        assertConnect(fd, sockAddr, true);
-    }
-
     public static void assertConnect(NetworkFacade nf, long fd, long ilpSockAddr) {
-        nf.configureNoLinger(fd);
         long rc = nf.connect(fd, ilpSockAddr);
         if (rc != 0) {
             Assert.fail("could not connect, errno=" + nf.errno());
@@ -380,6 +389,7 @@ public final class TestUtils {
     }
 
     public static void assertIndexBlockCapacity(SqlExecutionContext sqlExecutionContext, CairoEngine engine, String tableName, String columnName) {
+
         engine.releaseAllReaders();
         try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
             TableReaderMetadata metadata = rdr.getMetadata();
@@ -412,7 +422,6 @@ public final class TestUtils {
         if (fileCount != Files.getOpenFileCount()) {
             Assert.assertEquals(Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
         }
-        Assert.assertEquals(mem, Unsafe.getMemUsed());
 
         // Checks that the same tag used for allocation and freeing native memory
         for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
@@ -421,6 +430,7 @@ public final class TestUtils {
                 Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i), memoryUsageByTag[i], actualMemByTag);
             }
         }
+        Assert.assertEquals(mem, Unsafe.getMemUsed());
     }
 
     public static void assertReader(CharSequence expected, TableReader reader, MutableCharSink sink) {
@@ -498,14 +508,6 @@ public final class TestUtils {
         assertEquals(expected, sink);
     }
 
-    public static long connect(long fd, long sockAddr, boolean noLinger) {
-        Assert.assertTrue(fd > -1);
-        if (noLinger) {
-            Net.configureNoLinger(fd);
-        }
-        return Net.connect(fd, sockAddr);
-    }
-
     public static void copyMimeTypes(String targetDir) throws IOException {
         try (InputStream stream = TestUtils.class.getResourceAsStream("/site/conf/mime.types")) {
             Assert.assertNotNull(stream);
@@ -519,6 +521,15 @@ public final class TestUtils {
                 }
             }
         }
+    }
+
+    public static boolean drainEngineCmdQueue(CairoEngine engine) {
+        boolean useful = false;
+        while (engine.tick()) {
+            useful = true;
+            // drain the engine queue
+        }
+        return useful;
     }
 
     public static void createPopulateTable(
@@ -622,15 +633,6 @@ public final class TestUtils {
             }
             Files.mkdirs(path.of(root).slash$(), 509);
         }
-    }
-
-    public static boolean drainEngineCmdQueue(CairoEngine engine) {
-        boolean useful = false;
-        while (engine.tick()) {
-            useful = true;
-            // drain the engine queue
-        }
-        return useful;
     }
 
     public static int getJavaVersion() {

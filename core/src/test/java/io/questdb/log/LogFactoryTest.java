@@ -24,10 +24,7 @@
 
 package io.questdb.log;
 
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SCSequence;
-import io.questdb.mp.SOCountDownLatch;
-import io.questdb.mp.SPSequence;
+import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -41,7 +38,6 @@ import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.locks.LockSupport;
 
 public class LogFactoryTest {
 
@@ -198,15 +194,28 @@ public class LogFactoryTest {
 
         try (LogFactory factory = new LogFactory()) {
 
+            final SOUnboundedCountDownLatch xLatch = new SOUnboundedCountDownLatch();
+            final SOUnboundedCountDownLatch yLatch = new SOUnboundedCountDownLatch();
+
             factory.add(new LogWriterConfig(LogLevel.INFO | LogLevel.DEBUG, (ring, seq, level) -> {
                 LogFileWriter w = new LogFileWriter(ring, seq, level);
                 w.setLocation(x.getAbsolutePath());
+                final QueueConsumer<LogRecordSink> consumer = w.getMyConsumer();
+                w.setMyConsumer(slot -> {
+                    xLatch.countDown();
+                    consumer.consume(slot);
+                });
                 return w;
             }));
 
             factory.add(new LogWriterConfig(LogLevel.DEBUG | LogLevel.ERROR, (ring, seq, level) -> {
                 LogFileWriter w = new LogFileWriter(ring, seq, level);
                 w.setLocation(y.getAbsolutePath());
+                final QueueConsumer<LogRecordSink> consumer = w.getMyConsumer();
+                w.setMyConsumer(slot -> {
+                    yLatch.countDown();
+                    consumer.consume(slot);
+                });
                 return w;
             }));
 
@@ -219,20 +228,14 @@ public class LogFactoryTest {
                     logger.xerror().$("test ").$(i).$();
                 }
 
-                Os.sleep(100);
-
-                Assert.assertEquals(0, x.length());
-                Assert.assertEquals(9890, y.length());
+                yLatch.await(-1000);
+                Os.sleep(500);
 
                 for (int i = 0; i < 1000; i++) {
                     logger.xinfo().$("test ").$(i).$();
                 }
 
-                Os.sleep(100);
-
-                Assert.assertEquals(9890, x.length());
-                Assert.assertEquals(9890, y.length());
-
+                xLatch.await(-1000);
             } finally {
                 factory.haltThread();
             }
@@ -371,7 +374,7 @@ public class LogFactoryTest {
                 long cursor = pubSeq.next();
 
                 if (cursor < 0) {
-                    LockSupport.parkNanos(1);
+                    Os.pause();
                     continue;
                 }
 
@@ -683,7 +686,7 @@ public class LogFactoryTest {
             }
         }
 
-        // this is a very weak assertion, but we have to live with it
+        // this is a very weak assertion but we have to live with it
         // logger runs asynchronously, it doesn't offer any synchronisation
         // support right now, which leaves tests at a mercy of the hardware/OS/other things
         // consuming CPU and potentially starving logger of execution time

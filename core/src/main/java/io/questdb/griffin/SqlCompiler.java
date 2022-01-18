@@ -136,6 +136,7 @@ public class SqlCompiler implements Closeable {
         final KeywordBasedExecutor dropTable = this::dropTable;
         final KeywordBasedExecutor sqlBackup = backupAgent::sqlBackup;
         final KeywordBasedExecutor sqlShow = this::sqlShow;
+        final KeywordBasedExecutor vacuumTable = this::vacuum;
 
         keywordBasedExecutors.put("truncate", truncateTables);
         keywordBasedExecutors.put("TRUNCATE", truncateTables);
@@ -159,6 +160,8 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("BACKUP", sqlBackup);
         keywordBasedExecutors.put("show", sqlShow);
         keywordBasedExecutors.put("SHOW", sqlShow);
+        keywordBasedExecutors.put("vacuum", vacuumTable);
+        keywordBasedExecutors.put("VACUUM", vacuumTable);
 
         configureLexer(lexer);
 
@@ -2048,8 +2051,8 @@ public class SqlCompiler implements Closeable {
                     final int valueCount = values.size();
                     if (columnCount != valueCount) {
                         throw SqlException.$(
-                                        model.getEndOfRowTupleValuesPosition(t),
-                                        "row value count does not match column count [expected=").put(columnCount).put(", actual=").put(values.size())
+                                model.getEndOfRowTupleValuesPosition(t),
+                                "row value count does not match column count [expected=").put(columnCount).put(", actual=").put(values.size())
                                 .put(", tuple=").put(t + 1).put(']');
                     }
                     valueFunctions = new ObjList<>(columnCount);
@@ -2240,8 +2243,8 @@ public class SqlCompiler implements Closeable {
         for (int i = 0, n = model.getRowTupleCount(); i < n; i++) {
             if (columnSetSize > 0 && columnSetSize != model.getRowTupleValues(i).size()) {
                 throw SqlException.$(
-                                model.getEndOfRowTupleValuesPosition(i),
-                                "row value count does not match column count [expected=").put(columnSetSize).put(", actual=").put(model.getRowTupleValues(i).size())
+                        model.getEndOfRowTupleValuesPosition(i),
+                        "row value count does not match column count [expected=").put(columnSetSize).put(", actual=").put(model.getRowTupleValues(i).size())
                         .put(", tuple=").put(i + 1).put(']');
             }
         }
@@ -2469,6 +2472,35 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofTruncate();
     }
 
+    private CompiledQuery vacuum(SqlExecutionContext executionContext) throws SqlException {
+        CharSequence tok = expectToken(lexer, "'partitions'");
+        if (isPartitionsKeyword(tok)) {
+            CharSequence tableName = expectToken(lexer, "table name");
+            tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tableName), lexer.lastTokenPosition());
+            int tableNamePos = lexer.lastTokenPosition();
+            CharSequence eol = SqlUtil.fetchNext(lexer);
+            if (eol == null || Chars.equals(eol, ';')) {
+                tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
+                try (TableReader rdr = engine.getReader(executionContext.getCairoSecurityContext(), tableName)) {
+                    int partitionBy = rdr.getMetadata().getPartitionBy();
+                    if (PartitionBy.isPartitioned(partitionBy)) {
+                        if (!TableUtils.schedulePurgeO3Partitions(messageBus, rdr.getTableName(), partitionBy)) {
+                            throw SqlException.$(
+                                    tableNamePos,
+                                    "cannot schedule vacuum action, queue is full, please retry " +
+                                            "or increase Purge Discovery Queue Capacity"
+                            );
+                        }
+                        return compiledQuery.ofVacuum();
+                    }
+                    throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tableName).put("' is not partitioned");
+                }
+            }
+            throw SqlException.$(lexer.lastTokenPosition(), "end of line or ';' expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), "'partitions' expected");
+    }
+
     private Function validateAndConsume(
             InsertModel model,
             int tupleIndex,
@@ -2625,11 +2657,6 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
-        public long getColumnHash(int columnIndex) {
-            return metadata.getColumnHash(columnIndex);
-        }
-
-        @Override
         public CharSequence getColumnName(int columnIndex) {
             return model.getColumnName(columnIndex);
         }
@@ -2644,8 +2671,8 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
-        public long getCommitLag() {
-            return model.getCommitLag();
+        public long getColumnHash(int columnIndex) {
+            return metadata.getColumnHash(columnIndex);
         }
 
         @Override
@@ -2654,8 +2681,13 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
-        public int getMaxUncommittedRows() {
-            return model.getMaxUncommittedRows();
+        public boolean isIndexed(int columnIndex) {
+            return model.isIndexed(columnIndex);
+        }
+
+        @Override
+        public boolean isSequential(int columnIndex) {
+            return model.isSequential(columnIndex);
         }
 
         @Override
@@ -2693,13 +2725,13 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
-        public boolean isIndexed(int columnIndex) {
-            return model.isIndexed(columnIndex);
+        public int getMaxUncommittedRows() {
+            return model.getMaxUncommittedRows();
         }
 
         @Override
-        public boolean isSequential(int columnIndex) {
-            return model.isSequential(columnIndex);
+        public long getCommitLag() {
+            return model.getCommitLag();
         }
 
         TableStructureAdapter of(CreateTableModel model, RecordMetadata metadata, IntIntHashMap typeCast) {

@@ -34,7 +34,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
 import java.util.concurrent.BrokenBarrierException;
-import java.util.concurrent.locks.LockSupport;
 
 public class SendAndReceiveRequestBuilder {
     public final static String RequestHeaders = "Host: localhost:9000\r\n" +
@@ -66,13 +65,16 @@ public class SendAndReceiveRequestBuilder {
     private int requestCount = 1;
     private int compareLength = -1;
     private boolean expectSendDisconnect;
+    private int clientLingerSeconds = -1;
 
     public long connectAndSendRequest(String request) {
         final long fd = nf.socketTcp(true);
-        nf.configureNoLinger(fd);
         long sockAddr = nf.sockaddr("127.0.0.1", 9001);
         try {
             TestUtils.assertConnect(fd, sockAddr);
+            if (clientLingerSeconds > -1) {
+                Assert.assertEquals(0, nf.configureLinger(fd, clientLingerSeconds));
+            }
             Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
             if (!expectDisconnect) {
                 NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
@@ -88,9 +90,8 @@ public class SendAndReceiveRequestBuilder {
     public void execute(
             String request,
             CharSequence response
-    ) {
+    ) throws InterruptedException {
         final long fd = nf.socketTcp(true);
-        nf.configureNoLinger(fd);
         try {
             long sockAddr = nf.sockaddr("127.0.0.1", 9001);
             try {
@@ -164,7 +165,7 @@ public class SendAndReceiveRequestBuilder {
                     timeoutExpired = true;
                     break;
                 } else {
-                    Os.sleep(10);
+                    Os.pause();
                 }
             }
         }
@@ -207,7 +208,6 @@ public class SendAndReceiveRequestBuilder {
 
     public void executeMany(RequestAction action) throws InterruptedException, BrokenBarrierException {
         final long fd = nf.socketTcp(true);
-        nf.configureNoLinger(fd);
         try {
             long sockAddr = nf.sockaddr("127.0.0.1", 9001);
             Assert.assertTrue(fd > -1);
@@ -220,13 +220,13 @@ public class SendAndReceiveRequestBuilder {
             try {
                 RequestExecutor executor = new RequestExecutor() {
                     @Override
-                    public void execute(String request, String response) {
-                        executeWithSocket(request, response, fd);
+                    public void executeWithStandardHeaders(String request, String response) {
+                        executeWithSocket(request + RequestHeaders, ResponseHeaders + response, fd);
                     }
 
                     @Override
-                    public void executeWithStandardHeaders(String request, String response) {
-                        executeWithSocket(request + RequestHeaders, ResponseHeaders + response, fd);
+                    public void execute(String request, String response) {
+                        executeWithSocket(request, response, fd);
                     }
                 };
 
@@ -278,7 +278,7 @@ public class SendAndReceiveRequestBuilder {
                     timeoutExpired = true;
                     break;
                 } else {
-                    LockSupport.parkNanos(1);
+                    Os.pause();
                 }
             }
         }
@@ -337,6 +337,11 @@ public class SendAndReceiveRequestBuilder {
         return this;
     }
 
+    public SendAndReceiveRequestBuilder withClientLinger(int seconds) {
+        this.clientLingerSeconds = seconds;
+        return this;
+    }
+
     public SendAndReceiveRequestBuilder withRequestCount(int requestCount) {
         this.requestCount = requestCount;
         return this;
@@ -364,11 +369,11 @@ public class SendAndReceiveRequestBuilder {
         void execute(
                 String request,
                 String response
-        );
+        ) throws InterruptedException;
 
         void executeWithStandardHeaders(
                 String request,
                 String response
-        );
+        ) throws InterruptedException;
     }
 }
