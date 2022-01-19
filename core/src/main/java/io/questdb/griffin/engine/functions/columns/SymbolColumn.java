@@ -58,8 +58,8 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         this.symbolTable = symbolTableSource.getSymbolTable(columnIndex);
-        //non-static symbol table must be non-null
-        assert symbolTableStatic || symbolTable != null;
+        //static symbol table must be non-null
+        assert !symbolTableStatic || symbolTable != null;
     }
 
     @Override
