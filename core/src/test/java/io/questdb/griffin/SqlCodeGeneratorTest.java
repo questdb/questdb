@@ -4529,8 +4529,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_double(0)*100 a," +
                         " rnd_symbol('AA','BB','CC') b," +
                         " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
+                        " from long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
                 null,
                 false,
@@ -4626,13 +4625,28 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_double(0)*100 a," +
                         " rnd_symbol('AA','BB','CC') b," +
                         " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
+                        " from long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
                 "k",
                 true,
                 true,
                 true
+        );
+    }
+
+    @Test
+    public void testFailsForLatestByOnSubQueryWithNoTimestampSpecified() throws Exception {
+        assertFailure(
+                "with tab as (x where b in ('BB')) tab latest by b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol('AA','BB','CC') b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20)" +
+                        ")",
+                5,
+                "latest by query does not provide dedicated TIMESTAMP column"
         );
     }
 
