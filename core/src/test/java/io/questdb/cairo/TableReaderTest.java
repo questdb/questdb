@@ -2038,6 +2038,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                         Assert.assertTrue(r.reload());
 
+                        sink.clear();
                         TestUtils.printer.print(r.getCursor(), r.getMetadata(), true, sink);
                         TestUtils.assertEquals(
                                 "l\ttimestamp\txyz\n" +
@@ -2045,7 +2046,6 @@ public class TableReaderTest extends AbstractCairoTest {
                                 sink
                         );
                     }
-
                 }
         );
     }
