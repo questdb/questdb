@@ -203,6 +203,10 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(TRUNCATE);
     }
 
+    CompiledQuery ofVacuum() {
+        return of(VACUUM);
+    }
+
     private class AlterTableQueryFuture implements QueryFuture {
         private SCSequence eventSubSeq;
         private int status;

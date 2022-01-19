@@ -24,40 +24,20 @@
 
 package io.questdb.tasks;
 
-import io.questdb.cairo.TxnScoreboard;
-
 public class O3PurgeDiscoveryTask {
-    private CharSequence tableName;
+    private String tableName;
     private int partitionBy;
-    private TxnScoreboard txnScoreboard;
-    private long timestamp;
-    private long mostRecentTxn;
-
-    public long getMostRecentTxn() {
-        return mostRecentTxn;
-    }
 
     public int getPartitionBy() {
         return partitionBy;
     }
 
-    public CharSequence getTableName() {
+    public String getTableName() {
         return tableName;
     }
 
-    public long getTimestamp() {
-        return timestamp;
-    }
-
-    public TxnScoreboard getTxnScoreboard() {
-        return txnScoreboard;
-    }
-
-    public void of(CharSequence tableName, int partitionBy, TxnScoreboard txnScoreboard, long timestamp, long mostRecentTxn) {
+    public void of(String tableName, int partitionBy) {
         this.tableName = tableName;
         this.partitionBy = partitionBy;
-        this.txnScoreboard = txnScoreboard;
-        this.timestamp = timestamp;
-        this.mostRecentTxn = mostRecentTxn;
     }
 }
