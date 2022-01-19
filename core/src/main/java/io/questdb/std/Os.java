@@ -134,14 +134,16 @@ public final class Os {
     }
 
     public static void sleep(long millis) {
-        final long t = System.currentTimeMillis();
+        long t = System.currentTimeMillis();
         long deadline = millis;
         while (deadline > 0) {
             try {
                 Thread.sleep(deadline);
                 break;
             } catch (InterruptedException e) {
-                deadline = System.currentTimeMillis() - t;
+                long t2 = System.currentTimeMillis();
+                deadline -= t2 - t;
+                t = t2;
             }
         }
     }
