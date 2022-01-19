@@ -44,11 +44,12 @@ public class LatestByLightRecordCursorFactory implements RecordCursorFactory {
 
     private final RecordCursorFactory base;
     private final RecordMetadata metadata;
-    private final LatestByLightRecordCursor cursor;
-    private final RecordSink recordSink;
-    private final Map map;
     private final int timestampIndex;
     private final boolean orderedByTimestampAsc;
+    private final LatestByLightRecordCursor cursor;
+    private final RecordSink recordSink;
+    // contains <[latest_by columns...], [row id, timestamp column]> pairs
+    private final Map latestByMap;
 
     public LatestByLightRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -67,7 +68,7 @@ public class LatestByLightRecordCursorFactory implements RecordCursorFactory {
         if (!orderedByTimestampAsc) {
             mapValueTypes.add(TIMESTAMP_VALUE_IDX, ColumnType.TIMESTAMP);
         }
-        this.map = MapFactory.createMap(configuration, columnTypes, mapValueTypes);
+        this.latestByMap = MapFactory.createMap(configuration, columnTypes, mapValueTypes);
         this.cursor = new LatestByLightRecordCursor();
         this.timestampIndex = timestampIndex;
         this.orderedByTimestampAsc = orderedByTimestampAsc;
@@ -76,12 +77,12 @@ public class LatestByLightRecordCursorFactory implements RecordCursorFactory {
     @Override
     public void close() {
         base.close();
-        map.close();
+        latestByMap.close();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        map.clear();
+        latestByMap.clear();
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         final RecordCursor baseCursor = base.getCursor(executionContext);
 
@@ -95,7 +96,7 @@ public class LatestByLightRecordCursorFactory implements RecordCursorFactory {
                 // Otherwise - we have to deal with the timestamps.
                 buildMapForUnorderedSubQuery(circuitBreaker, baseCursor, baseRecord);
             }
-            cursor.of(baseCursor, map, circuitBreaker);
+            cursor.of(baseCursor, latestByMap, circuitBreaker);
             return cursor;
         } catch (Throwable e) {
             baseCursor.close();
@@ -107,7 +108,7 @@ public class LatestByLightRecordCursorFactory implements RecordCursorFactory {
         while (baseCursor.hasNext()) {
             circuitBreaker.test();
 
-            final MapKey key = map.withKey();
+            final MapKey key = latestByMap.withKey();
             recordSink.copy(baseRecord, key);
             final MapValue value = key.createValue();
             value.putLong(ROW_ID_VALUE_IDX, baseRecord.getRowId());
@@ -118,7 +119,7 @@ public class LatestByLightRecordCursorFactory implements RecordCursorFactory {
         while (baseCursor.hasNext()) {
             circuitBreaker.test();
 
-            final MapKey key = map.withKey();
+            final MapKey key = latestByMap.withKey();
             recordSink.copy(baseRecord, key);
             final MapValue value = key.createValue();
 
@@ -155,7 +156,6 @@ public class LatestByLightRecordCursorFactory implements RecordCursorFactory {
 
         private RecordCursor baseCursor;
         private Record baseRecord;
-        // contains <[latest_by columns...], [timestamp column, row id]> pairs
         private Map map;
         private RecordCursor mapCursor;
         private MapRecord mapRecord;
