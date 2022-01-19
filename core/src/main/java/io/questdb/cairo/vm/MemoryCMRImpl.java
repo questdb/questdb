@@ -86,7 +86,7 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
             }
         } else {
             if (size < 0) {
-                throw CairoException.instance(0).put("cannot map negative length");
+                throw CairoException.instance(ff.errno()).put("invalid file ").put(name);
             }
             this.pageAddress = 0;
         }
@@ -99,7 +99,7 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
         this.ff = ff;
         boolean exists = ff.exists(name);
         if (!exists) {
-            throw CairoException.instance(0).put("File not found: ").put(name);
+            throw CairoException.instance(CairoException.ERRNO_FILE_DOES_NOT_EXIST).put("File not found: ").put(name);
         }
         fd = TableUtils.openRO(ff, name, LOG);
     }

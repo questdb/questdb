@@ -1678,7 +1678,6 @@ public class TableWriter implements Closeable {
             }
             ddlMem.putStr(name);
         } finally {
-            ddlMem.sync(false);
             ddlMem.close();
         }
         return index;
@@ -4382,7 +4381,9 @@ public class TableWriter implements Closeable {
     private void restoreMetaFrom(CharSequence fromBase, int fromIndex) {
         try {
             path.concat(fromBase);
-            path.put('.').put(fromIndex);
+            if (fromIndex > 0) {
+                path.put('.').put(fromIndex);
+            }
             path.$();
 
             TableUtils.renameOrFail(ff, path, other.concat(META_FILE_NAME).$());
@@ -4761,7 +4762,9 @@ public class TableWriter implements Closeable {
         try {
             try {
                 path.concat(META_SWAP_FILE_NAME);
-                path.put('.').put(metaSwapIndex);
+                if (metaSwapIndex > 0) {
+                    path.put('.').put(metaSwapIndex);
+                }
                 metaMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
                 validationMap.clear();
                 validate(ff, metaMem, validationMap, ColumnType.VERSION);

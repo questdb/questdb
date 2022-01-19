@@ -199,9 +199,9 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         this.path.of(path).$();
         try {
             this.metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-            this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             this.columnNameIndexMap.clear();
             TableUtils.validate(ff, metaMem, this.columnNameIndexMap, expectedVersion);
+            this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             this.id = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
             this.columnMetadata.clear();

@@ -843,9 +843,8 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private boolean isMetaFileMissingFileSystemError(CairoException ex) {
-        return Chars.contains(ex.getFlyweightMessage(), "File not found")
-                || Chars.contains(ex.getFlyweightMessage(), "cannot map negative length")
-                || Chars.contains(ex.getFlyweightMessage(), "could not open read-only");
+        int errno = ex.getErrno();
+        return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST;
     }
 
     private TableReaderMetadata openMetaFile() {

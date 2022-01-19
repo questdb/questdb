@@ -700,8 +700,9 @@ public final class TableUtils {
             int expectedVersion
     ) {
         try {
-            if (metaMem.size() < META_OFFSET_COLUMN_TYPES) {
-                throw CairoException.instance(0).put("_meta file is too small ").put(metaMem.size());
+            long fileLength = ff.length(metaMem.getFd());
+            if (fileLength < META_OFFSET_COLUMN_TYPES) {
+                throw CairoException.instance(0).put(". File is too small ").put(fileLength);
             }
             final int metaVersion = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
             if (expectedVersion != metaVersion) {
@@ -713,32 +714,13 @@ public final class TableUtils {
 
             final int columnCount = metaMem.getInt(META_OFFSET_COUNT);
             long offset = getColumnNameOffset(columnCount);
-            if (metaMem.size() < offset) {
-                throw validationException(metaMem).put("_meta file is too small, column types are not written ").put(metaMem.size());
+            if (fileLength < offset) {
+                throw validationException(metaMem).put("File is too small, column types are missing ").put(fileLength);
             }
 
             if (offset < columnCount || (
-                    columnCount > 0 && (offset < 0 || offset >= ff.length(metaMem.getFd())))) {
+                    columnCount > 0 && (offset < 0 || offset >= fileLength))) {
                 throw validationException(metaMem).put("Incorrect columnCount: ").put(columnCount);
-            }
-
-            long colNameOffset = offset;
-            for (int i = 0; i <= columnCount; i++) {
-                if (colNameOffset >= metaMem.size()) {
-                    throw validationException(metaMem).put("_meta file is too small, column names are missing ").put(metaMem.size());
-                }
-                int strLen = Unsafe.getUnsafe().getInt(metaMem.addressOf(colNameOffset));
-                colNameOffset += 4;
-                if (strLen != TableUtils.NULL_LEN) {
-                    if (colNameOffset > 0) {
-                        colNameOffset += strLen * 2L;
-                    } else {
-                        throw validationException(metaMem).put("_meta file is too small, column names are missing ").put(metaMem.size());
-                    }
-                }
-            }
-            if (colNameOffset >= metaMem.size()) {
-                throw validationException(metaMem).put("_meta file is too small, column names are missing ").put(metaMem.size());
             }
 
             final int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
@@ -773,15 +755,31 @@ public final class TableUtils {
 
             // validate column names
             for (int i = 0; i < columnCount; i++) {
+                if (offset + 4 >= fileLength) {
+                    throw validationException(metaMem).put("File is too small, column length for column ").put(i).put(" is missing");
+                }
                 CharSequence name = metaMem.getStr(offset);
-                if (name == null || name.length() < 1) {
+                if (name == null) {
                     throw validationException(metaMem).put("NULL column name at [").put(i).put(']');
+                }
+
+                int strLength = name.length();
+                if (strLength < 1 || strLength >= 256) {
+                    // EXT4 and many others do not allow files to by > 255 bytes
+                    throw validationException(metaMem)
+                            .put("Column name length of ")
+                            .put(strLength).put(" is invalid at offset ")
+                            .put(offset);
                 }
 
                 if (nameIndex.put(name, i)) {
                     offset += Vm.getStorageLength(name);
                 } else {
                     throw validationException(metaMem).put("Duplicate column: ").put(name).put(" at [").put(i).put(']');
+                }
+
+                if (offset >= fileLength) {
+                    throw validationException(metaMem).put("File is too small, column names are missing ").put(fileLength);
                 }
             }
         } catch (Throwable e) {
@@ -892,8 +890,10 @@ public final class TableUtils {
             int l = path.length();
             int index = 0;
             do {
-                path.trimTo(l).put('.').put(index);
-                path.$();
+                if (index > 0) {
+                    path.trimTo(l).put('.').put(index);
+                    path.$();
+                }
 
                 if (!ff.exists(path) || ff.remove(path)) {
                     try {
