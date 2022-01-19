@@ -366,18 +366,16 @@ public class ReaderPoolTest extends AbstractCairoTest {
             try (TableReader reader = pool.get("xyz")) {
                 Assert.assertNotNull(reader);
             }
-
         });
     }
 
     @Test
     public void testGetAndCloseRace() throws Exception {
-
         try (TableModel model = new TableModel(configuration, "xyz", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
             CairoTestUtils.create(model);
         }
 
-        for (int i = 0; i < 100; i++) {
+        for (int i = 0; i < 1000; i++) {
             assertWithPool(pool -> {
                 AtomicInteger exceptionCount = new AtomicInteger();
                 CyclicBarrier barrier = new CyclicBarrier(2);
@@ -394,7 +392,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         stopLatch.countDown();
                     }
                 }).start();
-
 
                 new Thread(() -> {
                     try {

@@ -59,6 +59,7 @@ stages:
             inputs:
               mavenPomFile: "core/pom.xml"
               mavenOptions: "-Xmx3072m"
+              testRunTitle: "ReaderPoolTest"
               options:
                 "--batch-mode --quiet
                 -DquestdbLog=$(Build.SourcesDirectory)/ci/qlog.conf"
