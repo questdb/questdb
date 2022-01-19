@@ -24,9 +24,9 @@
 
 package io.questdb.test.tools;
 
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -46,7 +46,6 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 
 import java.io.*;
-import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
