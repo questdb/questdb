@@ -71,8 +71,13 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     @Override
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
         this.memoryTag = memoryTag;
-        openFile(ff, name);
-        map(ff, name, size);
+        if (size > -1) {
+            openFile(ff, name);
+            map(ff, name, size);
+        } else {
+            // This is read-only map and file length is -1. Means file does not exist
+            throw CairoException.instance(CairoException.ERRNO_FILE_DOES_NOT_EXIST).put("invalid file ").put(name);
+        }
     }
 
     protected void map(FilesFacade ff, LPSZ name, final long size) {
@@ -85,9 +90,6 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
                 throw e;
             }
         } else {
-            if (size < 0) {
-                throw CairoException.instance(ff.errno()).put("invalid file ").put(name);
-            }
             this.pageAddress = 0;
         }
 
