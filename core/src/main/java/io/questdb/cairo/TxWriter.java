@@ -360,7 +360,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     private void saveAttachedPartitionsToTx(int symbolColumnCount) {
         // change partition count only when we have something to save to the
-        // parition table
+        // partition table
         if (maxTimestamp != Long.MIN_VALUE) {
             final int size = attachedPartitions.size();
             final long partitionTableOffset = getPartitionTableSizeOffset(symbolColumnCount);
