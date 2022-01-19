@@ -33,13 +33,13 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.*;
 
-public class TxReader implements Closeable {
+public class TxReader implements Closeable, Mutable {
     protected static final int PARTITION_TS_OFFSET = 0;
     protected static final int PARTITION_SIZE_OFFSET = 1;
     protected static final int PARTITION_NAME_TX_OFFSET = 2;
     protected static final int PARTITION_DATA_TX_OFFSET = 3;
     protected final LongList attachedPartitions = new LongList();
-    private final PartitionBy.PartitionFloorMethod partitionFloorMethod;
+    private final FilesFacade ff;
     protected long minTimestamp;
     protected long maxTimestamp;
     protected long txn;
@@ -51,21 +51,20 @@ public class TxReader implements Closeable {
     protected int partitionBy;
     protected long partitionTableVersion;
     protected int attachedPartitionsSize = 0;
+    private PartitionBy.PartitionFloorMethod partitionFloorMethod;
     private MemoryMR roTxMem;
 
-    public TxReader(FilesFacade ff, @Transient Path path, int partitionBy) {
-        try {
-            roTxMem = openTxnFile(ff, path);
-            this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
-            this.partitionBy = partitionBy;
-        } catch (Throwable e) {
-            close();
-            throw e;
-        }
+    public TxReader(FilesFacade ff) {
+        this.ff = ff;
     }
 
     public boolean attachedPartitionsContains(long ts) {
         return findAttachedPartitionIndex(ts) > -1;
+    }
+
+    @Override
+    public void clear() {
+        close();
     }
 
     @Override
@@ -161,6 +160,43 @@ public class TxReader implements Closeable {
         return txn;
     }
 
+    public TxReader ofRO(@Transient Path path, int partitionBy) {
+        clear();
+        int tableRootLen = path.length();
+        try {
+            roTxMem = openTxnFile(ff, path);
+            this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
+            this.partitionBy = partitionBy;
+        } catch (Throwable e) {
+            close();
+            path.trimTo(tableRootLen);
+            throw e;
+        }
+        return this;
+    }
+
+    public void unsafeLoadAll() {
+        this.txn = roTxMem.getLong(TX_OFFSET_TXN);
+        this.transientRowCount = roTxMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
+        this.fixedRowCount = roTxMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
+        this.minTimestamp = roTxMem.getLong(TX_OFFSET_MIN_TIMESTAMP);
+        this.maxTimestamp = roTxMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
+        this.dataVersion = roTxMem.getLong(TX_OFFSET_DATA_VERSION);
+        this.structureVersion = roTxMem.getLong(TX_OFFSET_STRUCT_VERSION);
+        final long prevSymbolCount = this.symbolColumnCount;
+        this.symbolColumnCount = roTxMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
+        final long prevPartitionTableVersion = this.partitionTableVersion;
+        this.partitionTableVersion = roTxMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION);
+        if (prevSymbolCount != symbolColumnCount) {
+            roTxMem.growToFileSize();
+        }
+        unsafeLoadPartitions(prevPartitionTableVersion);
+    }
+
+    public long unsafeReadPartitionTableVersion() {
+        return roTxMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION);
+    }
+
     private int findAttachedPartitionIndex(long ts) {
         return findAttachedPartitionIndexByLoTimestamp(getPartitionTimestampLo(ts));
     }
@@ -190,24 +226,6 @@ public class TxReader implements Closeable {
 
     protected long unsafeGetRawMemory() {
         return roTxMem.getPageAddress(0);
-    }
-
-    public void unsafeLoadAll() {
-        this.txn = roTxMem.getLong(TX_OFFSET_TXN);
-        this.transientRowCount = roTxMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
-        this.fixedRowCount = roTxMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
-        this.minTimestamp = roTxMem.getLong(TX_OFFSET_MIN_TIMESTAMP);
-        this.maxTimestamp = roTxMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
-        this.dataVersion = roTxMem.getLong(TX_OFFSET_DATA_VERSION);
-        this.structureVersion = roTxMem.getLong(TX_OFFSET_STRUCT_VERSION);
-        final long prevSymbolCount = this.symbolColumnCount;
-        this.symbolColumnCount = roTxMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
-        final long prevPartitionTableVersion = this.partitionTableVersion;
-        this.partitionTableVersion = roTxMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION);
-        if (prevSymbolCount != symbolColumnCount) {
-            roTxMem.growToFileSize();
-        }
-        unsafeLoadPartitions(prevPartitionTableVersion);
     }
 
     private void unsafeLoadPartitions(long prevPartitionTableVersion) {

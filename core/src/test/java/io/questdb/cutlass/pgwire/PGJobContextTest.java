@@ -4465,11 +4465,6 @@ create table tab as (
                     public int getBindPort() {
                         return 8812;
                     }
-
-                    @Override
-                    public boolean getPeerNoLinger() {
-                        return false;
-                    }
                 };
             }
         };

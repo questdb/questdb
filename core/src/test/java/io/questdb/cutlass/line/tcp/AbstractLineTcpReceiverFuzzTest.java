@@ -285,7 +285,7 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
                 for (int i = 0; i < numOfThreads; i++) {
                     final int threadId = i;
                     new Thread(() -> {
-                        try (Socket socket = getSocket(false)) {
+                        try (Socket socket = getSocket()) {
                             for (int n = 0; n < numOfIterations; n++) {
                                 for (int j = 0; j < numOfLines; j++) {
                                     final TableData table = pickTable(threadId);
