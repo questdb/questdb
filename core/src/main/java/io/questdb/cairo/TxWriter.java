@@ -359,10 +359,12 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     private void saveAttachedPartitionsToTx(int symbolColumnCount) {
-        final int size = attachedPartitions.size();
-        final long partitionTableOffset = getPartitionTableSizeOffset(symbolColumnCount);
-        txMem.putInt(partitionTableOffset, size * Long.BYTES);
+        // change partition count only when we have something to save to the
+        // parition table
         if (maxTimestamp != Long.MIN_VALUE) {
+            final int size = attachedPartitions.size();
+            final long partitionTableOffset = getPartitionTableSizeOffset(symbolColumnCount);
+            txMem.putInt(partitionTableOffset, size * Long.BYTES);
             for (int i = attachedPositionDirtyIndex; i < size; i++) {
                 txMem.putLong(getPartitionTableIndexOffset(partitionTableOffset, i), attachedPartitions.getQuick(i));
             }
