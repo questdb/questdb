@@ -3719,6 +3719,33 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testLatestByOnDesignatedTimestampWithSubQuery() throws SqlException {
+        assertQuery(
+                "select-choose ts, x, y, z from (select [ts, x, y, z] from (select-choose [ts, x, y, z] ts, x, y, z from (select [ts, x, y, z] from tab timestamp (ts)) order by ts) _xQdbA1 latest on ts partition by z)",
+                "select * from (tab order by ts) latest on ts partition by z",
+                modelOf("tab").timestamp("ts").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testLatestByOnNonDesignatedTimestampWithSubQuery() throws SqlException {
+        assertQuery(
+                "select-choose ts, another_ts, x, y, z from (select [ts, another_ts, x, y, z] from (select-choose [another_ts, ts, x, y, z] ts, another_ts, x, y, z from (select [another_ts, ts, x, y, z] from tab timestamp (ts)) order by another_ts) _xQdbA1 latest on another_ts partition by z)",
+                "(tab order by another_ts) latest on another_ts partition by z",
+                modelOf("tab").timestamp("ts").col("another_ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testLatestByWithFilterAndSubQuery() throws SqlException {
+        assertQuery(
+                "select-choose x, ts from (select [x, ts, z] from (select-choose [ts, x, z] ts, x, y, z from (select [ts, x, z] from tab timestamp (ts) where x > 0) order by ts) _xQdbA1 latest on ts partition by z)",
+                "select x, ts from (tab order by ts) where x > 0 latest on ts partition by z",
+                modelOf("tab").timestamp("ts").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.STRING)
+        );
+    }
+
+    @Test
     public void testLatestBySyntax() throws Exception {
         assertSyntaxError(
                 "select * from tab latest",
