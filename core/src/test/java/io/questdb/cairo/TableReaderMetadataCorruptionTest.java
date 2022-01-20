@@ -78,7 +78,9 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 types,
                 names.length + 1000,
                 5,
-                "File is too small, column types are missing 4096" //failed validation on garbage flags value
+                "File is too small, column types are missing 4096", //failed validation on garbage flags value
+                4096,
+                4096
         );
     }
 
