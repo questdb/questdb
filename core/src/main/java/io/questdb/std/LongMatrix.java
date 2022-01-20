@@ -24,8 +24,6 @@
 
 package io.questdb.std;
 
-import io.questdb.cairo.BinarySearch;
-
 public class LongMatrix<T> {
     private final int bits;
     private int pos;
@@ -49,91 +47,6 @@ public class LongMatrix<T> {
         } else {
             return resize();
         }
-    }
-
-    public int binarySearchBlock(int shl, long value, int scanDir, int offset) {
-        // Binary searches using 2^shl blocks
-        // e.g. when shl == 2
-        // this method treats 4 longs as 1 entry
-        // taking first long for the comparisons
-        // and ignoring the other 3 values.
-
-        // This is useful when list is a dictionary where first long is a key
-        // and subsequent X (1, 3, 7 etc.) values are the value of the dictionary.
-
-        // this is the same algorithm as implemented in C (util.h)
-        // template<class T, class V>
-        // inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_t scan_dir)
-        // please ensure these implementations are in sync
-
-        int low = 0;
-        int high = (pos - 1) >> shl;
-        while (high - low > 65) {
-            final int mid = (low + high) / 2;
-            final long midVal = data[(mid << shl) + offset];
-
-            if (midVal < value) {
-                low = mid;
-            } else if (midVal > value) {
-                high = mid - 1;
-            } else {
-                // In case of multiple equal values, find the first
-                return scanDir == BinarySearch.SCAN_UP ?
-                        scrollUpBlock(shl, mid, midVal) :
-                        scrollDownBlock(shl, mid, high, midVal);
-            }
-        }
-        return scanDir == BinarySearch.SCAN_UP ?
-                scanUpBlock(shl, value, low, high + 1) :
-                scanDownBlock(shl, value, low, high + 1);
-    }
-
-    private int scanDownBlock(int shl, long v, int low, int high) {
-        for (int i = high - 1; i >= low; i--) {
-            long that = data[i << shl];
-            if (that == v) {
-                return i << shl;
-            }
-            if (that < v) {
-                return -(((i + 1) << shl) + 1);
-            }
-        }
-        return -((low << shl) + 1);
-    }
-
-    private int scanUpBlock(int shl, long value, int low, int high) {
-        for (int i = low; i < high; i++) {
-            long that = data[i << shl];
-            if (that == value) {
-                return i << shl;
-            }
-            if (that > value) {
-                return -((i << shl) + 1);
-            }
-        }
-        return -((high << shl) + 1);
-    }
-
-    private int scrollDownBlock(int shl, int low, int high, long value) {
-        do {
-            if (low < high) {
-                low++;
-            } else {
-                return low << shl;
-            }
-        } while (data[low << shl] == value);
-        return (low - 1) << shl;
-    }
-
-    private int scrollUpBlock(int shl, int high, long value) {
-        do {
-            if (high > 0) {
-                high--;
-            } else {
-                return 0;
-            }
-        } while (data[high << shl] == value);
-        return (high + 1) << shl;
     }
 
     public int binarySearch(long v, int index) {
