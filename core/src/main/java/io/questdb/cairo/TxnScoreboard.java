@@ -49,15 +49,10 @@ public class TxnScoreboard implements Closeable, Mutable {
 
     public static native long getScoreboardSize(int entryCount);
 
-    public static long releaseTxn(long pTxnScoreboard, long txn) {
-        assert pTxnScoreboard > 0;
-        LOG.debug().$("release  [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
-        return releaseTxn0(pTxnScoreboard, txn);
-    }
-
     public boolean acquireTxn(long txn) {
         assert txn > -1;
-        long response = acquireTxn(mem, txn);
+        final long internalTxn = toInternalTxn(txn);
+        final long response = acquireTxn(mem, internalTxn);
         if (response == 0) {
             // all good
             return true;
@@ -66,8 +61,13 @@ public class TxnScoreboard implements Closeable, Mutable {
             // retry
             return false;
         }
-        long min = -response - 2;
+        final long min = fromInternalTxn(-response - 2);
         throw CairoException.instance(0).put("max txn-inflight limit reached [txn=").put(txn).put(", min=").put(min).put(", size=").put(pow2EntryCount).put(']');
+    }
+
+    public void releaseTxn(long txn) {
+        long released = releaseTxn(mem, txn);
+        assert released > -1 : "released count " + txn + " must be positive: " + (released  + 1);
     }
 
     @Override
@@ -89,16 +89,21 @@ public class TxnScoreboard implements Closeable, Mutable {
         }
     }
 
+    public boolean isTxnAvailable(long txn) {
+        return getActiveReaderCount(txn) == 0;
+    }
+
     public long getActiveReaderCount(long txn) {
-        return getCount(mem, txn);
+        return getCount(mem, toInternalTxn(txn));
     }
 
     public long getMin() {
-        return getMin(mem);
-    }
-
-    public boolean isTxnAvailable(long nameTxn) {
-        return getActiveReaderCount(nameTxn) == 0;
+        final long min = getMin(mem);
+        // min can be 0 on empty scoreboard, so we simply treat it as txn 0.
+        if (min == 0) {
+            return 0;
+        }
+        return fromInternalTxn(min);
     }
 
     public int getEntryCount() {
@@ -140,15 +145,33 @@ public class TxnScoreboard implements Closeable, Mutable {
         return this;
     }
 
-    public void releaseTxn(long txn) {
-        long released = releaseTxn(mem, txn);
-        assert released > -1 : "released count " + txn + " must be positive: " + (released  + 1);
+    /**
+     * Table readers use 0 txn as the empty table transaction number.
+     * The scoreboard only supports txn > 0, so we have to patch the value
+     * to avoid races in the scoreboard initialization.
+     */
+    private static long toInternalTxn(long txn) {
+        return txn + 1;
+    }
+
+    /**
+     * Reverts toInternalTxn() value.
+     */
+    private static long fromInternalTxn(long txn) {
+        return txn - 1;
     }
 
     private static long acquireTxn(long pTxnScoreboard, long txn) {
         assert pTxnScoreboard > 0;
         LOG.debug().$("acquire [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
         return acquireTxn0(pTxnScoreboard, txn);
+    }
+
+    private static long releaseTxn(long pTxnScoreboard, long txn) {
+        assert pTxnScoreboard > 0;
+        LOG.debug().$("release  [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
+        final long internalTxn = toInternalTxn(txn);
+        return releaseTxn0(pTxnScoreboard, internalTxn);
     }
 
     private native static long acquireTxn0(long pTxnScoreboard, long txn);

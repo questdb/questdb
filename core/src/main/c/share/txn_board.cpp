@@ -35,6 +35,9 @@ class txn_scoreboard_t {
     uint32_t mask = 0;
     uint32_t size = 0;
     std::atomic<int64_t> max{0};
+    // The min txn that is in-use. Increases monotonically.
+    // Once the scoreboard is initialized, min is guaranteed to be
+    // greater than 0.
     std::atomic<int64_t> min{0};
     std::atomic<T> counts[];
 
@@ -110,7 +113,7 @@ public:
         return countAfter;
     }
 
-    // txn should be >= 0
+    // txn must be > 0
     inline int64_t txn_acquire(int64_t txn) {
         int64_t current_min = min.load();
         if (current_min == L_MIN) {
@@ -162,6 +165,8 @@ public:
         mask = entry_count - 1;
         size = entry_count;
         int64_t expected = 0;
+        // Since txn values are guaranteed to be greater than 0, min can be 0 only on
+        // a newly created scoreboard. So, this CAS should only succeed single time.
         min.compare_exchange_strong(expected, L_MIN);
     }
 };
