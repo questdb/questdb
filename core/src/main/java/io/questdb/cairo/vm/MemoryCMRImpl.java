@@ -76,7 +76,7 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
             map(ff, name, size);
         } else {
             // This is read-only map and file length is -1. Means file does not exist
-            throw CairoException.instance(CairoException.ERRNO_FILE_DOES_NOT_EXIST).put("invalid file ").put(name);
+            throw CairoException.instance(CairoException.ERRNO_FILE_DOES_NOT_EXIST).put("File not found: ").put(name);
         }
     }
 
