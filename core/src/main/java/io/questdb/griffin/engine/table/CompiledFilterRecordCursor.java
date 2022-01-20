@@ -64,7 +64,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
     private int pageFrameIndex;
     // The following fields are used for table iteration:
     // when compiled filter is in use, they store rows array indexes;
-    // when Java filter is in use, they store rowids
+    // when Java filter is in use, they store row ids
     private long hi;
     private long current;
 
