@@ -51,7 +51,7 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
             try {
                 compiler.compile("select coalesce(b)\n" +
                         "from alex", sqlExecutionContext);
-                Assert.fail("SqlException epected");
+                Assert.fail("SqlException expected");
             } catch (SqlException ex) {
                 Assert.assertTrue(ex.getMessage().contains("coalesce"));
             }
