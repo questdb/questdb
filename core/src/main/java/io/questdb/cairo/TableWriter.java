@@ -222,7 +222,7 @@ public class TableWriter implements Closeable {
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableName = Chars.toString(tableName);
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
-        this.o3PartitionUpdateQueue = new RingQueue<O3PartitionUpdateTask>(O3PartitionUpdateTask.CONSTRUCTOR, configuration.getO3PartitionUpdateQueueCapacity());
+        this.o3PartitionUpdateQueue = new RingQueue<>(O3PartitionUpdateTask.CONSTRUCTOR, configuration.getO3PartitionUpdateQueueCapacity());
         this.o3PartitionUpdatePubSeq = new MPSequence(this.o3PartitionUpdateQueue.getCycle());
         this.o3PartitionUpdateSubSeq = new SCSequence();
         o3PartitionUpdatePubSeq.then(o3PartitionUpdateSubSeq).then(o3PartitionUpdatePubSeq);
@@ -451,7 +451,7 @@ public class TableWriter implements Closeable {
             throwDistressException(err);
         }
 
-        txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
+        bumpStructureVersion();
 
         metadata.addColumn(name, configuration.getRandom().nextLong(), type, isIndexed, indexValueBlockCapacity);
 
@@ -549,7 +549,7 @@ public class TableWriter implements Closeable {
             throwDistressException(err);
         }
 
-        txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
+        bumpStructureVersion();
         indexers.extendAndSet(columnIndex, indexer);
         populateDenseIndexerList();
 
@@ -558,6 +558,20 @@ public class TableWriter implements Closeable {
         columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
         LOG.info().$("ADDED index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$(path).$();
+    }
+
+    public void changeCacheFlag(int columnIndex, boolean cache) {
+        checkDistressed();
+
+        commit();
+
+        SymbolMapWriter symbolMapWriter = getSymbolMapWriter(columnIndex);
+        if (symbolMapWriter.isCached() != cache) {
+            symbolMapWriter.updateCacheFlag(cache);
+        } else {
+            return;
+        }
+        updateMetaStructureVersion();
     }
 
     public int attachPartition(long timestamp) {
@@ -652,20 +666,135 @@ public class TableWriter implements Closeable {
         return StatusCode.OK;
     }
 
-    public void changeCacheFlag(int columnIndex, boolean cache) {
+    public void removeColumn(CharSequence name) {
+
         checkDistressed();
+
+        final int index = getColumnIndex(name);
+        final int type = metadata.getColumnType(index);
+
+        LOG.info().$("removing column '").utf8(name).$("' from ").$(path).$();
+
+        // check if we are moving timestamp from a partitioned table
+        final int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
+        boolean timestamp = index == timestampIndex;
+
+        if (timestamp && PartitionBy.isPartitioned(partitionBy)) {
+            throw CairoException.instance(0).put("Cannot remove timestamp from partitioned table");
+        }
 
         commit();
 
-        SymbolMapWriter symbolMapWriter = getSymbolMapWriter(columnIndex);
-        if (symbolMapWriter.isCached() != cache) {
-            symbolMapWriter.updateCacheFlag(cache);
-        } else {
-            return;
+        final CharSequence timestampColumnName = timestampIndex != -1 ? metadata.getColumnName(timestampIndex) : null;
+
+        this.metaSwapIndex = removeColumnFromMeta(index);
+
+        // close _meta so we can rename it
+        metaMem.close();
+
+        // rename _meta to _meta.prev
+        renameMetaToMetaPrev(name);
+
+        // after we moved _meta to _meta.prev
+        // we have to have _todo to restore _meta should anything go wrong
+        writeRestoreMetaTodo(name);
+
+        // rename _meta.swp to _meta
+        renameSwapMetaToMeta(name);
+
+        // remove column objects
+        removeColumn(index);
+
+        // remove symbol map writer or entry for such
+        removeSymbolMapWriter(index);
+
+        // decrement column count
+        columnCount--;
+
+        // reset timestamp limits
+        if (timestamp) {
+            txWriter.resetTimestamp();
+            timestampSetter = value -> {
+            };
         }
 
-        txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
+        try {
+            // open _meta file
+            openMetaFile(ff, path, rootLen, metaMem);
+
+            // remove _todo
+            clearTodoLog();
+
+            // remove column files has to be done after _todo is removed
+            removeColumnFiles(name, type, REMOVE_OR_LOG);
+        } catch (CairoException err) {
+            throwDistressException(err);
+        }
+
+        bumpStructureVersion();
+
+        metadata.removeColumn(name);
+        if (timestamp) {
+            metadata.setTimestampIndex(-1);
+        } else if (timestampColumnName != null) {
+            int timestampIndex2 = metadata.getColumnIndex(timestampColumnName);
+            metadata.setTimestampIndex(timestampIndex2);
+            o3TimestampMem = o3Columns.getQuick(getPrimaryColumnIndex(timestampIndex2));
+        }
+
+        LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
     }
+
+    public void renameColumn(CharSequence currentName, CharSequence newName) {
+
+        checkDistressed();
+
+        final int index = getColumnIndex(currentName);
+        final int type = metadata.getColumnType(index);
+
+        LOG.info().$("renaming column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$(path).$();
+
+        commit();
+
+        this.metaSwapIndex = renameColumnFromMeta(index, newName);
+
+        // close _meta so we can rename it
+        metaMem.close();
+
+        // rename _meta to _meta.prev
+        renameMetaToMetaPrev(currentName);
+
+        // after we moved _meta to _meta.prev
+        // we have to have _todo to restore _meta should anything go wrong
+        writeRestoreMetaTodo(currentName);
+
+        // rename _meta.swp to _meta
+        renameSwapMetaToMeta(currentName);
+
+        try {
+            // open _meta file
+            openMetaFile(ff, path, rootLen, metaMem);
+
+            // remove _todo
+            clearTodoLog();
+
+            // rename column files has to be done after _todo is removed
+            renameColumnFiles(currentName, newName, type);
+        } catch (CairoException err) {
+            throwDistressException(err);
+        }
+
+        bumpStructureVersion();
+
+        metadata.renameColumn(currentName, newName);
+
+        if (index == metadata.getTimestampIndex()) {
+            designatedTimestampColumnName = Chars.toString(newName);
+        }
+
+        LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$(path).$();
+    }
+
 
     @Override
     public void close() {
@@ -859,83 +988,54 @@ public class TableWriter implements Closeable {
         }
     }
 
-    public void removeColumn(CharSequence name) {
-
-        checkDistressed();
-
-        final int index = getColumnIndex(name);
-        final int type = metadata.getColumnType(index);
-
-        LOG.info().$("removing column '").utf8(name).$("' from ").$(path).$();
-
-        // check if we are moving timestamp from a partitioned table
-        final int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
-        boolean timestamp = index == timestampIndex;
-
-        if (timestamp && PartitionBy.isPartitioned(partitionBy)) {
-            throw CairoException.instance(0).put("Cannot remove timestamp from partitioned table");
-        }
-
-        commit();
-
-        final CharSequence timestampColumnName = timestampIndex != -1 ? metadata.getColumnName(timestampIndex) : null;
-
-        this.metaSwapIndex = removeColumnFromMeta(index);
-
-        // close _meta so we can rename it
-        metaMem.close();
-
-        // rename _meta to _meta.prev
-        renameMetaToMetaPrev(name);
-
-        // after we moved _meta to _meta.prev
-        // we have to have _todo to restore _meta should anything go wrong
-        writeRestoreMetaTodo(name);
-
-        // rename _meta.swp to _meta
-        renameSwapMetaToMeta(name);
-
-        // remove column objects
-        removeColumn(index);
-
-        // remove symbol map writer or entry for such
-        removeSymbolMapWriter(index);
-
-        // decrement column count
-        columnCount--;
-
-        // reset timestamp limits
-        if (timestamp) {
-            txWriter.resetTimestamp();
-            timestampSetter = value -> {
-            };
-        }
-
+    private int addColumnToMeta(
+            CharSequence name,
+            int type,
+            boolean indexFlag,
+            int indexValueBlockCapacity,
+            boolean sequentialFlag
+    ) {
+        int index;
         try {
-            // open _meta file
-            openMetaFile(ff, path, rootLen, metaMem);
+            index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
+            int columnCount = metaMem.getInt(META_OFFSET_COUNT);
 
-            // remove _todo
-            clearTodoLog();
+            ddlMem.putInt(columnCount + 1);
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
+            copyVersionAndLagValues(txWriter.getStructureVersion() + 1);
+            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
+            for (int i = 0; i < columnCount; i++) {
+                writeColumnEntry(i);
+            }
 
-            // remove column files has to be done after _todo is removed
-            removeColumnFiles(name, type, REMOVE_OR_LOG);
-        } catch (CairoException err) {
-            throwDistressException(err);
+            // add new column metadata to bottom of list
+            ddlMem.putInt(type);
+            long flags = 0;
+            if (indexFlag) {
+                flags |= META_FLAG_BIT_INDEXED;
+            }
+
+            if (sequentialFlag) {
+                flags |= META_FLAG_BIT_SEQUENTIAL;
+            }
+
+            ddlMem.putLong(flags);
+            ddlMem.putInt(indexValueBlockCapacity);
+            ddlMem.putLong(configuration.getRandom().nextLong());
+            ddlMem.skip(8);
+
+            long nameOffset = getColumnNameOffset(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                CharSequence columnName = metaMem.getStr(nameOffset);
+                ddlMem.putStr(columnName);
+                nameOffset += Vm.getStorageLength(columnName);
+            }
+            ddlMem.putStr(name);
+        } finally {
+            ddlMem.close();
         }
-
-        txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
-
-        metadata.removeColumn(name);
-        if (timestamp) {
-            metadata.setTimestampIndex(-1);
-        } else if (timestampColumnName != null) {
-            int timestampIndex2 = metadata.getColumnIndex(timestampColumnName);
-            metadata.setTimestampIndex(timestampIndex2);
-            o3TimestampMem = o3Columns.getQuick(getPrimaryColumnIndex(timestampIndex2));
-        }
-
-        LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
+        return index;
     }
 
     public boolean removePartition(long timestamp) {
@@ -1002,54 +1102,9 @@ public class TableWriter implements Closeable {
         }
     }
 
-    public void renameColumn(CharSequence currentName, CharSequence newName) {
-
-        checkDistressed();
-
-        final int index = getColumnIndex(currentName);
-        final int type = metadata.getColumnType(index);
-
-        LOG.info().$("renaming column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$(path).$();
-
-        commit();
-
-        this.metaSwapIndex = renameColumnFromMeta(index, newName);
-
-        // close _meta so we can rename it
-        metaMem.close();
-
-        // rename _meta to _meta.prev
-        renameMetaToMetaPrev(currentName);
-
-        // after we moved _meta to _meta.prev
-        // we have to have _todo to restore _meta should anything go wrong
-        writeRestoreMetaTodo(currentName);
-
-        // rename _meta.swp to _meta
-        renameSwapMetaToMeta(currentName);
-
-        try {
-            // open _meta file
-            openMetaFile(ff, path, rootLen, metaMem);
-
-            // remove _todo
-            clearTodoLog();
-
-            // rename column files has to be done after _todo is removed
-            renameColumnFiles(currentName, newName, type);
-        } catch (CairoException err) {
-            throwDistressException(err);
-        }
-
+    private void bumpStructureVersion() {
         txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
-
-        metadata.renameColumn(currentName, newName);
-
-        if (index == metadata.getTimestampIndex()) {
-            designatedTimestampColumnName = Chars.toString(newName);
-        }
-
-        LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$(path).$();
+        assert txWriter.getStructureVersion() == metadata.getStructureVersion();
     }
 
     public TableSyncModel replCreateTableSyncModel(long slaveTxData, long slaveMetaData, long slaveMetaDataSize) {
@@ -1633,42 +1688,30 @@ public class TableWriter implements Closeable {
         throw CairoException.instance(0).put("Column file does not exist [path=").put(path).put(']');
     }
 
-    private int addColumnToMeta(
-            CharSequence name,
-            int type,
-            boolean indexFlag,
-            int indexValueBlockCapacity,
-            boolean sequentialFlag
-    ) {
-        int index;
+    private int copyMetadataAndSetIndexed(int columnIndex, int indexValueBlockSize) {
         try {
-            index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
+            int index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
             int columnCount = metaMem.getInt(META_OFFSET_COUNT);
-
-            ddlMem.putInt(columnCount + 1);
+            ddlMem.putInt(columnCount);
             ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
-            copyVersionAndLagValues();
+            copyVersionAndLagValues(txWriter.getStructureVersion() + 1);
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i);
+                if (i != columnIndex) {
+                    writeColumnEntry(i);
+                } else {
+                    ddlMem.putInt(getColumnType(metaMem, i));
+                    long flags = META_FLAG_BIT_INDEXED;
+                    if (isSequential(metaMem, i)) {
+                        flags |= META_FLAG_BIT_SEQUENTIAL;
+                    }
+                    ddlMem.putLong(flags);
+                    ddlMem.putInt(indexValueBlockSize);
+                    ddlMem.putLong(getColumnHash(metaMem, i));
+                    ddlMem.skip(8);
+                }
             }
-
-            // add new column metadata to bottom of list
-            ddlMem.putInt(type);
-            long flags = 0;
-            if (indexFlag) {
-                flags |= META_FLAG_BIT_INDEXED;
-            }
-
-            if (sequentialFlag) {
-                flags |= META_FLAG_BIT_SEQUENTIAL;
-            }
-
-            ddlMem.putLong(flags);
-            ddlMem.putInt(indexValueBlockCapacity);
-            ddlMem.putLong(configuration.getRandom().nextLong());
-            ddlMem.skip(8);
 
             long nameOffset = getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
@@ -1676,11 +1719,10 @@ public class TableWriter implements Closeable {
                 ddlMem.putStr(columnName);
                 nameOffset += Vm.getStorageLength(columnName);
             }
-            ddlMem.putStr(name);
+            return index;
         } finally {
             ddlMem.close();
         }
-        return index;
     }
 
     private void bumpMasterRef() {
@@ -1926,43 +1968,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private int copyMetadataAndSetIndexed(int columnIndex, int indexValueBlockSize) {
-        try {
-            int index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
-            int columnCount = metaMem.getInt(META_OFFSET_COUNT);
-            ddlMem.putInt(columnCount);
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
-            copyVersionAndLagValues();
-            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
-            for (int i = 0; i < columnCount; i++) {
-                if (i != columnIndex) {
-                    writeColumnEntry(i);
-                } else {
-                    ddlMem.putInt(getColumnType(metaMem, i));
-                    long flags = META_FLAG_BIT_INDEXED;
-                    if (isSequential(metaMem, i)) {
-                        flags |= META_FLAG_BIT_SEQUENTIAL;
-                    }
-                    ddlMem.putLong(flags);
-                    ddlMem.putInt(indexValueBlockSize);
-                    ddlMem.putLong(getColumnHash(metaMem, i));
-                    ddlMem.skip(8);
-                }
-            }
-
-            long nameOffset = getColumnNameOffset(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metaMem.getStr(nameOffset);
-                ddlMem.putStr(columnName);
-                nameOffset += Vm.getStorageLength(columnName);
-            }
-            return index;
-        } finally {
-            ddlMem.close();
-        }
-    }
-
     private long copyMetadataAndUpdateVersion() {
         try {
             int index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
@@ -1971,7 +1976,7 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(columnCount);
             ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
-            copyVersionAndLagValues();
+            copyVersionAndLagValues(txWriter.getStructureVersion());
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 writeColumnEntry(i);
@@ -1990,11 +1995,42 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void copyVersionAndLagValues() {
+    private void copyVersionAndLagValues(long structureVersion) {
         ddlMem.putInt(ColumnType.VERSION);
         ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
         ddlMem.putInt(metaMem.getInt(META_OFFSET_MAX_UNCOMMITTED_ROWS));
         ddlMem.putLong(metaMem.getLong(META_OFFSET_COMMIT_LAG));
+        ddlMem.putLong(txWriter.getStructureVersion() + 1);
+        metadata.setStructureVersion(txWriter.getStructureVersion() + 1);
+    }
+
+    private void finishMetaSwapUpdate() {
+
+        // rename _meta to _meta.prev
+        this.metaPrevIndex = rename(fileOperationRetryCount);
+        writeRestoreMetaTodo();
+
+        try {
+            // rename _meta.swp to -_meta
+            restoreMetaFrom(META_SWAP_FILE_NAME, metaSwapIndex);
+        } catch (CairoException ex) {
+            try {
+                recoverFromTodoWriteFailure(null);
+            } catch (CairoException ex2) {
+                throwDistressException(ex2);
+            }
+            throw ex;
+        }
+
+        try {
+            // open _meta file
+            openMetaFile(ff, path, rootLen, metaMem);
+        } catch (CairoException err) {
+            throwDistressException(err);
+        }
+
+        bumpStructureVersion();
+        metadata.setTableVersion();
     }
 
     /**
@@ -2084,33 +2120,42 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void finishMetaSwapUpdate() {
-
-        // rename _meta to _meta.prev
-        this.metaPrevIndex = rename(fileOperationRetryCount);
-        writeRestoreMetaTodo();
-
+    private int removeColumnFromMeta(int index) {
         try {
-            // rename _meta.swp to -_meta
-            restoreMetaFrom(META_SWAP_FILE_NAME, metaSwapIndex);
-        } catch (CairoException ex) {
-            try {
-                recoverFromTodoWriteFailure(null);
-            } catch (CairoException ex2) {
-                throwDistressException(ex2);
+            int metaSwapIndex = openMetaSwapFile(ff, ddlMem, path, rootLen, fileOperationRetryCount);
+            int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
+            ddlMem.putInt(columnCount - 1);
+            ddlMem.putInt(partitionBy);
+
+            if (timestampIndex == index) {
+                ddlMem.putInt(-1);
+            } else if (index < timestampIndex) {
+                ddlMem.putInt(timestampIndex - 1);
+            } else {
+                ddlMem.putInt(timestampIndex);
             }
-            throw ex;
-        }
+            copyVersionAndLagValues(txWriter.getStructureVersion() + 1);
+            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
 
-        try {
-            // open _meta file
-            openMetaFile(ff, path, rootLen, metaMem);
-        } catch (CairoException err) {
-            throwDistressException(err);
-        }
+            for (int i = 0; i < columnCount; i++) {
+                if (i != index) {
+                    writeColumnEntry(i);
+                }
+            }
 
-        txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
-        metadata.setTableVersion();
+            long nameOffset = getColumnNameOffset(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                CharSequence columnName = metaMem.getStr(nameOffset);
+                if (i != index) {
+                    ddlMem.putStr(columnName);
+                }
+                nameOffset += Vm.getStorageLength(columnName);
+            }
+
+            return metaSwapIndex;
+        } finally {
+            ddlMem.close();
+        }
     }
 
     private void freeAndRemoveColumnPair(ObjList<?> columns, int pi, int si) {
@@ -3877,36 +3922,29 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private int removeColumnFromMeta(int index) {
+    private int renameColumnFromMeta(int index, CharSequence newName) {
         try {
             int metaSwapIndex = openMetaSwapFile(ff, ddlMem, path, rootLen, fileOperationRetryCount);
             int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
-            ddlMem.putInt(columnCount - 1);
+            ddlMem.putInt(columnCount);
             ddlMem.putInt(partitionBy);
-
-            if (timestampIndex == index) {
-                ddlMem.putInt(-1);
-            } else if (index < timestampIndex) {
-                ddlMem.putInt(timestampIndex - 1);
-            } else {
-                ddlMem.putInt(timestampIndex);
-            }
-            copyVersionAndLagValues();
+            ddlMem.putInt(timestampIndex);
+            copyVersionAndLagValues(txWriter.getStructureVersion() + 1);
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < columnCount; i++) {
-                if (i != index) {
-                    writeColumnEntry(i);
-                }
+                writeColumnEntry(i);
             }
 
             long nameOffset = getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
                 CharSequence columnName = metaMem.getStr(nameOffset);
-                if (i != index) {
-                    ddlMem.putStr(columnName);
-                }
                 nameOffset += Vm.getStorageLength(columnName);
+
+                if (i == index) {
+                    columnName = newName;
+                }
+                ddlMem.putStr(columnName);
             }
 
             return metaSwapIndex;
@@ -4104,32 +4142,11 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private int renameColumnFromMeta(int index, CharSequence newName) {
+    private void updateMetaStructureVersion() {
         try {
-            int metaSwapIndex = openMetaSwapFile(ff, ddlMem, path, rootLen, fileOperationRetryCount);
-            int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
-            ddlMem.putInt(columnCount);
-            ddlMem.putInt(partitionBy);
-            ddlMem.putInt(timestampIndex);
-            copyVersionAndLagValues();
-            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
-
-            for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i);
-            }
-
-            long nameOffset = getColumnNameOffset(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metaMem.getStr(nameOffset);
-                nameOffset += Vm.getStorageLength(columnName);
-
-                if (i == index) {
-                    columnName = newName;
-                }
-                ddlMem.putStr(columnName);
-            }
-
-            return metaSwapIndex;
+            copyMetadataAndUpdateVersion();
+            finishMetaSwapUpdate();
+            clearTodoLog();
         } finally {
             ddlMem.close();
         }

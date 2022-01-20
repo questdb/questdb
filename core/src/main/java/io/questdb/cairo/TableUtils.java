@@ -61,8 +61,9 @@ public final class TableUtils {
     public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
     public static final long META_OFFSET_VERSION = 12;
     public static final long META_OFFSET_TABLE_ID = 16;
-    public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20;
-    public static final long META_OFFSET_COMMIT_LAG = 24;
+    public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // LONG
+    public static final long META_OFFSET_COMMIT_LAG = 24; // LONG
+    public static final long META_OFFSET_STRUCTURE_VERSION = 32; // LONG
     public static final String FILE_SUFFIX_I = ".i";
     public static final String FILE_SUFFIX_D = ".d";
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
@@ -205,7 +206,7 @@ public final class TableUtils {
                 }
             }
             mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-            TableUtils.resetTxn(mem, symbolMapCount, 0L, INITIAL_TXN, 0L);
+            TableUtils.resetTxn(mem, symbolMapCount, 0L, INITIAL_TXN, 0L, 0L);
             resetTodoLog(ff, path, rootLen, mem);
             // allocate txn scoreboard
             path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();
@@ -611,7 +612,7 @@ public final class TableUtils {
         mem.jumpTo(40);
     }
 
-    public static void resetTxn(MemoryMW txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion) {
+    public static void resetTxn(MemoryMW txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion, long structureVersion) {
         // txn to let readers know table is being reset
         txMem.putLong(TX_OFFSET_TXN, txn);
         Unsafe.getUnsafe().storeFence();
@@ -625,7 +626,7 @@ public final class TableUtils {
         // max timestamp value in table
         txMem.putLong(TX_OFFSET_MAX_TIMESTAMP, Long.MIN_VALUE);
         // structure version
-        txMem.putLong(TX_OFFSET_STRUCT_VERSION, 0);
+        txMem.putLong(TX_OFFSET_STRUCT_VERSION, structureVersion);
         // data version
         txMem.putLong(TX_OFFSET_DATA_VERSION, dataVersion);
         // partition table version

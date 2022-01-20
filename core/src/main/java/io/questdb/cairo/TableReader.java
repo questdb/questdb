@@ -306,6 +306,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         return txFile.getTransientRowCount();
     }
 
+    public long getTxnStructureVersion() {
+        return txFile.getStructureVersion();
+    }
+
     public long getVersion() {
         return this.txFile.getStructureVersion();
     }
@@ -1138,12 +1142,15 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void reloadColumnChanges() {
+    private boolean reloadMetadata(long newStructureVersion) {
         // create transition index, which will help us reuse already open resources
         final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
         while (true) {
             try {
-                long pTransitionIndex = metadata.createTransitionIndex();
+                long pTransitionIndex = metadata.createTransitionIndex(newStructureVersion);
+                if (pTransitionIndex < 0) {
+                    return false;
+                }
                 try {
                     metadata.applyTransitionIndex(pTransitionIndex);
                     final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
@@ -1161,21 +1168,22 @@ public class TableReader implements Closeable, SymbolTableSource {
                     // rearrange symbol map reader list
                     reshuffleSymbolMapReaders(pTransitionIndex);
                     this.columnCount = columnCount;
-                    return;
+                    return true;
                 } finally {
                     TableUtils.freeTransitionIndex(pTransitionIndex);
                 }
             } catch (CairoException ex) {
-                // This is temporary solution until we can get multiple version of metadata not ovewriting each other
+                // This is temporary solution until we can get multiple version of metadata not overwriting each other
                 if (isMetaFileMissingFileSystemError(ex)) {
-                    if (configuration.getMicrosecondClock().getTicks() > deadline) {
+                    if (configuration.getMicrosecondClock().getTicks() < deadline) {
+                        LOG.info().$("error reloading metadata [table=").$(tableName)
+                                .$(", errno=").$(ex.getErrno())
+                                .$(", error=").$(ex.getFlyweightMessage()).I$();
+                        Os.pause();
+                    } else {
                         LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeoutUs()).utf8("μs]").$();
                         throw CairoException.instance(0).put("Metadata read timeout");
                     }
-                    LOG.info().$("error reloading metadata [table=").$(tableName)
-                            .$(", errno=").$(ex.getErrno())
-                            .$(", error=").$(ex.getFlyweightMessage()).I$();
-                    Os.pause();
                 } else {
                     throw ex;
                 }
@@ -1235,23 +1243,28 @@ public class TableReader implements Closeable, SymbolTableSource {
         final long prevPartitionVersion = this.txFile.getPartitionTableVersion();
 
         // reload tx file, this will update the versions
-        this.readTxnSlow();
-        reloadStruct(prevStructVersion);
+        do {
+            this.readTxnSlow();
+        } while (!reloadStruct(prevStructVersion, txFile.getStructureVersion()));
+
         // partition reload will apply truncate if necessary
         // applyTruncate for non-partitioned tables only
         reconcileOpenPartitions(prevPartitionVersion);
     }
 
-    private void reloadStruct(long prevStructVersion) {
-        if (prevStructVersion == txFile.getStructureVersion()) {
-            return;
+    private boolean reloadStruct(long prevStructVersion, long newStructureVersion) {
+        if (prevStructVersion == newStructureVersion) {
+            return true;
         }
-        reloadStructSlow();
+        return reloadStructSlow(newStructureVersion);
     }
 
-    private void reloadStructSlow() {
-        reloadColumnChanges();
-        reloadSymbolMapCounts();
+    private boolean reloadStructSlow(long newStructureVersion) {
+        if (reloadMetadata(newStructureVersion)) {
+            reloadSymbolMapCounts();
+            return true;
+        }
+        return false;
     }
 
     private void reloadSymbolMapCounts() {

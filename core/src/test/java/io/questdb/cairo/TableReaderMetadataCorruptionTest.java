@@ -78,9 +78,23 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 types,
                 names.length + 1000,
                 5,
-                "File is too small, column types are missing 4096", //failed validation on garbage flags value
+                "File is too small, column types are missing 4096",
                 4096,
                 4096
+        );
+    }
+
+    @Test
+    public void testDuplicateColumnName() throws Exception {
+        final String[] names = new String[]{"a", "b", "c", "d", "b", "f"};
+        final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
+
+        assertMetaConstructorFailure(
+                names,
+                types,
+                names.length,
+                5,
+                "Duplicate"
         );
     }
 
@@ -145,20 +159,6 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 "File is too small, column types are missing",
                 4906,
                 128
-        );
-    }
-
-    @Test
-    public void testDuplicateColumnName() throws Exception {
-        final String[] names = new String[]{"a", "b", "c", "d", "b", "f"};
-        final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
-
-        assertMetaConstructorFailure(
-                names,
-                types,
-                names.length,
-                5,
-                "Duplicate"
         );
     }
 
@@ -264,32 +264,33 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                     throw CairoException.instance(FilesFacadeImpl.INSTANCE.errno()).put("Cannot create dir: ").put(path);
                 }
 
-                MemoryMA mem = Vm.getMAInstance();
+                try (MemoryMA mem = Vm.getMAInstance()) {
+                    mem.of(FilesFacadeImpl.INSTANCE, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), pageSize, MemoryTag.MMAP_DEFAULT);
 
-                mem.of(FilesFacadeImpl.INSTANCE, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), pageSize, MemoryTag.MMAP_DEFAULT);
+                    mem.putInt(columnCount);
+                    mem.putInt(PartitionBy.NONE);
+                    mem.putInt(timestampIndex);
+                    mem.putInt(ColumnType.VERSION);
+                    mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
-                mem.putInt(columnCount);
-                mem.putInt(PartitionBy.NONE);
-                mem.putInt(timestampIndex);
-                mem.putInt(ColumnType.VERSION);
-                mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
-
-                for (int i = 0; i < names.length; i++) {
-                    mem.putInt(types[i]);
-                    mem.putLong(0);
-                    mem.putInt(0);
-                    mem.skip(16);
-                }
-                for (int i = 0; i < names.length; i++) {
-                    mem.putStr(names[i]);
+                    for (int i = 0; i < names.length; i++) {
+                        mem.putInt(types[i]);
+                        mem.putLong(0);
+                        mem.putInt(0);
+                        mem.skip(16);
+                    }
+                    for (int i = 0; i < names.length; i++) {
+                        mem.putStr(names[i]);
+                    }
                 }
 
                 if (trimSize > -1) {
-                    FilesFacade ff = new FilesFacadeImpl();
-                    ff.truncate(mem.getFd(), trimSize);
-                    mem.close(false);
-                } else {
-                    mem.close();
+                    FilesFacade ff = FilesFacadeImpl.INSTANCE;
+                    path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
+                    long fd = ff.openRW(path);
+                    assert fd > -1;
+                    ff.truncate(fd, trimSize);
+                    ff.close(fd);
                 }
 
                 try {
@@ -321,7 +322,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                     }
 
                     try {
-                        metadata.createTransitionIndex();
+                        metadata.createTransitionIndex(0);
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "Invalid metadata at ");
                     }

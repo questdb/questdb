@@ -204,11 +204,13 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
 
                     Assert.assertEquals(12, metadata.getColumnCount());
                     Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());
+                    long structureVersion;
                     try (TableWriter writer = new TableWriter(configuration, "all")) {
                         writer.removeColumn("timestamp");
+                        structureVersion = writer.getStructureVersion();
                     }
 
-                    long pTransitionIndex = metadata.createTransitionIndex();
+                    long pTransitionIndex = metadata.createTransitionIndex(structureVersion);
                     StringSink sink = new StringSink();
                     try {
                         metadata.applyTransitionIndex(pTransitionIndex);
@@ -238,11 +240,13 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
 
                     Assert.assertEquals(12, metadata.getColumnCount());
                     Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());
+                    long structVersion;
                     try (TableWriter writer = new TableWriter(configuration, "all")) {
                         manipulator.restructure(writer);
+                        structVersion = writer.getStructureVersion();
                     }
 
-                    long address = metadata.createTransitionIndex();
+                    long address = metadata.createTransitionIndex(structVersion);
                     StringSink sink = new StringSink();
                     try {
                         metadata.applyTransitionIndex(address);

@@ -302,7 +302,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         txPartitionCount = 1;
         attachedPositionDirtyIndex = 0;
         attachedPartitions.clear();
-        resetTxn(txMem, symbolColumnCount, txn, ++dataVersion, ++partitionTableVersion);
+        resetTxn(txMem, symbolColumnCount, txn, ++dataVersion, ++partitionTableVersion, structureVersion);
     }
 
     public void updateMaxTimestamp(long timestamp) {

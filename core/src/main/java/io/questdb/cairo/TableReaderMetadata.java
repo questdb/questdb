@@ -35,7 +35,6 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 
 public class TableReaderMetadata extends BaseRecordMetadata implements Closeable {
-    private static final Log LOG = LogFactory.getLog(TableReaderMetadata.class);
     private final Path path;
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
@@ -61,7 +60,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         MemoryMR temp = this.metaMem;
         this.metaMem = this.transitionMeta;
         transitionMeta = temp;
-        transitionMeta.close();
+        transitionMeta.close(); // Memory is safe to double close, do not assign null to transitionMeta
 
         this.columnNameIndexMap.clear();
         final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
@@ -156,10 +155,10 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     public void close() {
         Misc.free(metaMem);
         Misc.free(path);
-        Misc.free(transitionMeta);
+        transitionMeta = Misc.free(transitionMeta);
     }
 
-    public long createTransitionIndex() {
+    public long createTransitionIndex(long expectedStructureVersion) {
         if (transitionMeta == null) {
             transitionMeta = Vm.getMRInstance();
         }
@@ -167,6 +166,10 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         transitionMeta.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
         tmpValidationMap.clear();
         TableUtils.validate(ff, transitionMeta, tmpValidationMap, ColumnType.VERSION);
+        if (expectedStructureVersion != transitionMeta.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION)) {
+            // No match
+            return -1;
+        }
         return TableUtils.createTransitionIndex(transitionMeta, this.metaMem, this.columnCount, this.columnNameIndexMap);
     }
 
@@ -189,6 +192,10 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
 
     public int getPartitionBy() {
         return metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
+    }
+
+    public long getStructureVersion() {
+        return metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
     }
 
     public int getVersion() {

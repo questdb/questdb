@@ -333,11 +333,13 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path.concat(TableUtils.META_FILE_NAME).$())) {
 
                     tableId = metadata.getId();
+                    long structVersion;
                     try (TableWriter writer = new TableWriter(configuration, "all")) {
                         manipulator.restructure(writer);
+                        structVersion = writer.getStructureVersion();
                     }
 
-                    long pTransitionIndex = metadata.createTransitionIndex();
+                    long pTransitionIndex = metadata.createTransitionIndex(structVersion);
                     StringSink sink = new StringSink();
                     try {
                         metadata.applyTransitionIndex(pTransitionIndex);
