@@ -312,17 +312,17 @@ public class NetTest {
             fail("Failed to create server socket");
         }
 
-        long address = Net.sockaddr("216.27.87.1", 9005);
+        long address = Net.sockaddr("127.0.0.1", 9005);
         LongList openFds = new LongList();
 
         try {
-            if (!Net.bindTcp(mainSocket, "216.27.87.1", 9005)) {
+            if (!Net.bindTcp(mainSocket, "127.0.0.1", 9005)) {
                 Assert.fail("Failed to bind tcp socket to localhost. Errno=" + Os.errno());
             }
-            Net.listen(mainSocket, BACKLOG_SIZE);
+            Net.listen(mainSocket, Os.type == Os.WINDOWS ? -BACKLOG_SIZE : BACKLOG_SIZE);
             log("Created test server socket");
 
-            for (int i = 0; i < BACKLOG_SIZE + 1; i++) {
+            for (int i = 0; i < BACKLOG_SIZE; i++) {
                 long socket = Net.socketTcp(true);
                 log("Created test client socket #" + i);
                 long status = Net.connect(socket, address);

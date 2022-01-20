@@ -4556,9 +4556,10 @@ public class IODispatcherTest {
             HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
 
             final int listenBackLog = 400;
-            final int activeConnectionLimit = 400;//change to 400 to trigger lockup
-            //excess connection take a while to return (because it's N TCP retransmissions + timeout under the hood  
-            //so increasing this number only makes test take longer to run) 
+            // change to 400 to trigger lockup
+            // excess connection take a while to return (because it's N TCP retransmissions + timeout under the hood
+            // so increasing this number only makes test take longer to run)
+            final int activeConnectionLimit = 400;
             final int nExcessConnections = 2;
 
             AtomicInteger openCount = new AtomicInteger(0);
@@ -4571,13 +4572,13 @@ public class IODispatcherTest {
                 }
 
                 @Override
-                public int getListenBacklog() {
-                    return listenBackLog;
+                public long getQueuedConnectionTimeout() {
+                    return 300_000;
                 }
 
                 @Override
-                public long getQueuedConnectionTimeout() {
-                    return 300_000;
+                public boolean useWindowsHint() {
+                    return true;
                 }
             };
 
@@ -4690,7 +4691,7 @@ public class IODispatcherTest {
 
                             LOG.info().$("Sending request via socket #").$(i).$();
                             long fd = openFds.getQuick(i);
-                            Assert.assertEquals(request.length(), Net.send(fd, mem, request.length()));//stops here on i=300 
+                            Assert.assertEquals(request.length(), Net.send(fd, mem, request.length()));//stops here on i=300
                             // ensure we have response from server
                             Assert.assertTrue(0 < Net.recv(fd, buf, 64));//fails here
 
@@ -4727,7 +4728,6 @@ public class IODispatcherTest {
     public void testQueuedConnectionTimeout() throws Exception {
         LOG.info().$("started testQueuedConnectionTimeout").$();
         assertMemoryLeak(() -> {
-            final int listenBackLog = 10;
             final int activeConnectionLimit = 5;
             final long queuedConnectionTimeoutInMs = 250;
 
@@ -4738,15 +4738,12 @@ public class IODispatcherTest {
                 }
 
                 @Override
-                public int getListenBacklog() {
-                    return listenBackLog;
-                }
-
-                @Override
                 public long getQueuedConnectionTimeout() {
                     return queuedConnectionTimeoutInMs;
                 }
             };
+
+            final int listenBackLog = configuration.getListenBacklog();
 
             final AtomicInteger nConnected = new AtomicInteger();
             final LongHashSet serverConnectedFds = new LongHashSet();
