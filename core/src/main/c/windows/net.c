@@ -177,7 +177,10 @@ JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_connect
 
 JNIEXPORT void JNICALL Java_io_questdb_network_Net_listen
         (JNIEnv *e, jclass cl, jlong fd, jint backlog) {
-    listen((SOCKET) fd, backlog);
+    //simulates SOMAXCONN_HINT 
+    jint backlog_hint = (backlog > 200? -backlog : backlog );
+
+    listen((SOCKET) fd, backlog_hint );
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_shutdown

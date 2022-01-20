@@ -4555,9 +4555,11 @@ public class IODispatcherTest {
         assertMemoryLeak(() -> {
             HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
 
-            final int listenBackLog = 10;
-            final int activeConnectionLimit = 5;
-            final int nExcessConnections = 20;
+            final int listenBackLog = 400;
+            final int activeConnectionLimit = 400;//change to 400 to trigger lockup
+            //excess connection take a while to return (because it's N TCP retransmissions + timeout under the hood  
+            //so increasing this number only makes test take longer to run) 
+            final int nExcessConnections = 2;
 
             AtomicInteger openCount = new AtomicInteger(0);
             AtomicInteger closeCount = new AtomicInteger(0);
@@ -4638,6 +4640,7 @@ public class IODispatcherTest {
                 try {
                     for (int i = 0; i < N; i++) {
                         long fd = Net.socketTcp(true);
+                        LOG.info().$("Connecting socket ").$(i).$(" fd=").$(fd).$();
                         TestUtils.assertConnect(fd, sockAddr);
                         openFds.add(fd);
                     }
@@ -4647,7 +4650,7 @@ public class IODispatcherTest {
                     while (dispatcher.isListening()) {
                         long endNanos = System.nanoTime();
                         if (TimeUnit.NANOSECONDS.toSeconds(endNanos - startNanos) > 30) {
-                            Assert.fail("Timed out waiting for despatcher to stop listening");
+                            Assert.fail("Timed out waiting for dispatcher to stop listening");
                         }
                         Os.pause();
                     }
@@ -4667,11 +4670,11 @@ public class IODispatcherTest {
                     // Active connection limit is reached and backlog is full, check we get connection closed
                     for (int i = 0; i < nExcessConnections; i++) {
                         long fd = Net.socketTcp(true);
-                        if (fd > 0) {
-                            int nSent = Net.send(fd, mem, request.length());
-                            Assert.assertTrue(nSent < 0);
-                            Net.close(fd);
-                        }
+                        LOG.info().$("Created excess socket ").$(i).$(" fd=").$(fd).$();
+                        Assert.assertTrue(fd > 0);
+                        long connectStatus = Net.connect(fd, sockAddr);
+                        Assert.assertTrue("Excess connection to io dispatcher should fail", connectStatus < 0);
+                        Net.close(fd);
                     }
 
                     try {
@@ -4682,15 +4685,17 @@ public class IODispatcherTest {
                                     Net.close(fd);
                                     closedFds.add(fd);
                                 }
+                                LOG.info().$("Closed all active sockets").$();
                             }
 
+                            LOG.info().$("Sending request via socket #").$(i).$();
                             long fd = openFds.getQuick(i);
-                            Assert.assertEquals(request.length(), Net.send(fd, mem, request.length()));
+                            Assert.assertEquals(request.length(), Net.send(fd, mem, request.length()));//stops here on i=300 
                             // ensure we have response from server
-                            Assert.assertTrue(0 < Net.recv(fd, buf, 64));
+                            Assert.assertTrue(0 < Net.recv(fd, buf, 64));//fails here
 
                             if (i < activeConnectionLimit) {
-                                // dont close any connections until the first connections have been processed and check that the dispatcher
+                                // don't close any connections until the first connections have been processed and check that the dispatcher
                                 // is not listening
                                 Assert.assertFalse(dispatcher.isListening());
                             } else {
