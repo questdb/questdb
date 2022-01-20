@@ -3253,7 +3253,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestByIsApplicableToSubQueriesNoDesignatedTimestamp() throws Exception {
+    public void testLatestByIsApplicableToSubQueriesInFilterNoDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table tab(" +
                     "    id symbol, " +
@@ -4466,78 +4466,188 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestByTsIsPickedAtRuntimeNoDesignated() throws Exception {
+    public void testLatestByOnSubQueryWithoutRandomAccessSupport() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table tab(" +
                     "    id symbol, " +
                     "    name symbol, " +
-                    "    value double, " +
-                    "    other_ts timestamp, " +
-                    "    ts timestamp" +
-                    ")", sqlExecutionContext);
-            executeInsert("insert into tab values ('d1', 'c1', 101.1, '2021-10-15T11:31:35.878Z', '2021-10-05T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-15T12:31:35.878Z', '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.3, '2021-10-15T13:31:35.878Z', '2021-10-05T17:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.4, '2021-10-15T14:31:35.878Z', '2021-10-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.1, '2021-10-15T15:31:35.878Z', '2021-10-04T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.2, '2021-10-15T16:31:35.878Z', '2021-10-03T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.3, '2021-10-15T17:31:35.878Z', '2021-10-02T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.4, '2021-10-15T11:31:35.878Z', '2021-09-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.5, '2021-10-15T12:31:35.878Z', '2021-01-05T15:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.1, '2021-10-15T13:31:35.878Z', '2021-10-05T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.2, '2021-10-15T14:31:35.878Z', '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.3, '2021-10-15T15:31:35.878Z', '2021-10-25T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.4, '2021-10-15T16:31:35.878Z', '2021-10-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c2', 401.1, '2021-10-16T17:31:35.878Z', '2021-10-26T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 401.2, '2021-10-16T11:31:35.878Z', '2021-10-06T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-16T17:31:35.878Z', '2021-10-26T15:31:35.878Z')");
+                    "    value long, " +
+                    "    ts timestamp, " +
+                    "    other_ts timestamp" +
+                    ") timestamp(ts) partition by day", sqlExecutionContext);
+
+            executeInsert("insert into tab values ('d1', 'c1', 111, 1, 3)");
+            executeInsert("insert into tab values ('d1', 'c1', 112, 2, 2)");
+            executeInsert("insert into tab values ('d1', 'c1', 113, 3, 1)");
+            executeInsert("insert into tab values ('d1', 'c2', 121, 2, 1)");
+            executeInsert("insert into tab values ('d1', 'c2', 122, 3, 2)");
+            executeInsert("insert into tab values ('d1', 'c2', 123, 4, 3)");
+            executeInsert("insert into tab values ('d2', 'c1', 211, 3, 3)");
+            executeInsert("insert into tab values ('d2', 'c1', 212, 4, 3)");
+            executeInsert("insert into tab values ('d2', 'c2', 221, 5, 4)");
+            executeInsert("insert into tab values ('d2', 'c2', 222, 6, 5)");
+
+            // select all columns
             assertSql(
-                    "tab where name in ('c2') latest on other_ts partition by id",
-                    "id\tname\tvalue\tother_ts\tts\n" +
-                            "d1\tc2\t102.5\t2021-10-15T12:31:35.878000Z\t2021-01-05T15:31:35.878000Z\n" +
-                            "d2\tc2\t401.1\t2021-10-16T17:31:35.878000Z\t2021-10-26T11:31:35.878000Z\n");
+                    "(select id, name, max(value) value, max(ts) ts from tab sample by 1T) latest on ts partition by id",
+                    "id\tname\tvalue\tts\n" +
+                            "d1\tc2\t123\t1970-01-01T00:00:00.000004Z\n" +
+                            "d2\tc2\t222\t1970-01-01T00:00:00.000006Z\n");
+
+            // partition by multiple columns
+            assertSql(
+                    "(select id, name, max(value) value, max(ts) ts from tab sample by 1T) latest on ts partition by id, name",
+                    "id\tname\tvalue\tts\n" +
+                            "d1\tc1\t113\t1970-01-01T00:00:00.000003Z\n" +
+                            "d1\tc2\t123\t1970-01-01T00:00:00.000004Z\n" +
+                            "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\n" +
+                            "d2\tc2\t222\t1970-01-01T00:00:00.000006Z\n");
+
+            // select subset of columns
+            assertSql(
+                    "select value, ts from (select id, name, max(value) value, max(ts) ts from tab sample by 1T) latest on ts partition by id",
+                    "value\tts\n" +
+                            "123\t1970-01-01T00:00:00.000004Z\n" +
+                            "222\t1970-01-01T00:00:00.000006Z\n");
+
+            // empty sub-query
+            assertSql(
+                    "(select id, name, max(value) value, max(ts) ts from tab where id in('c3') sample by 1T) latest on ts partition by id",
+                    "id\tname\tvalue\tts\n");
         });
     }
 
-    @Ignore()
-    // TODO: if the table has a designated timestamp, it becomes sticky
-    //  on latest by, and we cannot change it explicitly.
-    //  The query: (tab latest by id where name in ('c2')) timestamp(ts)
-    //   - only interested in rows with name == 'c2'
-    //   - for these, we want the latest row based on the ts column,
-    //     using id as unique key for the whole row
     @Test
-    public void testLatestByTsIsPickedAtRuntimeOtherThanDesignated() throws Exception {
+    public void testCursorForLatestByOnSubQueryWithoutRandomAccessSupport() throws Exception {
+        assertQuery("b\tk\n" +
+                        "CC\t1970-01-21T20:00:00.000000Z\n" +
+                        "BB\t1970-01-22T23:46:40.000000Z\n",
+                "(select b, max(k) k from x where b in ('BB','CC') sample by 1T) latest on k partition by b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol('AA','BB','CC') b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testLatestByOnSubQueryWithRandomAccessSupport() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table tab(" +
                     "    id symbol, " +
                     "    name symbol, " +
-                    "    value double, " +
-                    "    other_ts timestamp, " +
-                    "    ts timestamp" +
-                    ") timestamp(other_ts) partition by day", sqlExecutionContext);
-            executeInsert("insert into tab values ('d1', 'c1', 101.1, '2021-10-15T11:31:35.878Z', '2021-10-05T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-15T12:31:35.878Z', '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.3, '2021-10-15T13:31:35.878Z', '2021-10-05T17:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.4, '2021-10-15T14:31:35.878Z', '2021-10-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.1, '2021-10-15T15:31:35.878Z', '2021-10-04T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.2, '2021-10-15T16:31:35.878Z', '2021-10-03T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.3, '2021-10-15T17:31:35.878Z', '2021-10-02T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.4, '2021-10-15T11:31:35.878Z', '2021-09-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.5, '2021-10-15T12:31:35.878Z', '2021-01-05T15:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.1, '2021-10-15T13:31:35.878Z', '2021-10-05T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.2, '2021-10-15T14:31:35.878Z', '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.3, '2021-10-15T15:31:35.878Z', '2021-10-25T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 201.4, '2021-10-15T16:31:35.878Z', '2021-10-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c2', 401.1, '2021-10-16T17:31:35.878Z', '2021-10-26T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 401.2, '2021-10-16T11:31:35.878Z', '2021-10-06T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-16T17:31:35.878Z', '2021-10-26T15:31:35.878Z')");
+                    "    value long, " +
+                    "    ts timestamp, " +
+                    "    other_ts timestamp" +
+                    ") timestamp(ts) partition by day", sqlExecutionContext);
+
+            executeInsert("insert into tab values ('d1', 'c1', 111, 1, 3)");
+            executeInsert("insert into tab values ('d1', 'c1', 112, 2, 2)");
+            executeInsert("insert into tab values ('d1', 'c1', 113, 3, 1)");
+            executeInsert("insert into tab values ('d1', 'c2', 121, 2, 1)");
+            executeInsert("insert into tab values ('d1', 'c2', 122, 3, 2)");
+            executeInsert("insert into tab values ('d1', 'c2', 123, 4, 3)");
+            executeInsert("insert into tab values ('d2', 'c1', 211, 3, 3)");
+            executeInsert("insert into tab values ('d2', 'c1', 212, 4, 3)");
+            executeInsert("insert into tab values ('d2', 'c2', 221, 5, 4)");
+            executeInsert("insert into tab values ('d2', 'c2', 222, 6, 5)");
+
+            // latest by designated timestamp, no order by, select all columns
             assertSql(
-                    "tab where name in ('c2') latest on ts partition by id",
-                    "id\tname\tvalue\tother_ts\tts\n" +
-                            "d1\tc2\t102.10000000000001\t2021-10-15T17:31:35.878000Z\t2021-10-04T11:31:35.878000Z\n" +
-                            "d2\tc2\t401.1\t2021-10-16T17:31:35.878000Z\t2021-10-26T11:31:35.878000Z\n");
+                    "(tab where name in ('c1')) latest on ts partition by id",
+                    "id\tname\tvalue\tts\tother_ts\n" +
+                            "d1\tc1\t113\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z\n" +
+                            "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z\n");
+
+            // latest by designated timestamp, ordered by another timestamp, select all columns
+            assertSql(
+                    "(tab where name in ('c1') order by other_ts) latest on ts partition by id",
+                    "id\tname\tvalue\tts\tother_ts\n" +
+                            "d1\tc1\t113\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z\n" +
+                            "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z\n");
+
+            // latest by designated timestamp, select subset of columns
+            assertSql(
+                    "select value, ts from (tab where name in ('c1')) latest on ts partition by id",
+                    "value\tts\n" +
+                            "113\t1970-01-01T00:00:00.000003Z\n" +
+                            "212\t1970-01-01T00:00:00.000004Z\n");
+
+            // latest by designated timestamp, partition by multiple columns
+            assertSql(
+                    "(tab where name in ('c1','c2')) latest on ts partition by id, name",
+                    "id\tname\tvalue\tts\tother_ts\n" +
+                            "d1\tc1\t113\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z\n" +
+                            "d1\tc2\t123\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z\n" +
+                            "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z\n" +
+                            "d2\tc2\t222\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000005Z\n");
+
+            // latest by non-designated timestamp, ordered
+            assertSql(
+                    "(tab where name in ('c1') order by other_ts) latest on other_ts partition by id",
+                    "id\tname\tvalue\tts\tother_ts\n" +
+                            "d1\tc1\t111\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000003Z\n" +
+                            "d2\tc1\t211\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000003Z\n");
+
+            // latest by non-designated timestamp, no order
+            // note: other_ts is equal for both 211 and 212 records, so it's fine that
+            // the second returned row is different from the ordered by query
+            assertSql(
+                    "(tab where name in ('c1')) latest on other_ts partition by id",
+                    "id\tname\tvalue\tts\tother_ts\n" +
+                            "d1\tc1\t111\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000003Z\n" +
+                            "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z\n");
+
+            // empty sub-query
+            assertSql(
+                    "(tab where name in ('c3')) latest on ts partition by id",
+                    "id\tname\tvalue\tts\tother_ts\n");
         });
+    }
+
+    @Test
+    public void testCursorForLatestByOnSubQueryWithRandomAccessSupport() throws Exception {
+        assertQuery("a\tb\tk\n" +
+                        "81.0161274171258\tCC\t1970-01-21T20:00:00.000000Z\n" +
+                        "37.62501709498378\tBB\t1970-01-22T23:46:40.000000Z\n",
+                "(x where b in ('BB','CC')) where a > 0 latest on k partition by b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol('AA','BB','CC') b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testFailsForLatestByOnSubQueryWithNoTimestampSpecified() throws Exception {
+        assertFailure(
+                "with tab as (x where b in ('BB')) tab latest by b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol('AA','BB','CC') b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20)" +
+                        ")",
+                5,
+                "latest by query does not provide dedicated TIMESTAMP column"
+        );
     }
 
     @Test
