@@ -25,9 +25,7 @@ steps:
     inputs:
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
-      options:
-        "compile -DskipTests -P build-web-console
-        -Dhttp.keepAlive=false"
+      options: "compile -DskipTests -P build-web-console -Dhttp.keepAlive=false"
       jdkVersionOption: $(jdk)
     condition: eq(variables['SOURCE_CODE_CHANGED'], 'false')
   - task: Maven@3
@@ -38,7 +36,8 @@ steps:
       goals: "test"
       options:
         "--batch-mode --quiet -P build-web-console
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -DargLine='-ea'
+        -Dhttp.keepAlive=false"
       jdkVersionOption: $(jdk)
       codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
       codeCoverageClassFilter: "$(COVERAGE_DIFF)"
@@ -59,7 +58,8 @@ steps:
       goals: "clean test"
       options:
         "--batch-mode --quiet -P build-web-console
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -DargLine='-ea'
+        -Dhttp.keepAlive=false"
       jdkVersionOption: $(jdk)
     timeoutInMinutes: 55
     condition: |
