@@ -24,15 +24,16 @@
 
 package io.questdb.network;
 
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSequenceZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
-
-import static org.junit.Assert.*;
 
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
@@ -302,55 +303,11 @@ public class NetTest {
         }
     }
 
-    @Test
-    public void testConnectToSocketUpToBacklogSize() {
-        final int BACKLOG_SIZE = 250;
-
-        long mainSocket = Net.socketTcp(true);
-
-        if (mainSocket < 0) {
-            fail("Failed to create server socket");
-        }
-
-        long address = Net.sockaddr("127.0.0.1", 9005);
-        LongList openFds = new LongList();
-
-        try {
-            if (!Net.bindTcp(mainSocket, "127.0.0.1", 9005)) {
-                Assert.fail("Failed to bind tcp socket to localhost. Errno=" + Os.errno());
-            }
-            Net.listen(mainSocket, Os.type == Os.WINDOWS ? -BACKLOG_SIZE : BACKLOG_SIZE);
-            log("Created test server socket");
-
-            for (int i = 0; i < BACKLOG_SIZE; i++) {
-                long socket = Net.socketTcp(true);
-                log("Created test client socket #" + i);
-                long status = Net.connect(socket, address);
-                if (status != 0) {
-                    fail("Failed to create socket #" + i + " result=" + status + " errno=" + Os.errno());
-                }
-
-                openFds.add(socket);
-            }
-        } finally {
-            Net.close(mainSocket);
-            Net.freeSockAddr(address);
-
-            for (int i = 0, len = openFds.size(); i < len; i++) {
-                Net.close(openFds.get(i));
-            }
-        }
-    }
-
     private void bindSocket(long fd) {
         Assert.assertTrue(fd > 0);
         Assert.assertEquals(0, Net.setReuseAddress(fd));
         Assert.assertEquals(0, Net.setReusePort(fd));
         Assert.assertTrue(Net.bindUdp(fd, 0, 18215));
         Assert.assertTrue(Net.join(fd, "0.0.0.0", "224.0.0.125"));
-    }
-
-    private void log(String s) {
-        System.out.println(s);
     }
 }
