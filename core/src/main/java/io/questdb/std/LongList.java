@@ -523,5 +523,4 @@ public class LongList implements Mutable, LongVec {
         } while (data[high << shl] == value);
         return (high + 1) << shl;
     }
-
 }
