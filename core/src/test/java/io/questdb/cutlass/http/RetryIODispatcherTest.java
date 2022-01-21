@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableWriter;
@@ -616,17 +617,22 @@ public class RetryIODispatcherTest {
 
     private void assertInsertsIsPerformedWhenWriterLockedAndDisconnected() throws Exception {
         final int parallelCount = 4;
+        final Metrics metrics = Metrics.enabled();
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
                 .withWorkerCount(parallelCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withMetrics(metrics)
                 .withTelemetry(false)
                 .run(engine -> {
+                    long nonInsertQueries = 0;
+
                     // create table
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n",
                             IODispatcherTest.JSON_DDL_RESPONSE
                     );
+                    nonInsertQueries++;
 
                     TableWriter writer = lockWriter(engine, "balances_x");
                     CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
@@ -664,34 +670,45 @@ public class RetryIODispatcherTest {
                                     "{\"query\":\"SELECT 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"dataset\":[[1]],\"count\":1}\r\n" +
                                     "00\r\n" +
                                     "\r\n");
+                    nonInsertQueries++;
 
-                    for (int n = 0; n < fds.length; n++) {
-                        Assert.assertNotEquals(fds[n], -1);
-                        NetworkFacadeImpl.INSTANCE.close(fds[n]);
+                    final int maxWaitTimeMillis = 3000;
+                    final int sleepMillis = 50;
+
+                    // wait for all insert queries to be initially handled
+                    for (int i = 0; i < maxWaitTimeMillis / sleepMillis; i++) {
+                        final long startedInserts = metrics.jsonQuery().startedQueriesCount() - nonInsertQueries;
+                        if (startedInserts >= parallelCount) {
+                            break;
+                        }
+                        Os.sleep(sleepMillis);
+                    }
+
+                    // close the client sockets
+                    for (long fd : fds) {
+                        Assert.assertNotEquals(fd, -1);
+                        NetworkFacadeImpl.INSTANCE.close(fd);
                     }
 
                     writer.close();
 
-                    // check if we have parallelCount x insertCount  records
-                    int waitCount = 1000 / 50 * parallelCount;
-                    for (int i = 0; i < waitCount; i++) {
-                        try {
-                            new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                                    "GET /query?query=select+count()+from+balances_x&count=true HTTP/1.1\r\n",
-                                    "6f\r\n" +
-                                            "{\"query\":\"select count() from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + parallelCount + "]],\"count\":1}\r\n" +
-                                            "00\r\n" +
-                                            "\r\n"
-                            );
-                            return;
-                        } catch (ComparisonFailure e) {
-                            if (i < waitCount - 1) {
-                                Os.sleep(50);
-                            } else {
-                                throw e;
-                            }
+                    // wait for all insert queries to be executed
+                    for (int i = 0; i < maxWaitTimeMillis / sleepMillis; i++) {
+                        final long completeInserts = metrics.jsonQuery().completedQueriesCount() - nonInsertQueries;
+                        if (completeInserts == parallelCount) {
+                            break;
                         }
+                        Os.sleep(sleepMillis);
                     }
+
+                    // check that we have all the records inserted
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=select+count()+from+balances_x&count=true HTTP/1.1\r\n",
+                            "6f\r\n" +
+                                    "{\"query\":\"select count() from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + parallelCount + "]],\"count\":1}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n"
+                    );
                 });
     }
 

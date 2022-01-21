@@ -24,7 +24,12 @@
 
 package io.questdb.metrics;
 
+import org.jetbrains.annotations.TestOnly;
+
 public interface Counter extends Scrapable {
 
     void inc();
+
+    @TestOnly
+    long get();
 }

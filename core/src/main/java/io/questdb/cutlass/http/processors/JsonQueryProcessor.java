@@ -92,7 +92,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     ) {
         this.configuration = configuration;
         this.compiler = sqlCompiler;
-        final QueryExecutor sendConfirmation = JsonQueryProcessor::sendConfirmation;
+        final QueryExecutor sendConfirmation = this::updateMetricsAndSendConfirmation;
         this.queryExecutors.extendAndSet(CompiledQuery.SELECT, this::executeNewSelect);
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT, this::executeInsert);
         this.queryExecutors.extendAndSet(CompiledQuery.TRUNCATE, sendConfirmation);
@@ -113,6 +113,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.alterStartTimeout = engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout();
         this.alterStartFullTimeoutNs = engine.getConfiguration().getWriterAsyncCommandMaxTimeout() * 1000;
     }
+
+
 
     @Override
     public void close() {
@@ -289,6 +291,15 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 .$(", totalBytesSent=").$(context.getTotalBytesSent()).$(']').$();
     }
 
+    private void updateMetricsAndSendConfirmation(
+            JsonQueryProcessorState state,
+            CompiledQuery cq,
+            CharSequence keepAliveHeader
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        metrics.jsonQuery().markComplete();
+        sendConfirmation(state, keepAliveHeader);
+    }
+
     protected static void sendConfirmation(
             JsonQueryProcessorState state,
             CompiledQuery cq,
@@ -393,9 +404,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 queryFuture.close();
             }
         }
+        metrics.jsonQuery().markComplete();
         sendConfirmation(state, cc, keepAliveHeader);
     }
-
 
     private void executeInsert(
             JsonQueryProcessorState state,
@@ -405,6 +416,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         try (QueryFuture execution = cc.execute(state.getEventSubSequence())) {
             execution.await();
         }
+        metrics.jsonQuery().markComplete();
         sendConfirmation(state, cc, keepAliveHeader);
     }
 
@@ -431,6 +443,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             if (state.of(factory, sqlExecutionContext)) {
                 header(context.getChunkedResponseSocket(), keepAliveHeader);
                 doResumeSend(state, context);
+                metrics.jsonQuery().markComplete();
             } else {
                 readyForNextRequest(context);
             }
