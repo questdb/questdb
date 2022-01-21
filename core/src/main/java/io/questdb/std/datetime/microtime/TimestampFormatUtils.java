@@ -42,7 +42,6 @@ public class TimestampFormatUtils {
     public static final DateFormat GREEDY_MILLIS2_UTC_FORMAT;
     public static final DateFormat USEC_UTC_FORMAT;
     public static final DateFormat PG_TIMESTAMP_FORMAT;
-    public static final DateFormat PG_TIMESTAMPZ_FORMAT;
     public static final DateFormat PG_TIMESTAMP_MILLI_TIME_Z_FORMAT;
     public static final DateFormat PG_TIMESTAMP_TIME_Z_FORMAT;
     public static final DateFormat NANOS_UTC_FORMAT;
@@ -368,7 +367,6 @@ public class TimestampFormatUtils {
         TimestampFormatCompiler compiler = new TimestampFormatCompiler();
         HTTP_FORMAT = compiler.compile("E, d MMM yyyy HH:mm:ss Z");
         PG_TIMESTAMP_FORMAT = compiler.compile("y-MM-dd HH:mm:ss.SSSUUU");
-        PG_TIMESTAMPZ_FORMAT = compiler.compile("y-MM-ddTHH:mm:ss.SSSUUU");
         PG_TIMESTAMP_TIME_Z_FORMAT = compiler.compile("y-MM-dd HH:mm:ssz");
         NANOS_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUNNNz");
 
