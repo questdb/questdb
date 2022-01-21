@@ -28,8 +28,10 @@ import io.questdb.std.Os;
 
 public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C> {
 
+    private static final int M_ID = 2;
     private final Kqueue kqueue;
     private final int capacity;
+    private long fdid = 1;
 
     public IODispatcherOsx(
             IODispatcherConfiguration configuration,
@@ -49,10 +51,10 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             kqueue.setWriteOffset(offset);
             final int fd = (int) pending.get(i, M_FD);
             if (initialBias == IODispatcherConfiguration.BIAS_READ) {
-                kqueue.readFD(fd, pending.get(i, M_TIMESTAMP));
+                kqueue.readFD(fd, pending.get(i, M_ID));
                 LOG.debug().$("kq [op=1, fd=").$(fd).$(", index=").$(index).$(", offset=").$(offset).$(']').$();
             } else {
-                kqueue.writeFD(fd, pending.get(i, M_TIMESTAMP));
+                kqueue.writeFD(fd, pending.get(i, M_ID));
                 LOG.debug().$("kq [op=2, fd=").$(fd).$(", index=").$(index).$(", offset=").$(offset).$(']').$();
             }
             if (++index > capacity - 1) {
@@ -75,20 +77,11 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
 
     @Override
     protected void pendingAdded(int index) {
-        // nothing to do
+        pending.set(index, M_ID, fdid++);
     }
 
-    private int findPending(int fd, long ts) {
-        int r = pending.binarySearch(ts, M_TIMESTAMP);
-        if (r < 0) {
-            return r;
-        }
-
-        if (pending.get(r, M_FD) == fd) {
-            return r;
-        } else {
-            return scanRow(r + 1, fd, ts);
-        }
+    private int findPending(long ts) {
+        return pending.binarySearch(ts, M_ID);
     }
 
     private void processIdleConnections(long deadline) {
@@ -111,13 +104,14 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             int operation = evt.operation;
             interestSubSeq.done(cursor);
 
+            long id = fdid++;
             final int fd = (int) context.getFd();
             LOG.debug().$("registered [fd=").$(fd).$(", op=").$(operation).$(']').$();
             kqueue.setWriteOffset(offset);
             if (operation == IOOperation.READ) {
-                kqueue.readFD(fd, timestamp);
+                kqueue.readFD(fd, id);
             } else {
-                kqueue.writeFD(fd, timestamp);
+                kqueue.writeFD(fd, id);
             }
 
             offset += KqueueAccessor.SIZEOF_KEVENT;
@@ -126,6 +120,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             int r = pending.addRow();
             pending.set(r, M_TIMESTAMP, timestamp);
             pending.set(r, M_FD, fd);
+            pending.set(r, M_ID, id);
             pending.set(r, context);
 
 
@@ -172,8 +167,9 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
                     // find row in pending for two reasons:
                     // 1. find payload
                     // 2. remove row from pending, remaining rows will be timed out
-                    int row = findPending(fd, kqueue.getData());
+                    int row = findPending(kqueue.getData());
                     if (row < 0) {
+                        findPending(kqueue.getData());
                         LOG.error().$("Internal error: unknown FD: ").$(fd).$();
                         continue;
                     }
@@ -199,20 +195,6 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         }
 
         return processRegistrations(timestamp) || useful;
-    }
-
-    private int scanRow(int r, int fd, long ts) {
-        for (int i = r, n = pending.size(); i < n; i++) {
-            // timestamps not match?
-            if (pending.get(i, M_TIMESTAMP) != ts) {
-                return -(i + 1);
-            }
-
-            if (pending.get(i, M_FD) == fd) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     @Override
