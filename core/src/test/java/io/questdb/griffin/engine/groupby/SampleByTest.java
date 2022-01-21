@@ -8253,6 +8253,42 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleFillValueListWithNullNotKeyed() throws Exception {
+        assertQuery("sum\tcount\tk\n" +
+                        "11.427984775756228\t1\t1970-01-03T00:00:00.000000Z\n" +
+                        "20.56\tNaN\t1970-01-03T00:30:00.000000Z\n" +
+                        "42.17768841969397\t1\t1970-01-03T01:00:00.000000Z\n" +
+                        "20.56\tNaN\t1970-01-03T01:30:00.000000Z\n" +
+                        "23.90529010846525\t1\t1970-01-03T02:00:00.000000Z\n" +
+                        "20.56\tNaN\t1970-01-03T02:30:00.000000Z\n" +
+                        "70.94360487171201\t1\t1970-01-03T03:00:00.000000Z\n" +
+                        "20.56\tNaN\t1970-01-03T03:30:00.000000Z\n" +
+                        "87.99634725391621\t1\t1970-01-03T04:00:00.000000Z\n" +
+                        "20.56\tNaN\t1970-01-03T04:30:00.000000Z\n" +
+                        "32.881769076795045\t1\t1970-01-03T05:00:00.000000Z\n" +
+                        "20.56\tNaN\t1970-01-03T05:30:00.000000Z\n" +
+                        "97.71103146051203\t1\t1970-01-03T06:00:00.000000Z\n" +
+                        "20.56\tNaN\t1970-01-03T06:30:00.000000Z\n" +
+                        "81.46807944500559\t1\t1970-01-03T07:00:00.000000Z\n" +
+                        "20.56\tNaN\t1970-01-03T07:30:00.000000Z\n" +
+                        "57.93466326862211\t1\t1970-01-03T08:00:00.000000Z\n" +
+                        "20.56\tNaN\t1970-01-03T08:30:00.000000Z\n" +
+                        "12.026122412833129\t1\t1970-01-03T09:00:00.000000Z\n",
+                "select sum(a), count(), k from x sample by 30m fill(20.56, null)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(10)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false);
+    }
+
+    @Test
     public void testSampleFillValueNotKeyedAlignToCalendar() throws Exception {
         assertQuery("sum\tk\n" +
                         "11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +

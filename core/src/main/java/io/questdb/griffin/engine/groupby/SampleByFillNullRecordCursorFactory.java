@@ -89,7 +89,7 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
     }
 
     @NotNull
-    public static ObjList<Function> createPlaceholderFunctions(
+    static ObjList<Function> createPlaceholderFunctions(
             ObjList<Function> recordFunctions,
             IntList recordFunctionPositions
     ) throws SqlException {
@@ -97,46 +97,39 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
             Function function = recordFunctions.getQuick(i);
             if (function instanceof GroupByFunction) {
-                int type = function.getType();
-                switch (ColumnType.tagOf(type)) {
-                    case ColumnType.INT:
-                        placeholderFunctions.add(IntConstant.NULL);
-                        break;
-                    case ColumnType.LONG:
-                        placeholderFunctions.add(LongConstant.NULL);
-                        break;
-                    case ColumnType.FLOAT:
-                        placeholderFunctions.add(FloatConstant.NULL);
-                        break;
-                    case ColumnType.DOUBLE:
-                        placeholderFunctions.add(DoubleConstant.NULL);
-                        break;
-                    case ColumnType.BYTE:
-                        placeholderFunctions.add(ByteConstant.ZERO);
-                        break;
-                    case ColumnType.SHORT:
-                        placeholderFunctions.add(ShortConstant.ZERO);
-                        break;
-                    case ColumnType.GEOBYTE:
-                        placeholderFunctions.add(GeoByteConstant.NULL);
-                        break;
-                    case ColumnType.GEOSHORT:
-                        placeholderFunctions.add(GeoShortConstant.NULL);
-                        break;
-                    case ColumnType.GEOINT:
-                        placeholderFunctions.add(GeoIntConstant.NULL);
-                        break;
-                    case ColumnType.GEOLONG:
-                        placeholderFunctions.add(GeoLongConstant.NULL);
-                        break;
-                    default:
-                        throw SqlException.$(recordFunctionPositions.getQuick(i), "Unsupported type: ").put(ColumnType.nameOf(type));
-                }
+                placeholderFunctions.add(createPlaceHolderFunction(recordFunctionPositions, i, function.getType()));
             } else {
                 placeholderFunctions.add(function);
             }
         }
         return placeholderFunctions;
+    }
+
+    static Function createPlaceHolderFunction(IntList recordFunctionPositions, int index, int type) throws SqlException {
+        switch (ColumnType.tagOf(type)) {
+            case ColumnType.INT:
+                return IntConstant.NULL;
+            case ColumnType.LONG:
+                return LongConstant.NULL;
+            case ColumnType.FLOAT:
+                return FloatConstant.NULL;
+            case ColumnType.DOUBLE:
+                return DoubleConstant.NULL;
+            case ColumnType.BYTE:
+                return ByteConstant.ZERO;
+            case ColumnType.SHORT:
+                return ShortConstant.ZERO;
+            case ColumnType.GEOBYTE:
+                return GeoByteConstant.NULL;
+            case ColumnType.GEOSHORT:
+                return GeoShortConstant.NULL;
+            case ColumnType.GEOINT:
+                return GeoIntConstant.NULL;
+            case ColumnType.GEOLONG:
+                return GeoLongConstant.NULL;
+            default:
+                throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
+        }
     }
 
     @Override
