@@ -45,6 +45,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public class NetTest {
     private int port = 9992;
 
+
     @Test
     public void testNoLinger() throws InterruptedException, BrokenBarrierException {
         bindAcceptConnectClose();
@@ -292,14 +293,12 @@ public class NetTest {
     public void testBindAndListenUdpToLocalhost(){
         long fd = Net.socketUdp();
         try {
-            if (!Net.bindUdp(fd, Net.parseIPv4("127.0.0.1"), 9005)){
+            if (!Net.bindUdp(fd, Net.parseIPv4("127.0.0.1"), 9005)) {
                 Assert.fail("Failed to bind udp socket to localhost. Errno=" + Os.errno());
-            }
-            else {
+            } else {
                 Net.listen(fd, 100);
             }
-        }
-        finally {
+        } finally {
             Net.close(fd);
         }
     }

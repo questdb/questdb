@@ -675,7 +675,6 @@ public class RetryIODispatcherTest {
                     // check if we have parallelCount x insertCount  records
                     int waitCount = 1000 / 50 * parallelCount;
                     for (int i = 0; i < waitCount; i++) {
-
                         try {
                             new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                                     "GET /query?query=select+count()+from+balances_x&count=true HTTP/1.1\r\n",
@@ -691,7 +690,6 @@ public class RetryIODispatcherTest {
                             } else {
                                 throw e;
                             }
-
                         }
                     }
                 });
