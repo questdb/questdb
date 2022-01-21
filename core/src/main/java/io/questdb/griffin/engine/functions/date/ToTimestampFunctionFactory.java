@@ -31,11 +31,11 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 
 public class ToTimestampFunctionFactory implements FunctionFactory {
     @Override
@@ -67,7 +67,7 @@ public class ToTimestampFunctionFactory implements FunctionFactory {
             final CharSequence value = arg.getStr(rec);
             try {
                 if (value != null) {
-                    return TimestampFormatUtils.PG_TIMESTAMPZ_FORMAT.parse(value, TimestampFormatUtils.enLocale);
+                    return IntervalUtils.parseFloorPartialDate(value);
                 }
             } catch (NumericException ignore) {
             }
