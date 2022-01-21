@@ -34,7 +34,7 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.*;
 
-public final class TxWriter extends TxReader implements Closeable, SymbolValueCountCollector {
+public final class TxWriter extends TxReader implements Closeable, Mutable, SymbolValueCountCollector {
     private long prevTransientRowCount;
     private int attachedPositionDirtyIndex;
     private int txPartitionCount;
@@ -42,17 +42,8 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
     private long prevMinTimestamp;
     private MemoryCMARW txMem;
 
-    public TxWriter(FilesFacade ff, @Transient Path path, int partitionBy) {
-        super(ff, path, partitionBy);
-        try {
-            unsafeLoadAll();
-        } catch (Throwable e) {
-            // Do not truncate in case the file cannot be read
-            txMem.close(false);
-            txMem = null;
-            super.close();
-            throw e;
-        }
+    public TxWriter(FilesFacade ff) {
+        super(ff);
     }
 
     public void append() {
@@ -117,6 +108,11 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
     }
 
     @Override
+    public void clear() {
+        close();
+    }
+
+    @Override
     public void close() {
         try {
             if (txMem != null) {
@@ -125,6 +121,11 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
         } finally {
             super.close();
         }
+    }
+
+    @Override
+    public TxWriter ofRO(@Transient Path path, int partitionBy) {
+        throw new IllegalStateException();
     }
 
     @Override
@@ -203,6 +204,20 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
 
     public boolean isActivePartition(long timestamp) {
         return getPartitionTimestampLo(maxTimestamp) == timestamp;
+    }
+
+    public TxWriter ofRW(@Transient Path path, int partitionBy) {
+        super.ofRO(path, partitionBy);
+        try {
+            unsafeLoadAll();
+        } catch (Throwable e) {
+            // Do not truncate in case the file cannot be read
+            txMem.close(false);
+            txMem = null;
+            super.close();
+            throw e;
+        }
+        return this;
     }
 
     public void openFirstPartition(long timestamp) {
@@ -344,10 +359,12 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
     }
 
     private void saveAttachedPartitionsToTx(int symbolColumnCount) {
-        final int size = attachedPartitions.size();
-        final long partitionTableOffset = getPartitionTableSizeOffset(symbolColumnCount);
-        txMem.putInt(partitionTableOffset, size * Long.BYTES);
+        // change partition count only when we have something to save to the
+        // partition table
         if (maxTimestamp != Long.MIN_VALUE) {
+            final int size = attachedPartitions.size();
+            final long partitionTableOffset = getPartitionTableSizeOffset(symbolColumnCount);
+            txMem.putInt(partitionTableOffset, size * Long.BYTES);
             for (int i = attachedPositionDirtyIndex; i < size; i++) {
                 txMem.putLong(getPartitionTableIndexOffset(partitionTableOffset, i), attachedPartitions.getQuick(i));
             }

@@ -30,11 +30,10 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
-
-import java.util.concurrent.locks.LockSupport;
 
 public abstract class AbstractIndexReader implements BitmapIndexReader {
     public static final String INDEX_CORRUPT = "cursor could not consistently read index header [corrupt?]";
@@ -141,7 +140,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
                     throw CairoException.instance(0).put(INDEX_CORRUPT);
                 }
 
-                LockSupport.parkNanos(1);
+                Os.pause();
             }
 
             this.blockValueCountMod = blockValueCountMod;
@@ -181,6 +180,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
                 LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
                 throw CairoException.instance(0).put(INDEX_CORRUPT);
             }
+            Os.pause();
         }
 
         if (keyCount > this.keyCount) {

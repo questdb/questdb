@@ -503,6 +503,11 @@ Java_io_questdb_std_Vect_sortULongAscInPlace(JNIEnv *env, jclass cl, jlong pLong
     sort<uint64_t>(reinterpret_cast<uint64_t *>(pLong), len);
 }
 
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_sort128BitAscInPlace(JNIEnv *env, jclass cl, jlong pLong, jlong len) {
+    quick_sort_long_index_asc_in_place<__int128>(reinterpret_cast<__int128 *>(pLong), 0, len - 1);
+}
+
 JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_mergeLongIndexesAsc(JAVA_STATIC, jlong pIndexStructArray, jint cnt) {
     // prepare merge entries

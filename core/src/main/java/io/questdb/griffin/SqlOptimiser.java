@@ -1667,7 +1667,13 @@ class SqlOptimiser {
         if (nested != null) {
             moveTimestampToChooseModel(nested);
             ExpressionNode timestamp = nested.getTimestamp();
-            if (timestamp != null && nested.getSelectModelType() == QueryModel.SELECT_MODEL_NONE && nested.getTableName() == null && nested.getTableNameFunction() == null) {
+            if (
+                    timestamp != null
+                            && nested.getSelectModelType() == QueryModel.SELECT_MODEL_NONE
+                            && nested.getTableName() == null
+                            && nested.getTableNameFunction() == null
+                            && nested.getLatestBy().size() == 0
+            ) {
                 model.setTimestamp(timestamp);
                 nested.setTimestamp(null);
             }
@@ -3116,6 +3122,7 @@ class SqlOptimiser {
                         && model.getTableNameFunction() == null
                         && model.getJoinModels().size() == 1
                         && model.getWhereClause() == null
+                        && model.getLatestBy().size() == 0
         ) {
             model = model.getNestedModel();
         }

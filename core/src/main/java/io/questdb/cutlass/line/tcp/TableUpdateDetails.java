@@ -47,6 +47,8 @@ public class TableUpdateDetails implements Closeable {
     private final int timestampIndex;
     private final CairoEngine engine;
     private final MillisecondClock millisecondClock;
+    private final long commitTimeout;
+    private final long noAppendInterval;
     private final long writerTickRowsCountMod;
     private int writerThreadId;
     // Number of rows processed since the last reshuffle, this is an estimate because it is incremented by
@@ -75,6 +77,8 @@ public class TableUpdateDetails implements Closeable {
         }
         CairoConfiguration cairoConfiguration = engine.getConfiguration();
         this.millisecondClock = cairoConfiguration.getMillisecondClock();
+        this.commitTimeout = configuration.getCommitTimeout();
+        this.noAppendInterval = commitTimeout/4;
         this.writerTickRowsCountMod = cairoConfiguration.getWriterTickRowsCountMod();
         this.lastCommitMillis = millisecondClock.getTicks();
         this.writer = writer;
@@ -193,12 +197,12 @@ public class TableUpdateDetails implements Closeable {
     }
 
     void handleRowAppended() {
-        if (checkMaxAndCommitLag(writer)) {
+        if (commitIfMaxUncommittedRowsCountReached(writer)) {
             lastCommitMillis = millisecondClock.getTicks();
         }
     }
 
-    private boolean checkMaxAndCommitLag(TableWriter writer) {
+    private boolean commitIfMaxUncommittedRowsCountReached(TableWriter writer) {
         final long rowsSinceCommit = writer.getUncommittedRowCount();
         if (rowsSinceCommit < writer.getMetadata().getMaxUncommittedRows()) {
             if ((rowsSinceCommit & writerTickRowsCountMod) == 0) {
@@ -207,32 +211,44 @@ public class TableUpdateDetails implements Closeable {
             }
             return false;
         }
+        LOG.debug().$("max-uncommitted-rows commit with lag [").$(tableNameUtf16).I$();
         writer.commitWithLag(engine.getConfiguration().getCommitMode());
         // Tick after commit.
         writer.tick(false);
         return true;
     }
 
-    void handleWriterThreadMaintenance(long ticks, long maintenanceInterval) {
-        if (ticks - lastCommitMillis < maintenanceInterval) {
-            return;
+    boolean commitIfTimeoutElapsed(long millis) {
+        if (millis - lastMeasurementMillis < noAppendInterval || millis - lastCommitMillis < commitTimeout) {
+            return false;
         }
-        if (null != writer) {
-            LOG.debug().$("maintenance commit [table=").$(writer.getTableName()).I$();
+        return commit(millis);
+    }
+
+    private boolean commit(long millis) {
+        if (writer != null && writer.getUncommittedRowCount() > 0) {
+            LOG.debug().$("timeout-elapsed commit [rows=").$(writer.getUncommittedRowCount()).$(", table=").$(tableNameUtf16).I$();
+            lastCommitMillis = millis;
             try {
                 writer.commit();
             } catch (Throwable e) {
-                LOG.error().$("could not commit [table=").$(writer.getTableName()).I$();
-                writer = Misc.free(writer);
+                LOG.error().$("could not commit [table=").$(writer.getTableName()).$(", msg=").$(e.getMessage()).I$();
+                try {
+                    writer.rollback();
+                } catch (Throwable th) {
+                    LOG.error().$("could not perform emergency rollback [table=").$(writer.getTableName()).I$();
+                }
             }
+            return true;
         }
+        return false;
     }
 
     void releaseWriter(boolean commit) {
-        if (null != writer) {
-            LOG.debug().$("release commit [table=").$(writer.getTableName()).I$();
+        if (writer != null) {
             try {
                 if (commit) {
+                    LOG.debug().$("release commit [table=").$(writer.getTableName()).I$();
                     writer.commit();
                 }
             } catch (Throwable ex) {

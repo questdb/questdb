@@ -26,7 +26,6 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.mp.*;
-import io.questdb.std.DirectObjectFactory;
 import io.questdb.std.MemoryTag;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
@@ -47,10 +46,6 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<O3PurgeDiscoveryTask> o3PurgeDiscoveryQueue;
     private final MPSequence o3PurgeDiscoveryPubSeq;
     private final MCSequence o3PurgeDiscoverySubSeq;
-
-    private final RingQueue<O3PurgeTask> o3PurgeQueue;
-    private final MPSequence o3PurgePubSeq;
-    private final MCSequence o3PurgeSubSeq;
 
     private final RingQueue<O3PartitionTask> o3PartitionQueue;
     private final MPSequence o3PartitionPubSeq;
@@ -113,11 +108,6 @@ public class MessageBusImpl implements MessageBus {
         this.o3PurgeDiscoveryPubSeq = new MPSequence(this.o3PurgeDiscoveryQueue.getCycle());
         this.o3PurgeDiscoverySubSeq = new MCSequence(this.o3PurgeDiscoveryQueue.getCycle());
         this.o3PurgeDiscoveryPubSeq.then(this.o3PurgeDiscoverySubSeq).then(o3PurgeDiscoveryPubSeq);
-
-        this.o3PurgeQueue = new RingQueue<>(O3PurgeTask::new, configuration.getO3PurgeQueueCapacity());
-        this.o3PurgePubSeq = new MPSequence(this.o3PurgeQueue.getCycle());
-        this.o3PurgeSubSeq = new MCSequence(this.o3PurgeQueue.getCycle());
-        this.o3PurgePubSeq.then(this.o3PurgeSubSeq).then(this.o3PurgePubSeq);
 
         this.latestByQueue = new RingQueue<>(LatestByTask::new, configuration.getLatestByQueueCapacity());
         this.latestByPubSeq = new MPSequence(latestByQueue.getCycle());
@@ -255,21 +245,6 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MCSequence getO3PurgeDiscoverySubSeq() {
         return o3PurgeDiscoverySubSeq;
-    }
-
-    @Override
-    public MPSequence getO3PurgePubSeq() {
-        return o3PurgePubSeq;
-    }
-
-    @Override
-    public RingQueue<O3PurgeTask> getO3PurgeQueue() {
-        return o3PurgeQueue;
-    }
-
-    @Override
-    public MCSequence getO3PurgeSubSeq() {
-        return o3PurgeSubSeq;
     }
 
     @Override

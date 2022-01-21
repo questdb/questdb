@@ -24,18 +24,16 @@
 
 package io.questdb.cutlass.http;
 
-import java.util.concurrent.BrokenBarrierException;
-import java.util.concurrent.locks.LockSupport;
-
-import io.questdb.std.*;
-import org.junit.Assert;
-
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.*;
 import io.questdb.std.str.ByteSequence;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+
+import java.util.concurrent.BrokenBarrierException;
 
 public class SendAndReceiveRequestBuilder {
     public final static String RequestHeaders = "Host: localhost:9000\r\n" +
@@ -67,13 +65,16 @@ public class SendAndReceiveRequestBuilder {
     private int requestCount = 1;
     private int compareLength = -1;
     private boolean expectSendDisconnect;
+    private int clientLingerSeconds = -1;
 
     public long connectAndSendRequest(String request) {
         final long fd = nf.socketTcp(true);
-        nf.configureNoLinger(fd);
         long sockAddr = nf.sockaddr("127.0.0.1", 9001);
         try {
             TestUtils.assertConnect(fd, sockAddr);
+            if (clientLingerSeconds > -1) {
+                Assert.assertEquals(0, nf.configureLinger(fd, clientLingerSeconds));
+            }
             Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
             if (!expectDisconnect) {
                 NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
@@ -91,7 +92,6 @@ public class SendAndReceiveRequestBuilder {
             CharSequence response
     ) throws InterruptedException {
         final long fd = nf.socketTcp(true);
-        nf.configureNoLinger(fd);
         try {
             long sockAddr = nf.sockaddr("127.0.0.1", 9001);
             try {
@@ -165,7 +165,7 @@ public class SendAndReceiveRequestBuilder {
                     timeoutExpired = true;
                     break;
                 } else {
-                    Os.sleep(10);
+                    Os.pause();
                 }
             }
         }
@@ -208,7 +208,6 @@ public class SendAndReceiveRequestBuilder {
 
     public void executeMany(RequestAction action) throws InterruptedException, BrokenBarrierException {
         final long fd = nf.socketTcp(true);
-        nf.configureNoLinger(fd);
         try {
             long sockAddr = nf.sockaddr("127.0.0.1", 9001);
             Assert.assertTrue(fd > -1);
@@ -279,7 +278,7 @@ public class SendAndReceiveRequestBuilder {
                     timeoutExpired = true;
                     break;
                 } else {
-                    LockSupport.parkNanos(1);
+                    Os.pause();
                 }
             }
         }
@@ -335,6 +334,11 @@ public class SendAndReceiveRequestBuilder {
 
     public SendAndReceiveRequestBuilder withPrintOnly(boolean printOnly) {
         this.printOnly = printOnly;
+        return this;
+    }
+
+    public SendAndReceiveRequestBuilder withClientLinger(int seconds) {
+        this.clientLingerSeconds = seconds;
         return this;
     }
 

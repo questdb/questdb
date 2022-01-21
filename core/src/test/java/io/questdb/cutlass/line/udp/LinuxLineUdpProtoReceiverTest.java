@@ -266,12 +266,12 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
                         sender.flush();
                     }
 
-                    try (TableReader reader = new TableReader(new DefaultCairoConfiguration(root), "tab")) {
+                    try (TableReader reader = new TableReader(new DefaultCairoConfiguration(root), "tab", null)) {
                         int count = 1000000;
                         while (true) {
                             if (count-- > 0 && reader.size() < 10) {
                                 reader.reload();
-                                LockSupport.parkNanos(1);
+                                Os.pause();
                             } else {
                                 break;
                             }

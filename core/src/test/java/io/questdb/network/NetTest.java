@@ -41,10 +41,10 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.LockSupport;
 
 public class NetTest {
     private int port = 9992;
+
 
     @Test
     public void testNoLinger() throws InterruptedException, BrokenBarrierException {
@@ -168,7 +168,7 @@ public class NetTest {
                 ipCollectedLatch.countDown();
                 Net.configureNoLinger(clientfd);
                 while (!Net.isDead(clientfd)) {
-                    LockSupport.parkNanos(1);
+                    Os.pause();
                 }
                 Net.close(clientfd);
                 haltLatch.countDown();
@@ -293,14 +293,12 @@ public class NetTest {
     public void testBindAndListenUdpToLocalhost(){
         long fd = Net.socketUdp();
         try {
-            if (!Net.bindUdp(fd, Net.parseIPv4("127.0.0.1"), 9005)){
+            if (!Net.bindUdp(fd, Net.parseIPv4("127.0.0.1"), 9005)) {
                 Assert.fail("Failed to bind udp socket to localhost. Errno=" + Os.errno());
-            }
-            else {
+            } else {
                 Net.listen(fd, 100);
             }
-        }
-        finally {
+        } finally {
             Net.close(fd);
         }
     }

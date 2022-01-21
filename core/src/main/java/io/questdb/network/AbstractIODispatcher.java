@@ -106,15 +106,19 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
 
     private void createListenFd() throws NetworkError {
         this.serverFd = nf.socketTcp(false);
+        final int backlog = configuration.getListenBacklog();
         if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), configuration.getBindPort())) {
-            nf.listen(this.serverFd, configuration.getListenBacklog());
+            nf.listen(this.serverFd, backlog);
         } else {
             throw NetworkError.instance(nf.errno()).couldNotBindSocket(
                     configuration.getDispatcherLogName(),
                     configuration.getBindIPv4Address(),
                     configuration.getBindPort());
         }
-        LOG.advisory().$("listening on ").$ip(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort()).$(" [fd=").$(serverFd).$(']').$();
+        LOG.advisory().$("listening on ").$ip(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort())
+                .$(" [fd=").$(serverFd)
+                .$(" backlog=").$(backlog)
+                .I$();
     }
 
     @Override
@@ -188,7 +192,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected void accept(long timestamp) {
         int tlConCount = this.connectionCount.get();
         while (tlConCount < activeConnectionLimit) {
-            // this accept is greedy, rather than to rely on epoll(or similar) to
+            // this 'accept' is greedy, rather than to rely on epoll(or similar) to
             // fire accept requests at us one at a time we will be actively accepting
             // until nothing left.
 
