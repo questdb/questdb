@@ -42,7 +42,7 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     public SortedLightRecordCursor(LongTreeChain chain, RecordComparator comparator) {
         this.chain = chain;
         this.comparator = comparator;
-        // assign it once, its the same instance anyway
+        // assign it once, it's the same instance anyway
         this.chainCursor = chain.getCursor();
     }
 

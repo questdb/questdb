@@ -249,15 +249,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int sendBufferSize;
     private CharSequence indexFileName;
     private String publicDirectory;
-    private int httpActiveConnectionLimit;
-    private int httpEventCapacity;
-    private int httpIOQueueCapacity;
-    private long httpIdleConnectionTimeout;
-    private long httpQueuedConnectionTimeout;
-    private int httpInterestQueueCapacity;
-    private int httpListenBacklog;
-    private int httpSndBufSize;
-    private int httpRcvBufSize;
+    private int httpNetActiveConnectionLimit;
+    private boolean httpNetUseWindowsHint;
+    private long httpNetIdleConnectionTimeout;
+    private long httpNetQueuedConnectionTimeout;
+    private int httpNetSndBufSize;
+    private int httpNetRcvBufSize;
     private int dateAdapterPoolCapacity;
     private int jsonCacheLimit;
     private int jsonCacheSize;
@@ -272,8 +269,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int utf8SinkSize;
     private MimeTypesCache mimeTypesCache;
     private String keepAliveHeader;
-    private int httpBindIPv4Address;
-    private int httpBindPort;
+    private int httpNetBindIPv4Address;
+    private int httpNetBindPort;
     private int lineUdpBindIPV4Address;
     private int lineUdpPort;
     private int jsonQueryFloatScale;
@@ -284,14 +281,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long maxHttpQueryResponseRowLimit;
     private boolean interruptOnClosedConnection;
     private int pgNetActiveConnectionLimit;
+    private boolean pgNetUseWindowsHint;
     private int pgNetBindIPv4Address;
     private int pgNetBindPort;
-    private int pgNetEventCapacity;
-    private int pgNetIOQueueCapacity;
     private long pgNetIdleConnectionTimeout;
     private long pgNetQueuedConnectionTimeout;
-    private int pgNetInterestQueueCapacity;
-    private int pgNetListenBacklog;
     private int pgNetRcvBufSize;
     private int pgNetSndBufSize;
     private int pgCharacterStoreCapacity;
@@ -323,14 +317,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgNamesStatementPoolCapacity;
     private int pgPendingWritersCacheCapacity;
     private int lineTcpNetActiveConnectionLimit;
+    private boolean lineTcpNetUseWindowsHint;
     private int lineTcpNetBindIPv4Address;
     private int lineTcpNetBindPort;
-    private int lineTcpNetEventCapacity;
-    private int lineTcpNetIOQueueCapacity;
     private long lineTcpNetIdleConnectionTimeout;
     private long lineTcpNetQueuedConnectionTimeout;
-    private int lineTcpNetInterestQueueCapacity;
-    private int lineTcpNetListenBacklog;
     private int lineTcpNetRcvBufSize;
     private int lineTcpConnectionPoolInitialCapacity;
     private LineProtoTimestampAdapter lineTcpTimestampAdapter;
@@ -360,12 +351,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long httpMinWorkerSleepThreshold;
     private int httpMinBindIPv4Address;
     private int httpMinBindPort;
-    private int httpMinEventCapacity;
-    private int httpMinIOQueueCapacity;
     private long httpMinIdleConnectionTimeout;
     private long httpMinQueuedConnectionTimeout;
-    private int httpMinInterestQueueCapacity;
-    private int httpMinListenBacklog;
     private int httpMinRcvBufSize;
     private int httpMinSndBufSize;
     private long symbolCacheWaitUsBeforeReload;
@@ -430,12 +417,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                     httpMinBindPort = p;
                 });
 
-                this.httpMinEventCapacity = getInt(properties, env, "http.min.net.event.capacity", 16);
-                this.httpMinIOQueueCapacity = getQueueCapacity(properties, env, "http.min.net.io.queue.capacity", 16);
                 this.httpMinIdleConnectionTimeout = getLong(properties, env, "http.min.net.idle.connection.timeout", 5 * 60 * 1000L);
                 this.httpMinQueuedConnectionTimeout = getLong(properties, env, "http.min.net.queued.connection.timeout", 5 * 1000L);
-                this.httpMinInterestQueueCapacity = getQueueCapacity(properties, env, "http.min.net.interest.queue.capacity", 16);
-                this.httpMinListenBacklog = getInt(properties, env, "http.min.net.listen.backlog", 64);
                 this.httpMinSndBufSize = getIntSize(properties, env, "http.min.net.snd.buf.size", 1024);
                 this.httpMinRcvBufSize = getIntSize(properties, env, "http.net.rcv.buf.size", 1024);
             }
@@ -483,15 +466,13 @@ public class PropServerConfiguration implements ServerConfiguration {
                     this.publicDirectory = new File(root, publicDirectory).getAbsolutePath();
                 }
 
-                this.httpActiveConnectionLimit = getInt(properties, env, "http.net.active.connection.limit", 256);
-                this.httpEventCapacity = getInt(properties, env, "http.net.event.capacity", 1024);
-                this.httpIOQueueCapacity = getQueueCapacity(properties, env, "http.net.io.queue.capacity", 1024);
-                this.httpIdleConnectionTimeout = getLong(properties, env, "http.net.idle.connection.timeout", 5 * 60 * 1000L);
-                this.httpQueuedConnectionTimeout = getLong(properties, env, "http.net.queued.connection.timeout", 5 * 1000L);
-                this.httpInterestQueueCapacity = getQueueCapacity(properties, env, "http.net.interest.queue.capacity", 1024);
-                this.httpListenBacklog = getInt(properties, env, "http.net.listen.backlog", 256);
-                this.httpSndBufSize = getIntSize(properties, env, "http.net.snd.buf.size", 2 * 1024 * 1024);
-                this.httpRcvBufSize = getIntSize(properties, env, "http.net.rcv.buf.size", 2 * 1024 * 1024);
+                this.httpNetActiveConnectionLimit = getInt(properties, env, "http.net.active.connection.limit", 256);
+                this.httpNetUseWindowsHint = getBoolean(properties, env, "http.net.windows.hint", false);
+
+                this.httpNetIdleConnectionTimeout = getLong(properties, env, "http.net.idle.connection.timeout", 5 * 60 * 1000L);
+                this.httpNetQueuedConnectionTimeout = getLong(properties, env, "http.net.queued.connection.timeout", 5 * 1000L);
+                this.httpNetSndBufSize = getIntSize(properties, env, "http.net.snd.buf.size", 2 * 1024 * 1024);
+                this.httpNetRcvBufSize = getIntSize(properties, env, "http.net.rcv.buf.size", 2 * 1024 * 1024);
                 this.dateAdapterPoolCapacity = getInt(properties, env, "http.text.date.adapter.pool.capacity", 16);
                 this.jsonCacheLimit = getIntSize(properties, env, "http.text.json.cache.limit", 16384);
                 this.jsonCacheSize = getIntSize(properties, env, "http.text.json.cache.size", 8192);
@@ -514,8 +495,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.interruptOnClosedConnection = getBoolean(properties, env, "http.security.interrupt.on.closed.connection", true);
 
                 parseBindTo(properties, env, "http.bind.to", "0.0.0.0:9000", (a, p) -> {
-                    httpBindIPv4Address = a;
-                    httpBindPort = p;
+                    httpNetBindIPv4Address = a;
+                    httpNetBindPort = p;
                 });
 
                 // load mime types
@@ -535,17 +516,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.pgEnabled = getBoolean(properties, env, "pg.enabled", true);
             if (pgEnabled) {
                 pgNetActiveConnectionLimit = getInt(properties, env, "pg.net.active.connection.limit", 10);
+                pgNetUseWindowsHint = getBoolean(properties, env, "pg.net.windows.hint", false);
                 parseBindTo(properties, env, "pg.net.bind.to", "0.0.0.0:8812", (a, p) -> {
                     pgNetBindIPv4Address = a;
                     pgNetBindPort = p;
                 });
 
-                this.pgNetEventCapacity = getInt(properties, env, "pg.net.event.capacity", 1024);
-                this.pgNetIOQueueCapacity = getQueueCapacity(properties, env, "pg.net.io.queue.capacity", 1024);
                 this.pgNetIdleConnectionTimeout = getLong(properties, env, "pg.net.idle.timeout", 300_000);
                 this.pgNetQueuedConnectionTimeout = getLong(properties, env, "pg.net.idle.timeout", 5_000);
-                this.pgNetInterestQueueCapacity = getQueueCapacity(properties, env, "pg.net.interest.queue.capacity", 1024);
-                this.pgNetListenBacklog = getInt(properties, env, "pg.net.listen.backlog", 50_000);
                 this.pgNetRcvBufSize = getIntSize(properties, env, "pg.net.recv.buf.size", -1);
                 this.pgNetSndBufSize = getIntSize(properties, env, "pg.net.send.buf.size", -1);
                 this.pgCharacterStoreCapacity = getInt(properties, env, "pg.character.store.capacity", 4096);
@@ -729,17 +707,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineTcpEnabled = getBoolean(properties, env, "line.tcp.enabled", true);
             if (lineTcpEnabled) {
                 lineTcpNetActiveConnectionLimit = getInt(properties, env, "line.tcp.net.active.connection.limit", 256);
+                lineTcpNetUseWindowsHint = getBoolean(properties, env, "line.tcp.net.windows.hint", false);
                 parseBindTo(properties, env, "line.tcp.net.bind.to", "0.0.0.0:9009", (a, p) -> {
                     lineTcpNetBindIPv4Address = a;
                     lineTcpNetBindPort = p;
                 });
 
-                this.lineTcpNetEventCapacity = getInt(properties, env, "line.tcp.net.event.capacity", 1024);
-                this.lineTcpNetIOQueueCapacity = getInt(properties, env, "line.tcp.net.io.queue.capacity", 256);
                 this.lineTcpNetIdleConnectionTimeout = getLong(properties, env, "line.tcp.net.idle.timeout", 0);
                 this.lineTcpNetQueuedConnectionTimeout = getLong(properties, env, "line.tcp.net.queued.timeout", 5_000);
-                this.lineTcpNetInterestQueueCapacity = getInt(properties, env, "line.tcp.net.interest.queue.capacity", 1024);
-                this.lineTcpNetListenBacklog = getInt(properties, env, "line.tcp.net.listen.backlog", 50_000);
                 this.lineTcpNetRcvBufSize = getIntSize(properties, env, "line.tcp.net.recv.buf.size", -1);
                 this.lineTcpConnectionPoolInitialCapacity = getInt(properties, env, "line.tcp.connection.pool.capacity", 64);
                 this.lineTcpTimestampAdapter = getLineTimestampAdaptor(properties, env, "line.tcp.timestamp");
@@ -1124,17 +1099,22 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropHttpIODispatcherConfiguration implements IODispatcherConfiguration {
         @Override
         public int getActiveConnectionLimit() {
-            return httpActiveConnectionLimit;
+            return httpNetActiveConnectionLimit;
+        }
+
+        @Override
+        public boolean useWindowsHint() {
+            return httpNetUseWindowsHint;
         }
 
         @Override
         public int getBindIPv4Address() {
-            return httpBindIPv4Address;
+            return httpNetBindIPv4Address;
         }
 
         @Override
         public int getBindPort() {
-            return httpBindPort;
+            return httpNetBindPort;
         }
 
         @Override
@@ -1153,33 +1133,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getEventCapacity() {
-            return httpEventCapacity;
-        }
-
-        @Override
-        public int getIOQueueCapacity() {
-            return httpIOQueueCapacity;
-        }
-
-        @Override
         public long getIdleConnectionTimeout() {
-            return httpIdleConnectionTimeout;
+            return httpNetIdleConnectionTimeout;
         }
 
         @Override
         public int getInitialBias() {
             return IOOperation.READ;
-        }
-
-        @Override
-        public int getInterestQueueCapacity() {
-            return httpInterestQueueCapacity;
-        }
-
-        @Override
-        public int getListenBacklog() {
-            return httpListenBacklog;
         }
 
         @Override
@@ -1189,7 +1149,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getRcvBufSize() {
-            return httpRcvBufSize;
+            return httpNetRcvBufSize;
         }
 
         @Override
@@ -1199,19 +1159,19 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getSndBufSize() {
-            return httpSndBufSize;
+            return httpNetSndBufSize;
         }
 
         @Override
         public long getQueuedConnectionTimeout() {
-            return httpQueuedConnectionTimeout;
+            return httpNetQueuedConnectionTimeout;
         }
     }
 
     private class PropHttpMinIODispatcherConfiguration implements IODispatcherConfiguration {
         @Override
         public int getActiveConnectionLimit() {
-            return httpActiveConnectionLimit;
+            return httpNetActiveConnectionLimit;
         }
 
         @Override
@@ -1239,17 +1199,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             return EpollFacadeImpl.INSTANCE;
         }
 
-        @Override
-        public int getEventCapacity() {
-            return httpMinEventCapacity;
-        }
-
-        @Override
-        public int getIOQueueCapacity() {
-            return httpMinIOQueueCapacity;
-        }
-
-        @Override
         public long getIdleConnectionTimeout() {
             return httpMinIdleConnectionTimeout;
         }
@@ -1257,16 +1206,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getInitialBias() {
             return IOOperation.READ;
-        }
-
-        @Override
-        public int getInterestQueueCapacity() {
-            return httpMinInterestQueueCapacity;
-        }
-
-        @Override
-        public int getListenBacklog() {
-            return httpMinListenBacklog;
         }
 
         @Override
@@ -2228,6 +2167,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean useWindowsHint() {
+            return lineTcpNetUseWindowsHint;
+        }
+
+        @Override
         public int getBindIPv4Address() {
             return lineTcpNetBindIPv4Address;
         }
@@ -2253,16 +2197,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getEventCapacity() {
-            return lineTcpNetEventCapacity;
-        }
-
-        @Override
-        public int getIOQueueCapacity() {
-            return lineTcpNetIOQueueCapacity;
-        }
-
-        @Override
         public long getIdleConnectionTimeout() {
             return lineTcpNetIdleConnectionTimeout;
         }
@@ -2272,17 +2206,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             return BIAS_READ;
         }
 
-        @Override
-        public int getInterestQueueCapacity() {
-            return lineTcpNetInterestQueueCapacity;
-        }
-
-        @Override
-        public int getListenBacklog() {
-            return lineTcpNetListenBacklog;
-        }
-
-        @Override
         public NetworkFacade getNetworkFacade() {
             return NetworkFacadeImpl.INSTANCE;
         }
@@ -2595,6 +2518,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean useWindowsHint() {
+            return pgNetUseWindowsHint;
+        }
+
+        @Override
         public int getBindIPv4Address() {
             return pgNetBindIPv4Address;
         }
@@ -2619,17 +2547,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             return EpollFacadeImpl.INSTANCE;
         }
 
-        @Override
-        public int getEventCapacity() {
-            return pgNetEventCapacity;
-        }
-
-        @Override
-        public int getIOQueueCapacity() {
-            return pgNetIOQueueCapacity;
-        }
-
-        @Override
         public long getIdleConnectionTimeout() {
             return pgNetIdleConnectionTimeout;
         }
@@ -2637,16 +2554,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getInitialBias() {
             return BIAS_READ;
-        }
-
-        @Override
-        public int getInterestQueueCapacity() {
-            return pgNetInterestQueueCapacity;
-        }
-
-        @Override
-        public int getListenBacklog() {
-            return pgNetListenBacklog;
         }
 
         @Override

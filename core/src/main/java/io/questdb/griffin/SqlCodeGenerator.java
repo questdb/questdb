@@ -764,6 +764,55 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return new FilteredRecordCursorFactory(factory, f);
     }
 
+    @NotNull
+    private RecordCursorFactory generateLatestBy(RecordCursorFactory factory, QueryModel model) throws SqlException {
+        final ObjList<ExpressionNode> latestBy = model.getLatestBy();
+        if (latestBy.size() == 0) {
+            return factory;
+        }
+
+        final int timestampIndex = getTimestampIndex(model, factory);
+        if (timestampIndex == -1) {
+            Misc.free(factory);
+            throw SqlException.$(model.getModelPosition(), "latest by query does not provide dedicated TIMESTAMP column");
+        }
+
+        final RecordMetadata metadata = factory.getMetadata();
+        prepareLatestByColumnIndexes(latestBy, metadata);
+
+        if (!factory.recordCursorSupportsRandomAccess()) {
+            return new LatestByRecordCursorFactory(
+                    configuration,
+                    factory,
+                    RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
+                    keyTypes,
+                    timestampIndex
+            );
+        }
+
+        boolean orderedByTimestampAsc = false;
+        final QueryModel nested = model.getNestedModel();
+        assert nested != null;
+        final LowerCaseCharSequenceIntHashMap orderBy = nested.getOrderHash();
+        CharSequence timestampColumn = metadata.getColumnName(timestampIndex);
+        if (orderBy.get(timestampColumn) == QueryModel.ORDER_DIRECTION_ASCENDING) {
+            // ORDER BY the timestamp column case.
+            orderedByTimestampAsc = true;
+        } else if (timestampIndex == metadata.getTimestampIndex() && orderBy.size() == 0) {
+            // Empty ORDER BY, but the timestamp column in the designated timestamp.
+            orderedByTimestampAsc = true;
+        }
+
+        return new LatestByLightRecordCursorFactory(
+                configuration,
+                factory,
+                RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
+                keyTypes,
+                timestampIndex,
+                orderedByTimestampAsc
+        );
+    }
+
     private RecordCursorFactory generateFunctionQuery(QueryModel model) throws SqlException {
         final Function function = model.getTableNameFunction();
         assert function != null;
@@ -995,7 +1044,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     @NotNull
-    private RecordCursorFactory generateLatestByQuery(
+    private RecordCursorFactory generateLatestByTableQuery(
             QueryModel model,
             TableReader reader,
             RecordMetadata metadata,
@@ -1014,14 +1063,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             dataFrameCursorFactory = new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion());
         }
 
-        // 'latest by' clause takes over the filter
-        model.setWhereClause(null);
-
         assert model.getLatestBy() != null && model.getLatestBy().size() > 0;
-        ObjList<ExpressionNode> latestBy = model.getLatestBy();
+        ObjList<ExpressionNode> latestBy = new ObjList<>(model.getLatestBy().size());
+        latestBy.addAll(model.getLatestBy());
         final ExpressionNode latestByNode = latestBy.get(0);
         final int latestByIndex = metadata.getColumnIndexQuiet(latestByNode.token);
         final boolean indexed = metadata.isColumnIndexed(latestByIndex);
+
+        // 'latest by' clause takes over the filter and the latest by nodes,
+        // so that the later generateFilter() and generateLatestBy() are no-op
+        model.setWhereClause(null);
+        model.getLatestBy().clear();
 
         // if there are > 1 columns in the latest by statement we cannot use indexes
         if (latestBy.size() > 1 || !ColumnType.isSymbol(metadata.getColumnType(latestByIndex))) {
@@ -1400,15 +1452,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private RecordCursorFactory generateQuery0(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
         return generateLimit(
-                generateOrderBy(  
-                        generateFilter(
-                                generateSelect(
+                generateOrderBy(
+                        generateLatestBy(
+                                generateFilter(
+                                        generateSelect(
+                                                model,
+                                                executionContext,
+                                                processJoins
+                                        ),
                                         model,
-                                        executionContext,
-                                        processJoins
+                                        executionContext
                                 ),
-                                model,
-                                executionContext
+                                model
                         ),
                         model,
                         executionContext
@@ -1963,6 +2018,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private RecordCursorFactory generateSelectChoose(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final RecordCursorFactory factory = generateSubQuery(model, executionContext);
+
         final RecordMetadata metadata = factory.getMetadata();
         final ObjList<QueryColumn> columns = model.getColumns();
         final int selectColumnCount = columns.size();
@@ -2688,14 +2744,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (latestByColumnCount > 0) {
                     Function f = compileFilter(intrinsicModel, myMeta, executionContext);
                     if (f != null && f.isConstant() && !f.getBool(null)) {
+                        // 'latest by' clause takes over the latest by nodes, so that the later generateLatestBy() is no-op
+                        model.getLatestBy().clear();
+
                         return new EmptyTableRecordCursorFactory(myMeta);
                     }
 
-                    // a subquery present in the filter may have used the latest by
+                    // a sub-query present in the filter may have used the latest by
                     // column index lists, so we need to regenerate them
                     prepareLatestByColumnIndexes(latestBy, myMeta);
 
-                    return generateLatestByQuery(
+                    return generateLatestByTableQuery(
                             model,
                             reader,
                             myMeta,
@@ -2986,6 +3045,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
+            // 'latest by' clause takes over the latest by nodes, so that the later generateLatestBy() is no-op
+            model.getLatestBy().clear();
+
             // listColumnFilterA = latest by column indexes
             if (latestByColumnCount == 1 && myMeta.isColumnIndexed(listColumnFilterA.getColumnIndexFactored(0))) {
                 return new LatestByAllIndexedRecordCursorFactory(
@@ -3016,7 +3078,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 getOrderByDirectionOrDefault(model, 0) == ORDER_DIRECTION_DESCENDING;
     }
 
-    private int prepareLatestByColumnIndexes(ObjList<ExpressionNode> latestBy, GenericRecordMetadata myMeta) throws SqlException {
+    private int prepareLatestByColumnIndexes(ObjList<ExpressionNode> latestBy, RecordMetadata myMeta) throws SqlException {
         keyTypes.clear();
         listColumnFilterA.clear();
 
