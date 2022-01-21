@@ -3207,21 +3207,7 @@ public class TableReaderTest extends AbstractCairoTest {
         ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
 
         String tableName = "tbl_meta_test";
-        try (Path path = new Path()) {
-            try (
-                    MemoryMARW mem = Vm.getCMARWInstance();
-                    TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
-            ) {
-                model.timestamp();
-                TableUtils.createTable(
-                        configuration,
-                        mem,
-                        path,
-                        model,
-                        1
-                );
-            }
-        }
+        createTable(tableName, PartitionBy.DAY);
 
         Thread writerThread = new Thread(() -> {
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
@@ -3272,6 +3258,47 @@ public class TableReaderTest extends AbstractCairoTest {
         }
         Assert.assertTrue(reloadCount.get() > 100);
         LOG.infoW().$("total reload count ").$(reloadCount.get()).$();
+    }
+
+    @Test
+    public void testManySymbolReloadTest() {
+        String tableName = "testRandomMetaPartitionReloadFuzzTest";
+        createTable(tableName, PartitionBy.HOUR);
+
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            int partitionsToAdd = (int) (Files.PAGE_SIZE / Long.BYTES / 4) + 1;
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
+                int symbolsToAdd = (int) (Files.PAGE_SIZE / Long.BYTES);
+                for (int i = 0; i < symbolsToAdd; i++) {
+                    writer.addColumn("col" + i, ColumnType.SYMBOL);
+                }
+
+                for (int i = 0; i < partitionsToAdd; i++) {
+                    writer.newRow(i * Timestamps.HOUR_MICROS).append();
+                }
+                writer.commit();
+            }
+            reader.reload();
+            Assert.assertEquals(partitionsToAdd, reader.getPartitionCount());
+        }
+    }
+
+    private void createTable(String tableName, int partitionBy) {
+        try (Path path = new Path()) {
+            try (
+                    MemoryMARW mem = Vm.getCMARWInstance();
+                    TableModel model = new TableModel(configuration, tableName, partitionBy)
+            ) {
+                model.timestamp();
+                TableUtils.createTable(
+                        configuration,
+                        mem,
+                        path,
+                        model,
+                        1
+                );
+            }
+        }
     }
 
     static boolean isSamePartition(long timestampA, long timestampB, int partitionBy) {

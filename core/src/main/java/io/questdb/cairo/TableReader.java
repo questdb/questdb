@@ -63,7 +63,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final MessageBus messageBus;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final CairoConfiguration configuration;
-    private final IntList symbolCountSnapshot = new IntList();
     private final TxReader txFile;
     private final MemoryMR todoMem = Vm.getMRInstance();
     private final TxnScoreboard txnScoreboard;
@@ -103,7 +102,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     .I$();
             this.txFile = new TxReader(ff).ofRO(path, partitionBy);
             path.trimTo(rootLen);
-            readTxnSlow();
+            readTxnSlow(configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs());
             openSymbolMaps();
             partitionCount = txFile.getPartitionCount();
             partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
@@ -952,7 +951,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         symbolMapReaders.setPos(columnCount);
         for (int i = 0; i < columnCount; i++) {
             if (ColumnType.isSymbol(metadata.getColumnType(i))) {
-                SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl(configuration, path, metadata.getColumnName(i), symbolCountSnapshot.getQuick(symbolColumnIndex++));
+                SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl(configuration, path, metadata.getColumnName(i), txFile.getSymbolValueCount(symbolColumnIndex++));
                 symbolMapReaders.extendAndSet(i, symbolMapReader);
             }
         }
@@ -963,18 +962,21 @@ public class TableReader implements Closeable, SymbolTableSource {
         return path;
     }
 
-    private void readTxnSlow() {
-        int count = 0;
-        final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
+    private void readTxnSlow(long deadline) {
+        int count = 0, loadCount = 0;
+
         while (true) {
 
             // Note that txn numbers should be read in the reverse order to how they are written
             // writer writes `txn` followed by `txn_check` when all is written out.
             // Reader must begin with `txn_check` followed by verifying that `txn` remains the same.
-
             long txn = txFile.unsafeReadTxnCheck();
 
             // make sure this isn't re-ordered
+            Unsafe.getUnsafe().loadFence();
+            int symbolColumnCount = txFile.unsafeReadSymbolColumnCount();
+            int partitionSegmentSize = txFile.unsafeReadPartitionSegmentSize(symbolColumnCount);
+
             Unsafe.getUnsafe().loadFence();
 
             // do start and end sequences match? if so we have a chance at stable read
@@ -982,11 +984,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // great, we seem to have got stable read, lets do some reading
                 // and check later if it was worth it
 
-                Unsafe.getUnsafe().loadFence();
-                txFile.unsafeLoadAll();
-
-                this.symbolCountSnapshot.clear();
-                this.txFile.unsafeLoadSymbolCounts(this.symbolCountSnapshot);
+                // When unsafeLoadAll is used and partition information found to be
+                // half re-written by Writer at the txn check should force
+                // full partition table reload next run
+                txFile.unsafeLoadAll(symbolColumnCount, partitionSegmentSize, loadCount++ > 0);
 
                 Unsafe.getUnsafe().loadFence();
                 // ok, we have snapshot, check if our snapshot is stable
@@ -1008,9 +1009,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                         break;
                     }
                 }
-                // This is unlucky, sequences have changed while we were reading transaction data
-                // We must discard and try again
             }
+            // This is unlucky, sequences have changed while we were reading transaction data
+            // We must discard and try again
             count++;
             if (configuration.getMicrosecondClock().getTicks() > deadline) {
                 LOG.error().$("tx read timeout [timeout=").$(configuration.getSpinLockTimeoutUs()).utf8("μs]").$();
@@ -1230,7 +1231,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 if (reader == null) {
                     continue;
                 }
-                reader.updateSymbolCount(symbolCountSnapshot.getQuick(symbolMapIndex++));
+                reader.updateSymbolCount(txFile.getSymbolValueCount(symbolMapIndex++));
             }
         } finally {
             path.trimTo(rootLen);
@@ -1242,9 +1243,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         final long prevStructVersion = this.txFile.getStructureVersion();
         final long prevPartitionVersion = this.txFile.getPartitionTableVersion();
 
+        long deadline = this.configuration.getMicrosecondClock().getTicks() + this.configuration.getSpinLockTimeoutUs();
         // reload tx file, this will update the versions
         do {
-            this.readTxnSlow();
+            this.readTxnSlow(deadline);
         } while (!reloadStruct(prevStructVersion, txFile.getStructureVersion()));
 
         // partition reload will apply truncate if necessary
@@ -1273,7 +1275,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             if (!ColumnType.isSymbol(metadata.getColumnType(i))) {
                 continue;
             }
-            symbolMapReaders.getQuick(i).updateSymbolCount(symbolCountSnapshot.getQuick(symbolMapIndex++));
+            symbolMapReaders.getQuick(i).updateSymbolCount(txFile.getSymbolValueCount(symbolMapIndex++));
         }
     }
 

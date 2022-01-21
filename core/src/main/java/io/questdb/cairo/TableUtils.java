@@ -33,6 +33,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.MPSequence;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -692,6 +693,44 @@ public final class TableUtils {
         if (txn > -1) {
             txnPartition(path, txn);
         }
+    }
+
+    public static void safeReadTxn(TxReader txReader, MicrosecondClock microsecondClock, long spinLockTimeoutUs) {
+        long txn;
+        int loadCount = 0;
+        long deadline = microsecondClock.getTicks() + spinLockTimeoutUs;
+        while (true) {
+            txn = txReader.unsafeReadTxnCheck();
+            Unsafe.getUnsafe().loadFence();
+
+            int symbolColumnCount = txReader.unsafeReadSymbolColumnCount();
+            int partitionSegmentSize = txReader.unsafeReadPartitionSegmentSize(symbolColumnCount);
+            Unsafe.getUnsafe().loadFence();
+
+            if (txn == txReader.unsafeReadTxn()) {
+                txReader.unsafeLoadAll(symbolColumnCount, partitionSegmentSize, loadCount++ > 0);
+                Unsafe.getUnsafe().loadFence();
+            }
+
+            if (txn == txReader.unsafeReadTxn()) {
+                // All good, snapshot read
+                return;
+            } else {
+                // This is unlucky, sequences have changed while we were reading transaction data
+                // We must discard and try again
+                if (microsecondClock.getTicks() > deadline) {
+                    LOG.error().$("tx read timeout [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
+                    throw CairoException.instance(0).put("Transaction read timeout");
+                }
+                Os.pause();
+            }
+        }
+    }
+
+    public static void unsafeReadTxFile(TxReader txReader) {
+        int symbolColumnCount = txReader.unsafeReadSymbolColumnCount();
+        int partitionSegmentSize = txReader.unsafeReadPartitionSegmentSize(symbolColumnCount);
+        txReader.unsafeLoadAll(symbolColumnCount, partitionSegmentSize, true);
     }
 
     public static void validate(

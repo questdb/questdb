@@ -60,7 +60,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
         for (int i = 0; i < workerCount; i++) {
             sink[i] = new StringSink();
             fileNameSinks[i] = new StringSink();
-            partitionList.add(new DirectLongList(configuration.getPartitionPurgeListCapacity() * 2, MemoryTag.NATIVE_O3));
+            partitionList.add(new DirectLongList(configuration.getPartitionPurgeListCapacity() * 2L, MemoryTag.NATIVE_O3));
             txnScoreboards.add(new TxnScoreboard(configuration.getFilesFacade(), configuration.getTxnScoreboardEntryCount()));
             txnReaders.add(new TxReader(configuration.getFilesFacade()));
         }
@@ -184,7 +184,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
             txnScoreboard.ofRO(path);
             path.trimTo(tableRootLen);
             txReader.ofRO(path, partitionBy);
-            loadLastTx(txReader);
+            TableUtils.safeReadTxn(txReader, this.configuration.getMicrosecondClock(), this.configuration.getSpinLockTimeoutUs());
 
             for (int i = 0; i < n; i += 2) {
                 long currentPartitionTs = partitionList.get(i + 1);
@@ -253,18 +253,6 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
         );
         subSeq.done(cursor);
         return true;
-    }
-
-    private void loadLastTx(TxReader txReader) {
-        long txn;
-        do {
-            txn = txReader.unsafeReadTxnCheck();
-
-            Unsafe.getUnsafe().loadFence();
-            txReader.unsafeLoadAll();
-
-            Unsafe.getUnsafe().loadFence();
-        } while (txn != txReader.unsafeReadTxn());
     }
 
     private void parsePartitionDateVersion(StringSink fileNameSink, DirectLongList partitionList, CharSequence tableName, DateFormat partitionByFormat) {

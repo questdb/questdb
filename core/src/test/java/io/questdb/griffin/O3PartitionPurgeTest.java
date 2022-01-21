@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -34,7 +35,6 @@ import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.LockSupport;
 
 public class O3PartitionPurgeTest extends AbstractGriffinTest {
     private static O3PurgeDiscoveryJob purgeJob;
@@ -208,11 +208,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
 
     @Test
     public void testManyTablesFuzzTest() throws Exception {
-        // 2022-01-10T15:05:30.074009Z I i.q.c.AbstractCairoTest random seed 21709708564750, 1641827130074
-        long s0 = System.nanoTime();
-        long s1 = System.currentTimeMillis();
-        LOG.info().$("random seed ").$(s0).$(", ").$(s1).$();
-        Rnd rnd = new Rnd(21709708564750L, 1641827130074L);
+        Rnd rnd = TestUtils.generateRandom(LOG);
         int tableCount = 3;
         int testIterations = 100;
 
@@ -259,7 +255,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                     int len = path.length();
                     int partitionBy = PartitionBy.DAY;
                     txReader.ofRO(path, partitionBy);
-                    txReader.unsafeLoadAll();
+                    TableUtils.unsafeReadTxFile(txReader);
 
                     Assert.assertEquals(2, txReader.getPartitionCount());
                     for (int p = 0; p < 2; p++) {
