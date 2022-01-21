@@ -231,6 +231,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int writerTickRowsCountMod;
     private final long writerAsyncCommandMaxWaitTimeout;
     private final int o3PartitionPurgeListCapacity;
+    private int httpMinNetConnectionLimit;
     private boolean httpMinNetConnectionHint;
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
@@ -413,10 +414,15 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.httpMinWorkerYieldThreshold = getLong(properties, env, "http.min.worker.yield.threshold", 10);
                 this.httpMinWorkerSleepThreshold = getLong(properties, env, "http.min.worker.sleep.threshold", 10000);
 
-                parseBindTo(properties, env, "http.min.bind.to", "0.0.0.0:9003", (a, p) -> {
+                // obsolete
+                String httpMinBindTo = getString(properties, env, "http.min.bind.to", "0.0.0.0:9003");
+
+                parseBindTo(properties, env, "http.min.net.bind.to", httpMinBindTo, (a, p) -> {
                     httpMinBindIPv4Address = a;
                     httpMinBindPort = p;
                 });
+
+                this.httpMinNetConnectionLimit = getInt(properties, env, "http.min.net.connection.limit", 4);
 
                 // obsolete
                 this.httpMinNetConnectionTimeout = getLong(properties, env, "http.min.net.idle.connection.timeout", 5 * 60 * 1000L);
@@ -520,7 +526,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.maxHttpQueryResponseRowLimit = getLong(properties, env, "http.security.max.response.rows", Long.MAX_VALUE);
                 this.interruptOnClosedConnection = getBoolean(properties, env, "http.security.interrupt.on.closed.connection", true);
 
-                parseBindTo(properties, env, "http.bind.to", "0.0.0.0:9000", (a, p) -> {
+                String httpBindTo = getString(properties, env, "http.bind.to", "0.0.0.0:9000");
+                parseBindTo(properties, env, "http.net.bind.to", httpBindTo, (a, p) -> {
                     httpNetBindIPv4Address = a;
                     httpNetBindPort = p;
                 });
@@ -1219,7 +1226,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropHttpMinIODispatcherConfiguration implements IODispatcherConfiguration {
         @Override
         public int getLimit() {
-            return httpNetConnectionLimit;
+            return httpMinNetConnectionLimit;
         }
 
         @Override
