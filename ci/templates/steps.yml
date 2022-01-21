@@ -36,8 +36,7 @@ steps:
       goals: "test"
       options:
         "--batch-mode --quiet -P build-web-console
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -DargLine='-ea'
-        -Dhttp.keepAlive=false"
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
       jdkVersionOption: $(jdk)
       codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
       codeCoverageClassFilter: "$(COVERAGE_DIFF)"
@@ -58,8 +57,7 @@ steps:
       goals: "clean test"
       options:
         "--batch-mode --quiet -P build-web-console
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -DargLine='-ea'
-        -Dhttp.keepAlive=false"
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
       jdkVersionOption: $(jdk)
     timeoutInMinutes: 55
     condition: |
