@@ -24,6 +24,8 @@
 
 package io.questdb.network;
 
+import io.questdb.std.Numbers;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface IODispatcherConfiguration {
@@ -44,17 +46,36 @@ public interface IODispatcherConfiguration {
 
     EpollFacade getEpollFacade();
 
-    int getEventCapacity();
+    default int getEventCapacity() {
+        return Numbers.ceilPow2(getActiveConnectionLimit());
+    }
 
-    int getIOQueueCapacity();
+    default int getIOQueueCapacity() {
+        return Numbers.ceilPow2(getActiveConnectionLimit());
+    }
 
     long getIdleConnectionTimeout();
 
     int getInitialBias();
 
-    int getInterestQueueCapacity();
+    default int getInterestQueueCapacity() {
+        return Numbers.ceilPow2(getActiveConnectionLimit());
+    }
 
-    int getListenBacklog();
+    default boolean useWindowsHint() {
+        return false;
+    }
+
+    default int getListenBacklog() {
+        if (Os.type == Os.WINDOWS && useWindowsHint()) {
+            // Windows OS might have a limit of 200 concurrent connections. To overcome
+            // this limit we set backlog value to a hint as described here:
+            /// https://docs.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-listen
+            // the hint is -backlog
+            return -getActiveConnectionLimit();
+        }
+        return getActiveConnectionLimit();
+    }
 
     NetworkFacade getNetworkFacade();
 

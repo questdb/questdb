@@ -240,7 +240,6 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             _wptr = address + SelectAccessor.ARRAY_OFFSET;
         }
 
-        // todo: this method is untested
         private void resize() {
             int sz = size * 2;
             int l = SelectAccessor.ARRAY_OFFSET + 8 * sz;
