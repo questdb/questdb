@@ -4348,17 +4348,17 @@ public class IODispatcherTest {
 
             final IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration() {
                 @Override
-                public int getActiveConnectionLimit() {
+                public int getLimit() {
                     return activeConnectionLimit;
                 }
 
                 @Override
-                public long getQueuedConnectionTimeout() {
+                public long getQueueTimeout() {
                     return 300_000;
                 }
 
                 @Override
-                public boolean useWindowsHint() {
+                public boolean getHint() {
                     return true;
                 }
             };
@@ -4424,7 +4424,7 @@ public class IODispatcherTest {
                 } finally {
                     Net.freeSockAddr(sockAddr);
                     Unsafe.free(buf, 4096, MemoryTag.NATIVE_DEFAULT);
-                    Assert.assertFalse(configuration.getActiveConnectionLimit() < dispatcher.getConnectionCount());
+                    Assert.assertFalse(configuration.getLimit() < dispatcher.getConnectionCount());
                     serverRunning.set(false);
                     serverHaltLatch.await();
                 }
@@ -4666,12 +4666,12 @@ public class IODispatcherTest {
 
             final IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration() {
                 @Override
-                public int getActiveConnectionLimit() {
+                public int getLimit() {
                     return activeConnectionLimit;
                 }
 
                 @Override
-                public long getQueuedConnectionTimeout() {
+                public long getQueueTimeout() {
                     return queuedConnectionTimeoutInMs;
                 }
             };
@@ -5735,7 +5735,7 @@ public class IODispatcherTest {
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration() {
                         @Override
-                        public long getIdleConnectionTimeout() {
+                        public long getTimeout() {
                             // 0.5s idle timeout
                             return 500;
                         }
