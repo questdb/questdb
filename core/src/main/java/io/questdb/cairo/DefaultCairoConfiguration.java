@@ -69,6 +69,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getDataAppendPageSize() {
+        return getFilesFacade().getMapPageSize();
+    }
+
+    @Override
     public DateFormat getBackupDirTimestampFormat() {
         return null;
     }
@@ -144,11 +149,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getDataAppendPageSize() {
-        return getFilesFacade().getMapPageSize();
-    }
-
-    @Override
     public long getDataIndexKeyAppendPageSize() {
         return Files.PAGE_SIZE;
     }
@@ -206,11 +206,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public FilesFacade getFilesFacade() {
         return FilesFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public int getFilterQueueCapacity() {
-        return 32;
     }
 
     @Override
@@ -289,11 +284,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getMiscAppendPageSize() {
-        return getFilesFacade().getPageSize();
-    }
-
-    @Override
     public int getMkDirMode() {
         return 509;
     }
@@ -334,18 +324,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getO3PurgeQueueCapacity() {
-        return 1024;
-    }
-
-    @Override
-    public int getPageFrameQueueCapacity() {
-        return 32;
-    }
-
-    @Override
     public int getParallelIndexThreshold() {
         return 100000;
+    }
+
+    @Override
+    public int getPartitionPurgeListCapacity() {
+        return 64;
     }
 
     @Override
@@ -366,6 +351,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSampleByIndexSearchPageSize() {
         return 0;
+    }
+
+    @Override
+    public long getMiscAppendPageSize() {
+        return getFilesFacade().getPageSize();
     }
 
     @Override
@@ -471,41 +461,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlJitBindVarsMemoryMaxPages() {
-        return 8;
-    }
-
-    @Override
-    public long getSqlJitBindVarsMemoryPageSize() {
-        return 4096;
-    }
-
-    @Override
-    public int getSqlJitIRMemoryMaxPages() {
-        return 8;
-    }
-
-    @Override
-    public long getSqlJitIRMemoryPageSize() {
-        return 8192;
-    }
-
-    @Override
-    public int getSqlJitMode() {
-        return SqlJitMode.JIT_MODE_DISABLED;
-    }
-
-    @Override
-    public long getSqlJitPageAddressCacheThreshold() {
-        return Numbers.SIZE_1MB;
-    }
-
-    @Override
-    public int getSqlJitRowsThreshold() {
-        return Numbers.SIZE_1MB;
-    }
-
-    @Override
     public int getSqlJoinContextPoolCapacity() {
         return 64;
     }
@@ -556,11 +511,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlPageFrameMaxSize() {
-        return 8 * Numbers.SIZE_1MB;
-    }
-
-    @Override
     public int getSqlSortKeyMaxPages() {
         return 128;
     }
@@ -588,6 +538,51 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlSortValuePageSize() {
         return Numbers.SIZE_1MB * 16;
+    }
+
+    @Override
+    public int getSqlPageFrameMaxSize() {
+        return 8 * Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public int getSqlJitMode() {
+        return SqlJitMode.JIT_MODE_DISABLED;
+    }
+
+    @Override
+    public int getSqlJitIRMemoryPageSize() {
+        return 8192;
+    }
+
+    @Override
+    public int getSqlJitIRMemoryMaxPages() {
+        return 8;
+    }
+
+    @Override
+    public int getSqlJitBindVarsMemoryPageSize() {
+        return 4096;
+    }
+
+    @Override
+    public int getSqlJitBindVarsMemoryMaxPages() {
+        return 8;
+    }
+
+    @Override
+    public int getSqlJitRowsThreshold() {
+        return Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public int getSqlJitPageAddressCacheThreshold() {
+        return Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public boolean isSqlJitDebugEnabled() {
+        return false;
     }
 
     @Override
@@ -636,11 +631,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getWriterCommandQueueSlotSize() {
-        return 2048;
-    }
-
-    @Override
     public int getWriterTickRowsCountMod() {
         return 1024 - 1;
     }
@@ -653,15 +643,5 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isParallelIndexingEnabled() {
         return true;
-    }
-
-    @Override
-    public boolean isSqlJitDebugEnabled() {
-        return false;
-    }
-
-    @Override
-    public int getPageFrameRowsCapacity() {
-        return 32;
     }
 }

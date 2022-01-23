@@ -56,8 +56,8 @@ public class TableData {
         readyLatch.countDown();
     }
 
-    public boolean await(long seconds) {
-        return readyLatch.await(TimeUnit.SECONDS.toNanos(seconds));
+    public boolean await(long micros) {
+        return readyLatch.await(TimeUnit.MICROSECONDS.toNanos(micros));
     }
 
     public synchronized int size() {

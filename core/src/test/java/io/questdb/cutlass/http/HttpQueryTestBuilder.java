@@ -30,7 +30,10 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cutlass.http.processors.*;
-import io.questdb.griffin.*;
+import io.questdb.griffin.QueryFutureUpdateListener;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -48,7 +51,9 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 public class HttpQueryTestBuilder {
 
     private static final Log LOG = LogFactory.getLog(HttpQueryTestBuilder.class);
+
     private boolean telemetry;
+    private Metrics metrics;
     private TemporaryFolder temp;
     private HttpServerConfigurationBuilder serverConfigBuilder;
     private HttpRequestProcessorBuilder textImportProcessor;
@@ -164,7 +169,7 @@ public class HttpQueryTestBuilder {
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
                                 new SqlCompiler(engine, null),
-                                Metrics.enabled(),
+                                metrics != null ? metrics : Metrics.enabled(),
                                 sqlExecutionContext
                         );
                     }
@@ -211,7 +216,7 @@ public class HttpQueryTestBuilder {
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
                                 1,
-                                Metrics.enabled()
+                                metrics != null ? metrics : Metrics.enabled()
                         );
                     }
 
@@ -265,6 +270,11 @@ public class HttpQueryTestBuilder {
 
     public HttpQueryTestBuilder withTelemetry(boolean telemetry) {
         this.telemetry = telemetry;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withMetrics(Metrics metrics) {
+        this.metrics = metrics;
         return this;
     }
 

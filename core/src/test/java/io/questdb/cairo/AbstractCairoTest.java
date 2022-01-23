@@ -163,6 +163,13 @@ public class AbstractCairoTest {
             public long getWriterAsyncCommandMaxTimeout() {
                 return writerAsyncCommandMaxTimeout < 0 ? super.getWriterAsyncCommandMaxTimeout() : writerAsyncCommandMaxTimeout;
             }
+
+            @Override
+            public int getPartitionPurgeListCapacity() {
+                // Bump it to high number so that test don't fail with memory leak if LongList
+                // re-allocates
+                return 512;
+            }
         };
         engine = new CairoEngine(configuration);
         messageBus = engine.getMessageBus();

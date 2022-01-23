@@ -162,11 +162,11 @@ public interface CairoConfiguration {
 
     int getO3PurgeDiscoveryQueueCapacity();
 
-    int getO3PurgeQueueCapacity();
-
     int getPageFrameQueueCapacity();
 
     int getParallelIndexThreshold();
+
+    int getPartitionPurgeListCapacity();
 
     default Rnd getRandom() {
         Rnd rnd = RANDOM.get();

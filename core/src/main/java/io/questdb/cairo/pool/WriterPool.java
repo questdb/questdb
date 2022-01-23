@@ -32,6 +32,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
@@ -144,7 +145,7 @@ public class WriterPool extends AbstractPool {
                 if (owner < 0) {
                     // writer is about to be released from the pool by release method.
                     // try again, it should become available soon.
-                    LockSupport.parkNanos(1);
+                    Os.pause();
                     continue;
                 }
                 if (owner == thread) {

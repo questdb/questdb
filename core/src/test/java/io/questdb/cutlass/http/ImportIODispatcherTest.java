@@ -801,7 +801,7 @@ public class ImportIODispatcherTest {
                     CairoConfiguration configuration = engine.getConfiguration();
                     try (
                             Path path = new Path().concat(configuration.getRoot()).concat("xyz");
-                            TxnScoreboard txnScoreboard = new TxnScoreboard(ff, path, configuration.getTxnScoreboardEntryCount())
+                            TxnScoreboard txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path)
                     ) {
                         Assert.assertEquals(2, txnScoreboard.getMin());
                         Assert.assertEquals(0, txnScoreboard.getActiveReaderCount(2));

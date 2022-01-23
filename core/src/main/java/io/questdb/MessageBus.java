@@ -94,12 +94,6 @@ public interface MessageBus extends Closeable {
 
     MCSequence getO3PurgeDiscoverySubSeq();
 
-    MPSequence getO3PurgePubSeq();
-
-    RingQueue<O3PurgeTask> getO3PurgeQueue();
-
-    MCSequence getO3PurgeSubSeq();
-
     FanOut getPageFrameCollectFanOut(int shard);
 
     MPSequence getPageFrameReducePubSeq(int shard);

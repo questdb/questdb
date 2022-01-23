@@ -155,7 +155,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_bindUdp
     ZeroMemory(&RecvAddr, sizeof(RecvAddr));
 
     RecvAddr.sin_family = AF_INET;
-    RecvAddr.sin_addr.s_addr = htonl((u_long)ipv4Address);
+    RecvAddr.sin_addr.s_addr = htonl((u_long) ipv4Address);
     RecvAddr.sin_port = htons((u_short) port);
 
     if (bind((SOCKET) fd, (SOCKADDR *) &RecvAddr, sizeof(RecvAddr)) == 0) {
@@ -267,21 +267,21 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_send
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_sendTo
         (JNIEnv *e, jclass cl, jlong fd, jlong ptr, jint len, jlong sockaddr) {
     int result = sendto((SOCKET) fd, (const void *) ptr, len, 0, (const struct sockaddr *) sockaddr,
-                         sizeof(struct sockaddr_in));
+                        sizeof(struct sockaddr_in));
     if (result != len) {
         SaveLastError();
     }
     return result;
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureNoLinger
-        (JNIEnv *e, jclass cl, jlong fd) {
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureLinger
+        (JNIEnv *e, jclass cl, jlong fd, jint seconds) {
     struct linger sl;
     sl.l_onoff = 1;
-    sl.l_linger = 0;
+    sl.l_linger = seconds;
 
     int result = setsockopt((SOCKET) (int) fd, SOL_SOCKET, SO_LINGER, (const char *) &sl, sizeof(struct linger));
-    if ( result == SOCKET_ERROR) {
+    if (result == SOCKET_ERROR) {
         SaveLastError();
     }
     return result;

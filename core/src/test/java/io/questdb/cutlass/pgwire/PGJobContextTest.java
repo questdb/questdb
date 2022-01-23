@@ -1288,6 +1288,33 @@ nodejs code:
     }
 
     @Test
+    public void testInsertTimestampWithTypeSuffix() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(true, false)
+            ) {
+                final PreparedStatement statement = connection.prepareStatement("create table x (ts timestamp) timestamp(ts)");
+                statement.execute();
+
+                // the below timestamp formats are used by Python drivers
+                final PreparedStatement insert = connection.prepareStatement("insert into x values " +
+                        "('2020-06-01T00:00:02'::timestamp)," +
+                        "('2020-06-01T00:00:02.000009'::timestamp)");
+                insert.execute();
+
+                final String expected = "ts[TIMESTAMP]\n" +
+                        "2020-06-01 00:00:02.0\n" +
+                        "2020-06-01 00:00:02.000009\n";
+                try (ResultSet resultSet = connection.prepareStatement("select * from x").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expected, sink, resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testIntAndLongParametersWithFormatCountGreaterThanValueCount() throws Exception {
         String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
@@ -4464,11 +4491,6 @@ create table tab as (
                     @Override
                     public int getBindPort() {
                         return 8812;
-                    }
-
-                    @Override
-                    public boolean getPeerNoLinger() {
-                        return false;
                     }
                 };
             }

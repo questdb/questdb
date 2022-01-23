@@ -119,6 +119,13 @@ public final class Os {
     public static void init() {
     }
 
+    public static void pause() {
+        try {
+            Thread.sleep(0);
+        } catch (InterruptedException ignore) {
+        }
+    }
+
     public static int setCurrentThreadAffinity(int cpu) {
         if (cpu == -1) {
             return 0;
@@ -127,14 +134,16 @@ public final class Os {
     }
 
     public static void sleep(long millis) {
-        final long t = System.currentTimeMillis();
+        long t = System.currentTimeMillis();
         long deadline = millis;
         while (deadline > 0) {
             try {
                 Thread.sleep(deadline);
                 break;
             } catch (InterruptedException e) {
-                deadline = System.currentTimeMillis() - t;
+                long t2 = System.currentTimeMillis();
+                deadline -= t2 - t;
+                t = t2;
             }
         }
     }

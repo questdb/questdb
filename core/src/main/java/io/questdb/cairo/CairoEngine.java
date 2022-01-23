@@ -72,7 +72,7 @@ public class CairoEngine implements Closeable, WriterSource {
         this.configuration = configuration;
         this.messageBus = new MessageBusImpl(configuration);
         this.writerPool = new WriterPool(configuration, messageBus);
-        this.readerPool = new ReaderPool(configuration);
+        this.readerPool = new ReaderPool(configuration, messageBus);
         this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
         if (configuration.getTelemetryConfiguration().getEnabled()) {
             this.telemetryQueue = new RingQueue<>(TelemetryTask::new, configuration.getTelemetryConfiguration().getQueueCapacity());
