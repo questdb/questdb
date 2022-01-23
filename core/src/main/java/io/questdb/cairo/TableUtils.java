@@ -713,6 +713,9 @@ public final class TableUtils {
             }
 
             if (txn == txReader.unsafeReadTxn()) {
+                if (loadCount > 1) {
+                    LOG.debug().$("clean txn read after dirty [txn=").$(txn).I$();
+                }
                 // All good, snapshot read
                 return;
             } else {
@@ -724,6 +727,7 @@ public final class TableUtils {
                 }
                 Os.pause();
             }
+            LOG.debug().$("dirty txn read discarded [txn=").$(txn).I$();
         }
     }
 

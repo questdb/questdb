@@ -637,7 +637,7 @@ public final class TestUtils {
     public static Rnd generateRandom(Log log) {
         long s0 = System.nanoTime();
         long s1 = System.currentTimeMillis();
-        log.info().$("random seed ").$(s0).$(", ").$(s1).$();
+        System.out.println("random seed " + s0 + ", " + s1);
         return new Rnd(s0, s1);
     }
 
