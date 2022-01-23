@@ -231,6 +231,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int writerTickRowsCountMod;
     private final long writerAsyncCommandMaxWaitTimeout;
     private final int o3PartitionPurgeListCapacity;
+    private final int cairoFilterQueueCapacity;
+    private final int cairoPageFrameQueueCapacity;
+    private final int cairoWriterCommandQueueSlotSize;
+    private final int cairoPageFrameRowsCapacity;
     private boolean httpAllowDeflateBeforeSend;
     private int[] httpWorkerAffinity;
     private int[] httpMinWorkerAffinity;
@@ -614,6 +618,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlInsertModelPoolCapacity = getInt(properties, env, "cairo.sql.insert.model.pool.capacity", 64);
             this.sqlCopyModelPoolCapacity = getInt(properties, env, "cairo.sql.copy.model.pool.capacity", 32);
             this.sqlCopyBufferSize = getIntSize(properties, env, "cairo.sql.copy.buffer.size", 2 * 1024 * 1024);
+
+            this.cairoFilterQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.filter.queue.capacity", 64));
+            this.cairoPageFrameQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.page.frame.queue.capacity", 64));
+            this.cairoWriterCommandQueueSlotSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.writer.command.queue.slot.size", 2048));
+            this.cairoPageFrameRowsCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.page.frame.rows.capacity", 32));
+
 
             this.writerDataIndexKeyAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, "cairo.writer.data.index.key.append.page.size", 512 * 1024));
             this.writerDataIndexValueAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, "cairo.writer.data.index.value.append.page.size", 16 * 1024 * 1024));
@@ -1103,11 +1113,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean useWindowsHint() {
-            return httpNetUseWindowsHint;
-        }
-
-        @Override
         public int getBindIPv4Address() {
             return httpNetBindIPv4Address;
         }
@@ -1140,6 +1145,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getInitialBias() {
             return IOOperation.READ;
+        }
+
+        @Override
+        public boolean useWindowsHint() {
+            return httpNetUseWindowsHint;
         }
 
         @Override
@@ -1491,6 +1501,25 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropCairoConfiguration implements CairoConfiguration {
+        @Override
+        public int getFilterQueueCapacity() {
+            return cairoFilterQueueCapacity;
+        }
+
+        @Override
+        public int getPageFrameQueueCapacity() {
+            return cairoPageFrameQueueCapacity;
+        }
+
+        @Override
+        public int getWriterCommandQueueSlotSize() {
+            return cairoWriterCommandQueueSlotSize;
+        }
+
+        @Override
+        public int getPageFrameRowsCapacity() {
+            return cairoPageFrameRowsCapacity;
+        }
 
         @Override
         public boolean enableTestFactories() {
@@ -1500,11 +1529,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getAnalyticColumnPoolCapacity() {
             return sqlAnalyticColumnPoolCapacity;
-        }
-
-        @Override
-        public long getDataAppendPageSize() {
-            return writerDataAppendPageSize;
         }
 
         @Override
@@ -1580,6 +1604,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getCreateTableModelPoolCapacity() {
             return sqlCreateTableModelPoolCapacity;
+        }
+
+        @Override
+        public long getDataAppendPageSize() {
+            return writerDataAppendPageSize;
         }
 
         @Override
@@ -1718,6 +1747,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getMiscAppendPageSize() {
+            return writerMiscAppendPageSize;
+        }
+
+        @Override
         public int getMkDirMode() {
             return mkdirMode;
         }
@@ -1785,11 +1819,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSampleByIndexSearchPageSize() {
             return sampleByIndexSearchPageSize;
-        }
-
-        @Override
-        public long getMiscAppendPageSize() {
-            return writerMiscAppendPageSize;
         }
 
         @Override
@@ -1893,6 +1922,41 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlJitBindVarsMemoryMaxPages() {
+            return sqlJitBindVarsMemoryMaxPages;
+        }
+
+        @Override
+        public int getSqlJitBindVarsMemoryPageSize() {
+            return sqlJitBindVarsMemoryPageSize;
+        }
+
+        @Override
+        public int getSqlJitIRMemoryMaxPages() {
+            return sqlJitIRMemoryMaxPages;
+        }
+
+        @Override
+        public int getSqlJitIRMemoryPageSize() {
+            return sqlJitIRMemoryPageSize;
+        }
+
+        @Override
+        public int getSqlJitMode() {
+            return sqlJitMode;
+        }
+
+        @Override
+        public int getSqlJitPageAddressCacheThreshold() {
+            return sqlJitPageAddressCacheThreshold;
+        }
+
+        @Override
+        public int getSqlJitRowsThreshold() {
+            return sqlJitRowsThreshold;
+        }
+
+        @Override
         public int getSqlJoinContextPoolCapacity() {
             return sqlJoinContextPoolCapacity;
         }
@@ -1943,6 +2007,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlPageFrameMaxSize() {
+            return sqlPageFrameMaxSize;
+        }
+
+        @Override
         public int getSqlSortKeyMaxPages() {
             return sqlSortKeyMaxPages;
         }
@@ -1970,51 +2039,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlSortValuePageSize() {
             return sqlSortValuePageSize;
-        }
-
-        @Override
-        public int getSqlPageFrameMaxSize() {
-            return sqlPageFrameMaxSize;
-        }
-
-        @Override
-        public int getSqlJitMode() {
-            return sqlJitMode;
-        }
-
-        @Override
-        public int getSqlJitIRMemoryPageSize() {
-            return sqlJitIRMemoryPageSize;
-        }
-
-        @Override
-        public int getSqlJitIRMemoryMaxPages() {
-            return sqlJitIRMemoryMaxPages;
-        }
-
-        @Override
-        public int getSqlJitBindVarsMemoryPageSize() {
-            return sqlJitBindVarsMemoryPageSize;
-        }
-
-        @Override
-        public int getSqlJitBindVarsMemoryMaxPages() {
-            return sqlJitBindVarsMemoryMaxPages;
-        }
-
-        @Override
-        public int getSqlJitRowsThreshold() {
-            return sqlJitRowsThreshold;
-        }
-
-        @Override
-        public int getSqlJitPageAddressCacheThreshold() {
-            return sqlJitPageAddressCacheThreshold;
-        }
-
-        @Override
-        public boolean isSqlJitDebugEnabled() {
-            return sqlJitDebugEnabled;
         }
 
         public TelemetryConfiguration getTelemetryConfiguration() {
@@ -2074,6 +2098,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isParallelIndexingEnabled() {
             return parallelIndexingEnabled;
+        }
+
+        @Override
+        public boolean isSqlJitDebugEnabled() {
+            return sqlJitDebugEnabled;
         }
     }
 
@@ -2162,11 +2191,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean useWindowsHint() {
-            return lineTcpNetUseWindowsHint;
-        }
-
-        @Override
         public int getBindIPv4Address() {
             return lineTcpNetBindIPv4Address;
         }
@@ -2199,6 +2223,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getInitialBias() {
             return BIAS_READ;
+        }
+
+        @Override
+        public boolean useWindowsHint() {
+            return lineTcpNetUseWindowsHint;
         }
 
         public NetworkFacade getNetworkFacade() {
@@ -2513,11 +2542,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean useWindowsHint() {
-            return pgNetUseWindowsHint;
-        }
-
-        @Override
         public int getBindIPv4Address() {
             return pgNetBindIPv4Address;
         }
@@ -2549,6 +2573,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getInitialBias() {
             return BIAS_READ;
+        }
+
+        @Override
+        public boolean useWindowsHint() {
+            return pgNetUseWindowsHint;
         }
 
         @Override

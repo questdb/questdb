@@ -184,7 +184,6 @@ public class ServerMain {
         workerPool.assign(new O3OpenColumnJob(cairoEngine.getMessageBus()));
         workerPool.assign(new O3CopyJob(cairoEngine.getMessageBus()));
         workerPool.assign(new O3PurgeDiscoveryJob(cairoEngine.getMessageBus(), workerPool.getWorkerCount()));
-        workerPool.assign(new O3PurgeJob(cairoEngine.getMessageBus()));
 
         workerPool.assign(new PageFrameDispatchJob(cairoEngine.getMessageBus(), workerPool.getWorkerCount()));
         for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {

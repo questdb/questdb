@@ -229,15 +229,15 @@ public interface CairoConfiguration {
 
     int getSqlJitBindVarsMemoryMaxPages();
 
-    long getSqlJitBindVarsMemoryPageSize();
+    int getSqlJitBindVarsMemoryPageSize();
 
     int getSqlJitIRMemoryMaxPages();
 
-    long getSqlJitIRMemoryPageSize();
+    int getSqlJitIRMemoryPageSize();
 
     int getSqlJitMode();
 
-    long getSqlJitPageAddressCacheThreshold();
+    int getSqlJitPageAddressCacheThreshold();
 
     int getSqlJitRowsThreshold();
 

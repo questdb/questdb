@@ -185,7 +185,7 @@ public class LatestByRecordCursorFactory implements RecordCursorFactory {
             rowIndexes.clear();
             if (rowIndexes.getCapacity() > rowIndexesCapacityThreshold) {
                 // This call will shrink down the underlying array
-                rowIndexes.extend(rowIndexesCapacityThreshold);
+                rowIndexes.setCapacity(rowIndexesCapacityThreshold);
             }
         }
 
