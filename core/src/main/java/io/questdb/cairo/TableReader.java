@@ -471,7 +471,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         // this is a silly exercise in walking the index
         for (int i = 0; i < columnCount; i++) {
 
-            // prevent writing same entry more times
+            // prevent writing same entry more than once
             if (Unsafe.getUnsafe().getByte(stateAddress + i) == -1) {
                 continue;
             }
