@@ -102,7 +102,13 @@ public class TableReader implements Closeable, SymbolTableSource {
                     .I$();
             this.txFile = new TxReader(ff).ofRO(path, partitionBy);
             path.trimTo(rootLen);
-            readTxnSlow(configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs());
+
+            long deadline = this.configuration.getMicrosecondClock().getTicks() + this.configuration.getSpinLockTimeoutUs();
+            long prevStructVersion = metadata.getStructureVersion();
+            do {
+                readTxnSlow(deadline);
+            } while (!reloadStruct(prevStructVersion, txFile.getStructureVersion(), deadline));
+
             openSymbolMaps();
             partitionCount = txFile.getPartitionCount();
             partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
@@ -1141,14 +1147,17 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private boolean reloadMetadata(long txnStructureVersion) {
+    private boolean reloadMetadata(long txnStructureVersion, long deadline) {
         // create transition index, which will help us reuse already open resources
-        final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
         while (true) {
             try {
                 long pTransitionIndex = metadata.createTransitionIndex(txnStructureVersion);
                 if (pTransitionIndex < 0) {
-                    return false;
+                    if (configuration.getMicrosecondClock().getTicks() < deadline) {
+                        return false;
+                    }
+                    LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeoutUs()).utf8("μs]").$();
+                    throw CairoException.instance(0).put("Metadata read timeout");
                 }
                 try {
                     metadata.applyTransitionIndex(pTransitionIndex);
@@ -1245,22 +1254,22 @@ public class TableReader implements Closeable, SymbolTableSource {
         // reload tx file, this will update the versions
         do {
             this.readTxnSlow(deadline);
-        } while (!reloadStruct(prevStructVersion, txFile.getStructureVersion()));
+        } while (!reloadStruct(prevStructVersion, txFile.getStructureVersion(), deadline));
 
         // partition reload will apply truncate if necessary
         // applyTruncate for non-partitioned tables only
         reconcileOpenPartitions(prevPartitionVersion);
     }
 
-    private boolean reloadStruct(long prevStructVersion, long txnStructureVersion) {
+    private boolean reloadStruct(long prevStructVersion, long txnStructureVersion, long deadline) {
         if (prevStructVersion == txnStructureVersion) {
             return true;
         }
-        return reloadStructSlow(txnStructureVersion);
+        return reloadStructSlow(txnStructureVersion, deadline);
     }
 
-    private boolean reloadStructSlow(long txnStructureVersion) {
-        if (reloadMetadata(txnStructureVersion)) {
+    private boolean reloadStructSlow(long txnStructureVersion, long deadline) {
+        if (reloadMetadata(txnStructureVersion, deadline)) {
             reloadSymbolMapCounts();
             return true;
         }
