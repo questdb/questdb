@@ -79,9 +79,10 @@ public class PageFrameDispatchJob implements Job {
         boolean idle = true;
         final int shard = frameSequence.getShard();
         final RingQueue<PageFrameReduceTask> queue = messageBus.getPageFrameReduceQueue(shard);
+        final int queueCycle = queue.getCycle();
+
         // the sequence used to steal worker jobs
         final MCSequence reduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
-        final MCSequence cleanupSubSeq = messageBus.getPageFrameCleanupSubSeq(shard);
 
         if ((workStealingMode && frameSequence.isWorkStealingOwner() || (!workStealingMode && frameSequence.isAsyncOwner()))) {
             final int frameCount = frameSequence.getFrameCount();
@@ -106,9 +107,6 @@ public class PageFrameDispatchJob implements Job {
                     cursor = reducePubSeq.next();
                     if (cursor > -1) {
                         queue.get(cursor).of(frameSequence, i);
-                        if (frameSequence.getId() == -1) {
-                            System.out.println("ok");
-                        }
                         LOG.info()
                                 .$("dispatched [shard=").$(shard)
                                 .$(", id=").$(frameSequence.getId())
@@ -121,7 +119,7 @@ public class PageFrameDispatchJob implements Job {
                     } else {
                         idle = false;
                         // start stealing work to unload the queue
-                        if (stealWork(messageBus, shard, queue, reduceSubSeq, cleanupSubSeq, record) || !workStealingMode) {
+                        if (stealWork(queue, reduceSubSeq, record) || !workStealingMode) {
                             continue;
                         }
                         frameSequence.setDispatchStartIndex(i);
@@ -133,7 +131,7 @@ public class PageFrameDispatchJob implements Job {
             // join the gang to consume published tasks
             while (framesReducedCounter.get() < frameCount) {
                 idle = false;
-                if (stealWork(messageBus, shard, queue, reduceSubSeq, cleanupSubSeq, record) || !workStealingMode) {
+                if (stealWork(queue, reduceSubSeq, record) || !workStealingMode) {
                     continue;
                 }
                 break;
@@ -141,28 +139,16 @@ public class PageFrameDispatchJob implements Job {
         }
 
         if (idle && workStealingMode) {
-            stealWork(messageBus, shard, queue, reduceSubSeq, cleanupSubSeq, record);
+            stealWork(queue, reduceSubSeq, record);
         }
     }
 
     public static boolean stealWork(
-            MessageBus messageBus,
-            int shard,
             RingQueue<PageFrameReduceTask> queue,
             MCSequence reduceSubSeq,
-            MCSequence cleanupSubSeq,
             PageAddressCacheRecord record
     ) {
-        if (
-                PageFrameReduceJob.consumeQueue(queue, reduceSubSeq, record) &&
-                        PageFrameCleanupJob.consumeQueue(
-                                queue,
-                                cleanupSubSeq,
-                                messageBus,
-                                shard,
-                                queue.getCycle()
-                        )
-        ) {
+        if (PageFrameReduceJob.consumeQueue(queue, reduceSubSeq, record)) {
             LockSupport.parkNanos(1);
             return false;
         }

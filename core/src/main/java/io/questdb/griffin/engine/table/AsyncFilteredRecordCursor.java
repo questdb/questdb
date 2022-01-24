@@ -95,6 +95,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         // do we have more frames?
         if (frameIndex + 1 < frameCount) {
             // release previous queue item
+            queue.get(cursor).collected();
             collectSubSeq.done(cursor);
             fetchNextFrame();
             if (frameRowCount > 0) {
@@ -109,6 +110,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     private void collectCursor() {
         if (cursor > -1) {
+            queue.get(cursor).collected();
             collectSubSeq.done(cursor);
             cursor = -1;
         }
@@ -168,6 +170,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                     record.setFrameIndex(task.getFrameIndex());
                     break;
                 } else {
+                    queue.get(cursor).collected();
                     collectSubSeq.done(cursor);
                     cursor = -1;
                 }

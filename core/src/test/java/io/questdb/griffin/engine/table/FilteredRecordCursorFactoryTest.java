@@ -26,12 +26,16 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.async.*;
+import io.questdb.cairo.sql.async.PageFrameDispatchJob;
+import io.questdb.cairo.sql.async.PageFrameReduceJob;
+import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.Misc;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -49,7 +53,7 @@ public class FilteredRecordCursorFactoryTest extends AbstractGriffinTest {
             WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
-                    return new int[]{ -1, -1, -1, -1};
+                    return new int[]{-1, -1, -1, -1};
                 }
 
                 @Override
@@ -65,13 +69,14 @@ public class FilteredRecordCursorFactoryTest extends AbstractGriffinTest {
 
             pool.assign(new PageFrameDispatchJob(engine.getMessageBus(), pool.getWorkerCount()));
             for (int i = 0, n = pool.getWorkerCount(); i < n; i++) {
-                pool.assign(i, new PageFrameReduceJob(
-                        engine.getMessageBus(),
-                        sqlExecutionContext.getRandom()
+                pool.assign(
+                        i,
+                        new PageFrameReduceJob(
+                                engine.getMessageBus(),
+                                sqlExecutionContext.getRandom()
                         )
                 );
             }
-            pool.assign(0, new PageFrameCleanupJob(engine.getMessageBus(), sqlExecutionContext.getRandom()));
 
             pool.start(null);
 
@@ -93,6 +98,7 @@ public class FilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                         PageFrameReduceTask task = queue.get(cursor);
                         if (task.getFrameSequence().getId() == frameSequenceId) {
                             frameCount++;
+                            task.collected();
                             if (frameCount == task.getFrameSequence().getFrameCount()) {
                                 subSeq.done(cursor);
                                 break;
@@ -101,8 +107,9 @@ public class FilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                         subSeq.done(cursor);
                     }
                     frameSequence.await();
+                    Misc.free(frameSequence.getSymbolTableSource());
                 }
-            } catch (Throwable e){
+            } catch (Throwable e) {
                 e.printStackTrace();
                 throw e;
             } finally {

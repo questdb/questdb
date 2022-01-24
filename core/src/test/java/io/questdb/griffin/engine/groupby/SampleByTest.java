@@ -7990,7 +7990,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 // make sure we get the same outcome when we get factory to create new cursor
                 assertCursor(expected, factory, false, true, false, false);
                 // make sure strings, binary fields and symbols are compliant with expected record behaviour
-                assertVariableColumns(factory, true);
+                assertVariableColumns(factory, true, sqlExecutionContext);
 
                 compiler.compile("truncate table x", sqlExecutionContext);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {

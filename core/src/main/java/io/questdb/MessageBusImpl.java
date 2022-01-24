@@ -77,7 +77,6 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence[] pageFrameReducePubSeq;
     private final MCSequence[] pageFrameReduceSubSeq;
     private final RingQueue<PageFrameReduceTask>[] pageFrameReduceQueue;
-    private final MCSequence[] pageFrameCleanupSubSeq;
     private final FanOut[] pageFrameCollectFanOut;
     private final MPSequence pageFrameDispatchPubSeq;
     private final MCSequence pageFrameDispatchSubSeq;
@@ -151,26 +150,23 @@ public class MessageBusImpl implements MessageBus {
         pageFrameReducePubSeq = new MPSequence[pageFrameReduceShardCount];
         pageFrameReduceSubSeq = new MCSequence[pageFrameReduceShardCount];
         pageFrameCollectFanOut = new FanOut[pageFrameReduceShardCount];
-        pageFrameCleanupSubSeq = new MCSequence[pageFrameReduceShardCount];
 
+        int queueCapacity = configuration.getPageFrameQueueCapacity();
         for (int i = 0; i < pageFrameReduceShardCount; i++) {
             final RingQueue<PageFrameReduceTask> queue = new RingQueue<PageFrameReduceTask>(
-                    () -> new PageFrameReduceTask(configuration),
-                    configuration.getPageFrameQueueCapacity()
+                    () -> new PageFrameReduceTask(configuration, queueCapacity),
+                    queueCapacity
             );
 
             final MPSequence reducePubSeq = new MPSequence(queue.getCycle());
             final MCSequence reduceSubSeq = new MCSequence(queue.getCycle());
-            final MCSequence cleanupSubSeq = new MCSequence(queue.getCycle());
             final FanOut collectFanOut = new FanOut();
-            reducePubSeq.then(reduceSubSeq).then(collectFanOut).then(cleanupSubSeq).then(reducePubSeq);
+            reducePubSeq.then(reduceSubSeq).then(collectFanOut).then(reducePubSeq);
 
             pageFrameReduceQueue[i] = queue;
             pageFrameReducePubSeq[i] = reducePubSeq;
             pageFrameReduceSubSeq[i] = reduceSubSeq;
             pageFrameCollectFanOut[i] = collectFanOut;
-            pageFrameCleanupSubSeq[i] = cleanupSubSeq;
-
         }
         pageFrameDispatchQueue = new RingQueue<PageFrameDispatchTask>(
                 PageFrameDispatchTask::new,
@@ -329,11 +325,6 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MCSequence getPageFrameReduceSubSeq(int shard) {
         return pageFrameReduceSubSeq[shard];
-    }
-
-    @Override
-    public MCSequence getPageFrameCleanupSubSeq(int shard) {
-        return pageFrameCleanupSubSeq[shard];
     }
 
     @Override

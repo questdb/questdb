@@ -81,8 +81,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    public static void assertVariableColumns(RecordCursorFactory factory, boolean checkSameStr) {
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+    public static void assertVariableColumns(RecordCursorFactory factory, boolean checkSameStr, SqlExecutionContext executionContext) {
+        try (RecordCursor cursor = factory.getCursor(executionContext)) {
             RecordMetadata metadata = factory.getMetadata();
             final int columnCount = metadata.getColumnCount();
             final Record record = cursor.getRecord();
@@ -166,7 +166,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 // make sure we get the same outcome when we get factory to create new cursor
                 assertCursorRawRecords(expected, factory, checkSameStr, expectSize);
                 // make sure strings, binary fields and symbols are compliant with expected record behaviour
-                assertVariableColumns(factory, checkSameStr);
+                assertVariableColumns(factory, checkSameStr, sqlExecutionContext);
 
                 if (ddl2 != null) {
                     compile(ddl2, sqlExecutionContext);
@@ -603,7 +603,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             // make sure we get the same outcome when we get factory to create new cursor
             assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable);
             // make sure strings, binary fields and symbols are compliant with expected record behaviour
-            assertVariableColumns(factory, checkSameStr);
+            assertVariableColumns(factory, checkSameStr, sqlExecutionContext);
 
             if (ddl2 != null) {
                 compile(ddl2, sqlExecutionContext);
@@ -904,16 +904,16 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             String expectedTimestamp,
             RecordCursorFactory factory,
             boolean supportsRandomAccess,
-            SqlExecutionContext sqlExecutionContext,
+            SqlExecutionContext executionContext,
             boolean checkSameStr,
             boolean expectSize,
             boolean sizeCanBeVariable) throws SqlException {
-        assertTimestamp(expectedTimestamp, factory, sqlExecutionContext);
-        assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, sqlExecutionContext);
+        assertTimestamp(expectedTimestamp, factory, executionContext);
+        assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, executionContext);
         // make sure we get the same outcome when we get factory to create new cursor
-        assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, sqlExecutionContext);
+        assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, executionContext);
         // make sure strings, binary fields and symbols are compliant with expected record behaviour
-        assertVariableColumns(factory, checkSameStr);
+        assertVariableColumns(factory, checkSameStr, executionContext);
     }
 
     protected void assertFailure(

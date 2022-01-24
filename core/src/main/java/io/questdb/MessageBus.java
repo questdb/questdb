@@ -104,8 +104,6 @@ public interface MessageBus extends Closeable {
 
     MCSequence getPageFrameReduceSubSeq(int shard);
 
-    MCSequence getPageFrameCleanupSubSeq(int shard);
-
     FanOut getTableWriterCommandFanOut();
 
     MPSequence getTableWriterCommandPubSeq();

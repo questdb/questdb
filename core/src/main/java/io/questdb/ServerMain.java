@@ -25,7 +25,6 @@
 package io.questdb;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.async.PageFrameCleanupJob;
 import io.questdb.cairo.sql.async.PageFrameDispatchJob;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
 import io.questdb.cutlass.http.HttpServer;
@@ -193,12 +192,6 @@ public class ServerMain {
                     )
             );
         }
-        workerPool.assign(0, new PageFrameCleanupJob(
-                        cairoEngine.getMessageBus(),
-                        SharedRandom.getRandom(configuration.getCairoConfiguration())
-                )
-        );
-
         Metrics metrics;
         if (configuration.getMetricsConfiguration().isEnabled()) {
             metrics = Metrics.enabled();

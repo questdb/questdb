@@ -257,6 +257,7 @@ public class PageFrameSequence<T> implements Mutable {
         // as it might be required by toTop()
         this.id = -1;
         frameRowCounts.clear();
+        assert doneLatch.getCount() == 0;
         doneLatch.countDown();
         this.owner.set(OWNER_NONE);
     }
@@ -370,7 +371,6 @@ public class PageFrameSequence<T> implements Mutable {
     private void xxx2() {
         final RingQueue<PageFrameReduceTask> queue = messageBus.getPageFrameReduceQueue(shard);
         final MCSequence pageFrameReduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
-        final MCSequence pageFrameCleanupSubSeq = messageBus.getPageFrameCleanupSubSeq(shard);
         while (doneLatch.getCount() == 0) {
             final PageAddressCacheRecord rec = records[getWorkerId()];
             // we were asked to steal work from dispatch queue and beyond, as much as we can
@@ -378,17 +378,11 @@ public class PageFrameSequence<T> implements Mutable {
                 long cursor = collectSubSeq.next();
                 if (cursor > -1) {
                     // discard collect items
+                    queue.get(cursor).collected();
                     collectSubSeq.done(cursor);
-                } else if (
-                        PageFrameCleanupJob.consumeQueue(
-                                queue,
-                                pageFrameCleanupSubSeq,
-                                messageBus,
-                                shard,
-                                queue.getCycle()
-                        )
-                )
+                } else {
                     LockSupport.parkNanos(1);
+                }
             }
         }
     }
