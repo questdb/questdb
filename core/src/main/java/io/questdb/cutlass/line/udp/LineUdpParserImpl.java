@@ -67,6 +67,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final CairoSecurityContext cairoSecurityContext;
     private final LineProtoTimestampAdapter timestampAdapter;
+    private final LineUdpReceiverConfiguration udpConfiguration;
     // state
     // cache entry index is always a negative value
     private int cacheEntryIndex = 0;
@@ -90,14 +91,14 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
     public LineUdpParserImpl(
             CairoEngine engine,
-            CairoSecurityContext cairoSecurityContext,
-            LineProtoTimestampAdapter timestampAdapter
+            LineUdpReceiverConfiguration udpConfiguration
     ) {
         this.configuration = engine.getConfiguration();
         this.clock = configuration.getMicrosecondClock();
         this.engine = engine;
-        this.cairoSecurityContext = cairoSecurityContext;
-        this.timestampAdapter = timestampAdapter;
+        this.udpConfiguration = udpConfiguration;
+        this.cairoSecurityContext = udpConfiguration.getCairoSecurityContext();
+        this.timestampAdapter = udpConfiguration.getTimestampAdapter();
     }
 
     @Override
@@ -552,7 +553,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
         @Override
         public int getPartitionBy() {
-            return PartitionBy.NONE;
+            return udpConfiguration.getDefaultPartitionBy();
         }
 
         @Override
