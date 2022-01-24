@@ -1062,9 +1062,9 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private boolean releaseTxn() {
         if (txnAcquired) {
-            long released = txnScoreboard.releaseTxn(txn);
+            long readerCount = txnScoreboard.releaseTxn(txn);
             txnAcquired = false;
-            return released == 0;
+            return readerCount == 0;
         }
         return false;
     }

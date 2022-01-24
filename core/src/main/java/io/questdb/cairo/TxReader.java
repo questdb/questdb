@@ -66,6 +66,8 @@ public class TxReader implements Closeable, Mutable {
     @Override
     public void clear() {
         close();
+        partitionTableVersion = 0;
+        attachedPartitions.clear();
     }
 
     @Override
@@ -198,7 +200,6 @@ public class TxReader implements Closeable, Mutable {
 
         unsafeLoadSymbolCounts(symbolColumnCount);
         unsafeLoadPartitions(prevPartitionTableVersion, partitionSegmentSize, forceClean);
-
     }
 
     /**
