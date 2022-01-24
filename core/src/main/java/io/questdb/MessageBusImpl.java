@@ -158,8 +158,8 @@ public class MessageBusImpl implements MessageBus {
                     queueCapacity
             );
 
-            final MPSequence reducePubSeq = new MPSequence(queue.getCycle());
-            final MCSequence reduceSubSeq = new MCSequence(queue.getCycle());
+            final MPSequence reducePubSeq = new MPSequence(queueCapacity);
+            final MCSequence reduceSubSeq = new MCSequence(queueCapacity);
             final FanOut collectFanOut = new FanOut();
             reducePubSeq.then(reduceSubSeq).then(collectFanOut).then(reducePubSeq);
 

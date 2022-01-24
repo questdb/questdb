@@ -83,7 +83,7 @@ public class PageFrameReduceTask implements Closeable {
         // What we are avoiding here is resetting capacity on 1000 frames given our queue size
         // is 32 items. If our particular producer resizes queue items to 10x of the initial size
         // we let these sizes stick until produce starts to wind down.
-        if (frameIndex > frameCount - pageFrameQueueCapacity) {
+        if (frameIndex >= frameCount - pageFrameQueueCapacity) {
             getRows().resetCapacity();
         }
 

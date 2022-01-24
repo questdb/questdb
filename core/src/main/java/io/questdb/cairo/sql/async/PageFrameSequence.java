@@ -113,66 +113,71 @@ public class PageFrameSequence<T> implements Mutable {
         // before thread begins we will need to pick a shard
         // of queues that we will interact with
         final int shard = 0;//rnd.nextInt(bus.getPageFrameReduceShardCount());
-        final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext);
+        PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext);
 
-        // todo: hack
-        ((Function)atom).init(pageFrameCursor, executionContext);
+        try {
+            // todo: hack
+            ((Function) atom).init(pageFrameCursor, executionContext);
 
-        final MPSequence dispatchPubSeq = bus.getPageFrameDispatchPubSeq();
-        final RingQueue<PageFrameDispatchTask> pageFrameDispatchQueue = bus.getPageFrameDispatchQueue();
+            final MPSequence dispatchPubSeq = bus.getPageFrameDispatchPubSeq();
+            final RingQueue<PageFrameDispatchTask> pageFrameDispatchQueue = bus.getPageFrameDispatchQueue();
 
-        // pass one to cache page addresses
-        // this has to be separate pass to ensure there no cache reads
-        // while cache might be resizing
-        this.pageAddressCache.of(base.getMetadata());
+            // pass one to cache page addresses
+            // this has to be separate pass to ensure there no cache reads
+            // while cache might be resizing
+            this.pageAddressCache.of(base.getMetadata());
 
-        PageFrame frame;
-        int frameIndex = 0;
-        while ((frame = pageFrameCursor.next()) != null) {
-            this.pageAddressCache.add(frameIndex++, frame);
-            frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
-        }
+            PageFrame frame;
+            int frameIndex = 0;
+            while ((frame = pageFrameCursor.next()) != null) {
+                this.pageAddressCache.add(frameIndex++, frame);
+                frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
+            }
 
-        of(
-                shard,
-                rnd.nextLong(),
-                frameIndex,
-                collectSubSeq,
-                pageFrameCursor,
-                atom,
-                dispatchPubSeq,
-                pageFrameDispatchQueue
-        );
+            of(
+                    shard,
+                    rnd.nextLong(),
+                    frameIndex,
+                    collectSubSeq,
+                    pageFrameCursor,
+                    atom,
+                    dispatchPubSeq,
+                    pageFrameDispatchQueue
+            );
 
-        // dispatch message only if there is anything to dispatch
-        if (frameIndex > 0) {
-            long dispatchCursor;
-            do {
-                dispatchCursor = dispatchPubSeq.next();
-                if (dispatchCursor < 0) {
-                    stealWork();
-                    LockSupport.parkNanos(1);
-                } else {
-                    break;
-                }
-            } while (true);
+            // dispatch message only if there is anything to dispatch
+            if (frameIndex > 0) {
+                long dispatchCursor;
+                do {
+                    dispatchCursor = dispatchPubSeq.next();
+                    if (dispatchCursor < 0) {
+                        stealWork();
+                        LockSupport.parkNanos(1);
+                    } else {
+                        break;
+                    }
+                } while (true);
 
-            // We need to subscribe publisher sequence before we return
-            // control to the caller of this method. However, this sequence
-            // will be unsubscribed asynchronously.
-            bus.getPageFrameCollectFanOut(shard).and(collectSubSeq);
-            LOG.info()
-                    .$("added [shard=").$(shard)
-                    .$(", id=").$(id)
-                    .$(", seq=").$(collectSubSeq)
-                    .I$();
+                // We need to subscribe publisher sequence before we return
+                // control to the caller of this method. However, this sequence
+                // will be unsubscribed asynchronously.
+                bus.getPageFrameCollectFanOut(shard).and(collectSubSeq);
+                LOG.info()
+                        .$("added [shard=").$(shard)
+                        .$(", id=").$(id)
+                        .$(", seq=").$(collectSubSeq)
+                        .I$();
 
-            PageFrameDispatchTask dispatchTask = pageFrameDispatchQueue.get(dispatchCursor);
-            dispatchTask.of(this);
-            dispatchPubSeq.done(dispatchCursor);
-        } else {
-            // non-dispatched frames will leave page frame cursor and reader dangling if not freed
-            pageFrameCursor.close();
+                PageFrameDispatchTask dispatchTask = pageFrameDispatchQueue.get(dispatchCursor);
+                dispatchTask.of(this);
+                dispatchPubSeq.done(dispatchCursor);
+            } else {
+                // non-dispatched frames will leave page frame cursor and reader dangling if not freed
+                pageFrameCursor = Misc.free(pageFrameCursor);
+            }
+        } catch (Throwable e) {
+            Misc.free(pageFrameCursor);
+            throw e;
         }
         return this;
     }
@@ -255,7 +260,6 @@ public class PageFrameSequence<T> implements Mutable {
     public void reset() {
         // prepare to resent the same sequence
         // as it might be required by toTop()
-        this.id = -1;
         frameRowCounts.clear();
         assert doneLatch.getCount() == 0;
         doneLatch.countDown();
@@ -378,7 +382,10 @@ public class PageFrameSequence<T> implements Mutable {
                 long cursor = collectSubSeq.next();
                 if (cursor > -1) {
                     // discard collect items
-                    queue.get(cursor).collected();
+                    final PageFrameReduceTask tsk = queue.get(cursor);
+                    if (tsk.getFrameSequence().getId() == id) {
+                        tsk.collected();
+                    }
                     collectSubSeq.done(cursor);
                 } else {
                     LockSupport.parkNanos(1);

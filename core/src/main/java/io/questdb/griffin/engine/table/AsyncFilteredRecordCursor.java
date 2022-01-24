@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
@@ -108,14 +107,6 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         return false;
     }
 
-    private void collectCursor() {
-        if (cursor > -1) {
-            queue.get(cursor).collected();
-            collectSubSeq.done(cursor);
-            cursor = -1;
-        }
-    }
-
     @Override
     public Record getRecordB() {
         if (recordB != null) {
@@ -150,30 +141,44 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         return -1;
     }
 
+    private void collectCursor() {
+        if (cursor > -1) {
+            queue.get(cursor).collected();
+            collectSubSeq.done(cursor);
+            cursor = -1;
+        }
+    }
+
     private void fetchNextFrame() {
         do {
             this.cursor = collectSubSeq.next();
             if (cursor > -1) {
                 PageFrameReduceTask task = queue.get(cursor);
-                this.rows = task.getRows();
-                this.frameRowCount = rows.size();
-                this.frameIndex = task.getFrameIndex();
-                LOG.info()
-                        .$("collected [shard=").$(frameSequence.getShard())
-                        .$(", id=").$(frameSequence.getId())
-                        .$(", frameIndex=").$(task.getFrameIndex())
-                        .$(", frameCount=").$(frameSequence.getFrameCount())
-                        .$(", valid=").$(frameSequence.isValid())
-                        .I$();
-                if (this.frameRowCount > 0) {
-                    this.frameRowIndex = 0;
-                    record.setFrameIndex(task.getFrameIndex());
-                    break;
+                if (task.getFrameSequence().getId() == frameSequence.getId() && frameSequence.getId() != -1) {
+                    this.rows = task.getRows();
+                    this.frameRowCount = rows.size();
+                    this.frameIndex = task.getFrameIndex();
+                    LOG.info()
+                            .$("collected [shard=").$(frameSequence.getShard())
+                            .$(", id=").$(frameSequence.getId())
+                            .$(", frameIndex=").$(task.getFrameIndex())
+                            .$(", frameCount=").$(frameSequence.getFrameCount())
+                            .$(", valid=").$(frameSequence.isValid())
+                            .I$();
+                    if (this.frameRowCount > 0) {
+                        this.frameRowIndex = 0;
+                        record.setFrameIndex(task.getFrameIndex());
+                        break;
+                    } else {
+                        queue.get(cursor).collected();
+                        collectSubSeq.done(cursor);
+                        cursor = -1;
+                    }
                 } else {
-                    queue.get(cursor).collected();
+                    // not our task
                     collectSubSeq.done(cursor);
-                    cursor = -1;
                 }
+
             } else {
                 // multiple reasons for collect task not being ready:
                 // 1. dispatch task hasn't been published
