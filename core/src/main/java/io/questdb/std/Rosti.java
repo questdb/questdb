@@ -144,14 +144,24 @@ public final class Rosti {
     // sum long
     public static native void keyedIntSumLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 
+    public static native void keyedIntSumLongLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
     public static native void keyedHourSumLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+
+    public static native void keyedHourSumLongLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 
     public static native void keyedIntSumLongMerge(long pRostiA, long pRostiB, int valueOffset);
 
+    public static native void keyedIntSumLongLongMerge(long pRostiA, long pRostiB, int valueOffset);
+
     public static native void keyedIntSumLongWrapUp(long pRosti, int valueOffset, long valueAtNull, long valueAtNullCount);
+
+    public static native void keyedIntSumLongLongWrapUp(long pRosti, int valueOffset, long valueAtNull, long valueAtNullCount);
 
     // avg long
     public static native void keyedIntAvgLongWrapUp(long pRosti, int valueOffset, double valueAtNull, long valueAtNullCount);
+
+    public static native void keyedIntAvgLongLongWrapUp(long pRosti, int valueOffset, double valueAtNull, long valueAtNullCount);
 
     // min long
     public static native void keyedIntMinLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);

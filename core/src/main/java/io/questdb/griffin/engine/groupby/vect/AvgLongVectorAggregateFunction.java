@@ -50,10 +50,10 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
         this.columnIndex = columnIndex;
         if (keyKind == GKK_HOUR_INT) {
             distinctFunc = Rosti::keyedHourDistinct;
-            keyValueFunc = Rosti::keyedHourSumLong;
+            keyValueFunc = Rosti::keyedHourSumLongLong;
         } else {
             distinctFunc = Rosti::keyedIntDistinct;
-            keyValueFunc = Rosti::keyedIntSumLong;
+            keyValueFunc = Rosti::keyedIntSumLongLong;
         }
     }
 
@@ -99,7 +99,7 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
 
     @Override
     public void merge(long pRostiA, long pRostiB) {
-        Rosti.keyedIntSumLongMerge(pRostiA, pRostiB, valueOffset);
+        Rosti.keyedIntSumLongLongMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
@@ -112,7 +112,7 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
 
     @Override
     public void wrapUp(long pRosti) {
-        Rosti.keyedIntAvgLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
+        Rosti.keyedIntAvgLongLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
     }
 
     @Override
