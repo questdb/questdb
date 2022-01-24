@@ -67,6 +67,7 @@ public class TxReader implements Closeable, Mutable {
     public void clear() {
         close();
         partitionTableVersion = 0;
+        attachedPartitionsSize = 0;
         attachedPartitions.clear();
     }
 
