@@ -54,7 +54,7 @@ public class CompiledQueryImpl implements CompiledQuery {
     private AlterStatement alterStatement;
     private short type;
     private SqlExecutionContext sqlExecutionContext;
-    //count of rows affected by this statement ; currently works only for insert as select
+    //count of rows affected by this statement ; currently works only for insert as select/create table as insert
     private long insertCount;
 
     public CompiledQueryImpl(CairoEngine engine) {
@@ -182,6 +182,12 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(CREATE_TABLE);
     }
 
+    CompiledQuery ofCreateTableAsSelect(long insertCount) {
+        of(CREATE_TABLE_AS_SELECT);
+        this.insertCount = insertCount;
+        return this;
+    }
+
     CompiledQuery ofDrop() {
         return of(DROP);
     }
@@ -191,9 +197,9 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(INSERT);
     }
 
-    CompiledQuery ofInsertAsSelect(long updateCount) {
+    CompiledQuery ofInsertAsSelect(long insertCount) {
         of(INSERT_AS_SELECT);
-        this.insertCount = updateCount;
+        this.insertCount = insertCount;
         return this;
     }
 

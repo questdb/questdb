@@ -27,12 +27,14 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.postgresql.util.PSQLException;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.sql.*;
+import java.util.Arrays;
 
 import static org.junit.Assert.*;
 import static org.junit.Assert.assertEquals;
@@ -65,21 +67,42 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
+    public void testRunPgLockTwice() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGTestSetup test = new PGTestSetup()) {
+                try (Statement statement = test.connection.createStatement()) {
+                    boolean result = statement.execute("SELECT pg_advisory_unlock_all(); CREATE TABLE test( l long); INSERT INTO test VALUES(1);");
+                    assertResults(statement, result, data(row((String) null)), count(0), count(1));
+
+                    test.connection.setAutoCommit(false);
+                    PreparedStatement pStmt = test.connection.prepareStatement("select * from test;");
+                    result = pStmt.execute();
+                    assertResults(pStmt, result, data(row(1L)));
+                    test.connection.rollback();
+
+                    result = statement.execute("SELECT pg_advisory_unlock_all();\n" +
+                            "CLOSE ALL;\n" +
+                            "UNLISTEN *;\n" +
+                            "RESET ALL;");
+                    assertResults(statement, result, data(row((String) null)), count(0), count(0), count(0));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRunSeveralQueriesInSingleBlockStatementReturnsAllSelectResultsInOrder() throws Exception {
         assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(true, true);
-                    Statement statement = connection.createStatement()
-            ) {
-                boolean hasResult = statement.execute(
-                        "create table test(l long, s string);" +
-                            "insert into test values(1, 'a');" +
-                            "insert into test values(2, 'b');" +
-                            "select * from test;");
+            try (PGTestSetup test = new PGTestSetup()) {
 
-                assertResults( statement, hasResult, Result.ZERO, result(1), result(1),
-                        result(row(1L, "a"), row(2L, "b")) );
+                boolean hasResult = test.statement.execute(
+                        "create table test(l long, s string);" +
+                                "insert into test values(1, 'a');" +
+                                "insert into test values(2, 'b');" +
+                                "select * from test;");
+
+                assertResults(test.statement, hasResult, Result.ZERO, count(1), count(1),
+                        data(row(1L, "a"), row(2L, "b")));
             }
         });
     }
@@ -90,8 +113,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             try ( PGTestSetup test = new PGTestSetup() ) {
                 Statement statement = test.statement;
                 boolean hasResult = statement.execute("select 1;;/*multiline comment */;--single line comment\n;select 2;");
-                
-                assertResults(statement, hasResult, result(row(1)), result(row(2)));
+
+                assertResults(statement, hasResult, data(row(1)), data(row(2)));
             }
         });
     }
@@ -125,7 +148,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             try ( PGTestSetup test = new PGTestSetup() ) {
                 Statement statement = test.statement;
                 boolean hasResult = statement.execute("select 'hello'");
-                assertResults(statement, hasResult, result( row("hello")));
+                assertResults(statement, hasResult, data(row("hello")));
             }
         });
     }
@@ -136,7 +159,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             try ( PGTestSetup test = new PGTestSetup() ) {
                 Statement statement = test.statement;
                 boolean hasResult = statement.execute("select 'hello2';");
-                assertResults(statement, hasResult, result(row("hello2")));
+                assertResults(statement, hasResult, data(row("hello2")));
             }
         });
     }
@@ -147,7 +170,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             try ( PGTestSetup test = new PGTestSetup() ) {
                 Statement statement = test.statement;
                 boolean hasResult = statement.execute("select 'hello3' as \"alias;\" ;");
-                assertResults(statement, hasResult, result(row("hello3")));
+                assertResults(statement, hasResult, data(row("hello3")));
             }
         });
     }
@@ -158,7 +181,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             try ( PGTestSetup test = new PGTestSetup() ) {
                 Statement statement = test.statement;
                 boolean hasResult = statement.execute("select 'hello4;select this_is_not_a_query()'");
-                assertResults(statement, hasResult, result(row("hello4;select this_is_not_a_query()")));
+                assertResults(statement, hasResult, data(row("hello4;select this_is_not_a_query()")));
             }
         });
     }
@@ -169,7 +192,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             try ( PGTestSetup test = new PGTestSetup() ) {
                 Statement statement = test.statement;
                 boolean hasResult = statement.execute("select -- comment \n 'hello5'");
-                assertResults(statement, hasResult, result(row("hello5")));
+                assertResults(statement, hasResult, data(row("hello5")));
             }
         });
     }
@@ -180,7 +203,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             try ( PGTestSetup test = new PGTestSetup() ) {
                 Statement statement = test.statement;
                 boolean hasResult = statement.execute("-- comment \n select  'hello6'");
-                assertResults(statement, hasResult, result(row("hello6")));
+                assertResults(statement, hasResult, data(row("hello6")));
             }
         });
     }
@@ -191,7 +214,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             try ( PGTestSetup test = new PGTestSetup() ) {
                 Statement statement = test.statement;
                 boolean hasResult = statement.execute("select  'hello7' -- end comment");
-                assertResults(statement, hasResult, result(row("hello7")));
+                assertResults(statement, hasResult, data(row("hello7")));
             }
         });
     }
@@ -213,7 +236,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             try ( PGTestSetup test = new PGTestSetup() ) {
                 Statement statement = test.statement;
                 boolean hasResult = statement.execute("/* comment here */ select  'hello9'");
-                assertResults(statement, hasResult, result(row("hello9")));
+                assertResults(statement, hasResult, data(row("hello9")));
             }
         });
     }
@@ -224,7 +247,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             try ( PGTestSetup test = new PGTestSetup() ) {
                 Statement statement = test.statement;
                 boolean hasResult = statement.execute(" select /* comment here */ 'hello10'");
-                assertResults(statement, hasResult, result(row("hello10")));
+                assertResults(statement, hasResult, data(row("hello10")));
             }
         });
     }
@@ -235,7 +258,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             try ( PGTestSetup test = new PGTestSetup() ) {
                 Statement statement = test.statement;
                 boolean hasResult = statement.execute("select  'hello11' /* end comment*/");
-                assertResults(statement, hasResult, result(row("hello11")));
+                assertResults(statement, hasResult, data(row("hello11")));
             }
         });
     }
@@ -257,7 +280,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             try ( PGTestSetup test = new PGTestSetup() ) {
                 Statement statement = test.statement;
                 boolean hasResult = statement.execute("SET a = 'b'; select 1");
-                assertResults( statement, hasResult, Result.ZERO, result(row(1L)) );
+                assertResults(statement, hasResult, Result.ZERO, data(row(1L)));
             }
         });
     }
@@ -279,7 +302,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             try ( PGTestSetup test = new PGTestSetup() ) {
                 Statement statement = test.statement;
                 boolean hasResult = statement.execute("BEGIN; select 2");
-                assertResults( statement, hasResult, Result.ZERO, result(row(2L)) );
+                assertResults(statement, hasResult, Result.ZERO, data(row(2L)));
             }
         });
     }
@@ -301,7 +324,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             try ( PGTestSetup test = new PGTestSetup() ) {
                 Statement statement = test.statement;
                 boolean hasResult = statement.execute("COMMIT; select 3");
-                assertResults( statement, hasResult, Result.ZERO, result(row(3L)) );
+                assertResults(statement, hasResult, Result.ZERO, data(row(3L)));
             }
         });
     }
@@ -323,7 +346,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             try ( PGTestSetup test = new PGTestSetup() ) {
                 Statement statement = test.statement;
                 boolean hasResult = statement.execute("ROLLBACK TRANSACTION; select 4");
-                assertResults( statement, hasResult, Result.ZERO, result(row(4L)) );
+                assertResults(statement, hasResult, Result.ZERO, data(row(4L)));
             }
         });
     }
@@ -345,7 +368,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             try ( PGTestSetup test = new PGTestSetup() ) {
                 Statement statement = test.statement;
                 boolean hasResult = statement.execute("DISCARD ALL; select 5");
-                assertResults( statement, hasResult, Result.ZERO, result(row(5L)) );
+                assertResults(statement, hasResult, Result.ZERO, data(row(5L)));
             }
         });
     }
@@ -386,10 +409,10 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             try ( PGTestSetup test = new PGTestSetup() ) {
                 Statement statement = test.statement;
                 boolean hasResult = statement.execute("CLOSE ALL; select 6");
-                assertResults( statement, hasResult, Result.ZERO, result(row(6L)) );
+                assertResults(statement, hasResult, Result.ZERO, data(row(6L)));
 
                 hasResult = statement.execute("CLOSE; select 7");
-                assertResults( statement, hasResult, Result.ZERO, result(row(7L)) );
+                assertResults(statement, hasResult, Result.ZERO, data(row(7L)));
             }
         });
     }
@@ -427,10 +450,10 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             try ( PGTestSetup test = new PGTestSetup() ) {
                 Statement statement = test.statement;
                 boolean hasResult = statement.execute("UNLISTEN channel_name; select 8");
-                assertResults( statement, hasResult, Result.ZERO, result(row(8L)) );
+                assertResults(statement, hasResult, Result.ZERO, data(row(8L)));
 
                 hasResult = statement.execute("UNLISTEN *; select 9");
-                assertResults( statement, hasResult, Result.ZERO, result(row(9L)) );
+                assertResults(statement, hasResult, Result.ZERO, data(row(9L)));
             }
         });
     }
@@ -462,10 +485,10 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             try ( PGTestSetup test = new PGTestSetup() ) {
                 Statement statement = test.statement;
                 boolean hasResult = statement.execute("RESET configuration_parameter; select 10");
-                assertResults( statement, hasResult, Result.ZERO, result(row(10L)) );
+                assertResults(statement, hasResult, Result.ZERO, data(row(10L)));
 
                 hasResult = statement.execute("RESET ALL; select 11");
-                assertResults( statement, hasResult, Result.ZERO, result(row(11L)) );
+                assertResults(statement, hasResult, Result.ZERO, data(row(11L)));
             }
         });
     }
@@ -499,11 +522,11 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
                 boolean hasResult = statement.execute(
                         "CREATE TABLE TEST(l long, s string); " +
-                        "INSERT INTO TEST VALUES (3, 'three'); " +
-                        "SELECT * from TEST;" +
-                        "DROP TABLE TEST;");
-                assertResults( statement, hasResult, result(0), result(1), 
-                                                     result(row(3L, "three")), result(0));
+                                "INSERT INTO TEST VALUES (3, 'three'); " +
+                                "SELECT * from TEST;" +
+                                "DROP TABLE TEST;");
+                assertResults(statement, hasResult, count(0), count(1),
+                        data(row(3L, "three")), count(0));
             }
         });
     }
@@ -511,7 +534,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     @Test
     public void testRunBlockWithCreateInsertTruncateSelectReturnsNoResult() throws Exception {
         assertMemoryLeak(() -> {
-            try ( PGTestSetup test = new PGTestSetup() ) {
+            try (PGTestSetup test = new PGTestSetup()) {
                 Statement statement = test.statement;
 
                 boolean hasResult = statement.execute(
@@ -519,21 +542,34 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                 "INSERT INTO TEST VALUES (3, 'three'); /*some comment */" +
                                 "TRUNCATE TABLE TEST;" +
                                 "SELECT '1';");
-                assertResults( statement, hasResult, result(0), result(1), 
-                                                     result(0), result(row("1")));
+                assertResults(statement, hasResult, count(0), count(1),
+                        count(0), data(row("1")));
             }
         });
     }
-    
+
+    @Test
+    public void testCreateTableAsSelectReturnsRightInsertCount() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGTestSetup test = new PGTestSetup()) {
+                Statement statement = test.statement;
+
+                boolean hasResult = statement.execute("CREATE TABLE test as (select x from long_sequence(3)); " +
+                        "SELECT * from test;");
+                assertResults(statement, hasResult, count(3), data(row("1"), row("2"), row("3")));
+            }
+        });
+    }
+
     @Test
     public void testShowTableInBlock() throws Exception {
         assertMemoryLeak(() -> {
-            try ( PGTestSetup test = new PGTestSetup() ) {
+            try (PGTestSetup test = new PGTestSetup()) {
                 Statement statement = test.statement;
 
                 boolean hasResult = statement.execute(
                         "SHOW TABLES; SELECT '15';");
-                assertResults( statement, hasResult, Result.EMPTY, result(row(15L)) );
+                assertResults(statement, hasResult, Result.EMPTY, data(row(15L)));
             }
         });
     }
@@ -546,7 +582,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
                 boolean hasResult = statement.execute(
                         "CREATE TABLE TEST(l long); INSERT INTO TEST VALUES(1); ALTER TABLE TEST ADD COLUMN s STRING; SELECT * from TEST;");
-                assertResults( statement, hasResult, Result.ZERO, result(1), Result.ZERO, result(row(1L, null)) );
+                assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, data(row(1L, null)));
             }
         });
     }
@@ -559,7 +595,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
                 boolean hasResult = statement.execute(
                 "CREATE TABLE TEST(l long, de string); INSERT INTO TEST VALUES(1,'a'); ALTER TABLE TEST DROP COLUMN de; SELECT * from TEST;");
-                assertResults( statement, hasResult, Result.ZERO, result(1), Result.ZERO, result(row(1L)) );
+                assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, data(row(1L)));
             }
         });
     }
@@ -572,7 +608,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
                 boolean hasResult = statement.execute(
                         "CREATE TABLE TEST(l long, de string); INSERT INTO TEST VALUES(2,'b'); ALTER TABLE TEST RENAME COLUMN de TO s; SELECT l,s from TEST;");
-                assertResults( statement, hasResult, Result.ZERO, result(1), Result.ZERO, result(row(2L, "b")) );
+                assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, data(row(2L, "b")));
             }
         });
     }
@@ -588,7 +624,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "INSERT INTO test VALUES(3,'c'); " +
                             "ALTER TABLE test set param maxUncommittedRows = 150; " +
                             "SELECT l,de from test;");
-                assertResults( statement, hasResult, Result.ZERO, result(1), Result.ZERO, result(row(3L, "c")) );
+                assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, data(row(3L, "c")));
             }
         });
     }
@@ -604,7 +640,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "INSERT INTO test VALUES(4,'d'); " +
                             "ALTER TABLE test ALTER COLUMN s ADD INDEX; " +
                             "SELECT l,s from test;");
-                assertResults( statement, hasResult, Result.ZERO, result(1), Result.ZERO, result(row(4L, "d")) );
+                assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, data(row(4L, "d")));
             }
         });
     }
@@ -620,7 +656,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "INSERT INTO test VALUES(5,'e'); " +
                             "ALTER TABLE test ALTER COLUMN s cache; " +
                             "SELECT l,s from test;");
-                assertResults( statement, hasResult, Result.ZERO, result(1), Result.ZERO, result(row(5L, "e")) );
+                assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, data(row(5L, "e")));
             }
         });
     }
@@ -636,7 +672,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "INSERT INTO test VALUES(6,'f'); " +
                             "ALTER TABLE test ALTER COLUMN s nocache; " +
                             "SELECT l,s from test;");
-                assertResults( statement, hasResult, Result.ZERO, result(1), Result.ZERO, result(row(6L, "f")) );
+                assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, data(row(6L, "f")));
             }
         });
     }
@@ -653,7 +689,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "ALTER SYSTEM LOCK WRITER test; " +
                             "ALTER SYSTEM UNLOCK WRITER test; " +
                             "SELECT l,s from test;");
-                assertResults( statement, hasResult, Result.ZERO, result(1), Result.ZERO, Result.ZERO, result(row(7L, "g")) );
+                assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, Result.ZERO, data(row(7L, "g")));
             }
         });
     }
@@ -670,7 +706,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "INSERT INTO test VALUES(2020, to_timestamp('2020-03-01', 'yyyy-MM-dd'));" +
                             "ALTER TABLE test DROP PARTITION LIST '1970'; " +
                             "SELECT l from test;");
-                assertResults( statement, hasResult, Result.ZERO, result(1), result(1), Result.ZERO, result(row(2020L)) );
+                assertResults(statement, hasResult, Result.ZERO, count(1), count(1), Result.ZERO, data(row(2020L)));
             }
         });
     }
@@ -683,13 +719,13 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
                 boolean hasResult = statement.execute(
                         "CREATE TABLE test(l long,ts timestamp) timestamp(ts) partition by year; " +
-                            "INSERT INTO test VALUES(1970, 0); " +
-                            "INSERT INTO test VALUES(2020, to_timestamp('2020-03-01', 'yyyy-MM-dd'));" +
-                            "INSERT INTO test VALUES(2021, to_timestamp('2021-03-01', 'yyyy-MM-dd'));" +
-                            "ALTER TABLE test DROP PARTITION LIST '1970', '2020'; " +
-                            "SELECT l from test;");
-                assertResults( statement, hasResult, Result.ZERO, result(1), result(1),
-                        result(1), Result.ZERO, result(row(2021L)) );
+                                "INSERT INTO test VALUES(1970, 0); " +
+                                "INSERT INTO test VALUES(2020, to_timestamp('2020-03-01', 'yyyy-MM-dd'));" +
+                                "INSERT INTO test VALUES(2021, to_timestamp('2021-03-01', 'yyyy-MM-dd'));" +
+                                "ALTER TABLE test DROP PARTITION LIST '1970', '2020'; " +
+                                "SELECT l from test;");
+                assertResults(statement, hasResult, Result.ZERO, count(1), count(1),
+                        count(1), Result.ZERO, data(row(2021L)));
             }
         });
     }
@@ -707,8 +743,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                 "INSERT INTO test VALUES(2021, to_timestamp('2021-03-01', 'yyyy-MM-dd'));" +
                                 "ALTER TABLE test DROP PARTITION WHERE ts <= to_timestamp('2020', 'yyyy'); " +
                                 "SELECT l from test;");
-                assertResults( statement, hasResult, Result.ZERO, result(1), result(1),
-                                                                  result(1), Result.ZERO, result(row(2021L)) );
+                assertResults(statement, hasResult, Result.ZERO, count(1), count(1),
+                        count(1), Result.ZERO, data(row(2021L)));
             }
         });
     }
@@ -744,7 +780,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "INSERT INTO test VALUES(1989, 0); " +
                             "RENAME TABLE test TO newtest; " +
                             "SELECT l from newtest;");
-                assertResults( statement, hasResult, Result.ZERO, result(1), Result.ZERO, result(row(1989L)) );
+                assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, data(row(1989L)));
             }
         });
     }
@@ -777,7 +813,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "INSERT INTO test VALUES(1989, 0); " +
                             "REPAIR TABLE test; " +
                             "SELECT l from test;");
-                assertResults( statement, hasResult, Result.ZERO, result(1), Result.ZERO, result(row(1989L)) );
+                assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, data(row(1989L)));
             }
         });
     }
@@ -792,7 +828,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                         "CREATE TABLE test(l long,s string); " +
                             "INSERT INTO test VALUES (1970, 'a'), (1971, 'b') ; " +
                             "SELECT l,s from test;");
-                assertResults( statement, hasResult, Result.ZERO, result(2), result(row(1970L, "a"), row(1971L, "b")) );
+                assertResults(statement, hasResult, Result.ZERO, count(2), data(row(1970L, "a"), row(1971L, "b")));
             }
         });
     }
@@ -808,8 +844,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                         "INSERT INTO test VALUES (21, 'u'); " +
                         "INSERT INTO test select l,s from test; " +
                         "SELECT l,s from test;");
-                assertResults(statement, hasResult, Result.ZERO, result(1), result(1), result(2), /*this is wrong, qdb doesn't report row count for insert as select !*/
-                        result(row(20L, "z"), row(21L, "u"), row(20L, "z"), row(21L, "u")));
+                assertResults(statement, hasResult, Result.ZERO, count(1), count(1), count(2), /*this is wrong, qdb doesn't report row count for insert as select !*/
+                        data(row(20L, "z"), row(21L, "u"), row(20L, "z"), row(21L, "u")));
             }
         });
     }
@@ -822,7 +858,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
                 boolean hasResult = statement.execute("CREATE TABLE test(l long, s string); " +
                         "INSERT INTO test select x,'str' from long_sequence(20);");
-                assertResults(statement, hasResult, Result.ZERO, result(20));
+                assertResults(statement, hasResult, Result.ZERO, count(20));
             }
         });
     }
@@ -837,7 +873,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                         "CREATE TABLE test(l long,s string); " +
                                 "INSERT INTO test VALUES (20, 'z'), (20, 'z'); " +
                                 "WITH x AS (SELECT DISTINCT l,s FROM test) SELECT l,s from x; ");
-                assertResults(statement, hasResult, Result.ZERO, result(2), result(row(20L, "z")));
+                assertResults(statement, hasResult, Result.ZERO, count(2), data(row(20L, "z")));
             }
         });
     }
@@ -910,7 +946,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 }
 
                 boolean hasResult = statement.execute("select * from test; ");
-                assertResults(statement, hasResult, result(row(20L, "z")));
+                assertResults(statement, hasResult, data(row(20L, "z")));
             }
         });
     }
@@ -937,7 +973,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 }
 
                 boolean hasResult = statement.execute("select * from testA; select  *from testB;");
-                assertResults(statement, hasResult, result(row(30L, "third")), result(row("bird", (byte) 4)));
+                assertResults(statement, hasResult, data(row(30L, "third")), data(row("bird", (byte) 4)));
             }
         });
     }
@@ -961,7 +997,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 }
 
                 boolean hasResult = statement.execute("select * from test; ");
-                assertResults(statement, hasResult, result(row(19L, "k")));
+                assertResults(statement, hasResult, data(row(19L, "k")));
             }
         });
     }
@@ -988,7 +1024,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 }
 
                 boolean hasResult = statement.execute("select * from testA; select * from testB; ");
-                assertResults(statement, hasResult, result(row(190L, "ka")), result(row("test", (short) 12)));
+                assertResults(statement, hasResult, data(row(190L, "ka")), data(row("test", (short) 12)));
             }
         });
     }
@@ -1007,17 +1043,18 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                 "INSERT INTO test VALUES (27, 'f');" +
                                 "SELECT * from test;");
 
-                assertResults(statement, hasResult, result(0), result(1), result(0),
-                        result(1), result(row(27L, "f")));
+                assertResults(statement, hasResult, count(0), count(1), count(0),
+                        count(1), data(row(27L, "f")));
             }
         });
     }
 
+    @Ignore("test won't work until implicit transactions are implemented")
     @Test //implicit transaction + rollback
     public void testCreateInsertRollbackOnTwoTables() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
-                test.connection.setAutoCommit(false);
+                test.connection.setAutoCommit(true);
                 Statement statement = test.statement;
 
                 boolean hasResult =
@@ -1031,9 +1068,9 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                 "SELECT * from testA;" +
                                 "SELECT * from testB;");
 
-                assertResults(statement, hasResult, result(0), result(0),
-                        result(1), result(1), result(0),
-                        result(1), result(1), result(row(-27L, "o")), result(row("z", 1.0)));
+                assertResults(statement, hasResult, count(0), count(0),
+                        count(1), count(1), count(0),
+                        count(1), count(1), data(row(-27L, "o")), data(row("z", 1.0)));
             }
         });
     }
@@ -1053,8 +1090,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                 "INSERT INTO test VALUES (27, 'f');" +
                                 "SELECT * from test;");
 
-                assertResults(statement, hasResult, result(0), result(0), result(1), result(0),
-                        result(1), result(row(27L, "f")));
+                assertResults(statement, hasResult, count(0), count(0), count(1), count(0),
+                        count(1), data(row(27L, "f")));
             }
         });
     }
@@ -1078,9 +1115,31 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                 "SELECT * from testA;" +
                                 "SELECT * from testB;");
 
-                assertResults(statement, hasResult, result(0), result(0), result(0),
-                        result(1), result(1), result(0),
-                        result(1), result(1), result(row(29L, "g")), result(row((byte) 2, 1.0d)));
+                assertResults(statement, hasResult, count(0), count(0), count(0),
+                        count(1), count(1), count(0),
+                        count(1), count(1), data(row(29L, "g")), data(row((byte) 2, 1.0d)));
+            }
+        });
+    }
+
+    @Ignore("table reader can't see uncommitted writes")
+    @Test
+    public void testSelectCanSeePriorInsertInTheSameTransaction() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGTestSetup test = new PGTestSetup()) {
+                test.connection.setAutoCommit(false);
+                Statement statement = test.statement;
+
+                boolean hasResult =
+                        statement.execute("BEGIN; " +
+                                "CREATE TABLE testA(l long,s string); " +
+                                "INSERT INTO testA VALUES (50, 'z'); " +
+                                "INSERT INTO testA VALUES (29, 'g'); " +
+                                "SELECT * from testA;");
+
+                assertResults(statement, hasResult, zero(), zero(),
+                        count(1), count(1),
+                        data(row(50L, "z"), row(29L, "g")));
             }
         });
     }
@@ -1105,10 +1164,10 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                 "SELECT * from testA;" +
                                 "SELECT * from testB;");
 
-                assertResults(statement, hasResult, result(0), result(0), result(0),
-                        result(1), result(1), result(0), result(0),
-                        result(1), result(1),
-                        result(row(50L, "z"), row(29L, "g")), result(row((byte) 8, 1.0d), row((byte) 2, 1.0d)));
+                assertResults(statement, hasResult, zero(), zero(), zero(),
+                        count(1), count(1), zero(), zero(),
+                        count(1), count(1),
+                        data(row(50L, "z"), row(29L, "g")), data(row((byte) 8, 1.0d), row((byte) 2, 1.0d)));
             }
         });
     }
@@ -1134,17 +1193,17 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                 "SELECT * from testA;" +
                                 "SELECT * from testB;");
 
-                assertResults(statement, hasResult, result(0), result(0), result(0),
-                        result(1), result(1), result(0), result(0),
-                        result(1), result(1), result(0),
-                        result(row(150L, "150")), result(row((byte) 78, 5.0d)));
+                assertResults(statement, hasResult, count(0), count(0), count(0),
+                        count(1), count(1), count(0), count(0),
+                        count(1), count(1), count(0),
+                        data(row(150L, "150")), data(row((byte) 78, 5.0d)));
             }
         });
     }
 
-    //TODO: fix this test by implementing implicit transactions in sql blocks, the last query should return 1 only  
+    @Ignore("without implicit transaction second insert runs in autocommit mode")
     @Test //example taken from https://www.postgresql.org/docs/current/protocol-flow.html#id-1.10.5.7.4
-    public void testCreateBeginInsertCommitInsertErrorRetainsOnlyCommittedDataOnTwoTables() throws Exception {
+    public void testCreateBeginInsertCommitInsertErrorRetainsOnlyCommittedData() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
                 test.connection.setAutoCommit(false);
@@ -1156,22 +1215,170 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "INSERT INTO mytable VALUES(1); " +
                             "COMMIT; " +
                             "INSERT INTO mytable VALUES(2); " +
-                            "DELETE from mytable1;");
+                            "DELETE from mytable3;");
                     fail("PSQLException expected");
                 } catch (PSQLException e) {
-                    assertEquals("ERROR: unexpected token: mytable1\n  Position: 120", e.getMessage());
+                    assertEquals("ERROR: unexpected token: mytable3\n  Position: 120", e.getMessage());
                 }
 
                 boolean hasResult = statement.execute("select * from mytable;");
 
-                assertResults(statement, hasResult, result(row(1L), row(2L)));
+                assertResults(statement, hasResult, data(row(1L)));
             }
         });
     }
 
-    // test transactions on more than one table 
-    // test transactions with begin end via jdbc (autocommit off) -- assuming begin/end are not issued by driver 
-    // test blocks with rollback without wrapping transactions 
+    @Ignore("Implicit transactions need to be implemented before enabling this test")
+    @Test
+    public void testImplicitTransactionIsCommitedAtEndOfBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGTestSetup test = new PGTestSetup()) {
+                test.connection.setAutoCommit(false);
+                Statement statement = test.statement;
+
+                boolean hasResult = statement.execute("CREATE TABLE mytable(l long); " +
+                        "INSERT INTO mytable VALUES(1); "); //transaction should be committed right after insert 
+                assertResults(statement, hasResult, count(0), count(1));
+
+                hasResult = statement.execute("ROLLBACK; select * from mytable;");
+                assertResults(statement, hasResult, count(0), data(row(1L)));
+            }
+        });
+    }
+
+    @Ignore("Truncate table times out trying to acquire lock taken by earlier insert in the same transaction")
+    @Test//truncate commits existing transaction and is non-transactional
+    public void testCreateNormalInsertThenTruncateThenRollbackLeavesEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGTestSetup test = new PGTestSetup()) {
+                test.connection.setAutoCommit(false);
+                Statement statement = test.statement;
+
+                boolean hasResult =
+                        statement.execute("CREATE TABLE mytable(l long); " +
+                                "BEGIN; " +
+                                "INSERT INTO mytable VALUES(1); " +
+                                "TRUNCATE TABLE mytable; " +
+                                "ROLLBACK; " +
+                                "SELECT * From mytable; ");
+
+                assertResults(statement, hasResult, count(0), count(0), count(1),
+                        count(0), count(0), empty());
+            }
+        });
+    }
+
+    @Ignore("alter table throws error while trying to acquire lock taken by prior transactional insert")
+    @Test //alter table isn't transactional so we commit transaction right before it 
+    public void testCreateNormalInsertThenAlterAddColumnTableThenRollbackLeavesNonEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGTestSetup test = new PGTestSetup()) {
+                test.connection.setAutoCommit(false);
+                Statement statement = test.statement;
+
+                boolean hasResult =
+                        statement.execute("CREATE TABLE mytable(l long); " +
+                                "BEGIN; " +
+                                "INSERT INTO mytable VALUES(27); " +
+                                "ALTER TABLE mytable ADD COLUMN s string; " +
+                                "ROLLBACK; " +
+                                "SELECT * From mytable; ");
+
+                assertResults(statement, hasResult, count(0), count(0), count(1), count(0), count(0), data(row(27L)));
+            }
+        });
+    }
+
+    @Ignore("alter table throws error while trying to acquire lock taken by prior transactional insert")
+    @Test //alter table isn't transactional so we commit transaction right before it 
+    public void testCreateInsertThenAlterTableRenameThenRollbackLeavesNonEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGTestSetup test = new PGTestSetup()) {
+                test.connection.setAutoCommit(false);
+                Statement statement = test.statement;
+
+                boolean hasResult =
+                        statement.execute("CREATE TABLE mytable(l long); " +
+                                "BEGIN; " +
+                                "INSERT INTO mytable VALUES(27); " +
+                                "ALTER TABLE mytable rename COLUMN l to i;" +
+                                "ROLLBACK; " +
+                                "SELECT i From mytable; ");
+
+                assertResults(statement, hasResult, count(0), count(0), count(1), count(0), count(0), data(row(27L)));
+            }
+        });
+    }
+
+    @Ignore("Insert as select times out trying to acquire lock taken by earlier insert in the same transaction")
+    @Test//insert as select is not transactional. It commits existing transaction and right after inserting data.
+    public void testCreateTableInsertThenInsertAsSelectThenRollbackLeavesNonEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGTestSetup test = new PGTestSetup()) {
+                test.connection.setAutoCommit(false);
+                Statement statement = test.statement;
+
+                boolean hasResult =
+                        statement.execute("CREATE TABLE mytable(l long); " +
+                                "BEGIN; " +
+                                "INSERT INTO mytable VALUES(1); " +
+                                "INSERT INTO mytable select x+1 from long_sequence(2); " +
+                                "ROLLBACK; " +
+                                "SELECT * From mytable; ");
+
+                assertResults(statement, hasResult, count(0), count(0), count(1),
+                        count(2), count(0), data(row(1L), row(2L), row(3L)));
+            }
+        });
+    }
+
+    //insert as select isn't transactional and commits data immediately
+    @Test
+    public void testCreateInsertAsSelectInsertThenRollbackLeavesNonEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGTestSetup test = new PGTestSetup()) {
+                test.connection.setAutoCommit(false);
+                Statement statement = test.statement;
+
+                boolean hasResult =
+                        statement.execute("CREATE TABLE mytable(l long); " +
+                                "BEGIN; " +
+                                "INSERT INTO mytable select x from long_sequence(2); " +
+                                "INSERT INTO mytable VALUES(3); " +
+                                "ROLLBACK; " +
+                                "SELECT * From mytable; ");
+
+                assertResults(statement, hasResult, count(0), count(0), count(2),
+                        count(1), count(0), data(row(1L), row(2L)));
+            }
+        });
+    }
+
+    @Ignore("Drop conflicts with earlier insert in the same transaction")
+    @Test
+    public void testCreateInsertThenDropDoesntSelfLock() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGTestSetup test = new PGTestSetup()) {
+                test.connection.setAutoCommit(false);
+                Statement statement = test.statement;
+
+                boolean hasResult =
+                        statement.execute("CREATE TABLE mytable(l long);" +
+                                "INSERT INTO mytable values(1); " +
+                                "DROP TABLE mytable; ");
+
+                assertResults(statement, hasResult, count(0), count(1), count(0));
+            }
+        });
+    }
+
+    //test when no earlier transaction nor begin/commit/rollback then block is wrapped in implicit transaction and committed at the end
+    //test when there's rollback/commit in middle and rest is wrapped in transaction
+    //test when there's error in the middle then implicit transaction is rolled back 
+
+    //test when there's earlier transaction then block is not committed at the end 
+    //test if there's begin in the middle then this piece of block is not committed
+    //test if there's earlier transaction with commit or rollback then later begin includes lines wrapped in implicit transactions
 
     class PGTestSetup implements Closeable {
         final PGWireServer server;
@@ -1216,6 +1423,11 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         Object get(int i) {
             return cols[i];
         }
+
+        @Override
+        public String toString() {
+            return "Row{" + Arrays.toString(cols) + '}';
+        }
     }
     
     static class Result {
@@ -1244,18 +1456,26 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         return new Row(cols);
     }
 
-    static Result result(Row... rows){
+    static Result data(Row... rows) {
         return new Result(rows);
     }
 
-    static Result result(int updatedRows){
+    static Result count(int updatedRows) {
         return new Result(updatedRows);
     }
-    
-    private static void assertResults( Statement s, boolean hasFirstResult, Result... results ) throws SQLException {
-        if ( results != null && results.length > 0 ){
-            
-            if ( results[0] != null ){
+
+    static Result zero() {
+        return Result.ZERO;
+    }
+
+    static Result empty() {
+        return Result.EMPTY;
+    }
+
+    private static void assertResults(Statement s, boolean hasFirstResult, Result... results) throws SQLException {
+        if (results != null && results.length > 0) {
+
+            if (results[0] != null) {
                 try {
                     if (results[0].hasData()) {
                         assertTrue("Expected data in first result", hasFirstResult);
@@ -1275,7 +1495,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                         assertTrue("expected data in result", s.getMoreResults());
                         assertResultSet(s, results[i].rows);
                     } else {
-                        assertFalse("didn't expect data in first result", s.getMoreResults());
+                        assertFalse("didn't expect data in result #" + i, s.getMoreResults());
                         assertEquals("Expected update count", results[i].updateCount, s.getUpdateCount());
                     }
                 } catch (AssertionError ae) {
@@ -1294,7 +1514,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
         for (int rownum = 0; rownum < rows.length; rownum++) {
             Row row = rows[rownum];
-            assertTrue("result set should have row #" + rownum, set.next());
+            assertTrue("result set should have row #" + rownum + " with data " + row, set.next());
 
             for (int colnum = 0; colnum < row.length(); colnum++) {
                 Object col = row.get(colnum);
@@ -1312,12 +1532,17 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     } else {
                         assertEquals(col, set.getObject(colnum + 1));
                     }
-                }catch(AssertionError ae){
+                } catch (AssertionError ae) {
                     throw new AssertionError("row#" + rownum + " col#" + colnum + " " + ae.getMessage());
                 }
             }
         }
-        
-        assertFalse( "No more rows expected!", set.next() );
+
+        int rowsLeft = 0;
+        while (set.next()) {
+            rowsLeft++;
+        }
+
+        assertEquals("No more rows expected!", 0, rowsLeft);
     }
 }

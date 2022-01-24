@@ -97,20 +97,25 @@ public class SqlCompiler implements Closeable {
     private final TextLoader textLoader;
     private final FilesFacade ff;
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
-    
+
     //determines how compiler parses query text
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing. 
-    private boolean isSingleQueryMode = true;  
-    
+    private boolean isSingleQueryMode = true;
+
     //null object used to skip null checks in batch method
     private static final BatchCallback EMPTY_CALLBACK = new BatchCallback() {
         @Override
-        public void preCompile(SqlCompiler compiler) {}
+        public void preCompile(SqlCompiler compiler) {
+        }
 
         @Override
-        public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence queryText) {}
+        public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence queryText) {
+        }
     };
+
+    //helper var used to pass back count in cases it can't be done via method result
+    private long insertCount;
 
     public SqlCompiler(CairoEngine engine) {
         this(engine, null);
@@ -925,34 +930,34 @@ public class SqlCompiler implements Closeable {
      *  Useful PG doc link :
      *  @see <a href=" https://www.postgresql.org/docs/current/protocol-flow.html#id-1.10.5.7.4">PostgreSQL documentation</a>
      *
-     * @param callback - callback to perform actions prior to or after batch part compilation, e.g. clear caches or execute command  
+     * @param batchCallback - callback to perform actions prior to or after batch part compilation, e.g. clear caches or execute command  
      */
-    public void compileBatch(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext, BatchCallback callback )
+    public void compileBatch(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext, BatchCallback batchCallback)
             throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
         clear();
         lexer.of(query);
         isSingleQueryMode = false;
 
-        if ( callback == null ){
-            callback = EMPTY_CALLBACK;
+        if (batchCallback == null) {
+            batchCallback = EMPTY_CALLBACK;
         }
 
         int position;
 
-        while (lexer.hasNext()){
+        while (lexer.hasNext()) {
             //skip over empty statements that'd cause error in parser
             position = getNextValidTokenPosition();
-            if ( position == -1 ){
+            if (position == -1) {
                 return;
             }
 
-            callback.preCompile(this);
+            batchCallback.preCompile(this);
             clear();//we don't use normal compile here because we can't reset existing lexer
             CompiledQuery current = compileInner(executionContext);
             //We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
             //some code in postCompile might need full text of current query
             CharSequence currentQuery = query.subSequence(position, goToQueryEnd());
-            callback.postCompile(this, current, currentQuery);
+            batchCallback.postCompile(this, current, currentQuery);
         }
     }
 
@@ -1920,13 +1925,14 @@ public class SqlCompiler implements Closeable {
         }
     }
 
+    //sets insertCount to number of copied rows
     private TableWriter copyTableData(CharSequence tableName, RecordCursor cursor, RecordMetadata cursorMetadata) {
         TableWriter writer = new TableWriter(configuration, tableName, messageBus, false, DefaultLifecycleManager.INSTANCE);
         try {
             RecordMetadata writerMetadata = writer.getMetadata();
             entityColumnFilter.of(writerMetadata.getColumnCount());
             RecordToRowCopier recordToRowCopier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, entityColumnFilter);
-            copyTableData(cursor, cursorMetadata, writer, writerMetadata, recordToRowCopier);
+            this.insertCount = copyTableData(cursor, cursorMetadata, writer, writerMetadata, recordToRowCopier);
             return writer;
         } catch (Throwable e) {
             writer.close();
@@ -1934,12 +1940,13 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void copyTableData(RecordCursor cursor, RecordMetadata metadata, TableWriter writer, RecordMetadata writerMetadata, RecordToRowCopier recordToRowCopier) {
+    /* returns number of copied rows*/
+    private long copyTableData(RecordCursor cursor, RecordMetadata metadata, TableWriter writer, RecordMetadata writerMetadata, RecordToRowCopier recordToRowCopier) {
         int timestampIndex = writerMetadata.getTimestampIndex();
         if (timestampIndex == -1) {
-            copyUnordered(cursor, writer, recordToRowCopier);
+            return copyUnordered(cursor, writer, recordToRowCopier);
         } else {
-            copyOrdered(writer, metadata, cursor, recordToRowCopier, timestampIndex);
+            return copyOrdered(writer, metadata, cursor, recordToRowCopier, timestampIndex);
         }
     }
 
@@ -1969,6 +1976,8 @@ public class SqlCompiler implements Closeable {
                         name.token, 0, name.token.length()) != TableUtils.TABLE_DOES_NOT_EXIST) {
             return compiledQuery.ofCreateTable();
         }
+
+        this.insertCount = -1;
 
         // Slow path with lock attempt
         CharSequence lockedReason = engine.lock(executionContext.getCairoSecurityContext(), name.token, "createTable");
@@ -2001,7 +2010,11 @@ public class SqlCompiler implements Closeable {
             throw SqlException.$(name.position, "cannot acquire table lock [lockedReason=").put(lockedReason).put(']');
         }
 
-        return compiledQuery.ofCreateTable();
+        if (createTableModel.getQueryModel() == null) {
+            return compiledQuery.ofCreateTable();
+        } else {
+            return compiledQuery.ofCreateTableAsSelect(insertCount);
+        }
     }
 
     private TableWriter createTableFromCursor(CreateTableModel model, SqlExecutionContext executionContext) throws SqlException {

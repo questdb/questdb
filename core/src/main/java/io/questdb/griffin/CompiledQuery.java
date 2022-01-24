@@ -49,6 +49,7 @@ public interface CompiledQuery {
     short BEGIN = 16;
     short COMMIT = 17;
     short ROLLBACK = 18;
+    short CREATE_TABLE_AS_SELECT = 19;
 
     RecordCursorFactory getRecordCursorFactory();
 

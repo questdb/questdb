@@ -62,7 +62,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     public static final String TAG_OK = "OK";
     public static final String TAG_COPY = "COPY";
     public static final String TAG_INSERT = "INSERT";
-    public static final String TAG_INSERT_AS_SELECT = "INSERT_AS_SELECT";
+
     public static final char STATUS_IN_TRANSACTION = 'T';
     public static final char STATUS_IN_ERROR = 'E';
     public static final char STATUS_IDLE = 'I';
@@ -154,6 +154,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private TypesAndInsert typesAndInsert = null;
     private long fd;
     private CharSequence queryText;
+
+    //command tag used when returning row count to client, 
+    //see CommandComplete (B) at https://www.postgresql.org/docs/current/protocol-message-formats.html
     private CharSequence queryTag;
     private CharSequence username;
     private boolean authenticationRequired = true;
@@ -216,7 +219,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         this.typesAndInsertCache = new AssociativeCache<>(blockCount, rowCount);
         this.batchCallback = new PGConnectionBatchCallback();
     }
-    
+
     class PGConnectionBatchCallback implements BatchCallback {
         @Override
         public void preCompile(SqlCompiler compiler) throws SqlException {
@@ -226,7 +229,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
 
         @Override
-        public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence text) 
+        public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence text)
                 throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
             PGConnectionContext.this.queryText = text;
             LOG.info().$("parse [fd=").$(fd).$(", q=").utf8(text).I$();
@@ -242,7 +245,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 sendCursor(0, resumeCursorQueryRef, resumeQueryCompleteRef);
             } else if (typesAndInsert != null) {
                 executeInsert();
-            } else if (queryTag == TAG_INSERT_AS_SELECT) {
+            } else if (cq.getType() == CompiledQuery.INSERT_AS_SELECT ||
+                    cq.getType() == CompiledQuery.CREATE_TABLE_AS_SELECT) {
                 prepareCommandComplete(true);
             } else {
                 executeTag();
@@ -1104,6 +1108,10 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         sqlExecutionContext.storeTelemetry(cq.getType(), Telemetry.ORIGIN_POSTGRES);
         
         switch (cq.getType()) {
+            case CompiledQuery.CREATE_TABLE_AS_SELECT:
+                queryTag = TAG_SELECT;
+                rowCount = cq.getInsertCount();
+                break;
             case CompiledQuery.SELECT:
                 typesAndSelect = typesAndSelectPool.pop();
                 typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService);
@@ -1121,7 +1129,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 }
                 break;
             case CompiledQuery.INSERT_AS_SELECT:
-                queryTag = TAG_INSERT_AS_SELECT;
+                queryTag = TAG_INSERT;
                 rowCount = cq.getInsertCount();
                 break;
             case CompiledQuery.COPY_LOCAL:
