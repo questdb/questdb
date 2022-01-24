@@ -37,6 +37,11 @@ class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwoLabels 
     }
 
     @Override
+    public long get() {
+        return 0;
+    }
+
+    @Override
     public void inc(short label0) {
     }
 

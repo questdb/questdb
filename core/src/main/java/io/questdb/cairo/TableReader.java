@@ -461,8 +461,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    public void reshuffleSymbolMapReaders(long pTransitionIndex) {
-        final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
+    private void reshuffleSymbolMapReaders(long pTransitionIndex, int columnCount) {
         final long index = pTransitionIndex + 8;
         final long stateAddress = index + columnCount * 8L;
 
@@ -475,7 +474,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         // this is a silly exercise in walking the index
         for (int i = 0; i < columnCount; i++) {
 
-            // prevent writing same entry once
+            // prevent writing same entry more than once
             if (Unsafe.getUnsafe().getByte(stateAddress + i) == -1) {
                 continue;
             }
@@ -1166,7 +1165,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         reshuffleColumns(columnCount, pTransitionIndex);
                     }
                     // rearrange symbol map reader list
-                    reshuffleSymbolMapReaders(pTransitionIndex);
+                    reshuffleSymbolMapReaders(pTransitionIndex, columnCount);
                     this.columnCount = columnCount;
                     return true;
                 } finally {

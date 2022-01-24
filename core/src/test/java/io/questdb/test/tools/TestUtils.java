@@ -25,6 +25,7 @@
 package io.questdb.test.tools;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -410,13 +411,16 @@ public final class TestUtils {
         }
 
         // Checks that the same tag used for allocation and freeing native memory
-        for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
-            long actualMemByTag = Unsafe.getMemUsedByTag(i);
-            if (memoryUsageByTag[i] != actualMemByTag) {
-                Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i), memoryUsageByTag[i], actualMemByTag);
+        long memAfter = Unsafe.getMemUsed();
+        if (mem != memAfter) {
+            for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
+                long actualMemByTag = Unsafe.getMemUsedByTag(i);
+                if (memoryUsageByTag[i] != actualMemByTag) {
+                    Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i), memoryUsageByTag[i], actualMemByTag);
+                }
             }
+            Assert.assertEquals(mem, memAfter);
         }
-        Assert.assertEquals(mem, Unsafe.getMemUsed());
     }
 
     public static void assertReader(CharSequence expected, TableReader reader, MutableCharSink sink) {
