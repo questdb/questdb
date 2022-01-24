@@ -158,7 +158,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         transitionMeta = Misc.free(transitionMeta);
     }
 
-    public long createTransitionIndex(long expectedStructureVersion) {
+    public long createTransitionIndex(long txnStructureVersion) {
         if (transitionMeta == null) {
             transitionMeta = Vm.getMRInstance();
         }
@@ -166,7 +166,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         transitionMeta.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
         tmpValidationMap.clear();
         TableUtils.validate(ff, transitionMeta, tmpValidationMap, ColumnType.VERSION);
-        if (expectedStructureVersion != transitionMeta.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION)) {
+        if (txnStructureVersion != transitionMeta.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION)) {
             // No match
             return -1;
         }

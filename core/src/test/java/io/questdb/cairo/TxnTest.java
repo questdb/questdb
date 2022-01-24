@@ -32,7 +32,9 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -118,21 +120,19 @@ public class TxnTest extends AbstractCairoTest {
     @Test
     public void testTxReadWriteConcurrent() throws Throwable {
         TestUtils.assertMemoryLeak(() -> {
-            int readerThreads = 2;
+            int readerThreads = 4;
 
             CyclicBarrier start = new CyclicBarrier(readerThreads + 1);
             AtomicInteger done = new AtomicInteger();
             AtomicInteger reloadCount = new AtomicInteger();
             int iterations = 1000;
             ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
-//            Rnd rnd = TestUtils.generateRandom(LOG);
+            Rnd rnd = TestUtils.generateRandom(LOG);
 
-            Rnd rnd = new Rnd(32060771041873L, 1642788330175L);
             String tableName = "testTxReadWriteConcurrent";
             FilesFacade ff = FilesFacadeImpl.INSTANCE;
             int maxPartitionCount = Math.max((int) (Files.PAGE_SIZE / 8 / 4), 4096);
             int maxSymbolCount = (int) (Files.PAGE_SIZE / 8 / 4);
-            ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
             AtomicInteger partitionCountCheck = new AtomicInteger();
 
             try (Path path = new Path()) {
@@ -150,61 +150,7 @@ public class TxnTest extends AbstractCairoTest {
                     );
                 }
             }
-            Thread writerThread = new Thread(() -> {
-                try (
-                        Path path = new Path();
-                        TxWriter txWriter = new TxWriter(ff)
-                ) {
-                    path.of(engine.getConfiguration().getRoot()).concat(tableName);
-                    txWriter.ofRW(path, PartitionBy.HOUR);
-
-                    // Create last partition and don't touch it with the updates
-                    txWriter.maxTimestamp = (maxPartitionCount + 1) * Timestamps.HOUR_MICROS;
-                    txWriter.updatePartitionSizeByTimestamp(txWriter.maxTimestamp * Timestamps.HOUR_MICROS, 1);
-
-                    start.await();
-                    for (int j = 0; j < iterations; j++) {
-                        // Set txn file with random number of symbols and random number of partitions
-                        int symbolCount = rnd.nextInt(maxSymbolCount);
-                        if (symbolCount > symbolCounts.size()) {
-                            for (int i = symbolCounts.size(); i < symbolCount; i++) {
-                                symbolCounts.add(new SymbolCountProviderImpl(i));
-                            }
-                        } else {
-                            symbolCounts.setPos(symbolCount);
-                        }
-                        txWriter.bumpStructureVersion(symbolCounts);
-
-                        // Set random number of partitions
-                        int partitionCount = rnd.nextInt(maxPartitionCount);
-                        int partitions = txWriter.getPartitionCount() - 1; // Last partition always stays
-
-                        long offset = txWriter.txn + 1 - txWriter.getStructureVersion();
-                        // Add / Update
-                        for (int i = 0; i < partitionCount; i++) {
-                            txWriter.updatePartitionSizeByTimestamp(i * Timestamps.HOUR_MICROS, offset + i);
-                        }
-                        // Remove from the end
-                        for (int i = partitionCount; i < partitions; i++) {
-                            txWriter.removeAttachedPartitions(i * Timestamps.HOUR_MICROS);
-                        }
-                        assert txWriter.getPartitionCount() - 1 == partitionCount;
-
-                        txWriter.maxTimestamp = partitionCount * Timestamps.HOUR_MICROS;
-                        txWriter.commit(CommitMode.NOSYNC, symbolCounts);
-                        partitionCountCheck.set(partitionCount);
-                        if (rnd.nextBoolean()) {
-                            // Reopen txn file for writing
-                            txWriter.ofRW(path, PartitionBy.HOUR);
-                        }
-                    }
-                } catch (Throwable e) {
-                    exceptions.add(e);
-                    LOG.error().$(e).$();
-                } finally {
-                    done.incrementAndGet();
-                }
-            });
+            Thread writerThread = createWriterThread(start, done, iterations, exceptions, rnd, tableName, ff, maxPartitionCount, maxSymbolCount, partitionCountCheck, true);
 
             Rnd readerRnd = TestUtils.generateRandom(LOG);
 
@@ -221,27 +167,38 @@ public class TxnTest extends AbstractCairoTest {
                         long duration = 500000;
                         start.await();
                         while (done.get() == 0 || partitionCountCheck.get() != txReader.getPartitionCount() - 1) {
-                            if (done.get() == 1) {
-                                int i = 0;
-                            }
                             TableUtils.safeReadTxn(txReader, microClock, duration);
                             reloadCount.incrementAndGet();
-                            String trace = String.format(
-                                    "[txn=%d, structureVersion=%d, partitionCount=%d, symbolCount=%d]",
-                                    txReader.txn,
-                                    txReader.structureVersion,
-                                    txReader.getPartitionCount(),
-                                    txReader.getSymbolColumnCount()
-                            );
                             Assert.assertTrue(txReader.getPartitionCount() <= maxPartitionCount);
+                            Assert.assertTrue(txReader.getSymbolColumnCount() <= maxSymbolCount);
+
+                            for (int i = txReader.getSymbolColumnCount() - 1; i > -1; i--) {
+                                if (i != txReader.getSymbolColumnCount()) {
+                                    String trace = String.format(
+                                            "[txn=%d, structureVersion=%d, partitionCount=%d, symbolCount=%d] ",
+                                            txReader.txn,
+                                            txReader.structureVersion,
+                                            txReader.getPartitionCount(),
+                                            txReader.getSymbolColumnCount()
+                                    );
+                                    Assert.assertEquals(trace, i, txReader.getSymbolValueCount(i));
+                                }
+                            }
+
                             long offset = txReader.txn - txReader.getStructureVersion();
                             for (int i = txReader.getPartitionCount() - 2; i > -1; i--) {
-                                Assert.assertEquals(trace, offset + i, txReader.getPartitionSize(i));
+                                if (offset + i != txReader.getPartitionSize(i)) {
+                                    String trace = String.format(
+                                            "[txn=%d, structureVersion=%d, partitionCount=%d, symbolCount=%d] ",
+                                            txReader.txn,
+                                            txReader.structureVersion,
+                                            txReader.getPartitionCount(),
+                                            txReader.getSymbolColumnCount()
+                                    );
+                                    Assert.assertEquals(trace + buildActualSizes(txReader), offset + i, txReader.getPartitionSize(i));
+                                }
                             }
-                            Assert.assertTrue(txReader.getSymbolColumnCount() <= maxSymbolCount);
-                            for (int i = txReader.getSymbolColumnCount() - 1; i > -1; i--) {
-                                Assert.assertEquals(trace, i, txReader.getSymbolValueCount(i));
-                            }
+
                             if (readerRnd.nextBoolean()) {
                                 // Reopen txn file
                                 txReader.ofRO(path, PartitionBy.HOUR);
@@ -272,67 +229,62 @@ public class TxnTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testTxReadWriteSequential() throws Throwable {
-        TestUtils.assertMemoryLeak(() -> {
-            AtomicInteger done = new AtomicInteger();
-            AtomicInteger reloadCount = new AtomicInteger();
-            int iterations = 1000;
-            ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
-//            Rnd rnd = TestUtils.generateRandom(LOG);
-
-            Rnd rnd = new Rnd(32060771041873L, 1642788330175L);
-
-            String tableName = "testTxReadWriteSequential";
-            FilesFacade ff = FilesFacadeImpl.INSTANCE;
-            int maxPartitionCount = Math.max((int) (Files.PAGE_SIZE / 8 / 4), 4096);
-            int maxSymbolCount = (int) (Files.PAGE_SIZE / 8 / 4);
-            ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
-            AtomicInteger partitionCountCheck = new AtomicInteger();
-
-            try (Path path = new Path()) {
-                try (
-                        MemoryMARW mem = Vm.getCMARWInstance();
-                        TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                ) {
-                    model.timestamp();
-                    TableUtils.createTable(
-                            configuration,
-                            mem,
-                            path,
-                            model,
-                            1
-                    );
-                }
+    private String buildActualSizes(TxReader txReader) {
+        StringSink ss = new StringSink();
+        for (int i = 0; i < txReader.getPartitionCount() - 1; i++) {
+            if (i > 0) {
+                ss.put(',');
             }
+            ss.put(txReader.getPartitionSize(i));
+        }
+        return ss.toString();
+    }
+
+    @NotNull
+    private Thread createWriterThread(
+            CyclicBarrier start,
+            AtomicInteger done,
+            int iterations,
+            ConcurrentLinkedQueue<Throwable> exceptions,
+            Rnd rnd,
+            String tableName,
+            FilesFacade ff,
+            int maxPartitionCount,
+            int maxSymbolCount,
+            AtomicInteger partitionCountCheck,
+            boolean increaseStructureVersion
+    ) {
+        ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
+        return new Thread(() -> {
             try (
                     Path path = new Path();
-                    TxWriter txWriter = new TxWriter(ff);
-                    TxReader txReader = new TxReader(ff)
+                    TxWriter txWriter = new TxWriter(ff)
             ) {
                 path.of(engine.getConfiguration().getRoot()).concat(tableName);
                 txWriter.ofRW(path, PartitionBy.HOUR);
-                txReader.ofRO(path, PartitionBy.HOUR);
-                MicrosecondClock microClock = engine.getConfiguration().getMicrosecondClock();
-                long duration = 500000;
-                Rnd readerRnd = TestUtils.generateRandom(LOG);
 
-                txReader.maxTimestamp = (maxPartitionCount + 1) * Timestamps.HOUR_MICROS;
-                txWriter.updatePartitionSizeByTimestamp(txReader.maxTimestamp * Timestamps.HOUR_MICROS, 1);
+                // Create last partition and don't touch it with the updates
+                txWriter.maxTimestamp = (maxPartitionCount + 1) * Timestamps.HOUR_MICROS;
+                txWriter.updatePartitionSizeByTimestamp(txWriter.maxTimestamp * Timestamps.HOUR_MICROS, 1);
 
+                start.await();
                 for (int j = 0; j < iterations; j++) {
-                    int symbolCount = rnd.nextInt(maxSymbolCount);
-                    if (symbolCount > symbolCounts.size()) {
-                        for (int i = symbolCounts.size(); i < symbolCount; i++) {
-                            symbolCounts.add(new SymbolCountProviderImpl(i));
+                    if (increaseStructureVersion) {
+                        // Set txn file with random number of symbols and random number of partitions
+                        int symbolCount = rnd.nextInt(maxSymbolCount);
+                        if (symbolCount > symbolCounts.size()) {
+                            for (int i = symbolCounts.size(); i < symbolCount; i++) {
+                                symbolCounts.add(new SymbolCountProviderImpl(i));
+                            }
+                        } else {
+                            symbolCounts.setPos(symbolCount);
                         }
-                    } else {
-                        symbolCounts.setPos(symbolCount);
+                        txWriter.bumpStructureVersion(symbolCounts);
                     }
-                    txWriter.bumpStructureVersion(symbolCounts);
 
+                    // Set random number of partitions
                     int partitionCount = rnd.nextInt(maxPartitionCount);
-                    int partitions = txWriter.getPartitionCount() - 1;
+                    int partitions = txWriter.getPartitionCount() - 1; // Last partition always stays
 
                     long offset = txWriter.txn + 1 - txWriter.getStructureVersion();
                     // Add / Update
@@ -343,6 +295,7 @@ public class TxnTest extends AbstractCairoTest {
                     for (int i = partitionCount; i < partitions; i++) {
                         txWriter.removeAttachedPartitions(i * Timestamps.HOUR_MICROS);
                     }
+                    txWriter.bumpPartitionTableVersion();
                     assert txWriter.getPartitionCount() - 1 == partitionCount;
 
                     txWriter.maxTimestamp = partitionCount * Timestamps.HOUR_MICROS;
@@ -352,32 +305,13 @@ public class TxnTest extends AbstractCairoTest {
                         // Reopen txn file for writing
                         txWriter.ofRW(path, PartitionBy.HOUR);
                     }
-
-                    TableUtils.safeReadTxn(txReader, microClock, duration);
-                    reloadCount.incrementAndGet();
-                    Assert.assertEquals(partitionCount + 1, txReader.getPartitionCount());
-                    long offset2 = txReader.txn - txReader.getStructureVersion();
-                    assert offset2 == offset;
-                    for (int i = txReader.getPartitionCount() - 2; i > -1; i--) {
-                        Assert.assertEquals(offset + i, txReader.getPartitionSize(i));
-                    }
-
-                    Assert.assertEquals(symbolCount, txReader.getSymbolColumnCount());
-                    for (int i = txReader.getSymbolColumnCount() - 1; i > -1; i--) {
-                        Assert.assertEquals(i, txReader.getSymbolValueCount(i));
-                    }
-                    LOG.infoW()
-                            .$("txn reloaded [symbols=").$(txReader.getSymbolColumnCount())
-                            .$(", partitions=").$(txReader.getPartitionCount())
-                            .I$();
-                    if (readerRnd.nextBoolean()) {
-                        // Reopen txn file
-                        txReader.ofRO(path, PartitionBy.HOUR);
-                    }
                 }
+            } catch (Throwable e) {
+                exceptions.add(e);
+                LOG.error().$(e).$();
+            } finally {
+                done.incrementAndGet();
             }
-
-            LOG.infoW().$("total reload count ").$(reloadCount.get()).$();
         });
     }
 

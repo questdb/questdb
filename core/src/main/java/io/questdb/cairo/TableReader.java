@@ -972,11 +972,10 @@ public class TableReader implements Closeable, SymbolTableSource {
             // Reader must begin with `txn_check` followed by verifying that `txn` remains the same.
             long txn = txFile.unsafeReadTxnCheck();
 
-            // make sure this isn't re-ordered
-            Unsafe.getUnsafe().loadFence();
             int symbolColumnCount = txFile.unsafeReadSymbolColumnCount();
             int partitionSegmentSize = txFile.unsafeReadPartitionSegmentSize(symbolColumnCount);
 
+            // make sure this isn't re-ordered
             Unsafe.getUnsafe().loadFence();
 
             // do start and end sequences match? if so we have a chance at stable read
@@ -1143,12 +1142,12 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private boolean reloadMetadata(long newStructureVersion) {
+    private boolean reloadMetadata(long txnStructureVersion) {
         // create transition index, which will help us reuse already open resources
         final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
         while (true) {
             try {
-                long pTransitionIndex = metadata.createTransitionIndex(newStructureVersion);
+                long pTransitionIndex = metadata.createTransitionIndex(txnStructureVersion);
                 if (pTransitionIndex < 0) {
                     return false;
                 }
@@ -1254,15 +1253,15 @@ public class TableReader implements Closeable, SymbolTableSource {
         reconcileOpenPartitions(prevPartitionVersion);
     }
 
-    private boolean reloadStruct(long prevStructVersion, long newStructureVersion) {
-        if (prevStructVersion == newStructureVersion) {
+    private boolean reloadStruct(long prevStructVersion, long txnStructureVersion) {
+        if (prevStructVersion == txnStructureVersion) {
             return true;
         }
-        return reloadStructSlow(newStructureVersion);
+        return reloadStructSlow(txnStructureVersion);
     }
 
-    private boolean reloadStructSlow(long newStructureVersion) {
-        if (reloadMetadata(newStructureVersion)) {
+    private boolean reloadStructSlow(long txnStructureVersion) {
+        if (reloadMetadata(txnStructureVersion)) {
             reloadSymbolMapCounts();
             return true;
         }

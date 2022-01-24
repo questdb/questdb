@@ -710,24 +710,19 @@ public final class TableUtils {
             if (txn == txReader.unsafeReadTxn()) {
                 txReader.unsafeLoadAll(symbolColumnCount, partitionSegmentSize, loadCount++ > 0);
                 Unsafe.getUnsafe().loadFence();
-            }
 
-            if (txn == txReader.unsafeReadTxn()) {
-                if (loadCount > 1) {
-                    LOG.debug().$("clean txn read after dirty [txn=").$(txn).I$();
+                if (txn == txReader.unsafeReadTxn()) {
+                    // All good, snapshot read
+                    return;
                 }
-                // All good, snapshot read
-                return;
-            } else {
-                // This is unlucky, sequences have changed while we were reading transaction data
-                // We must discard and try again
-                if (microsecondClock.getTicks() > deadline) {
-                    LOG.error().$("tx read timeout [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
-                    throw CairoException.instance(0).put("Transaction read timeout");
-                }
-                Os.pause();
             }
-            LOG.debug().$("dirty txn read discarded [txn=").$(txn).I$();
+            // This is unlucky, sequences have changed while we were reading transaction data
+            // We must discard and try again
+            if (microsecondClock.getTicks() > deadline) {
+                LOG.error().$("tx read timeout [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
+                throw CairoException.instance(0).put("Transaction read timeout");
+            }
+            Os.pause();
         }
     }
 
