@@ -44,8 +44,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static io.questdb.cairo.ColumnType.DOUBLE;
-import static io.questdb.cairo.ColumnType.STRING;
+import static io.questdb.cairo.ColumnType.*;
 
 class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
     private static final Log LOG = LogFactory.getLog(AbstractLineTcpReceiverFuzzTest.class);
@@ -57,14 +56,19 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
     private final AtomicLong timestampMillis = new AtomicLong(1465839830102300L);
     private final short[] colTypes = new short[]{STRING, DOUBLE, DOUBLE, DOUBLE, STRING, DOUBLE};
     private final String[][] colNameBases = new String[][]{
-            {"location", "Location", "LOCATION", "loCATion", "LocATioN"},
+            {"terület", "TERÜLet", "tERülET", "TERÜLET"},
             {"temperature", "TEMPERATURE", "Temperature", "TempeRaTuRe"},
             {"humidity", "HUMIdity", "HumiditY", "HUmiDIty", "HUMIDITY", "Humidity"},
             {"hőmérséklet", "HŐMÉRSÉKLET", "HŐmérséKLEt", "hőMÉRséKlET"},
-            {"terület", "TERÜLet", "tERülET", "TERÜLET"},
+            {"notes", "NOTES", "NotEs", "noTeS"},
             {"ветер", "Ветер", "ВЕТЕР", "вЕТЕр", "ВетЕР"}
     };
-    private final String[] colValueBases = new String[]{"us-midwest", "8", "2", "1", "europe", "6"};
+    private final String[] colValueBases = new String[]{"europe", "8", "2", "1", "note", "6"};
+    private final String[][] tagNameBases = new String[][]{
+            {"location", "Location", "LOCATION", "loCATion", "LocATioN"},
+            {"city", "ciTY", "CITY"}
+    };
+    private final String[] tagValueBases = new String[]{"us-midwest", "London"};
     private final char[] nonAsciiChars = {'ó', 'í', 'Á', 'ч', 'Ъ', 'Ж', 'ю', 0x3000, 0x3080, 0x3a55};
 
     private int numOfLines;
@@ -86,26 +90,49 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
 
     private volatile String errorMsg = null;
 
+    private CharSequence addTag(LineData line, int tagIndex) {
+        final CharSequence tagName = generateTagName(tagIndex, false);
+        final CharSequence tagValue = generateTagValue(tagIndex);
+        line.addTag(tagName, tagValue);
+        return tagName;
+    }
+
     private CharSequence addColumn(LineData line, int colIndex) {
-        final CharSequence colName = generateName(colIndex, false);
-        final CharSequence colValue = generateValue(colIndex);
-        line.add(colName, colValue);
+        final CharSequence colName = generateColumnName(colIndex, false);
+        final CharSequence colValue = generateColumnValue(colIndex);
+        line.addColumn(colName, colValue);
         return colName;
+    }
+
+    private void addDuplicateTag(LineData line, int tagIndex, CharSequence tagName) {
+        if (shouldFuzz(duplicatesFactor)) {
+            final CharSequence tagValueDupe = generateTagValue(tagIndex);
+            line.addTag(tagName, tagValueDupe);
+        }
     }
 
     private void addDuplicateColumn(LineData line, int colIndex, CharSequence colName) {
         if (shouldFuzz(duplicatesFactor)) {
-            final CharSequence colValueDupe = generateValue(colIndex);
-            line.add(colName, colValueDupe);
+            final CharSequence colValueDupe = generateColumnValue(colIndex);
+            line.addColumn(colName, colValueDupe);
+        }
+    }
+
+    private void addNewTag(LineData line) {
+        if (shouldFuzz(newColumnFactor)) {
+            final int extraTagIndex = random.nextInt(tagNameBases.length);
+            final CharSequence tagNameNew = generateTagName(extraTagIndex, true);
+            final CharSequence tagValueNew = generateTagValue(extraTagIndex);
+            line.addTag(tagNameNew, tagValueNew);
         }
     }
 
     private void addNewColumn(LineData line) {
         if (shouldFuzz(newColumnFactor)) {
             final int extraColIndex = random.nextInt(colNameBases.length);
-            final CharSequence colNameNew = generateName(extraColIndex, true);
-            final CharSequence colValueNew = generateValue(extraColIndex);
-            line.add(colNameNew, colValueNew);
+            final CharSequence colNameNew = generateColumnName(extraColIndex, true);
+            final CharSequence colValueNew = generateColumnValue(extraColIndex);
+            line.addColumn(colNameNew, colValueNew);
         }
     }
 
@@ -146,8 +173,8 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
         }
     }
 
-    private int[] generateColumnOrdering() {
-        final int[] columnOrdering = new int[colNameBases.length];
+    private int[] generateOrdering(int numOfCols) {
+        final int[] columnOrdering = new int[numOfCols];
         if (shouldFuzz(columnReorderingFactor)) {
             final List<Integer> indexes = new ArrayList<>();
             for (int i = 0; i < columnOrdering.length; i++) {
@@ -167,6 +194,13 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
 
     private LineData generateLine() {
         final LineData line = new LineData(timestampMillis.incrementAndGet());
+        final int[] tagIndexes = getTagIndexes();
+        for (int i = 0; i < tagIndexes.length; i++) {
+            final int tagIndex = tagIndexes[i];
+            final CharSequence tagName = addTag(line, tagIndex);
+            addDuplicateTag(line, tagIndex, tagName);
+            addNewTag(line);
+        }
         final int[] columnIndexes = getColumnIndexes();
         for (int i = 0; i < columnIndexes.length; i++) {
             final int colIndex = columnIndexes[i];
@@ -177,29 +211,51 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
         return line;
     }
 
-    private String generateName(int index, boolean randomize) {
-        final int caseIndex = diffCasesInColNames ? random.nextInt(colNameBases[index].length) : 0;
-        final String postfix = randomize ? Integer.toString(random.nextInt(NEW_COLUMN_RANDOMIZE_FACTOR)) : "";
-        return colNameBases[index][caseIndex] + postfix;
+    private String generateTagName(int index, boolean randomize) {
+        return generateName(tagNameBases[index], randomize);
     }
 
-    private String generateValue(int index) {
+    private String generateColumnName(int index, boolean randomize) {
+        return generateName(colNameBases[index], randomize);
+    }
+
+    private String generateName(String[] names, boolean randomize) {
+        final int caseIndex = diffCasesInColNames ? random.nextInt(names.length) : 0;
+        final String postfix = randomize ? Integer.toString(random.nextInt(NEW_COLUMN_RANDOMIZE_FACTOR)) : "";
+        return names[caseIndex] + postfix;
+    }
+
+    private String generateTagValue(int index) {
+        return generateValue(SYMBOL, tagValueBases[index]);
+    }
+
+    private String generateColumnValue(int index) {
+        return generateValue(colTypes[index], colValueBases[index]);
+    }
+
+    private String generateValue(short type, String valueBase) {
         final String postfix;
-        switch (colTypes[index]) {
+        switch (type) {
             case DOUBLE:
                 postfix = random.nextInt(9) + ".0";
-                break;
+                return valueBase + postfix;
+            case SYMBOL:
+                postfix = Character.toString(shouldFuzz(nonAsciiValueFactor) ? nonAsciiChars[random.nextInt(nonAsciiChars.length)] : random.nextChar());
+                return valueBase + postfix;
             case STRING:
                 postfix = Character.toString(shouldFuzz(nonAsciiValueFactor) ? nonAsciiChars[random.nextInt(nonAsciiChars.length)] : random.nextChar());
-                break;
+                return "\"" + valueBase + postfix + "\"";
             default:
-                postfix = "";
+                return valueBase;
         }
-        return colValueBases[index] + postfix;
+    }
+
+    private int[] getTagIndexes() {
+        return skipColumns(generateOrdering(tagNameBases.length));
     }
 
     private int[] getColumnIndexes() {
-        return skipColumns(generateColumnOrdering());
+        return skipColumns(generateOrdering(colNameBases.length));
     }
 
     private CharSequence getTableName(int tableIndex) {
