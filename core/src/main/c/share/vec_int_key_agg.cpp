@@ -657,7 +657,7 @@ Java_io_questdb_std_Rosti_keyedIntAvgLongWrapUp(JNIEnv *env, jclass cl, jlong pR
 
     auto map = reinterpret_cast<rosti_t *>(pRosti);
     const auto value_offset = map->value_offsets_[valueOffset];
-    const auto count_offset = map->value_offsets_[valueOffset + 1];
+    const auto count_offset = map->value_offsets_[valueOffset + 2];
     const auto capacity = map->capacity_;
     const auto ctrl = map->ctrl_;
     const auto shift = map->slot_size_shift_;
@@ -897,7 +897,7 @@ Java_io_questdb_std_Rosti_keyedIntSumLongMerge(JNIEnv *env, jclass cl, jlong pRo
     auto map_a = reinterpret_cast<rosti_t *>(pRostiA);
     auto map_b = reinterpret_cast<rosti_t *>(pRostiB);
     const auto value_offset = map_b->value_offsets_[valueOffset];
-    const auto count_offset = map_b->value_offsets_[valueOffset + 1];
+    const auto count_offset = map_b->value_offsets_[valueOffset + 2];
     const auto capacity = map_b->capacity_;
     const auto ctrl = map_b->ctrl_;
     const auto shift = map_b->slot_size_shift_;
@@ -1288,7 +1288,7 @@ void kIntSumLong(TO_INT *to_int, jlong pRosti, jlong pKeys, jlong pLong, jlong c
     auto map = reinterpret_cast<rosti_t *>(pRosti);
     const auto *pl = reinterpret_cast<jlong *>(pLong);
     const auto value_offset = map->value_offsets_[valueOffset];
-    const auto count_offset = map->value_offsets_[valueOffset + 1];
+    const auto count_offset = map->value_offsets_[valueOffset + 2];
     for (int i = 0; i < count; i++) {
         MM_PREFETCH_T0(pl + i + 8);
         const int32_t key = to_int(pKeys, i);
