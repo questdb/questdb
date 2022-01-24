@@ -590,7 +590,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         long txnLocks = txnScoreboard.getActiveReaderCount(txn);
         if (txnLocks == 0 && txFile.unsafeReadPartitionTableVersion() > txFile.getPartitionTableVersion()) {
             // Last lock for this txn is released and this is not latest txn number
-            // Schedule a job to clean up partition versions this reader may held
+            // Schedule a job to clean up partition versions this reader may hold
             if (TableUtils.schedulePurgeO3Partitions(messageBus, tableName, partitionBy)) {
                 return;
             }
@@ -1063,9 +1063,9 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private boolean releaseTxn() {
         if (txnAcquired) {
-            txnScoreboard.releaseTxn(txn);
+            long released = txnScoreboard.releaseTxn(txn);
             txnAcquired = false;
-            return true;
+            return released == 0;
         }
         return false;
     }

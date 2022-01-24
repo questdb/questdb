@@ -65,9 +65,10 @@ public class TxnScoreboard implements Closeable, Mutable {
         throw CairoException.instance(0).put("max txn-inflight limit reached [txn=").put(txn).put(", min=").put(min).put(", size=").put(pow2EntryCount).put(']');
     }
 
-    public void releaseTxn(long txn) {
+    public long releaseTxn(long txn) {
         long released = releaseTxn(mem, txn);
-        assert released > -1 : "released count " + txn + " must be positive: " + (released  + 1);
+        assert released > -1 : "released count " + txn + " must be positive: " + (released + 1);
+        return released;
     }
 
     @Override
