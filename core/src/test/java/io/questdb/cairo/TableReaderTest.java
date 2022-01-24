@@ -1432,6 +1432,145 @@ public class TableReaderTest extends AbstractCairoTest {
     };
 
     @Test
+    public void testAddColumnConcurrentWithDataUpdates() throws Throwable {
+        ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
+        assertMemoryLeak(() -> {
+            CyclicBarrier start = new CyclicBarrier(2);
+            AtomicInteger done = new AtomicInteger();
+            AtomicInteger columnsAdded = new AtomicInteger();
+            AtomicInteger reloadCount = new AtomicInteger();
+            int totalColAddCount = 100;
+
+            String tableName = "tbl_meta_test";
+            createTable(tableName, PartitionBy.DAY);
+
+            Thread writerThread = new Thread(() -> {
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
+                    start.await();
+                    for (int i = 0; i < totalColAddCount; i++) {
+                        writer.addColumn("col" + i, ColumnType.SYMBOL);
+                        columnsAdded.incrementAndGet();
+
+                        TableWriter.Row row = writer.newRow(i * Timestamps.HOUR_MICROS);
+                        row.append();
+
+                        writer.commit();
+                    }
+                } catch (Throwable e) {
+                    exceptions.add(e);
+                    LOG.error().$(e).$();
+                } finally {
+                    done.incrementAndGet();
+                }
+            });
+
+            Thread readerThread = new Thread(() -> {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                    start.await();
+                    int colAdded = -1, newColsAdded;
+                    while (colAdded < totalColAddCount) {
+                        if (colAdded < (newColsAdded = columnsAdded.get())) {
+                            reader.reload();
+                            Assert.assertEquals(reader.getTxnStructureVersion(), reader.getMetadata().getStructureVersion());
+                            colAdded = newColsAdded;
+                            reloadCount.incrementAndGet();
+                        }
+                        Os.pause();
+                    }
+                } catch (Throwable e) {
+                    exceptions.add(e);
+                    LOG.error().$(e).$();
+                }
+            });
+            writerThread.start();
+            readerThread.start();
+
+            writerThread.join();
+            readerThread.join();
+            Assert.assertTrue(reloadCount.get() > totalColAddCount / 10);
+            LOG.infoW().$("total reload count ").$(reloadCount.get()).$();
+        });
+
+        if (exceptions.size() != 0) {
+            throw exceptions.poll();
+        }
+    }
+
+    @Test
+    public void testAddColumnPartitionConcurrent() throws Throwable {
+        ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
+        assertMemoryLeak(() -> {
+            CyclicBarrier start = new CyclicBarrier(2);
+            AtomicInteger done = new AtomicInteger();
+            AtomicInteger columnsAdded = new AtomicInteger();
+            AtomicInteger reloadCount = new AtomicInteger();
+            int totalColAddCount = Os.type == Os.OSX_ARM64 || Os.type == Os.OSX_AMD64 ? 50 : 500;
+
+            String tableName = "tbl_meta_test";
+            createTable(tableName, PartitionBy.HOUR);
+            Rnd rnd = TestUtils.generateRandom(LOG);
+
+            Thread writerThread = new Thread(() -> {
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
+                    start.await();
+                    for (int i = 0; i < totalColAddCount; i++) {
+                        writer.addColumn("col" + i, ColumnType.SYMBOL);
+                        columnsAdded.incrementAndGet();
+
+                        if (rnd.nextBoolean()) {
+                            // Add partition
+                            TableWriter.Row row = writer.newRow(i * Timestamps.HOUR_MICROS);
+                            row.append();
+                            writer.commit();
+                        }
+
+                        if (rnd.nextBoolean() && writer.getPartitionCount() > 0) {
+                            // Remove partition
+                            int partitionNum = rnd.nextInt() % writer.getPartitionCount();
+                            writer.removePartition(partitionNum * Timestamps.HOUR_MICROS);
+                        }
+                    }
+                } catch (Throwable e) {
+                    exceptions.add(e);
+                    LOG.error().$(e).$();
+                } finally {
+                    done.incrementAndGet();
+                }
+            });
+
+            Thread readerThread = new Thread(() -> {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                    start.await();
+                    int colAdded = -1, newColsAdded;
+                    while (colAdded < totalColAddCount) {
+                        if (colAdded < (newColsAdded = columnsAdded.get())) {
+                            reader.reload();
+                            Assert.assertEquals(reader.getTxnStructureVersion(), reader.getMetadata().getStructureVersion());
+                            colAdded = newColsAdded;
+                            reloadCount.incrementAndGet();
+                        }
+                        Os.pause();
+                    }
+                } catch (Throwable e) {
+                    exceptions.add(e);
+                    LOG.error().$(e).$();
+                }
+            });
+            writerThread.start();
+            readerThread.start();
+
+            writerThread.join();
+            readerThread.join();
+            Assert.assertTrue(reloadCount.get() > totalColAddCount / 10);
+            LOG.infoW().$("total reload count ").$(reloadCount.get()).$();
+        });
+
+        if (exceptions.size() != 0) {
+            throw exceptions.poll();
+        }
+    }
+
+    @Test
     public void testAppendNullTimestamp() throws Exception {
         try (TableModel model = new TableModel(configuration, "all", PartitionBy.NONE)
                 .col("int", ColumnType.INT)
@@ -1659,6 +1798,105 @@ public class TableReaderTest extends AbstractCairoTest {
             TestUtils.assertEquals("a\n" +
                     "0x04000000000000000300000000000000020000000000000001\n" +
                     "0x08000000000000000700000000000000060000000000000005\n", sink);
+        });
+    }
+
+    @Test
+    public void testManySymbolReloadTest() throws Exception {
+        String tableName = "testManySymbolReloadTest";
+        createTable(tableName, PartitionBy.HOUR);
+
+        assertMemoryLeak(() -> {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                int partitionsToAdd = Math.min((int) (Files.PAGE_SIZE / Long.BYTES / 4) + 1, 500);
+                if (Os.type == Os.OSX_ARM64 || Os.type == Os.OSX_AMD64) {
+                    partitionsToAdd = 10; // Very restricted file limit
+                }
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
+                    int symbolsToAdd = Math.min((int) (Files.PAGE_SIZE / Long.BYTES), 500);
+                    if (Os.type == Os.OSX_ARM64 || Os.type == Os.OSX_AMD64) {
+                        symbolsToAdd = 10; // Very restricted file limit
+                    }
+                    for (int i = 0; i < symbolsToAdd; i++) {
+                        writer.addColumn("col" + i, ColumnType.SYMBOL);
+                    }
+
+                    for (int i = 0; i < partitionsToAdd; i++) {
+                        writer.newRow(i * Timestamps.HOUR_MICROS).append();
+                    }
+                    writer.commit();
+                }
+                reader.reload();
+                Assert.assertEquals(partitionsToAdd, reader.getPartitionCount());
+            }
+        });
+    }
+
+    @Test
+    public void testMetadataFileDoesNotExist() throws Exception {
+        String tableName = "testMetadataFileDoesNotExist";
+        createTable(tableName, PartitionBy.HOUR);
+        spinLockTimeoutUs = 10000;
+        AtomicInteger openCount = new AtomicInteger(1000);
+
+        assertMemoryLeak(() -> {
+            ff = new FilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && openCount.decrementAndGet() < 0) {
+                        return -1;
+                    }
+                    return Files.openRW(name);
+                }
+            };
+
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
+                    writer.addColumn("col10", ColumnType.SYMBOL);
+                }
+                engine.releaseAllWriters();
+                try {
+                    openCount.set(0);
+                    reader.reload();
+                    Assert.fail();
+                } catch (CairoException ex) {
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "Metadata read timeout");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMetadataVersionDoesNotMatch() throws Exception {
+        String tableName = "testMetadataVersionDoesNotMatch";
+        createTable(tableName, PartitionBy.HOUR);
+        spinLockTimeoutUs = 10000;
+
+        assertMemoryLeak(() -> {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
+                    writer.addColumn("col10", ColumnType.SYMBOL);
+                }
+                try (
+                        Path path = new Path().of(engine.getConfiguration().getRoot()).concat(tableName).concat(TableUtils.META_FILE_NAME).$();
+                        MemoryMARW mem = Vm.getMARWInstance(FilesFacadeImpl.INSTANCE, path, -1, Files.PAGE_SIZE, MemoryTag.NATIVE_DEFAULT)) {
+                    mem.putLong(TableUtils.META_OFFSET_STRUCTURE_VERSION, 0);
+                }
+
+                try {
+                    reader.reload();
+                    Assert.fail();
+                } catch (CairoException ex) {
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "Metadata read timeout");
+                }
+            }
+
+            engine.releaseAllReaders();
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "Metadata read timeout");
+            }
         });
     }
 
@@ -3197,194 +3435,6 @@ public class TableReaderTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testAddColumnConcurrentWithDataUpdates() throws Throwable {
-        ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
-        assertMemoryLeak(() -> {
-            CyclicBarrier start = new CyclicBarrier(2);
-            AtomicInteger done = new AtomicInteger();
-            AtomicInteger columnsAdded = new AtomicInteger();
-            AtomicInteger reloadCount = new AtomicInteger();
-            int totalColAddCount = 100;
-
-            String tableName = "tbl_meta_test";
-            createTable(tableName, PartitionBy.DAY);
-
-            Thread writerThread = new Thread(() -> {
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
-                    start.await();
-                    for (int i = 0; i < totalColAddCount; i++) {
-                        writer.addColumn("col" + i, ColumnType.SYMBOL);
-                        columnsAdded.incrementAndGet();
-
-                        TableWriter.Row row = writer.newRow(i * Timestamps.HOUR_MICROS);
-                        row.append();
-
-                        writer.commit();
-                    }
-                } catch (Throwable e) {
-                    exceptions.add(e);
-                    LOG.error().$(e).$();
-                } finally {
-                    done.incrementAndGet();
-                }
-            });
-
-            Thread readerThread = new Thread(() -> {
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                    start.await();
-                    int colAdded = -1, newColsAdded;
-                    while (colAdded < totalColAddCount) {
-                        if (colAdded < (newColsAdded = columnsAdded.get())) {
-                            reader.reload();
-                            Assert.assertEquals(reader.getTxnStructureVersion(), reader.getMetadata().getStructureVersion());
-                            colAdded = newColsAdded;
-                            reloadCount.incrementAndGet();
-                        }
-                        Os.pause();
-                    }
-                } catch (Throwable e) {
-                    exceptions.add(e);
-                    LOG.error().$(e).$();
-                }
-            });
-            writerThread.start();
-            readerThread.start();
-
-            writerThread.join();
-            readerThread.join();
-            Assert.assertTrue(reloadCount.get() > totalColAddCount / 10);
-            LOG.infoW().$("total reload count ").$(reloadCount.get()).$();
-        });
-
-        if (exceptions.size() != 0) {
-            throw exceptions.poll();
-        }
-    }
-
-    @Test
-    public void testAddColumnPartitionConcurrent() throws Throwable {
-        ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
-        assertMemoryLeak(() -> {
-            CyclicBarrier start = new CyclicBarrier(2);
-            AtomicInteger done = new AtomicInteger();
-            AtomicInteger columnsAdded = new AtomicInteger();
-            AtomicInteger reloadCount = new AtomicInteger();
-            int totalColAddCount = Os.type == Os.OSX_ARM64 || Os.type == Os.OSX_AMD64 ? 50 : 500;
-
-            String tableName = "tbl_meta_test";
-            createTable(tableName, PartitionBy.HOUR);
-            Rnd rnd = TestUtils.generateRandom(LOG);
-
-            Thread writerThread = new Thread(() -> {
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
-                    start.await();
-                    for (int i = 0; i < totalColAddCount; i++) {
-                        writer.addColumn("col" + i, ColumnType.SYMBOL);
-                        columnsAdded.incrementAndGet();
-
-                        if (rnd.nextBoolean()) {
-                            // Add partition
-                            TableWriter.Row row = writer.newRow(i * Timestamps.HOUR_MICROS);
-                            row.append();
-                            writer.commit();
-                        }
-
-                        if (rnd.nextBoolean() && writer.getPartitionCount() > 0) {
-                            // Remove partition
-                            int partitionNum = rnd.nextInt() % writer.getPartitionCount();
-                            writer.removePartition(partitionNum * Timestamps.HOUR_MICROS);
-                        }
-                    }
-                } catch (Throwable e) {
-                    exceptions.add(e);
-                    LOG.error().$(e).$();
-                } finally {
-                    done.incrementAndGet();
-                }
-            });
-
-            Thread readerThread = new Thread(() -> {
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                    start.await();
-                    int colAdded = -1, newColsAdded;
-                    while (colAdded < totalColAddCount) {
-                        if (colAdded < (newColsAdded = columnsAdded.get())) {
-                            reader.reload();
-                            Assert.assertEquals(reader.getTxnStructureVersion(), reader.getMetadata().getStructureVersion());
-                            colAdded = newColsAdded;
-                            reloadCount.incrementAndGet();
-                        }
-                        Os.pause();
-                    }
-                } catch (Throwable e) {
-                    exceptions.add(e);
-                    LOG.error().$(e).$();
-                }
-            });
-            writerThread.start();
-            readerThread.start();
-
-            writerThread.join();
-            readerThread.join();
-            Assert.assertTrue(reloadCount.get() > totalColAddCount / 10);
-            LOG.infoW().$("total reload count ").$(reloadCount.get()).$();
-        });
-
-        if (exceptions.size() != 0) {
-            throw exceptions.poll();
-        }
-    }
-
-    @Test
-    public void testManySymbolReloadTest() throws Exception {
-        String tableName = "testManySymbolReloadTest";
-        createTable(tableName, PartitionBy.HOUR);
-
-        assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                int partitionsToAdd = Math.min((int) (Files.PAGE_SIZE / Long.BYTES / 4) + 1, 500);
-                if (Os.type == Os.OSX_ARM64 || Os.type == Os.OSX_AMD64) {
-                    partitionsToAdd = 10; // Very restricted file limit
-                }
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
-                    int symbolsToAdd = Math.min((int) (Files.PAGE_SIZE / Long.BYTES), 500);
-                    if (Os.type == Os.OSX_ARM64 || Os.type == Os.OSX_AMD64) {
-                        symbolsToAdd = 10; // Very restricted file limit
-                    }
-                    for (int i = 0; i < symbolsToAdd; i++) {
-                        writer.addColumn("col" + i, ColumnType.SYMBOL);
-                    }
-
-                    for (int i = 0; i < partitionsToAdd; i++) {
-                        writer.newRow(i * Timestamps.HOUR_MICROS).append();
-                    }
-                    writer.commit();
-                }
-                reader.reload();
-                Assert.assertEquals(partitionsToAdd, reader.getPartitionCount());
-            }
-        });
-    }
-
-    private void createTable(String tableName, int partitionBy) {
-        try (Path path = new Path()) {
-            try (
-                    MemoryMARW mem = Vm.getCMARWInstance();
-                    TableModel model = new TableModel(configuration, tableName, partitionBy)
-            ) {
-                model.timestamp();
-                TableUtils.createTable(
-                        configuration,
-                        mem,
-                        path,
-                        model,
-                        1
-                );
-            }
-        }
-    }
-
     static boolean isSamePartition(long timestampA, long timestampB, int partitionBy) {
         switch (partitionBy) {
             case PartitionBy.NONE:
@@ -3659,6 +3709,24 @@ public class TableReaderTest extends AbstractCairoTest {
         // did our loop run?
         Assert.assertEquals(expectedSize, count);
         return ts;
+    }
+
+    private void createTable(String tableName, int partitionBy) {
+        try (Path path = new Path()) {
+            try (
+                    MemoryMARW mem = Vm.getCMARWInstance();
+                    TableModel model = new TableModel(configuration, tableName, partitionBy)
+            ) {
+                model.timestamp();
+                TableUtils.createTable(
+                        configuration,
+                        mem,
+                        path,
+                        model,
+                        1
+                );
+            }
+        }
     }
 
     private long testAppend(TableWriter writer, Rnd rnd, long ts, int count, long inc, long blob, int testPartitionSwitch, FieldGenerator generator) {
