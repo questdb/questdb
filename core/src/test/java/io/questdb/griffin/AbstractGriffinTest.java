@@ -61,13 +61,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                         -1,
                         null);
         bindVariableService.clear();
-//        engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-//            if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(name, "cpu")) {
-//                try(TableWriter tw = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, name, "test assert")) {
-//                    Assert.assertEquals(tw.getStructureVersion(), tw.getMetadata().getStructureVersion());
-//                }
-//            }
-//        });
     }
 
     @AfterClass

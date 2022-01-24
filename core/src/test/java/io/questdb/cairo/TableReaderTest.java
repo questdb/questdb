@@ -3338,7 +3338,7 @@ public class TableReaderTest extends AbstractCairoTest {
         createTable(tableName, PartitionBy.HOUR);
 
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-            int partitionsToAdd = Math.min((int) (Files.PAGE_SIZE / Long.BYTES / 4) + 1, 1000);
+            int partitionsToAdd = Math.min((int) (Files.PAGE_SIZE / Long.BYTES / 4) + 1, 500);
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
                 int symbolsToAdd = (int) (Files.PAGE_SIZE / Long.BYTES);
                 for (int i = 0; i < symbolsToAdd; i++) {

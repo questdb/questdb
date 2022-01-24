@@ -32,7 +32,6 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -1003,6 +1002,12 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 " rnd_symbol('aaa','bbbbbb', 'c', null) m," +
                 " rnd_long256() n," +
                 " rnd_bin(2,10, 2) o";
+    }
+
+    private void addRemoveColumn() throws SqlException {
+        // Insert some data
+        compiler.compile("alter table t_year add column sym0123 symbol", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table t_year drop column sym0123", sqlExecutionContext).execute(null).await();
     }
 
     private void doMigration(String dataZip, boolean freeTableId, boolean withO3) throws IOException, SqlException {

@@ -117,7 +117,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         try {
             // Never trim _txn file to size. Size of the file can only grow up.
             if (txMem != null) {
-                LOG.debug().$("close with no truncate [fd=").$(txMem.getFd()).I$();
                 txMem.jumpTo(getTxEofOffset());
                 txMem.close(false);
                 txMem = null;
