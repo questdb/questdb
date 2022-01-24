@@ -648,7 +648,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
         }
 
-
         // it is possible that we have more undefined variables than
         // args in the descriptor, in case of vararg for example
         for (int i = 0, n = undefinedVariables.size(); i < n; i++) {

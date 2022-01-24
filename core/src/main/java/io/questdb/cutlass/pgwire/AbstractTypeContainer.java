@@ -24,7 +24,9 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.CleanClosable;
 import io.questdb.std.IntList;
@@ -56,8 +58,18 @@ public abstract class AbstractTypeContainer<T extends CleanClosable> implements 
     }
 
     protected void copyTypesFrom(BindVariableService bindVariableService) {
-        for (int i = 0, n = bindVariableService.getIndexedVariableCount(); i < n; i++) {
-            getTypes().add(bindVariableService.getFunction(i).getType());
+        final int variableCount = bindVariableService.getIndexedVariableCount();
+        getTypes().ensureCapacity(variableCount);
+        for (int i = 0; i < variableCount; i++) {
+            final Function f = bindVariableService.getFunction(i);
+            if (f == null) {
+                // Intrinsic parser may take over the bind variable corresponding
+                // to the key column and remove it from the filter. In this case,
+                // the bind variable function will be defined later.
+                getTypes().set(i, ColumnType.UNDEFINED);
+            } else {
+                getTypes().set(i, f.getType());
+            }
         }
     }
 }
