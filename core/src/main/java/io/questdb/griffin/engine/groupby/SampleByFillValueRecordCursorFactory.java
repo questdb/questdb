@@ -39,6 +39,7 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.griffin.SqlKeywords.isNullKeyword;
+import static io.questdb.griffin.SqlKeywords.isPrevKeyword;
 
 public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRecordCursorFactory {
     private final AbstractNoRecordSampleByCursor cursor;
@@ -116,9 +117,13 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                     throw SqlException.position(0).put("not enough values");
                 }
                 ExpressionNode fillNode = fillValues.getQuick(fillIndex++);
-                placeholderFunctions.add(isNullKeyword(fillNode.token)
-                        ? SampleByFillNullRecordCursorFactory.createPlaceHolderFunction(recordFunctionPositions, i, function.getType())
-                        : createPlaceHolderFunction(recordFunctionPositions, i, function.getType(), fillNode));
+                if (isNullKeyword(fillNode.token)) {
+                    placeholderFunctions.add(SampleByFillNullRecordCursorFactory.createPlaceHolderFunction(recordFunctionPositions, i, function.getType()));
+                } else if (isPrevKeyword(fillNode.token)) {
+                    placeholderFunctions.add(function);
+                } else {
+                    placeholderFunctions.add(createPlaceHolderFunction(recordFunctionPositions, i, function.getType(), fillNode));
+                }
             } else {
                 placeholderFunctions.add(function);
             }
