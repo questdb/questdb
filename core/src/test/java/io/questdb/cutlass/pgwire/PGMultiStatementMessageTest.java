@@ -108,9 +108,33 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
+    public void testRunBlockWithEmptyQueryAtTheEnd() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGTestSetup test = new PGTestSetup()) {
+                Statement statement = test.statement;
+                boolean hasResult = statement.execute("select 1;;");
+
+                assertResults(statement, hasResult, data(row(1)));
+            }
+        });
+    }
+
+    @Test
+    public void testRunBlockWithCommentAtTheEnd() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGTestSetup test = new PGTestSetup()) {
+                Statement statement = test.statement;
+                boolean hasResult = statement.execute("select 1;;/*comment*/");
+
+                assertResults(statement, hasResult, data(row(1)));
+            }
+        });
+    }
+
+    @Test
     public void testRunSingleBlockStatementExecutesQueriesButIgnoresEmptyStatementsAndComments() throws Exception {
         assertMemoryLeak(() -> {
-            try ( PGTestSetup test = new PGTestSetup() ) {
+            try (PGTestSetup test = new PGTestSetup()) {
                 Statement statement = test.statement;
                 boolean hasResult = statement.execute("select 1;;/*multiline comment */;--single line comment\n;select 2;");
 
