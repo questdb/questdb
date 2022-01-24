@@ -27,6 +27,13 @@
 #define HOUR_MICROS  3600000000L
 #define DAY_HOURS  24
 
+//__SIZEOF_INT128__ is defined by Clang and GCC when __int128 is supported
+#if defined(__SIZEOF_INT128__)
+typedef __int128 accumulator_t;
+#else
+typedef jlong accumulator_t;
+#endif
+
 inline int32_t int64_to_hour(jlong ptr, int i) {
     const auto p = reinterpret_cast<int64_t *>(ptr);
     MM_PREFETCH_T0(p + i + 64);
@@ -678,8 +685,9 @@ Java_io_questdb_std_Rosti_keyedIntAvgLongWrapUp(JNIEnv *env, jclass cl, jlong pR
             const auto src = slots + (i << shift);
             auto count = *reinterpret_cast<jlong *>(src + count_offset);
             auto pValue = src + value_offset;
-            auto d = (jdouble) *reinterpret_cast<jlong *>(pValue);
-            *reinterpret_cast<jdouble *>(pValue) = d / count;
+            auto sum = *reinterpret_cast<accumulator_t *>(pValue);
+            auto res = static_cast<jdouble>(sum) / count;
+            *reinterpret_cast<jdouble *>(pValue) = res;
         }
     }
 }
@@ -900,7 +908,7 @@ Java_io_questdb_std_Rosti_keyedIntSumLongMerge(JNIEnv *env, jclass cl, jlong pRo
         if (c > -1) {
             auto src = slots + (i << shift);
             auto key = *reinterpret_cast<int32_t *>(src);
-            auto val = *reinterpret_cast<jlong *>(src + value_offset);
+            auto val = *reinterpret_cast<accumulator_t *>(src + value_offset);
             auto count = *reinterpret_cast<jlong *>(src + count_offset);
 
             auto res = find(map_a, key);
@@ -914,10 +922,10 @@ Java_io_questdb_std_Rosti_keyedIntSumLongMerge(JNIEnv *env, jclass cl, jlong pRo
             // on other hand
             const jlong old_count = *reinterpret_cast<jlong *>(dest + count_offset);
             if (old_count > 0 && count > 0) {
-                *reinterpret_cast<jlong *>(dest + value_offset) += val;
+                *reinterpret_cast<accumulator_t *>(dest + value_offset) += val;
                 *reinterpret_cast<jlong *>(dest + count_offset) += count;
             } else {
-                *reinterpret_cast<jlong *>(dest + value_offset) = val;
+                *reinterpret_cast<accumulator_t *>(dest + value_offset) = val;
                 *reinterpret_cast<jlong *>(dest + count_offset) = count;
             }
         }
@@ -1290,15 +1298,15 @@ void kIntSumLong(TO_INT *to_int, jlong pRosti, jlong pKeys, jlong pLong, jlong c
         if (PREDICT_FALSE(res.second)) {
             *reinterpret_cast<int32_t *>(dest) = key;
             if (PREDICT_FALSE(val == L_MIN)) {
-                *reinterpret_cast<jlong *>(dest + value_offset) = 0;
+                *reinterpret_cast<accumulator_t *>(dest + value_offset) = 0;
                 *reinterpret_cast<jlong *>(dest + count_offset) = 0;
             } else {
-                *reinterpret_cast<jlong *>(dest + value_offset) = val;
+                *reinterpret_cast<accumulator_t *>(dest + value_offset) = val;
                 *reinterpret_cast<jlong *>(dest + count_offset) = 1;
             }
         } else {
             if (PREDICT_TRUE(val > L_MIN)) {
-                *reinterpret_cast<jlong *>(dest + value_offset) += val;
+                *reinterpret_cast<accumulator_t *>(dest + value_offset) += val;
                 *reinterpret_cast<jlong *>(dest + count_offset) += 1;
             }
         }
