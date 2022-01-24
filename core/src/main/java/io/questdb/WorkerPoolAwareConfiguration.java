@@ -29,6 +29,7 @@ import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -82,6 +83,7 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
             server = factory.create(configuration, cairoEngine, localPool, local, functionFactoryCache, metrics);
 
             if (local) {
+                localPool.assignCleaner(Path.CLEANER);
                 localPool.start(log);
             }
 
