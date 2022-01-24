@@ -26,15 +26,33 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.MetricsRegistry;
+import org.jetbrains.annotations.TestOnly;
 
 public class JsonQueryMetrics {
-    private final Counter queriesCounter;
+
+    private final Counter startedQueriesCounter;
+    private final Counter completedQueriesCounter;
 
     public JsonQueryMetrics(MetricsRegistry metricsRegistry) {
-        this.queriesCounter = metricsRegistry.newCounter("json_queries");
+        this.startedQueriesCounter = metricsRegistry.newCounter("json_queries");
+        this.completedQueriesCounter = metricsRegistry.newCounter("json_queries_completed");
     }
 
     public void markStart() {
-        queriesCounter.inc();
+        startedQueriesCounter.inc();
+    }
+
+    public void markComplete() {
+        completedQueriesCounter.inc();
+    }
+
+    @TestOnly
+    public long startedQueriesCount() {
+        return startedQueriesCounter.get();
+    }
+
+    @TestOnly
+    public long completedQueriesCount() {
+        return completedQueriesCounter.get();
     }
 }
