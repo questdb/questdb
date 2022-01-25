@@ -27,10 +27,16 @@ stages:
               imageName: "macos-latest"
               os: macOS
               jdk: "1.11"
-            windows:
+            windows-cairo:
               imageName: "windows-latest"
               os: Windows
               jdk: "1.11"
+              testSet: "cairo"
+            windows-griffin:
+              imageName: "windows-latest"
+              os: Windows
+              jdk: "1.11"
+              testset: "griffin"
             linux-jdk8:
               imageName: "ubuntu-latest"
               os: Linux
