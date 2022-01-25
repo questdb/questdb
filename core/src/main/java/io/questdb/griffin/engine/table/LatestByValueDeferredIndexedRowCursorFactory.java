@@ -37,7 +37,6 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
     private final LatestByValueIndexedRowCursor cursor = new LatestByValueIndexedRowCursor();
     private int symbolKey;
 
-    // todo: make symbol function to allow use with bind variables
     public LatestByValueDeferredIndexedRowCursorFactory(int columnIndex, Function symbolFunc, boolean cachedIndexReaderCursor) {
         this.columnIndex = columnIndex;
         this.symbolFunc = symbolFunc;

@@ -1284,6 +1284,7 @@ final class WhereClauseParser implements Mutable {
         if (func.isRuntimeConstant() && func.getType() == ColumnType.UNDEFINED) {
             func.assignType(ColumnType.STRING, executionContext.getBindVariableService());
         }
+        func.init(null, executionContext);
         return func;
     }
 

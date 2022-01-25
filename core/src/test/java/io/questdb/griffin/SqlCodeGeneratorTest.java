@@ -3667,6 +3667,47 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByMissingKeyValueIndexedWithIndexedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testLatestByMissingKeyValueIndexedWithBindVariable("select * from x where b = $1 latest on k partition by b");
+    }
+
+    @Test
+    public void testLatestByMissingKeyValueIndexedWithNamedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testLatestByMissingKeyValueIndexedWithBindVariable("select * from x where b = :b latest on k partition by b");
+    }
+
+    private void testLatestByMissingKeyValueIndexedWithBindVariable(String query) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_double(0)*100 a," +
+                    " rnd_symbol(5,4,4,1) b," +
+                    " timestamp_sequence(0, 100000000000) k" +
+                    " from" +
+                    " long_sequence(20)" +
+                    "), index(b) timestamp(k) partition by DAY", sqlExecutionContext);
+
+            try (
+                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                assertCursor(
+                        "a\tb\tk\n" +
+                                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n",
+                        factory,
+                        true,
+                        true,
+                        false
+                );
+            }
+        });
+    }
+
+    @Test
     public void testLatestByMissingKeyValueIndexedColumnDereference() throws Exception {
         assertQuery(null,
                 "select b,k,a from x where b in ('XYZ') latest on k partition by b",
@@ -5057,7 +5098,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testNamedBindVariableInWhere() throws Exception {
         assertMemoryLeak(() -> {
-
             final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
             try (
                     CairoEngine engine = new CairoEngine(configuration);
