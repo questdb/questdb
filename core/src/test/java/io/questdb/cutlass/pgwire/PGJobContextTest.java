@@ -4900,8 +4900,11 @@ create table tab as (
                 connection.prepareStatement("insert into x (device_id, column_name, value, timestamp) values ('d2', 'c1', 201.1, 0)").execute();
                 connection.prepareStatement("insert into x (device_id, column_name, value, timestamp) values ('d2', 'c1', 201.2, 1)").execute();
                 connection.prepareStatement("insert into x (device_id, column_name, value, timestamp) values ('d2', 'c1', 201.3, 2)").execute();
+                connection.prepareStatement("insert into x (device_id, column_name, value, timestamp) values ('d3', 'c1', 301.1, 0)").execute();
+                connection.prepareStatement("insert into x (device_id, column_name, value, timestamp) values ('d3', 'c1', 301.2, 1)").execute();
                 connection.commit();
 
+                // single key value in filter
                 sink.clear();
                 try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id = ? and timestamp > ?")) {
                     ps.setString(1, "d1");
@@ -4909,6 +4912,25 @@ create table tab as (
                     try (ResultSet rs = ps.executeQuery()) {
                         assertResultSet(
                                 "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                        "d1,c1,101.30000000000001,1970-01-01 00:00:00.000002\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                // multiple key values in filter
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id in(?, ?) and timestamp > ?")) {
+                    ps.setString(1, "d1");
+                    ps.setString(2, "d2");
+                    ps.setTimestamp(3, new Timestamp(0));
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                        "d2,c1,201.20000000000002,1970-01-01 00:00:00.000001\n" +
+                                        "d1,c1,101.2,1970-01-01 00:00:00.000001\n" +
+                                        "d2,c1,201.3,1970-01-01 00:00:00.000002\n" +
                                         "d1,c1,101.30000000000001,1970-01-01 00:00:00.000002\n",
                                 sink,
                                 rs
