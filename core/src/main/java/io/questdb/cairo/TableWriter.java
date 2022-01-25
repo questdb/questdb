@@ -3395,8 +3395,7 @@ public class TableWriter implements Closeable {
                     // but the record index[count] may not exist yet
                     // so the data size has to be calculated as (index[count-1] + len(data[count-1]) + 4)
                     // where len(data[count-1]) can be read as the int from var col data at offset index[count-1]
-                    long prevOffset = o3IndexMem.getLong((o3RowCount - 1) * 8);
-                    size = prevOffset + 2L * o3DataMem.getInt(prevOffset) + 4L;
+                    size = o3IndexMem.getLong(o3RowCount * 8);
                     o3IndexMem.jumpTo((o3RowCount + 1) * 8);
                 } else {
                     size = 0;
