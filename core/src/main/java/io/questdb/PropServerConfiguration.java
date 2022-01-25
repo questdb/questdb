@@ -704,7 +704,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineUdpUnicast = getBoolean(properties, env, "line.udp.unicast", false);
             this.lineUdpCommitMode = getCommitMode(properties, env, "line.udp.commit.mode");
             this.lineUdpTimestampAdapter = getLineTimestampAdaptor(properties, env, "line.udp.timestamp");
-            String defaultUdpPartitionByProperty = getString(properties, env, "line.udp.default.partition.by", "DAY");
+            String defaultUdpPartitionByProperty = getString(properties, env, "line.default.partition.by", "DAY");
             this.lineUdpDefaultPartitionBy = PartitionBy.fromString(defaultUdpPartitionByProperty);
             if (this.lineUdpDefaultPartitionBy == -1) {
                 log.info().$("invalid partition by ").$(lineUdpDefaultPartitionBy).$("), will use DAY for UDP").$();
@@ -757,7 +757,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpMaintenanceInterval = getInt(properties, env, "line.tcp.maintenance.job.interval", 30_000);
                 this.lineTcpCommitTimeout = getInt(properties, env, "line.tcp.commit.timeout", 1000);
                 this.lineTcpAuthDbPath = getString(properties, env, "line.tcp.auth.db.path", null);
-                String defaultTcpPartitionByProperty = getString(properties, env, "line.tcp.default.partition.by", "DAY");
+                String defaultTcpPartitionByProperty = getString(properties, env, "line.default.partition.by", "line.tcp.default.partition.by", "DAY");
                 this.lineTcpDefaultPartitionBy = PartitionBy.fromString(defaultTcpPartitionByProperty);
                 if (this.lineTcpDefaultPartitionBy == -1) {
                     log.info().$("invalid partition by ").$(defaultTcpPartitionByProperty).$("), will use DAY for TCP").$();
@@ -1003,6 +1003,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         return SqlJitMode.JIT_MODE_DISABLED;
+    }
+
+    private String getString(Properties properties, @Nullable Map<String, String> env, String key, String fallbackKey, String defaultValue) {
+        String value = overrideWithEnv(properties, env, key);
+        if (value == null) {
+            return getString(properties, env, fallbackKey, defaultValue);
+        }
+        return value;
     }
 
     private String getString(Properties properties, @Nullable Map<String, String> env, String key, String defaultValue) {
