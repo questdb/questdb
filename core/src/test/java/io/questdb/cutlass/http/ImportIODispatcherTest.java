@@ -457,74 +457,81 @@ public class ImportIODispatcherTest {
                             "from long_sequence(1)" +
                             ")", sqlExecutionContext);
 
-                    new SendAndReceiveRequestBuilder().execute(
-                            "GET /exp?query=select+*+from+trips HTTP/1.1\r\n"
-                                    + SendAndReceiveRequestBuilder.RequestHeaders,
-                            "HTTP/1.1 200 OK\r\n" +
-                                    "Server: questDB/1.0\r\n" +
-                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                    "Transfer-Encoding: chunked\r\n" +
-                                    "Content-Type: text/csv; charset=utf-8\r\n" +
-                                    "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
-                                    "Keep-Alive: timeout=5, max=10000\r\n" +
-                                    "\r\n" +
-                                    "70\r\n" +
-                                    "\"Col1\",\"Pickup_DateTime\",\"timestamp_sequence\"\r\n" +
-                                    "\"b\",\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T00:01:40.000000Z\"\r\n" +
-                                    "\r\n" +
-                                    "00\r\n" +
-                                    "\r\n"
-                    );
-                    compiler.compile("drop table trips", sqlExecutionContext);
+                    new SendAndReceiveRequestBuilder().executeMany(executor -> {
+                        executor.execute(
+                                "GET /exp?query=select+*+from+trips HTTP/1.1\r\n"
+                                        + SendAndReceiveRequestBuilder.RequestHeaders,
+                                "HTTP/1.1 200 OK\r\n" +
+                                        "Server: questDB/1.0\r\n" +
+                                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                        "Transfer-Encoding: chunked\r\n" +
+                                        "Content-Type: text/csv; charset=utf-8\r\n" +
+                                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                                        "\r\n" +
+                                        "70\r\n" +
+                                        "\"Col1\",\"Pickup_DateTime\",\"timestamp_sequence\"\r\n" +
+                                        "\"b\",\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T00:01:40.000000Z\"\r\n" +
+                                        "\r\n" +
+                                        "00\r\n" +
+                                        "\r\n"
+                        );
+                        executor.executeWithStandardHeaders("GET /query?query=drop+table+trips HTTP/1.1\r\n",
+                                "0d\r\n" +
+                                        "{\"ddl\":\"OK\"}\n" +
+                                        "\r\n" +
+                                        "00\r\n" +
+                                        "\r\n");
 
-                    String request2 = ValidImportRequest2
-                            .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&timestamp=Pickup_DateTime&overwrite=true HTTP");
-                    new SendAndReceiveRequestBuilder().execute(request2, ValidImportResponse2);
+                        String request2 = ValidImportRequest2
+                                .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&timestamp=Pickup_DateTime&overwrite=true HTTP");
+                        executor.execute(request2, ValidImportResponse2);
 
-                    // This will try to hit same execution plan as the first SELECT query
-                    // but because table metadata changes, old query plan is not valid anymore
-                    // and produces NPE if used
-                    new SendAndReceiveRequestBuilder().execute(
-                            "GET /exp?query=select+*+from+trips HTTP/1.1\r\n"
-                                    + SendAndReceiveRequestBuilder.RequestHeaders,
-                            "HTTP/1.1 200 OK\r\n" +
-                                    "Server: questDB/1.0\r\n" +
-                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                    "Transfer-Encoding: chunked\r\n" +
-                                    "Content-Type: text/csv; charset=utf-8\r\n" +
-                                    "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
-                                    "Keep-Alive: timeout=5, max=10000\r\n" +
-                                    "\r\n" +
-                                    "0437\r\n" +
-                                    "\"Col1\",\"Col2\",\"Col3\",\"Col4\",\"Pickup_DateTime\"\r\n" +
-                                    "\"B00008\",,,,\"2017-02-01T00:30:00.000000Z\"\r\n" +
-                                    "\"B00008\",,,,\"2017-02-01T00:40:00.000000Z\"\r\n" +
-                                    "\"B00009\",,,,\"2017-02-01T00:50:00.000000Z\"\r\n" +
-                                    "\"B00013\",,,,\"2017-02-01T00:51:00.000000Z\"\r\n" +
-                                    "\"B00013\",,,,\"2017-02-01T01:41:00.000000Z\"\r\n" +
-                                    "\"B00013\",,,,\"2017-02-01T02:00:00.000000Z\"\r\n" +
-                                    "\"B00013\",,,,\"2017-02-01T03:53:00.000000Z\"\r\n" +
-                                    "\"B00013\",,,,\"2017-02-01T04:44:00.000000Z\"\r\n" +
-                                    "\"B00013\",,,,\"2017-02-01T05:05:00.000000Z\"\r\n" +
-                                    "\"B00013\",,,,\"2017-02-01T06:54:00.000000Z\"\r\n" +
-                                    "\"B00014\",,,,\"2017-02-01T07:45:00.000000Z\"\r\n" +
-                                    "\"B00014\",,,,\"2017-02-01T08:45:00.000000Z\"\r\n" +
-                                    "\"B00014\",,,,\"2017-02-01T09:46:00.000000Z\"\r\n" +
-                                    "\"B00014\",,,,\"2017-02-01T10:54:00.000000Z\"\r\n" +
-                                    "\"B00014\",,,,\"2017-02-01T11:45:00.000000Z\"\r\n" +
-                                    "\"B00014\",,,,\"2017-02-01T11:45:00.000000Z\"\r\n" +
-                                    "\"B00014\",,,,\"2017-02-01T11:45:00.000000Z\"\r\n" +
-                                    "\"B00014\",,,,\"2017-02-01T12:26:00.000000Z\"\r\n" +
-                                    "\"B00014\",,,,\"2017-02-01T12:55:00.000000Z\"\r\n" +
-                                    "\"B00014\",,,,\"2017-02-01T13:47:00.000000Z\"\r\n" +
-                                    "\"B00014\",,,,\"2017-02-01T14:05:00.000000Z\"\r\n" +
-                                    "\"B00014\",,,,\"2017-02-01T14:58:00.000000Z\"\r\n" +
-                                    "\"B00014\",,,,\"2017-02-01T15:33:00.000000Z\"\r\n" +
-                                    "\"B00014\",,,,\"2017-02-01T15:45:00.000000Z\"\r\n" +
-                                    "\r\n" +
-                                    "00\r\n" +
-                                    "\r\n"
-                    );
+                        // This will try to hit same execution plan as the first SELECT query
+                        // but because table metadata changes, old query plan is not valid anymore
+                        // and produces NPE if used
+                        executor.execute(
+                                "GET /exp?query=select+*+from+trips HTTP/1.1\r\n"
+                                        + SendAndReceiveRequestBuilder.RequestHeaders,
+                                "HTTP/1.1 200 OK\r\n" +
+                                        "Server: questDB/1.0\r\n" +
+                                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                        "Transfer-Encoding: chunked\r\n" +
+                                        "Content-Type: text/csv; charset=utf-8\r\n" +
+                                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                                        "\r\n" +
+                                        "0437\r\n" +
+                                        "\"Col1\",\"Col2\",\"Col3\",\"Col4\",\"Pickup_DateTime\"\r\n" +
+                                        "\"B00008\",,,,\"2017-02-01T00:30:00.000000Z\"\r\n" +
+                                        "\"B00008\",,,,\"2017-02-01T00:40:00.000000Z\"\r\n" +
+                                        "\"B00009\",,,,\"2017-02-01T00:50:00.000000Z\"\r\n" +
+                                        "\"B00013\",,,,\"2017-02-01T00:51:00.000000Z\"\r\n" +
+                                        "\"B00013\",,,,\"2017-02-01T01:41:00.000000Z\"\r\n" +
+                                        "\"B00013\",,,,\"2017-02-01T02:00:00.000000Z\"\r\n" +
+                                        "\"B00013\",,,,\"2017-02-01T03:53:00.000000Z\"\r\n" +
+                                        "\"B00013\",,,,\"2017-02-01T04:44:00.000000Z\"\r\n" +
+                                        "\"B00013\",,,,\"2017-02-01T05:05:00.000000Z\"\r\n" +
+                                        "\"B00013\",,,,\"2017-02-01T06:54:00.000000Z\"\r\n" +
+                                        "\"B00014\",,,,\"2017-02-01T07:45:00.000000Z\"\r\n" +
+                                        "\"B00014\",,,,\"2017-02-01T08:45:00.000000Z\"\r\n" +
+                                        "\"B00014\",,,,\"2017-02-01T09:46:00.000000Z\"\r\n" +
+                                        "\"B00014\",,,,\"2017-02-01T10:54:00.000000Z\"\r\n" +
+                                        "\"B00014\",,,,\"2017-02-01T11:45:00.000000Z\"\r\n" +
+                                        "\"B00014\",,,,\"2017-02-01T11:45:00.000000Z\"\r\n" +
+                                        "\"B00014\",,,,\"2017-02-01T11:45:00.000000Z\"\r\n" +
+                                        "\"B00014\",,,,\"2017-02-01T12:26:00.000000Z\"\r\n" +
+                                        "\"B00014\",,,,\"2017-02-01T12:55:00.000000Z\"\r\n" +
+                                        "\"B00014\",,,,\"2017-02-01T13:47:00.000000Z\"\r\n" +
+                                        "\"B00014\",,,,\"2017-02-01T14:05:00.000000Z\"\r\n" +
+                                        "\"B00014\",,,,\"2017-02-01T14:58:00.000000Z\"\r\n" +
+                                        "\"B00014\",,,,\"2017-02-01T15:33:00.000000Z\"\r\n" +
+                                        "\"B00014\",,,,\"2017-02-01T15:45:00.000000Z\"\r\n" +
+                                        "\r\n" +
+                                        "00\r\n" +
+                                        "\r\n"
+                        );
+                    });
 
                     compiler.close();
                 });
