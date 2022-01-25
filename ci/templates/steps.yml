@@ -5,7 +5,7 @@ steps:
     submodules: false
   - bash: sudo sysctl -w fs.file-max=500000
     displayName: "Increase file count on Linux"
-    condition: eq(variables['Agent.OS'], 'Linux')
+    condition: eq(variables['os'], 'Linux')
   - task: ShellScript@2
     displayName: "List of coverage classes PR build"
     inputs:
@@ -13,7 +13,7 @@ steps:
       args: $(System.PullRequest.PullRequestNumber)
       failOnStandardError: true
     condition:
-      and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')),
+      and(and(eq(variables['os'], 'Linux'), eq(variables['jdk'], '1.11')),
       not(eq(variables['System.PullRequest.PullRequestId'], '')) )
   - task: Cache@2
     inputs:
@@ -46,7 +46,7 @@ steps:
     condition: |
       and(
            and(
-              and( eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11') ),
+              and( eq(variables['os'], 'Linux'), eq(variables['jdk'], '1.11') ),
               not( eq(variables['System.PullRequest.PullRequestId'], '') )
           ),
           eq(variables['SOURCE_CODE_CHANGED'], 'true')
@@ -67,10 +67,10 @@ steps:
         not(
           or(
             and(
-              eq(variables['Agent.OS'], 'Linux'),
+              eq(variables['os'], 'Linux'),
               eq(variables['jdk'], '1.11')
             ),
-            eq(variables['Agent.OS'], 'Windows')
+            eq(variables['os'], 'Windows')
           )
         ),
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
@@ -126,7 +126,7 @@ steps:
     condition: |
       and(
           and(
-             and( eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11') ),
+             and( eq(variables['os'], 'Linux'), eq(variables['jdk'], '1.11') ),
              not( eq(variables['System.PullRequest.PullRequestId'], '') )
          ),
          eq(variables['SOURCE_CODE_CHANGED'], 'true')
