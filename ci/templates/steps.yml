@@ -88,21 +88,21 @@ steps:
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
   - task: Maven@3
-      displayName: "Run tests with Maven (griffin)"
-      inputs:
-        mavenPomFile: "pom.xml"
-        mavenOptions: "$(MAVEN_OPTS)"
-        goals: "clean test"
-        options:
-          "--batch-mode --quiet -P build-web-console
+    displayName: "Run tests with Maven (griffin)"
+    inputs:
+      mavenPomFile: "pom.xml"
+      mavenOptions: "$(MAVEN_OPTS)"
+      goals: "clean test"
+      options:
+        "--batch-mode --quiet -P build-web-console
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false '-Dtest=*griffin*'"
-        jdkVersionOption: $(jdk)
-      timeoutInMinutes: 55
-      condition: |
-        and(
-          eq(variables['testset'], 'griffin'),
-          eq(variables['SOURCE_CODE_CHANGED'], 'true')
-        )
+      jdkVersionOption: $(jdk)
+    timeoutInMinutes: 55
+    condition: |
+      and(
+        eq(variables['testset'], 'griffin'),
+        eq(variables['SOURCE_CODE_CHANGED'], 'true')
+      )
   - bash:
       if [ "$CODE_COVERAGE_TOOL_OPTION" == "JaCoCo" ] && [ "$IF_FORK" != "YES"
       ]; then $JAVA_HOME_11_X64/bin/java -jar
