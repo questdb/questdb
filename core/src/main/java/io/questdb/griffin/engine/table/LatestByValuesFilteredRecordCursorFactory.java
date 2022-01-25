@@ -29,8 +29,8 @@ import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -44,12 +44,12 @@ public class LatestByValuesFilteredRecordCursorFactory extends AbstractDeferredT
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
-            @Transient CharSequenceHashSet keyValues,
+            @Transient ObjList<Function> keyValueFuncs,
             @Transient SymbolMapReader symbolMapReader,
             @Nullable Function filter,
             @NotNull IntList columnIndexes
     ) {
-        super(configuration, metadata, dataFrameCursorFactory, columnIndex, keyValues, symbolMapReader);
+        super(configuration, metadata, dataFrameCursorFactory, columnIndex, keyValueFuncs, symbolMapReader);
         if (filter != null) {
             this.cursor = new LatestByValuesFilteredRecordCursor(columnIndex, rows, symbolKeys, filter, columnIndexes);
         } else {

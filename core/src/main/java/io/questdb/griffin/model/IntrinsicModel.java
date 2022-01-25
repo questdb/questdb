@@ -36,10 +36,8 @@ public class IntrinsicModel implements Mutable {
     public static final int FALSE = 2;
     public static final int UNDEFINED = 0;
     private static final LongList INFINITE_INTERVAL;
-    public final CharSequenceHashSet keyValues = new CharSequenceHashSet();
-    public final CharSequenceHashSet keyExcludedValues = new CharSequenceHashSet();
-    public final IntList keyValuePositions = new IntList();
-    public final IntList keyExcludedValuePositions = new IntList();
+    public final ObjList<Function> keyValueFuncs = new ObjList<>();
+    public final ObjList<Function> keyExcludedValueFuncs = new ObjList<>();
     public CharSequence keyColumn;
     public ExpressionNode filter;
     public int intrinsicValue = UNDEFINED;
@@ -49,41 +47,12 @@ public class IntrinsicModel implements Mutable {
     @Override
     public void clear() {
         keyColumn = null;
-        keyValues.clear();
-        keyExcludedValues.clear();
-        keyValuePositions.clear();
-        keyExcludedValuePositions.clear();
+        keyValueFuncs.clear();
+        keyExcludedValueFuncs.clear();
         runtimeIntervalBuilder.clear();
         filter = null;
         intrinsicValue = UNDEFINED;
         keySubQuery = null;
-    }
-
-    public void excludeValue(ExpressionNode val) {
-
-        final int index;
-        if (isNullKeyword(val.token)) {
-            index = keyValues.removeNull();
-            if (index > -1) {
-                keyValuePositions.removeIndex(index);
-            }
-        } else {
-            int keyIndex = Chars.isQuoted(val.token) ? keyValues.keyIndex(val.token, 1, val.token.length() - 1) : keyValues.keyIndex(val.token);
-            if (keyIndex < 0) {
-                index = keyValues.getListIndexAt(keyIndex);
-                keyValues.removeAt(keyIndex);
-            } else {
-                index = -1;
-            }
-        }
-
-        if (index > -1) {
-            keyValuePositions.removeIndex(index);
-        }
-
-        if (keyValues.size() == 0) {
-            intrinsicValue = FALSE;
-        }
     }
 
     public RuntimeIntrinsicIntervalModel buildIntervalModel() {
@@ -171,7 +140,7 @@ public class IntrinsicModel implements Mutable {
     @Override
     public String toString() {
         return "IntrinsicModel{" +
-                "keyValues=" + keyValues +
+                "keyValueFuncs=" + keyValueFuncs +
                 ", keyColumn='" + keyColumn + '\'' +
                 ", filter=" + filter +
                 '}';

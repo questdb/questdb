@@ -27,11 +27,13 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.model.*;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -156,8 +158,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         assertFilter(m, "100bid>");
         Assert.assertNull(m.keyColumn);
         Assert.assertTrue(m.hasIntervalFilters());
-        Assert.assertEquals("[]", m.keyValues.toString());
-        Assert.assertEquals("[]", m.keyValuePositions.toString());
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -168,8 +169,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         assertFilter(m, "100bid>'2014-01-02T12:30:00.000Z''2014-01-01T12:30:00.000Z'timestampbetweenand");
         Assert.assertNull(m.keyColumn);
         Assert.assertFalse(m.hasIntervalFilters());
-        Assert.assertEquals("[]", m.keyValues.toString());
-        Assert.assertEquals("[]", m.keyValuePositions.toString());
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -498,8 +498,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym = null and sym != null and ex != 'blah'");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
         assertFilter(m, "'blah'ex!=");
-        Assert.assertEquals("[]", m.keyValues.toString());
-        Assert.assertEquals("[]", m.keyValuePositions.toString());
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -507,8 +506,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym = null and sym != null and ex = 'blah'");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
         assertFilter(m, "'blah'ex=");
-        Assert.assertEquals("[]", m.keyValues.toString());
-        Assert.assertEquals("[]", m.keyValuePositions.toString());
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -516,8 +514,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym = null and null != sym and ex = 'blah'");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
         assertFilter(m, "'blah'ex=");
-        Assert.assertEquals("[]", m.keyValues.toString());
-        Assert.assertEquals("[]", m.keyValuePositions.toString());
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -525,8 +522,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("null = sym and null != sym and ex != 'blah'");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
         assertFilter(m, "'blah'ex!=");
-        Assert.assertEquals("[]", m.keyValues.toString());
-        Assert.assertEquals("[]", m.keyValuePositions.toString());
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -534,8 +530,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym = null and ex = 'blah' and sym != null");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
         assertFilter(m, "'blah'ex=");
-        Assert.assertEquals("[]", m.keyValues.toString());
-        Assert.assertEquals("[]", m.keyValuePositions.toString());
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -543,8 +538,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym != null and sym = null and ex != 'blah'");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         assertFilter(m, "'blah'ex!=");
-        Assert.assertEquals("[]", m.keyValues.toString());
-        Assert.assertEquals("[]", m.keyValuePositions.toString());
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -552,8 +546,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym != 'blah' and sym = 'blah'");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         Assert.assertNull(m.filter);
-        Assert.assertEquals("[]", m.keyValues.toString());
-        Assert.assertEquals("[]", m.keyValuePositions.toString());
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -561,8 +554,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym != 'ho' and sym in (null, 'ho')");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         Assert.assertNull(m.filter);
-        Assert.assertEquals("[null]", m.keyValues.toString());
-        Assert.assertEquals("[30]", m.keyValuePositions.toString());
+        Assert.assertEquals("[null]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -570,8 +562,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym = 'ho' and not sym in (null, 'ho')");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
         Assert.assertNull(m.filter);
-        Assert.assertEquals("[]", m.keyValues.toString());
-        Assert.assertEquals("[]", m.keyValuePositions.toString());
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -579,8 +570,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym = 'ho' and not ex in ('blah') and not sym in (null, 'ho')");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
         assertFilter(m, "'blah'exinnot");
-        Assert.assertEquals("[]", m.keyValues.toString());
-        Assert.assertEquals("[]", m.keyValuePositions.toString());
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -588,8 +578,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym = 'blah' and sym != 'blah'");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
         Assert.assertNull(m.filter);
-        Assert.assertEquals("[]", m.keyValues.toString());
-        Assert.assertEquals("[]", m.keyValuePositions.toString());
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -597,8 +586,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym != 'blah' and sym in ('blah')");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         Assert.assertNull(m.filter);
-        Assert.assertEquals("[]", m.keyValues.toString());
-        Assert.assertEquals("[]", m.keyValuePositions.toString());
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -606,8 +594,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym in ('blah') and sym != 'blah'");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
         Assert.assertNull(m.filter);
-        Assert.assertEquals("[]", m.keyValues.toString());
-        Assert.assertEquals("[]", m.keyValuePositions.toString());
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -615,8 +602,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("not (sym in ('blah')) and sym = 'blah'");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
         Assert.assertNull(m.filter);
-        Assert.assertEquals("[]", m.keyValues.toString());
-        Assert.assertEquals("[]", m.keyValuePositions.toString());
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -624,8 +610,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym = 'blah' and not (sym in ('blah'))");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
         Assert.assertNull(m.filter);
-        Assert.assertEquals("[]", m.keyValues.toString());
-        Assert.assertEquals("[]", m.keyValuePositions.toString());
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -633,8 +618,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym = 'ho' and sym != 'blah' and sym != 'ho'");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
         Assert.assertNull(m.filter);
-        Assert.assertEquals("[]", m.keyValues.toString());
-        Assert.assertEquals("[]", m.keyValuePositions.toString());
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -642,8 +626,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym = 'ho' and not sym in ('blah', 'ho')");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
         Assert.assertNull(m.filter);
-        Assert.assertEquals("[]", m.keyValues.toString());
-        Assert.assertEquals("[]", m.keyValuePositions.toString());
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -651,8 +634,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym != 'ho' and sym in ('blah', 'ho')");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         Assert.assertNull(m.filter);
-        Assert.assertEquals("[blah]", m.keyValues.toString());
-        Assert.assertEquals("[32]", m.keyValuePositions.toString());
+        Assert.assertEquals("[blah]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -678,7 +660,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym = 'X' and ex = 'Y'");
         assertFilter(m, "'Y'ex=");
         TestUtils.assertEquals("sym", m.keyColumn);
-        Assert.assertEquals("[X]", m.keyValues.toString());
+        Assert.assertEquals("[X]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -686,7 +668,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym = 'X' and ex = 'Y'");
         assertFilter(m, "'Y'ex=");
         TestUtils.assertEquals("sym", m.keyColumn);
-        Assert.assertEquals("[X]", m.keyValues.toString());
+        Assert.assertEquals("[X]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -694,7 +676,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym ='X' and bid > 100.05");
         assertFilter(m, "100.05bid>");
         TestUtils.assertEquals("sym", m.keyColumn);
-        Assert.assertEquals("[X]", m.keyValues.toString());
+        Assert.assertEquals("[X]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -723,30 +705,28 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testEqualsNull() throws Exception {
         IntrinsicModel m = modelOf("sym = null");
         TestUtils.assertEquals("sym", m.keyColumn);
-        Assert.assertEquals("[null]", m.keyValues.toString());
+        Assert.assertEquals("[null]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
     public void testEqualsOverlapWithIn() throws Exception {
         IntrinsicModel m = modelOf("sym in ('x','y') and sym = 'y'");
         Assert.assertNull(m.filter);
-        Assert.assertEquals("[y]", m.keyValues.toString());
-        Assert.assertEquals("[12]", m.keyValuePositions.toString());
+        Assert.assertEquals("[y]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
     public void testEqualsOverlapWithIn2() throws Exception {
         IntrinsicModel m = modelOf("sym = 'y' and sym in ('x','y')");
         Assert.assertNull(m.filter);
-        Assert.assertEquals("[y]", m.keyValues.toString());
+        Assert.assertEquals("[y]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
     public void testEqualsOverlapWithIn3() throws Exception {
         IntrinsicModel m = modelOf("sym in ('x','y') and sym = 'y'", "ex");
         TestUtils.assertEquals("'y'sym='y''x'syminand", toRpn(m.filter));
-        Assert.assertEquals("[]", m.keyValues.toString());
-        Assert.assertEquals("[]", m.keyValuePositions.toString());
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -787,8 +767,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = runWhereCompareToModelTest("sym in ('a', 'b', 'c') and timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z'",
                 "[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]");
         TestUtils.assertEquals("sym", m.keyColumn);
-        Assert.assertEquals("[a,b,c]", m.keyValues.toString());
-        Assert.assertEquals("[8,13,18]", m.keyValuePositions.toString());
+        Assert.assertEquals("[a,b,c]", keyValueFuncsToString(m.keyValueFuncs));
         Assert.assertNull(m.filter);
     }
 
@@ -797,7 +776,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = runWhereCompareToModelTest("sym in ('a') and timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z'",
                 "[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]");
         TestUtils.assertEquals("sym", m.keyColumn);
-        Assert.assertEquals("[a]", m.keyValues.toString());
+        Assert.assertEquals("[a]", keyValueFuncsToString(m.keyValueFuncs));
         Assert.assertNull(m.filter);
     }
 
@@ -823,7 +802,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testInNull() throws Exception {
         IntrinsicModel m = modelOf("sym in ('X', null, 'Y')");
-        Assert.assertEquals("[X,null,Y]", m.keyValues.toString());
+        Assert.assertEquals("[X,null,Y]", keyValueFuncsToString(m.keyValueFuncs));
         TestUtils.assertEquals("sym", m.keyColumn);
     }
 
@@ -1089,7 +1068,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testListOfValuesOverlapWithNotClause() throws Exception {
         IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and sym in ('a', 'z') and not (sym in ('c', 'd', 'e'))");
-        Assert.assertEquals("[a,z]", m.keyValues.toString());
+        Assert.assertEquals("[a,z]", keyValueFuncsToString(m.keyValueFuncs));
         Assert.assertNull(m.filter);
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
     }
@@ -1098,14 +1077,14 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testListOfValuesOverlapWithNotClause2() throws Exception {
         IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and sym in ('a', 'z') and not (sym in ('a', 'd', 'e'))");
         Assert.assertNull(m.filter);
-        Assert.assertEquals("[z]", m.keyValues.toString());
+        Assert.assertEquals("[z]", keyValueFuncsToString(m.keyValueFuncs));
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
     }
 
     @Test
     public void testListOfValuesOverlapWithNotClause3() throws Exception {
         IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and sym in ('a', 'z') and not (sym in ('a', 'z', 'e'))");
-        Assert.assertEquals("[]", m.keyValues.toString());
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
     }
 
@@ -1114,7 +1093,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and sym in ('a', 'z') and sym in ('z')");
         Assert.assertNull(m.filter);
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
-        Assert.assertEquals("[z]", m.keyValues.toString());
+        Assert.assertEquals("[z]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -1122,7 +1101,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and sym in ('a', 'z') and sym in ('z')");
         Assert.assertNull(m.filter);
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
-        Assert.assertEquals("[z]", m.keyValues.toString());
+        Assert.assertEquals("[z]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -1207,34 +1186,29 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         assertFilter(m, "nullsym!=nullsym=and");
         Assert.assertEquals("ex", m.keyColumn.toString());
-        Assert.assertEquals("[]", m.keyValues.toString());
-        Assert.assertEquals("[]", m.keyValuePositions.toString());
-        Assert.assertEquals("[blah]", m.keyExcludedValues.toString());
-        Assert.assertEquals("[37]", m.keyExcludedValuePositions.toString());
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
+        Assert.assertEquals("[blah]", keyValueFuncsToString(m.keyExcludedValueFuncs));
     }
 
     @Test
     public void testNotEqualsDoesNotOverlapWithIn() throws Exception {
         IntrinsicModel m = modelOf("sym in ('x','y') and sym != 'z' and ex != 'blah'");
         assertFilter(m, "'blah'ex!=");
-        Assert.assertEquals("[x,y]", m.keyValues.toString());
-        Assert.assertEquals("[8,12]", m.keyValuePositions.toString());
+        Assert.assertEquals("[x,y]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
     public void testNotEqualsOverlapWithIn() throws Exception {
         IntrinsicModel m = modelOf("sym in ('x','y') and sym != 'y' and ex != 'blah'");
         assertFilter(m, "'blah'ex!=");
-        Assert.assertEquals("[x]", m.keyValues.toString());
-        Assert.assertEquals("[8]", m.keyValuePositions.toString());
+        Assert.assertEquals("[x]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
     public void testNotEqualsOverlapWithNotIn() throws Exception {
         IntrinsicModel m = modelOf("sym != 'y' and not sym in ('x','y')");
         Assert.assertNull(m.filter);
-        Assert.assertEquals("[y]", m.keyExcludedValues.toString());
-        Assert.assertEquals("[7]", m.keyExcludedValuePositions.toString());
+        Assert.assertEquals("[y]", keyValueFuncsToString(m.keyExcludedValueFuncs));
     }
 
     @Test
@@ -1335,7 +1309,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testNotInLambdaVsConst() throws Exception {
         IntrinsicModel m = modelOf("not (sym in (select a from xyz)) and not (ex in (1,2))");
         TestUtils.assertEquals("ex", m.keyColumn);
-        Assert.assertEquals("[1,2]", m.keyExcludedValues.toString());
+        Assert.assertEquals("[1,2]", keyValueFuncsToString(m.keyExcludedValueFuncs));
         assertFilter(m, "(select-choose a from (xyz))syminnot");
     }
 
@@ -1374,10 +1348,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym = null or sym != null and ex != 'blah'");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         assertFilter(m, "nullsym!=nullsym=or");
-        Assert.assertEquals("[]", m.keyValues.toString());
-        Assert.assertEquals("[]", m.keyValuePositions.toString());
-        Assert.assertEquals("[blah]", m.keyExcludedValues.toString());
-        Assert.assertEquals("[36]", m.keyExcludedValuePositions.toString());
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
+        Assert.assertEquals("[blah]", keyValueFuncsToString(m.keyExcludedValueFuncs));
     }
 
     @Test
@@ -1385,8 +1357,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("sym = null or sym != null and ex = 'blah'");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         assertFilter(m, "nullsym!=nullsym=or");
-        Assert.assertEquals("[blah]", m.keyValues.toString());
-        Assert.assertEquals("[35]", m.keyValuePositions.toString());
+        Assert.assertEquals("[blah]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -1395,7 +1366,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         m = modelOf("sym in ('a', 'b') and ex in ('c') and timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z' and bid > 100 and ask < 110", "ex");
         assertFilter(m, "110ask<100bid>'b''a'syminandand");
         TestUtils.assertEquals("ex", m.keyColumn);
-        Assert.assertEquals("[c]", m.keyValues.toString());
+        Assert.assertEquals("[c]", keyValueFuncsToString(m.keyValueFuncs));
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m));
     }
 
@@ -1405,7 +1376,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         m = modelOf("ex in ('c') and sym in ('a', 'b') and timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z' and bid > 100 and ask < 110", "ex");
         assertFilter(m, "110ask<100bid>'b''a'syminandand");
         TestUtils.assertEquals("ex", m.keyColumn);
-        Assert.assertEquals("[c]", m.keyValues.toString());
+        Assert.assertEquals("[c]", keyValueFuncsToString(m.keyValueFuncs));
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m));
     }
 
@@ -1451,7 +1422,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         m = modelOf("sym in ('a', 'b') and ex in ('c') and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and bid > 100 and ask < 110");
 //        assertFilter(m, "110ask<100bid>'c'exinandand");
         TestUtils.assertEquals("sym", m.keyColumn);
-        Assert.assertEquals("[a,b]", m.keyValues.toString());
+        Assert.assertEquals("[a,b]", keyValueFuncsToString(m.keyValueFuncs));
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-01T12:30:00.000000Z},{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m));
     }
 
@@ -1461,7 +1432,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         m = modelOf("ex in ('c') and sym in ('a', 'b') and timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z' and bid > 100 and ask < 110");
         assertFilter(m, "110ask<100bid>'c'exinandand");
         TestUtils.assertEquals("sym", m.keyColumn);
-        Assert.assertEquals("[a,b]", m.keyValues.toString());
+        Assert.assertEquals("[a,b]", keyValueFuncsToString(m.keyValueFuncs));
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m));
     }
 
@@ -1703,7 +1674,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = unindexedModelOf("sym = 'ABC'", null);
         Assert.assertNull(m.keyColumn);
         TestUtils.assertEquals("sym = 'ABC'", GriffinParserTestUtils.toRpn(m.filter));
-        TestUtils.assertEquals("[]", m.keyValues.toString());
+        TestUtils.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -1711,7 +1682,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = unindexedModelOf("sym in (1,2)", null);
         Assert.assertNull(m.keyColumn);
         TestUtils.assertEquals("sym in (1,2)", GriffinParserTestUtils.toRpn(m.filter));
-        TestUtils.assertEquals("[]", m.keyValues.toString());
+        TestUtils.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -1719,7 +1690,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = unindexedModelOf("sym = 'ABC'", "sym");
         TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertNull(m.filter);
-        TestUtils.assertEquals("[ABC]", m.keyValues.toString());
+        TestUtils.assertEquals("[ABC]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -1727,7 +1698,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = unindexedModelOf("sym in (1,2)", "sym");
         TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertNull(m.filter);
-        TestUtils.assertEquals("[1,2]", m.keyValues.toString());
+        TestUtils.assertEquals("[1,2]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -1735,7 +1706,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = unindexedModelOf("sym in (1,2) and ex in ('XYZ')", "sym");
         TestUtils.assertEquals("sym", m.keyColumn);
         TestUtils.assertEquals("ex in 'XYZ'", GriffinParserTestUtils.toRpn(m.filter));
-        TestUtils.assertEquals("[1,2]", m.keyValues.toString());
+        TestUtils.assertEquals("[1,2]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
@@ -1864,7 +1835,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     private void runWhereTest(String where, String expected) throws SqlException {
         IntrinsicModel m = runWhereCompareToModelTest(where, expected);
-        Assert.assertEquals("IntrinsicModel{keyValues=[], keyColumn='null', filter=null}", m.toString());
+        Assert.assertEquals("IntrinsicModel{keyValueFuncs=[], keyColumn='null', filter=null}", m.toString());
     }
 
     private void testBadOperator(String op, String expected) {
@@ -1902,6 +1873,20 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 metadata,
                 sqlExecutionContext,
                 false);
+    }
+
+    private String keyValueFuncsToString(ObjList<Function> keyValueFuncs) {
+        StringBuilder b = new StringBuilder();
+        b.setLength(0);
+        b.append('[');
+        for (int i = 0, k = keyValueFuncs.size(); i < k; i++) {
+            if (i > 0) {
+                b.append(',');
+            }
+            b.append(keyValueFuncs.getQuick(i).getStr(null));
+        }
+        b.append(']');
+        return b.toString();
     }
 
     @FunctionalInterface

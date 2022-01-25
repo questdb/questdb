@@ -36,19 +36,19 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
 
     protected final Function filter;
     protected final int columnIndex;
-    private final String symbol;
+    private final Function symbolFunc;
     private AbstractDataFrameRecordCursor cursor;
 
     public AbstractDeferredValueRecordCursorFactory(
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
-            String symbol,
+            Function symbolFunc,
             @Nullable Function filter
     ) {
         super(metadata, dataFrameCursorFactory);
         this.columnIndex = columnIndex;
-        this.symbol = symbol;
+        this.symbolFunc = symbolFunc;
         this.filter = filter;
     }
 
@@ -78,6 +78,7 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
     }
 
     private boolean lookupDeferredSymbol(DataFrameCursor dataFrameCursor) {
+        final CharSequence symbol = symbolFunc.getStr(null);
         int symbolKey = dataFrameCursor.getSymbolTable(columnIndex).keyOf(symbol);
         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
             dataFrameCursor.close();

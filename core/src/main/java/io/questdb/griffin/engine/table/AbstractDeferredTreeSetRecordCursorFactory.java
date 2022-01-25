@@ -30,9 +30,8 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.CharSequenceHashSet;
-import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
@@ -42,14 +41,14 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
     // symbol keys will be added to this hash set
     protected final IntHashSet symbolKeys;
     private final int columnIndex;
-    private final CharSequenceHashSet deferredSymbols;
+    private final ObjList<Function> deferredSymbolFuncs;
 
     public AbstractDeferredTreeSetRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
-            @Transient CharSequenceHashSet keyValues,
+            @Transient ObjList<Function> keyValueFuncs,
             @Transient SymbolMapReader symbolMapReader
     ) {
         super(metadata, dataFrameCursorFactory, configuration);
@@ -59,18 +58,20 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
         // we could pass all symbols to factory to resolve, but this would lead to
         // creating Strings for symbols that we may be able to avoid doing so
 
-        final int nKeyValues = keyValues.size();
+        final int nKeyValues = keyValueFuncs.size();
         final IntHashSet symbolKeys = new IntHashSet(nKeyValues);
-        CharSequenceHashSet deferredSymbols = null;
+        ObjList<Function> deferredFuncs = null;
 
         for (int i = 0; i < nKeyValues; i++) {
-            CharSequence symbol = keyValues.get(i);
-            int symbolKey = symbolMapReader.keyOf(symbol);
+            Function symbolFunc = keyValueFuncs.get(i);
+            int symbolKey = symbolFunc.isRuntimeConstant()
+                    ? SymbolTable.VALUE_NOT_FOUND
+                    : symbolMapReader.keyOf(symbolFunc.getStr(null));
             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                if (deferredSymbols == null) {
-                    deferredSymbols = new CharSequenceHashSet();
+                if (deferredFuncs == null) {
+                    deferredFuncs = new ObjList<>();
                 }
-                deferredSymbols.add(Chars.toString(symbol));
+                deferredFuncs.add(symbolFunc);
             } else {
                 symbolKeys.add(TableUtils.toIndexKey(symbolKey));
             }
@@ -78,7 +79,7 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
 
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;
-        this.deferredSymbols = deferredSymbols;
+        this.deferredSymbolFuncs = deferredFuncs;
     }
 
     @Override
@@ -86,14 +87,15 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        if (deferredSymbols != null && deferredSymbols.size() > 0) {
+        if (deferredSymbolFuncs != null && deferredSymbolFuncs.size() > 0) {
             StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
-            for (int i = 0, n = deferredSymbols.size(); i < n; ) {
-                CharSequence symbol = deferredSymbols.get(i);
+            for (int i = 0, n = deferredSymbolFuncs.size(); i < n; ) {
+                Function symbolFunc = deferredSymbolFuncs.get(i);
+                final CharSequence symbol = symbolFunc.getStr(null);
                 int symbolKey = symbolTable.keyOf(symbol);
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
                     symbolKeys.add(TableUtils.toIndexKey(symbolKey));
-                    deferredSymbols.remove(symbol);
+                    deferredSymbolFuncs.remove(symbol);
                     n--;
                 } else {
                     i++;
