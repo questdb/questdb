@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory;
@@ -252,8 +253,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             mutableArgPositions.clear();
             mutableArgPositions.setPos(argCount);
             for (int n = 0; n < argCount; n++) {
-                mutableArgs.setQuick(n, functionStack.poll());
-                mutableArgPositions.setQuick(n, positionStack.pop());
+                final Function arg = functionStack.poll();
+                final int pos = positionStack.pop();
+
+                if (arg instanceof GroupByFunction) {
+                    throw SqlException.position(pos).put("GroupBy function cannot be passed as argument.");
+                }
+
+                mutableArgs.setQuick(n, arg);
+                mutableArgPositions.setQuick(n, pos);
             }
             functionStack.push(createFunction(node, mutableArgs, mutableArgPositions));
         }

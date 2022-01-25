@@ -24,9 +24,24 @@
 
 package io.questdb.griffin;
 
+import io.questdb.std.Chars;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class GroupByFunctionTest extends AbstractGriffinTest {
+
+    @Test
+    public void testNestedGroupByFn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));", sqlExecutionContext);
+            try {
+                compiler.compile("select sym, sum(x - min(x)) from test", sqlExecutionContext);
+            } catch (SqlException e) {
+                Assert.assertTrue(Chars.contains(e.getMessage(), "GroupBy function cannot be passed as argument"));
+            }
+        });
+    }
+
     @Test
     public void testKeyedAvgDoubleAllNaN() throws Exception {
         assertQuery("s\tsum\n" +
