@@ -852,7 +852,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private boolean isMetaFileMissingFileSystemError(CairoException ex) {
         int errno = ex.getErrno();
-        return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST;
+        return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST || errno == CairoException.METADATA_VALIDATION;
     }
 
     private TableReaderMetadata openMetaFile() {

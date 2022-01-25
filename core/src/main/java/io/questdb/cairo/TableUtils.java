@@ -739,7 +739,7 @@ public final class TableUtils {
             int expectedVersion
     ) {
         try {
-            long fileLength = ff.length(metaMem.getFd());
+            long fileLength = metaMem.size();
             if (fileLength < META_OFFSET_COLUMN_TYPES) {
                 throw CairoException.instance(0).put(". File is too small ").put(fileLength);
             }
@@ -797,19 +797,19 @@ public final class TableUtils {
                 if (offset + 4 >= fileLength) {
                     throw validationException(metaMem).put("File is too small, column length for column ").put(i).put(" is missing");
                 }
-                CharSequence name = metaMem.getStr(offset);
-                if (name == null) {
+                int strLength = metaMem.getInt(offset);
+                if (strLength == TableUtils.NULL_LEN) {
                     throw validationException(metaMem).put("NULL column name at [").put(i).put(']');
                 }
-
-                int strLength = name.length();
-                if (strLength < 1 || strLength >= 256) {
+                if (strLength < 1 || strLength >= 256 || offset + Vm.getStorageLength(strLength) > fileLength) {
                     // EXT4 and many others do not allow files to by > 255 bytes
                     throw validationException(metaMem)
                             .put("Column name length of ")
                             .put(strLength).put(" is invalid at offset ")
                             .put(offset);
                 }
+
+                CharSequence name = metaMem.getStr(offset);
 
                 if (nameIndex.put(name, i)) {
                     offset += Vm.getStorageLength(name);
@@ -973,7 +973,7 @@ public final class TableUtils {
     }
 
     private static CairoException validationException(MemoryMR mem) {
-        return CairoException.instance(0).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
+        return CairoException.instance(CairoException.METADATA_VALIDATION).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
     }
 
     static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
