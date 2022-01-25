@@ -31,7 +31,7 @@ jobs:
           os: Linux
           jdk: "1.8"
         linux-jdk17:
-          imageName: "macos-latest"
+          imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
           jdk: "1.17"
