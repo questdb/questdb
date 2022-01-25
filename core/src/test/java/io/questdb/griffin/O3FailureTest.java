@@ -289,7 +289,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testAllocateFailsAtO3OpenColumn() throws Exception {
-        counter.set(45);
+        counter.set(40);
         executeWithPool(0, O3FailureTest::testAllocateFailsAtO3OpenColumn0, ffAllocateFailure);
     }
 
@@ -1031,7 +1031,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testSetAppendPositionFails() throws Exception {
-        counter.set(182);
+        counter.set(169);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 

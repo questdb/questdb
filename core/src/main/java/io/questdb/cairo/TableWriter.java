@@ -261,7 +261,7 @@ public class TableWriter implements Closeable {
             this.metaMem = Vm.getMRInstance();
 
             openMetaFile(ff, path, rootLen, metaMem);
-            this.metadata = new TableWriterMetadata(ff, metaMem);
+            this.metadata = new TableWriterMetadata(metaMem);
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
             this.txWriter = new TxWriter(ff).ofRW(path, partitionBy);
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
@@ -4777,7 +4777,7 @@ public class TableWriter implements Closeable {
                 }
                 metaMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
                 validationMap.clear();
-                validate(ff, metaMem, validationMap, ColumnType.VERSION);
+                validate(metaMem, validationMap, ColumnType.VERSION);
             } finally {
                 metaMem.close();
                 path.trimTo(rootLen);

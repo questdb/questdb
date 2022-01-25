@@ -733,7 +733,6 @@ public final class TableUtils {
     }
 
     public static void validate(
-            FilesFacade ff,
             MemoryMR metaMem,
             LowerCaseCharSequenceIntHashMap nameIndex,
             int expectedVersion

@@ -27,8 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMR;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
@@ -165,7 +163,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
 
         transitionMeta.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
         tmpValidationMap.clear();
-        TableUtils.validate(ff, transitionMeta, tmpValidationMap, ColumnType.VERSION);
+        TableUtils.validate(transitionMeta, tmpValidationMap, ColumnType.VERSION);
         if (txnStructureVersion != transitionMeta.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION)) {
             // No match
             return -1;
@@ -207,7 +205,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         try {
             this.metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
             this.columnNameIndexMap.clear();
-            TableUtils.validate(ff, metaMem, this.columnNameIndexMap, expectedVersion);
+            TableUtils.validate(metaMem, this.columnNameIndexMap, expectedVersion);
             this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             this.id = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
