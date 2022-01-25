@@ -257,7 +257,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 final int pos = positionStack.pop();
 
                 if (arg instanceof GroupByFunction) {
-                    throw SqlException.position(pos).put("GroupBy function cannot be passed as argument.");
+                    throw SqlException.position(pos).put("Aggregate function cannot be passed as an argument");
                 }
 
                 mutableArgs.setQuick(n, arg);
