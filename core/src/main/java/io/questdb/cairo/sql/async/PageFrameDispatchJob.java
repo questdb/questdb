@@ -79,7 +79,6 @@ public class PageFrameDispatchJob implements Job {
         boolean idle = true;
         final int shard = frameSequence.getShard();
         final RingQueue<PageFrameReduceTask> queue = messageBus.getPageFrameReduceQueue(shard);
-        final int queueCycle = queue.getCycle();
 
         // the sequence used to steal worker jobs
         final MCSequence reduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);

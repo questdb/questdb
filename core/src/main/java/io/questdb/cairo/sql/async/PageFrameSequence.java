@@ -79,13 +79,31 @@ public class PageFrameSequence<T> implements Mutable {
                 .$(", id=").$(id)
                 .$(", frameCount=").$(frameCount)
                 .I$();
-        xxx2();
+
+        final RingQueue<PageFrameReduceTask> queue = messageBus.getPageFrameReduceQueue(shard);
+        final MCSequence pageFrameReduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
+        while (doneLatch.getCount() == 0) {
+            final PageAddressCacheRecord rec = records[getWorkerId()];
+            // we were asked to steal work from dispatch queue and beyond, as much as we can
+            if (PageFrameReduceJob.consumeQueue(queue, pageFrameReduceSubSeq, rec)) {
+                long cursor = collectSubSeq.next();
+                if (cursor > -1) {
+                    // discard collect items
+                    final PageFrameReduceTask tsk = queue.get(cursor);
+                    if (tsk.getFrameSequence().getId() == id) {
+                        tsk.collected();
+                    }
+                    collectSubSeq.done(cursor);
+                } else {
+                    LockSupport.parkNanos(1);
+                }
+            }
+        }
     }
 
     @Override
     public void clear() {
         // prepare different frame sequence using the same object instance
-        // todo: call reset from here ?
         this.frameCount = 0;
         pageAddressCache.clear();
         pageFrameCursor = Misc.free(pageFrameCursor);
@@ -112,7 +130,7 @@ public class PageFrameSequence<T> implements Mutable {
         final MessageBus bus = executionContext.getMessageBus();
         // before thread begins we will need to pick a shard
         // of queues that we will interact with
-        final int shard = 0;//rnd.nextInt(bus.getPageFrameReduceShardCount());
+        final int shard = rnd.nextInt(bus.getPageFrameReduceShardCount());
         PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext);
 
         try {
@@ -301,7 +319,7 @@ public class PageFrameSequence<T> implements Mutable {
                     .$(", id=").$(id)
                     .I$();
 
-            xxx2();
+            await();
 
             // done latch is reset by method call above
             doneLatch.reset();
@@ -364,33 +382,5 @@ public class PageFrameSequence<T> implements Mutable {
         this.atom = atom;
         this.dispatchPubSeq = dispatchPubSeq;
         this.pageFrameDispatchQueue = pageFrameDispatchQueue;
-    }
-
-    private void xxx() {
-        while (doneLatch.getCount() == 0) {
-            stealWork();
-        }
-    }
-
-    private void xxx2() {
-        final RingQueue<PageFrameReduceTask> queue = messageBus.getPageFrameReduceQueue(shard);
-        final MCSequence pageFrameReduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
-        while (doneLatch.getCount() == 0) {
-            final PageAddressCacheRecord rec = records[getWorkerId()];
-            // we were asked to steal work from dispatch queue and beyond, as much as we can
-            if (PageFrameReduceJob.consumeQueue(queue, pageFrameReduceSubSeq, rec)) {
-                long cursor = collectSubSeq.next();
-                if (cursor > -1) {
-                    // discard collect items
-                    final PageFrameReduceTask tsk = queue.get(cursor);
-                    if (tsk.getFrameSequence().getId() == id) {
-                        tsk.collected();
-                    }
-                    collectSubSeq.done(cursor);
-                } else {
-                    LockSupport.parkNanos(1);
-                }
-            }
-        }
     }
 }
