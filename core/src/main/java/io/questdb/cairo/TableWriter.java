@@ -1073,29 +1073,22 @@ public class TableWriter implements Closeable {
             // what remains on disk
 
             // find out if we are removing min partition
-            setStateForTimestamp(path, timestamp, false);
             long nextMinTimestamp = minTimestamp;
             if (timestamp == txWriter.getPartitionTimestamp(0)) {
                 nextMinTimestamp = readMinTimestamp(txWriter.getPartitionTimestamp(1));
             }
+            long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
             txWriter.beginPartitionSizeUpdate();
             txWriter.removeAttachedPartitions(timestamp);
             txWriter.setMinTimestamp(nextMinTimestamp);
             txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
             txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
 
-            if (ff.exists(path.$())) {
-                int errno;
-                if ((errno = ff.rmdir(path.chop$().slash$())) != 0) {
-                    LOG.info().$("partition directory delete is postponed [path=").$(path)
-                            .$(", errno=").$(errno)
-                            .$(']').$();
-                } else {
-                    LOG.info().$("partition marked for delete [path=").$(path).$(']').$();
-                }
-            } else {
-                LOG.info().$("partition absent on disk now detached from table [path=").$(path).$(']').$();
-            }
+            // Call O3 methods to remove check TxnScoreboard and remove partition directly
+            o3PartitionRemoveCandidates.clear();
+            o3PartitionRemoveCandidates.add(timestamp, partitionNameTxn);
+            o3ProcessPartitionRemoveCandidates();
+
             return true;
         } finally {
             path.trimTo(rootLen);

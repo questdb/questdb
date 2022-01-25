@@ -85,6 +85,56 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
             int lo,
             int hi
     ) {
+        boolean partitionInTxnFile = txReader.getPartitionSizeByPartitionTimestamp(partitionTimestamp) > 0;
+        if (partitionInTxnFile) {
+            processPartition0(ff, path, tableRootLen, txReader, txnScoreboard, partitionTimestamp, partitionBy, partitionList, lo, hi);
+        } else {
+            processDetachedPartition(ff, path, tableRootLen, txReader, txnScoreboard, partitionTimestamp, partitionBy, partitionList, lo, hi);
+        }
+    }
+
+    private static void processDetachedPartition(FilesFacade ff, Path path, int tableRootLen, TxReader txReader, TxnScoreboard txnScoreboard, long partitionTimestamp, int partitionBy, DirectLongList partitionList, int lo, int hi) {
+        // Partition is dropped or not fully committed.
+        // It is only possible to delete when there are no readers
+        long lastTxn = txReader.getTxn();
+        for (int i = hi - 2, n = lo - 1; i > n; i -= 2) {
+            long nameTxn = partitionList.get(i);
+            boolean rangeUnlocked = isRangeUnlocked(txnScoreboard, nameTxn, lastTxn);
+            if (rangeUnlocked) {
+                // nameTxn can be deleted
+                // -1 here is to compensate +1 added when partition version parsed from folder name
+                // See comments of why +1 added there in parsePartitionDateVersion()
+                LOG.info()
+                        .$("purging removed partition directory [ts=")
+                        .$ts(partitionTimestamp)
+                        .$(", nameTxn=").$(nameTxn - 1)
+                        .I$();
+                deleteParitionDirectory(
+                        ff,
+                        path,
+                        tableRootLen,
+                        partitionTimestamp,
+                        partitionBy,
+                        nameTxn - 1);
+                lastTxn = nameTxn;
+            } else {
+                break;
+            }
+        }
+    }
+
+    private static void processPartition0(
+            FilesFacade ff,
+            Path path,
+            int tableRootLen,
+            TxReader txReader,
+            TxnScoreboard txnScoreboard,
+            long partitionTimestamp,
+            int partitionBy,
+            DirectLongList partitionList,
+            int lo,
+            int hi
+    ) {
         long lastCommittedPartitionName = txReader.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
         if (lastCommittedPartitionName > -1) {
             assert hi <= partitionList.size();
@@ -95,44 +145,64 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                 long nextNameVersion = Math.min(lastCommittedPartitionName + 1, partitionList.get(i));
                 long previousNameVersion = partitionList.get(i - 2);
 
-                boolean rangeUnlocked = previousNameVersion < nextNameVersion;
-                for (long txn = previousNameVersion; txn < nextNameVersion; txn++) {
-                    if (txnScoreboard.getActiveReaderCount(txn) > 0) {
-                        rangeUnlocked = false;
-                        break;
-                    }
-                }
+                boolean rangeUnlocked = previousNameVersion < nextNameVersion
+                        && isRangeUnlocked(txnScoreboard, previousNameVersion, nextNameVersion);
 
                 if (rangeUnlocked) {
-                    path.trimTo(tableRootLen);
-                    TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
+                    // previousNameVersion can be deleted
                     // -1 here is to compensate +1 added when partition version parsed from folder name
                     // See comments of why +1 added there in parsePartitionDateVersion()
-                    TableUtils.txnPartitionConditionally(path, previousNameVersion - 1);
-                    path.slash$();
-
-                    // previousNameVersion can be deleted
                     LOG.info()
-                            .$("purging [path=")
-                            .$(path)
-                            .$(", nameTxnToRemove=").$(previousNameVersion - 1)
+                            .$("purging [ts=")
+                            .$ts(partitionTimestamp)
+                            .$(", nameTxn=").$(previousNameVersion - 1)
                             .$(", nameTxnNext=").$(nextNameVersion)
                             .$(", lastCommittedPartitionName=").$(lastCommittedPartitionName)
                             .I$();
-                    long errno;
-                    if ((errno = ff.rmdir(path)) == 0) {
-                        LOG.info()
-                                .$("purged [path=").$(path)
-                                .I$();
-                    } else {
-                        LOG.info()
-                                .$("partition purge failed [path=").$(path)
-                                .$(", errno=").$(errno)
-                                .I$();
-                    }
+                    deleteParitionDirectory(
+                            ff,
+                            path,
+                            tableRootLen,
+                            partitionTimestamp,
+                            partitionBy,
+                            previousNameVersion - 1);
                 }
             }
         }
+    }
+
+    private static void deleteParitionDirectory(
+            FilesFacade ff,
+            Path path,
+            int tableRootLen,
+            long partitionTimestamp,
+            int partitionBy,
+            long previousNameVersion) {
+        path.trimTo(tableRootLen);
+        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
+        TableUtils.txnPartitionConditionally(path, previousNameVersion);
+        path.slash$();
+
+        long errno;
+        if ((errno = ff.rmdir(path)) == 0) {
+            LOG.info()
+                    .$("purged [path=").$(path)
+                    .I$();
+        } else {
+            LOG.info()
+                    .$("partition purge failed [path=").$(path)
+                    .$(", errno=").$(errno)
+                    .I$();
+        }
+    }
+
+    private static boolean isRangeUnlocked(TxnScoreboard txnScoreboard, long fromTxn, long toTxn) {
+        for (long txn = fromTxn; txn < toTxn; txn++) {
+            if (txnScoreboard.getActiveReaderCount(txn) > 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void discoverPartitions(
@@ -189,7 +259,8 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
             for (int i = 0; i < n; i += 2) {
                 long currentPartitionTs = partitionList.get(i + 1);
                 if (currentPartitionTs != partitionTimestamp) {
-                    if (i > lo + 2) {
+                    if (i > lo + 2 ||
+                            (i > 0 && txReader.getPartitionSizeByPartitionTimestamp(partitionTimestamp) < 0)) {
                         processPartition(
                                 ff,
                                 path,

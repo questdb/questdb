@@ -425,6 +425,47 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testPartitionDeletedAsyncAfterDroppedBySql() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+
+                compiler.compile("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY", sqlExecutionContext);
+
+                // OOO inserts partition 1970-01-09
+                compiler.compile("insert into tbl select 4, '1970-01-09T10'", sqlExecutionContext);
+
+                path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-09").concat("x.d").$();
+                Assert.assertTrue(Chars.toString(path), Files.exists(path));
+
+                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
+                    // OOO inserts partition 1970-01-09
+                    compiler.compile("insert into tbl select 4, '1970-01-09T09'", sqlExecutionContext);
+
+                    path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-09.2").concat("x.d").$();
+                    Assert.assertTrue(Chars.toString(path), Files.exists(path));
+
+                    try (TableReader rdr2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
+                        compile("alter table tbl drop partition list '1970-01-09'", sqlExecutionContext);
+                        runPartitionPurgeJobs();
+
+                        // This should not fail
+                        rdr2.openPartition(0);
+                    }
+                    runPartitionPurgeJobs();
+                    Assert.assertFalse(Chars.toString(path), Files.exists(path));
+
+                    // This should not fail
+                    rdr.openPartition(0);
+                }
+                runPartitionPurgeJobs();
+
+                path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-09").concat("x.d").$();
+                Assert.assertFalse(Chars.toString(path), Files.exists(path));
+            }
+        });
+    }
+
+    @Test
     public void testTableDropAfterPurgeScheduled() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY", sqlExecutionContext);
