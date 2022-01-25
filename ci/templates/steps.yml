@@ -83,7 +83,7 @@ steps:
       goals: "clean test"
       options:
         "--batch-mode --quiet -P build-web-console
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false '-Dtest=*,!*griffin*'"
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false -Dtest=*,!*griffin*"
       jdkVersionOption: $(jdk)
     timeoutInMinutes: 55
     condition: |
@@ -99,7 +99,7 @@ steps:
       goals: "clean test"
       options:
         "--batch-mode --quiet -P build-web-console
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false '-Dtest=*griffin*'"
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false -Dtest=*griffin*"
       jdkVersionOption: $(jdk)
     timeoutInMinutes: 55
     condition: |
