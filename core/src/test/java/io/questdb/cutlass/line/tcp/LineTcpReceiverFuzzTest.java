@@ -88,8 +88,8 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
 
     @Test
     public void testReorderingAddSkipDuplicateColumnsWithNonAscii() throws Exception {
-        initLoadParameters(100, 5, 5, 5, 50);
-        initFuzzParameters(4, 4, 4, -1, 4, true, true, false);
+        initLoadParameters(10, 5, 2, 1, 50);
+        initFuzzParameters(-1, -1, -1, 1, -1, false, false, false);
         runTest();
     }
 

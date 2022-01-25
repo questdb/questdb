@@ -4440,6 +4440,7 @@ public class TableWriter implements Closeable {
                 masterRef--;
                 clearO3();
             }
+            rowValueIsNotNull.fill(0, columnCount, masterRef);
             return;
         }
 
@@ -4580,6 +4581,7 @@ public class TableWriter implements Closeable {
     }
 
     private void setRowValueNotNull(int columnIndex) {
+        assert rowValueIsNotNull.getQuick(columnIndex) != masterRef;
         rowValueIsNotNull.setQuick(columnIndex, masterRef);
     }
 
@@ -4952,6 +4954,7 @@ public class TableWriter implements Closeable {
         @Override
         public void putDate(int columnIndex, long value) {
             putLong(columnIndex, value);
+            setRowValueNotNull(columnIndex);
         }
 
         @Override
