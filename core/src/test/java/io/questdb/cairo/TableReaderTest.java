@@ -1439,7 +1439,7 @@ public class TableReaderTest extends AbstractCairoTest {
             AtomicInteger done = new AtomicInteger();
             AtomicInteger columnsAdded = new AtomicInteger();
             AtomicInteger reloadCount = new AtomicInteger();
-            int totalColAddCount = 100;
+            int totalColAddCount = Os.type == Os.LINUX_ARM64 ? 100 : 10;
 
             String tableName = "tbl_meta_test";
             createTable(tableName, PartitionBy.DAY);
@@ -1504,7 +1504,7 @@ public class TableReaderTest extends AbstractCairoTest {
             AtomicInteger done = new AtomicInteger();
             AtomicInteger columnsAdded = new AtomicInteger();
             AtomicInteger reloadCount = new AtomicInteger();
-            int totalColAddCount = Os.type == Os.OSX_ARM64 || Os.type == Os.OSX_AMD64 ? 50 : 500;
+            int totalColAddCount = Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64 ? 500 : 50;
 
             String tableName = "tbl_meta_test";
             createTable(tableName, PartitionBy.HOUR);
@@ -1808,15 +1808,9 @@ public class TableReaderTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                int partitionsToAdd = Math.min((int) (Files.PAGE_SIZE / Long.BYTES / 4) + 1, 500);
-                if (Os.type == Os.OSX_ARM64 || Os.type == Os.OSX_AMD64) {
-                    partitionsToAdd = 10; // Very restricted file limit
-                }
+                int partitionsToAdd = Os.type == Os.LINUX_ARM64 || Os.type == Os.LINUX_AMD64 ? (int) (Files.PAGE_SIZE / Long.BYTES / 4) + 1 : 10;
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
-                    int symbolsToAdd = Math.min((int) (Files.PAGE_SIZE / Long.BYTES), 500);
-                    if (Os.type == Os.OSX_ARM64 || Os.type == Os.OSX_AMD64) {
-                        symbolsToAdd = 10; // Very restricted file limit
-                    }
+                    int symbolsToAdd = Os.type == Os.LINUX_ARM64 || Os.type == Os.LINUX_AMD64 ? (int) (Files.PAGE_SIZE / Long.BYTES / 4) + 1 : 10;
                     for (int i = 0; i < symbolsToAdd; i++) {
                         writer.addColumn("col" + i, ColumnType.SYMBOL);
                     }
@@ -1840,27 +1834,30 @@ public class TableReaderTest extends AbstractCairoTest {
         AtomicInteger openCount = new AtomicInteger(1000);
 
         assertMemoryLeak(() -> {
-            ff = new FilesFacadeImpl() {
-                @Override
-                public long openRO(LPSZ name) {
-                    if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && openCount.decrementAndGet() < 0) {
-                        return -1;
+            try (Path temp = new Path()) {
+                temp.of(engine.getConfiguration().getRoot()).concat("dummy_non_existing_path").$();
+                ff = new FilesFacadeImpl() {
+                    @Override
+                    public long openRO(LPSZ name) {
+                        if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && openCount.decrementAndGet() < 0) {
+                            return Files.openRO(temp);
+                        }
+                        return Files.openRO(name);
                     }
-                    return Files.openRW(name);
-                }
-            };
+                };
 
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
-                    writer.addColumn("col10", ColumnType.SYMBOL);
-                }
-                engine.releaseAllWriters();
-                try {
-                    openCount.set(0);
-                    reader.reload();
-                    Assert.fail();
-                } catch (CairoException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(), "Metadata read timeout");
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
+                        writer.addColumn("col10", ColumnType.SYMBOL);
+                    }
+                    engine.releaseAllWriters();
+                    try {
+                        openCount.set(0);
+                        reader.reload();
+                        Assert.fail();
+                    } catch (CairoException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "Metadata read timeout");
+                    }
                 }
             }
         });
