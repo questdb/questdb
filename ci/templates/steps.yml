@@ -66,7 +66,10 @@ steps:
       and(
         not(
           or(
-            and( eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11') ) ),
+            and(
+              eq(variables['Agent.OS'], 'Linux'),
+              eq(variables['jdk'], '1.11')
+            ),
             eq(variables['Agent.OS'], 'Windows')
           )
         ),
