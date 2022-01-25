@@ -1003,7 +1003,7 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(columnCount + 1);
             ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
-            copyVersionAndLagValues(txWriter.getStructureVersion() + 1);
+            copyVersionAndLagValues();
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 writeColumnEntry(i);
@@ -1688,7 +1688,7 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(columnCount);
             ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
-            copyVersionAndLagValues(txWriter.getStructureVersion() + 1);
+            copyVersionAndLagValues();
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 if (i != columnIndex) {
@@ -1969,7 +1969,7 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(columnCount);
             ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
-            copyVersionAndLagValues(txWriter.getStructureVersion());
+            copyVersionAndLagValues();
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 writeColumnEntry(i);
@@ -1988,7 +1988,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void copyVersionAndLagValues(long structureVersion) {
+    private void copyVersionAndLagValues() {
         ddlMem.putInt(ColumnType.VERSION);
         ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
         ddlMem.putInt(metaMem.getInt(META_OFFSET_MAX_UNCOMMITTED_ROWS));
@@ -2127,7 +2127,7 @@ public class TableWriter implements Closeable {
             } else {
                 ddlMem.putInt(timestampIndex);
             }
-            copyVersionAndLagValues(txWriter.getStructureVersion() + 1);
+            copyVersionAndLagValues();
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < columnCount; i++) {
@@ -3922,7 +3922,7 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(columnCount);
             ddlMem.putInt(partitionBy);
             ddlMem.putInt(timestampIndex);
-            copyVersionAndLagValues(txWriter.getStructureVersion() + 1);
+            copyVersionAndLagValues();
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < columnCount; i++) {
