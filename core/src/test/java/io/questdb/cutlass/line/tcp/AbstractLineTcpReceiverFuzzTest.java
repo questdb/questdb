@@ -89,14 +89,14 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
     private CharSequence addColumn(LineData line, int colIndex) {
         final CharSequence colName = generateName(colIndex, false);
         final CharSequence colValue = generateValue(colIndex);
-        line.add(colName, colValue);
+        line.addColumn(colName, colValue);
         return colName;
     }
 
     private void addDuplicateColumn(LineData line, int colIndex, CharSequence colName) {
         if (shouldFuzz(duplicatesFactor)) {
             final CharSequence colValueDupe = generateValue(colIndex);
-            line.add(colName, colValueDupe);
+            line.addColumn(colName, colValueDupe);
         }
     }
 
@@ -105,7 +105,7 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
             final int extraColIndex = random.nextInt(colNameBases.length);
             final CharSequence colNameNew = generateName(extraColIndex, true);
             final CharSequence colValueNew = generateValue(extraColIndex);
-            line.add(colNameNew, colValueNew);
+            line.addColumn(colNameNew, colValueNew);
         }
     }
 
