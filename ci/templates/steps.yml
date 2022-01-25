@@ -68,6 +68,7 @@ steps:
           or(
             and( eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11') ) ),
             eq(variables['Agent.OS'], 'Windows')
+          )
         ),
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
