@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -258,9 +259,13 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
 
             try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(tableName)) {
                 path.concat("2020-01-01.1").concat("timestamp.d").$();
-
                 Assert.assertTrue(FilesFacadeImpl.INSTANCE.exists(path));
+                if (Os.type == Os.WINDOWS) {
+                    engine.releaseAllReaders();
+                }
+
                 compile("alter table x drop partition where timestamp = '2020-01-01'", sqlExecutionContext);
+
                 assertPartitionResult("count\n0\n", "2020-01-01");
                 Assert.assertFalse(FilesFacadeImpl.INSTANCE.exists(path));
             }
