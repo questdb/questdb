@@ -210,6 +210,7 @@ public class WriterPool extends AbstractPool {
             Entry other = entries.putIfAbsent(tableName, e);
             if (other == null) {
                 if (lockAndNotify(thread, e, tableName, lockReason)) {
+                    notifyListener(thread, tableName, PoolListener.EV_CREATE);
                     return OWNERSHIP_REASON_NONE;
                 } else {
                     entries.remove(tableName);

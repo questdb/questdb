@@ -34,6 +34,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -81,6 +82,7 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
 
     private SOCountDownLatch threadPushFinished;
     private LowerCaseCharSequenceObjHashMap<TableData> tables;
+    private ConcurrentHashMap<CharSequence> tableNames;
 
     private int duplicatesFactor = -1;
     private int columnReorderingFactor = -1;
@@ -159,8 +161,15 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
 
     // return false means could not assert and should be called again
     boolean checkTable(TableData table) {
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, table.getName())) {
-            LOG.info().$("table.getName(): ").$(table.getName()).$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
+        final CharSequence tableName = tableNames.get(table.getName());
+        if (tableName == null) {
+            LOG.info().$(table.getName()).$(" has not been created yet").$();
+            table.notReady();
+            return false;
+        }
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            LOG.info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
+                    .$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
             if (table.size() <= reader.size()) {
                 final TableReaderMetadata metadata = reader.getMetadata();
                 final CharSequence expected = table.generateRows(metadata);
@@ -320,6 +329,7 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
 
         threadPushFinished = new SOCountDownLatch(numOfThreads - 1);
         tables = new LowerCaseCharSequenceObjHashMap<>();
+        tableNames = new ConcurrentHashMap<>();
     }
 
     private CharSequence pickTableName(int threadId) {
@@ -328,15 +338,27 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
 
     void runTest() throws Exception {
         runTest((factoryType, thread, name, event, segment, position) -> {
+            if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_CREATE) {
+                handleWriterCreateEvent(name);
+            }
             if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                if (threadPushFinished.getCount() > 0) {
-                    // we are still sending, no point to check the table yet
-                    return;
-                }
-                final TableData table = tables.get(name);
-                table.ready();
+                handleWriterReturnEvent(name);
             }
         });
+    }
+
+    void handleWriterCreateEvent(CharSequence name) {
+        final String tableName = name.toString();
+        tableNames.put(tableName.toLowerCase(), tableName);
+    }
+
+    void handleWriterReturnEvent(CharSequence name) {
+        if (threadPushFinished.getCount() > 0) {
+            // we are still sending, no point to check the table yet
+            return;
+        }
+        final TableData table = tables.get(name);
+        table.ready();
     }
 
     void runTest(PoolListener listener) throws Exception {
