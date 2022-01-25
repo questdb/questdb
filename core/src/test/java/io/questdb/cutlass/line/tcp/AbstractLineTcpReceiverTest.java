@@ -270,6 +270,7 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     }
 
     protected void sendToSocket(Socket socket, String lineData) {
+        LOG.info().$("sending: ").utf8(lineData.substring(0, lineData.length() - 1)).$();
         byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
         long bufaddr = Unsafe.malloc(lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
         try {
