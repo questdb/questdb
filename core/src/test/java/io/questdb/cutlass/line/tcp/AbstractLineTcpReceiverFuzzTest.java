@@ -87,6 +87,8 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
     private int nonAsciiValueFactor = -1;
     private int newColumnFactor = -1;
     private boolean diffCasesInColNames = false;
+    private boolean exerciseTags = true;
+    private boolean sendStringsAsSymbols = false;
 
     private volatile String errorMsg = null;
 
@@ -194,12 +196,14 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
 
     private LineData generateLine() {
         final LineData line = new LineData(timestampMillis.incrementAndGet());
-        final int[] tagIndexes = getTagIndexes();
-        for (int i = 0; i < tagIndexes.length; i++) {
-            final int tagIndex = tagIndexes[i];
-            final CharSequence tagName = addTag(line, tagIndex);
-            addDuplicateTag(line, tagIndex, tagName);
-            addNewTag(line);
+        if (exerciseTags) {
+            final int[] tagIndexes = getTagIndexes();
+            for (int i = 0; i < tagIndexes.length; i++) {
+                final int tagIndex = tagIndexes[i];
+                final CharSequence tagName = addTag(line, tagIndex);
+                addDuplicateTag(line, tagIndex, tagName);
+                addNewTag(line);
+            }
         }
         final int[] columnIndexes = getColumnIndexes();
         for (int i = 0; i < columnIndexes.length; i++) {
@@ -244,7 +248,7 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
                 return valueBase + postfix;
             case STRING:
                 postfix = Character.toString(shouldFuzz(nonAsciiValueFactor) ? nonAsciiChars[random.nextInt(nonAsciiChars.length)] : random.nextChar());
-                return "\"" + valueBase + postfix + "\"";
+                return sendStringsAsSymbols ? valueBase + postfix : "\"" + valueBase + postfix + "\"";
             default:
                 return valueBase;
         }
@@ -284,13 +288,16 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
         };
     }
 
-    void initFuzzParameters(int duplicatesFactor, int columnReorderingFactor, int columnSkipFactor, int newColumnFactor, int nonAsciiValueFactor, boolean diffCasesInColNames) {
+    void initFuzzParameters(int duplicatesFactor, int columnReorderingFactor, int columnSkipFactor, int newColumnFactor, int nonAsciiValueFactor,
+                            boolean diffCasesInColNames, boolean exerciseTags, boolean sendStringsAsSymbols) {
         this.duplicatesFactor = duplicatesFactor;
         this.columnReorderingFactor = columnReorderingFactor;
         this.columnSkipFactor = columnSkipFactor;
         this.nonAsciiValueFactor = nonAsciiValueFactor;
         this.newColumnFactor = newColumnFactor;
         this.diffCasesInColNames = diffCasesInColNames;
+        this.exerciseTags = exerciseTags;
+        this.sendStringsAsSymbols = sendStringsAsSymbols;
     }
 
     void initLoadParameters(int numOfLines, int numOfIterations, int numOfThreads, int numOfTables, long waitBetweenIterationsMillis) {
