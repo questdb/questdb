@@ -102,7 +102,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     .I$();
             this.txFile = new TxReader(ff).ofRO(path, partitionBy);
             path.trimTo(rootLen);
-            reloadSlow(metadata.getStructureVersion());
+            reloadSlow(metadata.getStructureVersion(), false);
             openSymbolMaps();
             partitionCount = txFile.getPartitionCount();
             partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
@@ -454,8 +454,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         final long prevPartitionVersion = this.txFile.getPartitionTableVersion();
         try {
-            // Save tx file versions on stack
-            reloadSlow(this.txFile.getStructureVersion());
+            reloadSlow(this.txFile.getStructureVersion(), true);
             // partition reload will apply truncate if necessary
             // applyTruncate for non-partitioned tables only
             reconcileOpenPartitions(prevPartitionVersion);
@@ -1102,8 +1101,12 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private boolean reloadMetadata(long txnStructureVersion, long deadline) {
+    private boolean reloadMetadata(long txnStructureVersion, long deadline, boolean reshuffleColumns) {
         // create transition index, which will help us reuse already open resources
+        if (txnStructureVersion == metadata.getStructureVersion()) {
+            return true;
+        }
+
         while (true) {
             try {
                 long pTransitionIndex = metadata.createTransitionIndex(txnStructureVersion);
@@ -1116,22 +1119,24 @@ public class TableReader implements Closeable, SymbolTableSource {
                 }
                 try {
                     metadata.applyTransitionIndex(pTransitionIndex);
-                    final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
+                    if (reshuffleColumns) {
+                        final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
 
-                    int columnCountBits = getColumnBits(columnCount);
-                    // when a column is added we cannot easily reshuffle columns in-place
-                    // the reason is that we'd have to create gaps in columns list between
-                    // partitions. It is possible in theory, but this could be an algo for
-                    // another day.
-                    if (columnCountBits > this.columnCountBits) {
-                        createNewColumnList(columnCount, pTransitionIndex, columnCountBits);
-                    } else {
-                        reshuffleColumns(columnCount, pTransitionIndex);
+                        int columnCountBits = getColumnBits(columnCount);
+                        // when a column is added we cannot easily reshuffle columns in-place
+                        // the reason is that we'd have to create gaps in columns list between
+                        // partitions. It is possible in theory, but this could be an algo for
+                        // another day.
+                        if (columnCountBits > this.columnCountBits) {
+                            createNewColumnList(columnCount, pTransitionIndex, columnCountBits);
+                        } else {
+                            reshuffleColumns(columnCount, pTransitionIndex);
+                        }
+                        // rearrange symbol map reader list
+                        reshuffleSymbolMapReaders(pTransitionIndex, columnCount);
+                        this.columnCount = columnCount;
+                        reloadSymbolMapCounts();
                     }
-                    // rearrange symbol map reader list
-                    reshuffleSymbolMapReaders(pTransitionIndex, columnCount);
-                    this.columnCount = columnCount;
-                    reloadSymbolMapCounts();
                     return true;
                 } finally {
                     TableUtils.freeTransitionIndex(pTransitionIndex);
@@ -1359,13 +1364,16 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void reloadSlow(long prevStructureVersion) {
+    private void reloadSlow(long prevStructureVersion, boolean reshuffle) {
         final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
+        boolean versionUpdated;
         do {
+            // Reload txn
             readTxnSlow(deadline);
-        } while (
-                prevStructureVersion != txFile.getStructureVersion()
-                        && !reloadMetadata(txFile.getStructureVersion(), deadline)
+            versionUpdated = prevStructureVersion != txFile.getStructureVersion();
+            // Reload _meta if structure version updated
+        } while (versionUpdated &&
+                !reloadMetadata(txFile.getStructureVersion(), deadline, reshuffle) // Start again if _meta with matching structure version cannot be loaded
         );
     }
 
