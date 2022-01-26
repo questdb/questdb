@@ -139,8 +139,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified
             OPEN_EXISTING
     );
 
-    if (handle > INVALID_HANDLE_VALUE) {
-        SaveLastError();
+    if (handle == INVALID_HANDLE_VALUE) {
         return -1;
     }
 
@@ -214,8 +213,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_length0(JNIEnv *e, jclass cl, 
             OPEN_EXISTING
     );
 
-    if (handle == INVALID_HANDLE_VALUE) {
-        SaveLastError();
+    if (h == INVALID_HANDLE_VALUE) {
         return -1L;
     }
 
