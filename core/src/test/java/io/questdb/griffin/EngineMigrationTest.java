@@ -220,6 +220,42 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
         TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_none where y = null", sink, part1Expected);
         TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_none where y != null", sink, part2Expected);
+
+        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_день where день = null", sink,
+                "x\tm\tts\tдень\n" +
+                        "1\tc\t1970-01-01T00:33:20.000000Z\tNaN\n" +
+                        "2\tb\t1970-01-01T06:06:40.000000Z\tNaN\n" +
+                        "3\tb\t1970-01-01T11:40:00.000000Z\tNaN\n" +
+                        "4\tc\t1970-01-01T17:13:20.000000Z\tNaN\n" +
+                        "5\tc\t1970-01-01T22:46:40.000000Z\tNaN\n" +
+                        "6\tc\t1970-01-02T04:20:00.000000Z\tNaN\n" +
+                        "7\tb\t1970-01-02T09:53:20.000000Z\tNaN\n" +
+                        "8\t\t1970-01-02T15:26:40.000000Z\tNaN\n" +
+                        "9\t\t1970-01-02T21:00:00.000000Z\tNaN\n" +
+                        "10\tc\t1970-01-03T02:33:20.000000Z\tNaN\n" +
+                        "11\tb\t1970-01-03T08:06:40.000000Z\tNaN\n" +
+                        "12\tb\t1970-01-03T13:40:00.000000Z\tNaN\n" +
+                        "13\tb\t1970-01-03T19:13:20.000000Z\tNaN\n" +
+                        "14\tb\t1970-01-04T00:46:40.000000Z\tNaN\n" +
+                        "15\t\t1970-01-04T06:20:00.000000Z\tNaN\n");
+
+        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_день where день != null", sink,
+                "x\tm\tts\tдень\n" +
+                        "16\te\t1970-01-03T07:36:40.000000Z\t16\n" +
+                        "17\tf\t1970-01-03T08:10:00.000000Z\t17\n" +
+                        "18\te\t1970-01-03T08:43:20.000000Z\t18\n" +
+                        "19\t\t1970-01-03T09:16:40.000000Z\t19\n" +
+                        "20\te\t1970-01-03T09:50:00.000000Z\t20\n" +
+                        "21\td\t1970-01-03T10:23:20.000000Z\t21\n" +
+                        "22\td\t1970-01-03T10:56:40.000000Z\t22\n" +
+                        "23\tf\t1970-01-03T11:30:00.000000Z\t23\n" +
+                        "24\t\t1970-01-03T12:03:20.000000Z\t24\n" +
+                        "25\td\t1970-01-03T12:36:40.000000Z\t25\n" +
+                        "26\te\t1970-01-03T13:10:00.000000Z\t26\n" +
+                        "27\te\t1970-01-03T13:43:20.000000Z\t27\n" +
+                        "28\tf\t1970-01-03T14:16:40.000000Z\t28\n" +
+                        "29\te\t1970-01-03T14:50:00.000000Z\t29\n" +
+                        "30\td\t1970-01-03T15:23:20.000000Z\t30\n");
     }
 
     private void assertData(boolean withO3, boolean withColTops) throws SqlException {
@@ -1236,6 +1272,28 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         compiler.compile("alter table t_col_top_none add column y long", sqlExecutionContext).execute(null).await();
         compiler.compile("insert into t_col_top_none " +
                         "select x, m, ts, y from t_col_top_year where x > 15" +
+                        " from long_sequence(15)",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table t_col_top_день as (" +
+                        "select " +
+                        " x" +
+                        ", rnd_symbol('a', 'b', 'c', null) m" +
+                        ", timestamp_sequence(2000000000L, 20000000000L) ts" +
+                        " from long_sequence(15)," +
+                        "), index(m) timestamp(ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile("alter table t_col_top_день add column день long", sqlExecutionContext).execute(null).await();
+        compiler.compile("insert into t_col_top_день " +
+                        "select " +
+                        " x + 15 as x" +
+                        ", rnd_symbol('d', 'e', 'f', null) as m" +
+                        ", timestamp_sequence(200000000L + 10 * 20000000000L, 2000000000L) ts" +
+                        ", x + 15 as y" +
                         " from long_sequence(15)",
                 sqlExecutionContext
         );

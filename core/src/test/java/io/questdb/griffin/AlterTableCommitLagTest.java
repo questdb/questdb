@@ -241,6 +241,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
     @Test
     public void setMaxUncommittedRowsFailsToSwapMetadataUntilWriterReopen() throws Exception {
         assertMemoryLeak(() -> {
+            spinLockTimeoutUs = 1000;
             try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
                 CairoTestUtils.create(tbl.timestamp("ts")
                         .col("i", ColumnType.INT)

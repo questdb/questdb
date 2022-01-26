@@ -38,6 +38,7 @@ import org.junit.Test;
 public class TableReadFailTest extends AbstractCairoTest {
     @Test
     public void testMetaFileCannotOpenConstructor() throws Exception {
+        spinLockTimeoutUs = 1000;
         FilesFacade ff = new FilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
@@ -52,6 +53,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
     @Test
     public void testMetaFileMissingConstructor() throws Exception {
+        spinLockTimeoutUs = 1000;
         FilesFacade ff = new FilesFacadeImpl() {
             @Override
             public long openRO(LPSZ path) {
