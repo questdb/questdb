@@ -123,7 +123,7 @@ public class AbstractCairoTest {
                 if (spinLockTimeoutUs > -1) {
                     return spinLockTimeoutUs;
                 }
-                return 1000;
+                return 5000000;
             }
 
             @Override
