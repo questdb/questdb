@@ -46,7 +46,6 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -367,7 +366,12 @@ public class PGJobContextTest extends AbstractGriffinTest {
 
     @Test
     public void testBindVariablesWithIndexedSymbolInFilterBinaryTransfer() throws Exception {
-        testBindVariablesWithIndexedSymbolInFilter(true);
+        testBindVariablesWithIndexedSymbolInFilter(true, true);
+    }
+
+    @Test
+    public void testBindVariablesWithNonIndexedSymbolInFilterBinaryTransfer() throws Exception {
+        testBindVariablesWithIndexedSymbolInFilter(true, false);
     }
 
     @Test
@@ -382,7 +386,12 @@ public class PGJobContextTest extends AbstractGriffinTest {
 
     @Test
     public void testBindVariablesWithIndexedSymbolInFilterStringTransfer() throws Exception {
-        testBindVariablesWithIndexedSymbolInFilter(false);
+        testBindVariablesWithIndexedSymbolInFilter(false, true);
+    }
+
+    @Test
+    public void testBindVariablesWithNonIndexedSymbolInFilterStringTransfer() throws Exception {
+        testBindVariablesWithIndexedSymbolInFilter(false, false);
     }
 
     @Test
@@ -4886,14 +4895,14 @@ create table tab as (
         });
     }
 
-    private void testBindVariablesWithIndexedSymbolInFilter(boolean binary) throws Exception {
+    private void testBindVariablesWithIndexedSymbolInFilter(boolean binary, boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer ignored = createPGServer(1);
                     final Connection connection = getConnection(false, binary)
             ) {
                 connection.setAutoCommit(false);
-                connection.prepareStatement("create table x (device_id symbol index, column_name symbol index, value double, timestamp timestamp) timestamp(timestamp) partition by day").execute();
+                connection.prepareStatement("create table x (device_id symbol" + (indexed ? " index," : ",") + " column_name symbol, value double, timestamp timestamp) timestamp(timestamp) partition by day").execute();
                 connection.prepareStatement("insert into x (device_id, column_name, value, timestamp) values ('d1', 'c1', 101.1, 0)").execute();
                 connection.prepareStatement("insert into x (device_id, column_name, value, timestamp) values ('d1', 'c1', 101.2, 1)").execute();
                 connection.prepareStatement("insert into x (device_id, column_name, value, timestamp) values ('d1', 'c1', 101.3, 2)").execute();
@@ -4905,6 +4914,7 @@ create table tab as (
                 connection.commit();
 
                 // single key value in filter
+
                 sink.clear();
                 try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id = ? and timestamp > ?")) {
                     ps.setString(1, "d1");
@@ -4919,9 +4929,24 @@ create table tab as (
                     }
                 }
 
-                // multiple key values in filter
                 sink.clear();
-                try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id in(?, ?) and timestamp > ?")) {
+                try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id != ? and timestamp > ?")) {
+                    ps.setString(1, "d1");
+                    ps.setTimestamp(2, new Timestamp(1));
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                        "d2,c1,201.3,1970-01-01 00:00:00.000002\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                // multiple key values in filter
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id in (?, ?) and timestamp > ?")) {
                     ps.setString(1, "d1");
                     ps.setString(2, "d2");
                     ps.setTimestamp(3, new Timestamp(0));
@@ -4931,6 +4956,22 @@ create table tab as (
                                         "d2,c1,201.20000000000002,1970-01-01 00:00:00.000001\n" +
                                         "d1,c1,101.2,1970-01-01 00:00:00.000001\n" +
                                         "d2,c1,201.3,1970-01-01 00:00:00.000002\n" +
+                                        "d1,c1,101.30000000000001,1970-01-01 00:00:00.000002\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id not in (?, ?) and timestamp > ?")) {
+                    ps.setString(1, "d2");
+                    ps.setString(2, "d3");
+                    ps.setTimestamp(3, new Timestamp(0));
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                        "d1,c1,101.2,1970-01-01 00:00:00.000001\n" +
                                         "d1,c1,101.30000000000001,1970-01-01 00:00:00.000002\n",
                                 sink,
                                 rs

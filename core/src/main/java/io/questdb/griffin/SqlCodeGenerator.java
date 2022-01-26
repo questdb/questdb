@@ -1212,7 +1212,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         metadata,
                         dataFrameCursorFactory,
                         latestByIndex,
-                        intrinsicModel.keyValueFuncs.get(0),
+                        symbolKeyFunc,
                         filter,
                         columnIndexes
                 );
@@ -2794,14 +2794,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                                 if (f == null) {
                                     rcf = new DeferredSymbolIndexRowCursorFactory(keyColumnIndex,
-                                            intrinsicModel.keyValueFuncs.getQuick(0),
+                                            symbolFunc,
                                             true,
                                             indexDirection
                                     );
                                 } else {
                                     rcf = new DeferredSymbolIndexFilteredRowCursorFactory(
                                             keyColumnIndex,
-                                            intrinsicModel.keyValueFuncs.getQuick(0),
+                                            symbolFunc,
                                             f,
                                             true,
                                             indexDirection,

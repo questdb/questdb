@@ -642,7 +642,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         if (candidateSigVarArgConst) {
             for (int k = candidateSigArgCount; k < argCount; k++) {
                 Function func = args.getQuick(k);
-                if (!func.isConstant()) {
+                if (!(func.isConstant() || func.isRuntimeConstant())) {
                     throw SqlException.$(argPositions.getQuick(k), "constant expected");
                 }
             }
