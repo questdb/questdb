@@ -52,8 +52,8 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final CairoSecurityContext securityContext;
     private final RingQueue<LineTcpMeasurementEvent> queue;
     private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();
-    private final CharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
-    private final CharSequenceObjHashMap<TableUpdateDetails> idleTableUpdateDetailsUtf16;
+    private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
+    private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> idleTableUpdateDetailsUtf16;
     private final long[] loadByWriterThread;
     private final long writerIdleTimeout;
     private final NetworkIOJob[] netIoJobs;
@@ -90,8 +90,8 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         // Worker count is set to 1 because we do not use this execution context
         // in worker threads.
-        tableUpdateDetailsUtf16 = new CharSequenceObjHashMap<>();
-        idleTableUpdateDetailsUtf16 = new CharSequenceObjHashMap<>();
+        tableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
+        idleTableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
         loadByWriterThread = new long[writerWorkerPool.getWorkerCount()];
         int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();
         int queueSize = lineConfiguration.getWriterQueueCapacity();

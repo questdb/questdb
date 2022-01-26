@@ -34,7 +34,7 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     // when the issue is fixed 'newColumnFactor' can be used and this test should be enabled
     @Test
     public void testAddColumnsNoTagsStringsAsSymbol() throws Exception {
-        initLoadParameters(15, 2, 2, 5, 100);
+        initLoadParameters(15, 2, 2, 5, 75);
         initFuzzParameters(-1, -1, -1, 4, -1, false, false, true);
         runTest();
     }
@@ -43,7 +43,7 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     // when the issue is fixed 'newColumnFactor' can be used and this test should be enabled
     @Test
     public void testAddColumns() throws Exception {
-        initLoadParameters(15, 2, 2, 5, 100);
+        initLoadParameters(15, 2, 2, 5, 75);
         initFuzzParameters(-1, -1, -1, 4, -1, false, true, false);
         runTest();
     }
@@ -64,14 +64,14 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
 
     @Test
     public void testLoadNoTagsStringsAsSymbol() throws Exception {
-        initLoadParameters(100, 5, 5, 5, 50);
+        initLoadParameters(100, 5, 7, 12, 20);
         initFuzzParameters(-1, -1, -1, -1, -1, false, false, true);
         runTest();
     }
 
     @Test
     public void testLoad() throws Exception {
-        initLoadParameters(100, 5, 5, 5, 50);
+        initLoadParameters(100, 5, 7, 12, 20);
         runTest();
     }
 
