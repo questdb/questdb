@@ -1549,6 +1549,13 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampNotEqualsToNonConst() throws SqlException {
+        long day = 24L * 3600 * 1000 * 1000;
+        sqlExecutionContext.getBindVariableService().setTimestamp(0, day);
+        runWhereIntervalTest0("timestamp != dateadd('y',1,timestamp)", "");
+    }
+
+    @Test
     public void testTimestampGreaterConstFunction() throws SqlException {
         runWhereIntervalTest0("timestamp > to_date('2015-02-22', 'yyyy-MM-dd')", "[{lo=2015-02-22T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
     }
@@ -1576,6 +1583,17 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         long day = 24L * 3600 * 1000 * 1000;
         runWhereCompareToModelTest("timestamp >= $1 and timestamp <= $2",
                 "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-03T00:00:00.000000Z}]",
+                bv -> {
+                    bv.setTimestamp(0, day);
+                    bv.setTimestamp(1, 2 * day);
+                });
+    }
+
+    @Test
+    public void testTimestampWithBindVariableCombinedNot() throws SqlException {
+        long day = 24L * 3600 * 1000 * 1000;
+        runWhereIntervalTest0("timestamp != $1 and timestamp != $2",
+                "[{lo=, hi=1970-01-01T23:59:59.999999Z},{lo=1970-01-02T00:00:00.000001Z, hi=1970-01-02T23:59:59.999999Z},{lo=1970-01-03T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]",
                 bv -> {
                     bv.setTimestamp(0, day);
                     bv.setTimestamp(1, 2 * day);
@@ -1620,6 +1638,13 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         IntrinsicModel m = modelOf("timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z' or timestamp between '2014-02-01T12:30:00.000Z' and '2014-02-02T12:30:00.000Z'");
         Assert.assertFalse(m.hasIntervalFilters());
         assertFilter(m, "'2014-02-02T12:30:00.000Z''2014-02-01T12:30:00.000Z'timestampbetween'2014-01-02T12:30:00.000Z''2014-01-01T12:30:00.000Z'timestampbetweenor");
+    }
+
+    @Test
+    public void testTwoNot() throws SqlException {
+        IntrinsicModel m = modelOf("timestamp != '2015-05-10T15:03:10.000Z' and timestamp != '2015-05-10T16:03:10.000Z'");
+        TestUtils.assertEquals("[{lo=, hi=2015-05-10T15:03:09.999999Z},{lo=2015-05-10T15:03:10.000001Z, hi=2015-05-10T16:03:09.999999Z},{lo=2015-05-10T16:03:10.000001Z, hi=294247-01-10T04:00:54.775807Z}]", intervalToString(m));
+        Assert.assertNull(m.filter);
     }
 
     @Test
@@ -1674,7 +1699,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testTwoIntervalsWithOr() throws Exception {
-        IntrinsicModel m = modelOf("timestamp in ( '2014-01-01T12:30:00.000Z' ,  '2014-01-02T12:30:00.000Z') or timestamp in ('2014-02-01T12:30:00.000Z', '2014-02-02T12:30:00.000Z')");
+        IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') or timestamp in ('2014-02-01T12:30:00.000Z', '2014-02-02T12:30:00.000Z')");
         Assert.assertFalse(m.hasIntervalFilters());
         assertFilter(m, "'2014-02-02T12:30:00.000Z''2014-02-01T12:30:00.000Z'timestampin'2014-01-02T12:30:00.000Z''2014-01-01T12:30:00.000Z'timestampinor");
     }
