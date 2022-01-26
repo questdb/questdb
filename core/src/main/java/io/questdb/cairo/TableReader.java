@@ -805,14 +805,18 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private TableReaderMetadata openMetaFile() {
         long deadline = this.configuration.getMicrosecondClock().getTicks() + this.configuration.getSpinLockTimeoutUs();
-        while (true) {
-            try {
-                return new TableReaderMetadata(ff, path.concat(TableUtils.META_FILE_NAME).$());
-            } catch (CairoException ex) {
-                handleMetadataLoadException(deadline, ex);
-            } finally {
-                path.trimTo(rootLen);
+        TableReaderMetadata metadata = new TableReaderMetadata(ff);
+        path.concat(TableUtils.META_FILE_NAME).$();
+        try {
+            while (true) {
+                try {
+                    return metadata.of(path, ColumnType.VERSION);
+                } catch (CairoException ex) {
+                    handleMetadataLoadException(deadline, ex);
+                }
             }
+        } finally {
+            path.trimTo(rootLen);
         }
     }
 
