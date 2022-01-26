@@ -207,13 +207,18 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_length0(JNIEnv *e, jclass cl, jlong lpszName) {
-
     HANDLE h = openUtf8(
             lpszName,
             FILE_READ_ONLY,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             OPEN_EXISTING
     );
+
+    if (handle == INVALID_HANDLE_VALUE) {
+        SaveLastError();
+        return -1L;
+    }
+
     jlong len = Java_io_questdb_std_Files_length(e, cl, (jlong) h);
     CloseHandle(h);
     return len;
