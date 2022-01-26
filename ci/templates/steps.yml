@@ -92,21 +92,21 @@ steps:
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
   - task: Maven@3
-      displayName: "Run tests with Maven (cairo)"
-      inputs:
-        mavenPomFile: "pom.xml"
-        mavenOptions: "$(MAVEN_OPTS)"
-        goals: "clean test"
-        options:
-          "--batch-mode --quiet -P build-web-console
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false -Dtest=cairo.** -DfailIfNoTests=false"
-        jdkVersionOption: $(jdk)
-      timeoutInMinutes: 55
-      condition: |
-        and(
-          eq(variables['testset'], 'cairo'),
-          eq(variables['SOURCE_CODE_CHANGED'], 'true')
-        )
+    displayName: "Run tests with Maven (cairo)"
+    inputs:
+      mavenPomFile: "pom.xml"
+      mavenOptions: "$(MAVEN_OPTS)"
+      goals: "clean test"
+      options:
+        "--batch-mode --quiet -P build-web-console
+      -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false -Dtest=cairo.** -DfailIfNoTests=false"
+      jdkVersionOption: $(jdk)
+    timeoutInMinutes: 55
+    condition: |
+      and(
+        eq(variables['testset'], 'cairo'),
+        eq(variables['SOURCE_CODE_CHANGED'], 'true')
+      )
   - task: Maven@3
     displayName: "Run tests with Maven (griffin)"
     inputs:
