@@ -2020,7 +2020,7 @@ public class TableReaderTest extends AbstractCairoTest {
             }
 
             engine.releaseAllReaders();
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader ignored = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "Metadata read timeout");

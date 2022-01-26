@@ -102,14 +102,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     .I$();
             this.txFile = new TxReader(ff).ofRO(path, partitionBy);
             path.trimTo(rootLen);
-
-            long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
-            long metadataStructureVersion = metadata.getStructureVersion();
-            do {
-                readTxnSlow(deadline);
-            } while (metadataStructureVersion != txFile.getStructureVersion()
-                    && !reloadMetadata(txFile.getStructureVersion(), deadline));
-
+            reloadSlow(metadata.getStructureVersion());
             openSymbolMaps();
             partitionCount = txFile.getPartitionCount();
             partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
@@ -459,8 +452,13 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (acquireTxn()) {
             return false;
         }
+        final long prevPartitionVersion = this.txFile.getPartitionTableVersion();
         try {
-            reloadSlow();
+            // Save tx file versions on stack
+            reloadSlow(this.txFile.getStructureVersion());
+            // partition reload will apply truncate if necessary
+            // applyTruncate for non-partitioned tables only
+            reconcileOpenPartitions(prevPartitionVersion);
             return true;
         } catch (Throwable e) {
             releaseTxn();
@@ -1133,6 +1131,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     // rearrange symbol map reader list
                     reshuffleSymbolMapReaders(pTransitionIndex, columnCount);
                     this.columnCount = columnCount;
+                    reloadSymbolMapCounts();
                     return true;
                 } finally {
                     TableUtils.freeTransitionIndex(pTransitionIndex);
@@ -1188,37 +1187,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         } finally {
             path.trimTo(rootLen);
         }
-    }
-
-    private void reloadSlow() {
-        // Save tx file versions on stack
-        final long prevStructVersion = this.txFile.getStructureVersion();
-        final long prevPartitionVersion = this.txFile.getPartitionTableVersion();
-
-        long deadline = this.configuration.getMicrosecondClock().getTicks() + this.configuration.getSpinLockTimeoutUs();
-        // reload tx file, this will update the versions
-        do {
-            this.readTxnSlow(deadline);
-        } while (!reloadStruct(prevStructVersion, txFile.getStructureVersion(), deadline));
-
-        // partition reload will apply truncate if necessary
-        // applyTruncate for non-partitioned tables only
-        reconcileOpenPartitions(prevPartitionVersion);
-    }
-
-    private boolean reloadStruct(long prevStructVersion, long txnStructureVersion, long deadline) {
-        if (prevStructVersion == txnStructureVersion) {
-            return true;
-        }
-        return reloadStructSlow(txnStructureVersion, deadline);
-    }
-
-    private boolean reloadStructSlow(long txnStructureVersion, long deadline) {
-        if (reloadMetadata(txnStructureVersion, deadline)) {
-            reloadSymbolMapCounts();
-            return true;
-        }
-        return false;
     }
 
     private void reloadSymbolMapCounts() {
@@ -1389,6 +1357,16 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
             symbolMapReaders.setPos(columnCount);
         }
+    }
+
+    private void reloadSlow(long prevStructureVersion) {
+        final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
+        do {
+            readTxnSlow(deadline);
+        } while (
+                prevStructureVersion != txFile.getStructureVersion()
+                        && !reloadMetadata(txFile.getStructureVersion(), deadline)
+        );
     }
 
     private static class ColumnCopyStruct {
