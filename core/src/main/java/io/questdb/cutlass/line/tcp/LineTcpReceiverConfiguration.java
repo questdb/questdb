@@ -67,7 +67,7 @@ public interface LineTcpReceiverConfiguration {
 
     long getWriterIdleTimeout();
 
-    IODispatcherConfiguration getNetDispatcherConfiguration();
+    IODispatcherConfiguration getDispatcherConfiguration();
 
     int getNetMsgBufferSize();
 

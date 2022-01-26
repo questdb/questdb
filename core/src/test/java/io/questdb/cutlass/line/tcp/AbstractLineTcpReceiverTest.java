@@ -102,7 +102,7 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
 
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
         @Override
-        public IODispatcherConfiguration getNetDispatcherConfiguration() {
+        public IODispatcherConfiguration getDispatcherConfiguration() {
             return ioDispatcherConfiguration;
         }
 
