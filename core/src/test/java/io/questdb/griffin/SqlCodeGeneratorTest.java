@@ -1611,6 +1611,64 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFilterNotEqualsWithIndexedBindVariableSingleIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testFilterWithSymbolBindVariableNotEquals("select * from x where b != $1", true);
+    }
+
+    @Test
+    public void testFilterNotEqualsWithNamedBindVariableSingleIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testFilterWithSymbolBindVariableNotEquals("select * from x where b != :b", true);
+    }
+
+    @Test
+    public void testFilterNotEqualsWithIndexedBindVariableSingleNonIndexedSymbolNotEquals() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testFilterWithSymbolBindVariableNotEquals("select * from x where b != $1", false);
+    }
+
+    @Test
+    public void testFilterNotEqualsWithNamedBindVariableSingleNonIndexedSymbolNotEquals() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testFilterWithSymbolBindVariableNotEquals("select * from x where b != :b", false);
+    }
+
+    private void testFilterWithSymbolBindVariableNotEquals(String query, boolean indexed) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_double(0)*100 a," +
+                    " rnd_symbol(5,4,4,0) b," +
+                    " timestamp_sequence(0, 100000000000) k" +
+                    " from" +
+                    " long_sequence(5)" +
+                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
+
+            try (
+                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                assertCursor(
+                        "a\tb\tk\n" +
+                                "55.99161804800813\tRXGZ\t1970-01-02T03:46:40.000000Z\n" +
+                                "62.76954028373309\tPEHN\t1970-01-03T07:33:20.000000Z\n" +
+                                "31.00545983862456\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                                "0.35983672154330515\tCPSW\t1970-01-05T15:06:40.000000Z\n",
+                        factory,
+                        true,
+                        true,
+                        false
+                );
+            }
+        });
+    }
+
+    @Test
     public void testFilterSingleNonExistingSymbolAndFilter() throws Exception {
         TestMatchFunctionFactory.clear();
         assertQuery(null,

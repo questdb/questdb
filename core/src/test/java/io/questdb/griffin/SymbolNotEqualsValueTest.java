@@ -171,7 +171,7 @@ public class SymbolNotEqualsValueTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testNotEquals1SymbolsWithEqualsAnogher() throws Exception {
+    public void testNotEquals1SymbolsWithEqualsAnother() throws Exception {
         final String expected = "k\tprice\tts\tj\n" +
                 "DXR\t0.6778564558839208\t1970-01-03T00:48:00.000000Z\tF\n" +
                 "DXR\t0.299199045961845\t1970-01-03T00:06:00.000000Z\tF\n";
