@@ -100,4 +100,8 @@ public class CompiledFilterRecordCursorFactory implements RecordCursorFactory {
     public boolean usesCompiledFilter() {
         return true;
     }
+
+    public boolean hasDescendingOrder() {
+        return factory.hasDescendingOrder();
+    }
 }

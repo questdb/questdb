@@ -2708,6 +2708,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 // below code block generates index-based filter
+                //tODO: check if intrinsic model.keycolumn is not a better field to check than model
+                boolean isOrderByTimestampDesc = isOrderDescendingByDesignatedTimestampOnly(model);
 
                 final boolean intervalHitsOnlyOnePartition;
                 if (intrinsicModel.hasIntervalFilters()) {
@@ -2715,7 +2717,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     dfcFactory = new IntervalFwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion(), intervalModel, readerTimestampIndex);
                     intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(reader.getPartitionedBy());
                 } else {
-                    dfcFactory = new FullFwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion());
+                    if (isOrderByTimestampDesc) {
+                        dfcFactory = new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()); //here
+                    } else {
+                        dfcFactory = new FullFwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()); //here
+                    }
                     intervalHitsOnlyOnePartition = false;
                 }
 
@@ -2941,12 +2947,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
+                RowCursorFactory rowFactory = isOrderByTimestampDesc ? new BwdDataFrameRowCursorFactory() :
+                        new DataFrameRowCursorFactory();
+
                 model.setWhereClause(intrinsicModel.filter);
                 return new DataFrameRecordCursorFactory(
                         configuration,
                         myMeta,
                         dfcFactory,
-                        new DataFrameRowCursorFactory(),
+                        rowFactory,
                         false,
                         null,
                         framingSupported,

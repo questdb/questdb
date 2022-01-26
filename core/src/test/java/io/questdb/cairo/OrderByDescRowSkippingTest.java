@@ -784,6 +784,48 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testOrderByTimestampWithNonJittedFilter() throws Exception {
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+
+        runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
+                "insert into trips " +
+                        "  select x," +
+                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
+                        "  from long_sequence(10);");
+
+        assertQuery("l\tts\n" +
+                        "5\t2022-01-07T15:06:40.000000Z\n" +
+                        "4\t2022-01-06T11:20:00.000000Z\n" +
+                        "3\t2022-01-05T07:33:20.000000Z\n" +
+                        "2\t2022-01-04T03:46:40.000000Z\n" +
+                        "1\t2022-01-03T00:00:00.000000Z\n",
+                "select l, ts from trips where l <=5 order by ts desc limit 5", //where l <=5    limit 5, 10
+                null, "ts###DESC", true, false, true);
+    }
+
+    @Ignore
+    @Test
+    public void testOrderByTimestampWithJittedFilter() throws Exception {
+        //sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED); use default
+
+        runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
+                "insert into trips " +
+                        "  select x," +
+                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
+                        "  from long_sequence(10);");
+
+        assertQuery("l\tts\n" +
+                        "5\t2022-01-07T15:06:40.000000Z\n" +
+                        "4\t2022-01-06T11:20:00.000000Z\n" +
+                        "3\t2022-01-05T07:33:20.000000Z\n" +
+                        "2\t2022-01-04T03:46:40.000000Z\n" +
+                        "1\t2022-01-03T00:00:00.000000Z\n",
+                "select l, ts from trips where l <=5 order by ts desc limit 5", //where l <=5    limit 5, 10
+                null, "ts###ASC", true, false, true);
+    }
+
+
     static final String DATA = "10\t2022-01-13T10:00:00.000000Z\n" +
             "9\t2022-01-12T06:13:20.000000Z\n" +
             "8\t2022-01-11T02:26:40.000000Z\n" +
