@@ -1190,7 +1190,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         Os.pause();
                     } else {
                         LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeoutUs()).utf8("μs]").$();
-                        throw CairoException.instance(0).put("Metadata read timeout");
+                        throw CairoException.instance(ex.getErrno()).put("Metadata read timeout. Last error: ").put(ex.getFlyweightMessage());
                     }
                 } else {
                     throw ex;

@@ -13,7 +13,7 @@ jobs:
           poolName: "Azure Pipelines"
           os: macOS
           jdk: "1.11"
-        windows-cairo:
+        windows-all-other:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows

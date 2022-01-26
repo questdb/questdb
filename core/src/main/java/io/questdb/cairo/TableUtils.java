@@ -641,12 +641,12 @@ public final class TableUtils {
             txMem.putInt(offset, 0);
         }
 
+        // partition update count
+        txMem.putInt(getPartitionTableSizeOffset(symbolMapCount), 0);
+
         Unsafe.getUnsafe().storeFence();
         // txn check
         txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
-
-        // partition update count
-        txMem.putInt(getPartitionTableSizeOffset(symbolMapCount), 0);
 
         // make sure we put append pointer behind our data so that
         // files does not get truncated when closing
@@ -738,9 +738,9 @@ public final class TableUtils {
             int expectedVersion
     ) {
         try {
-            long fileLength = metaMem.size();
-            if (fileLength < META_OFFSET_COLUMN_TYPES) {
-                throw CairoException.instance(0).put(". File is too small ").put(fileLength);
+            long memSize = metaMem.size();
+            if (memSize < META_OFFSET_COLUMN_TYPES) {
+                throw CairoException.instance(0).put(". File is too small ").put(memSize);
             }
             final int metaVersion = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
             if (expectedVersion != metaVersion) {
@@ -752,12 +752,12 @@ public final class TableUtils {
 
             final int columnCount = metaMem.getInt(META_OFFSET_COUNT);
             long offset = getColumnNameOffset(columnCount);
-            if (fileLength < offset) {
-                throw validationException(metaMem).put("File is too small, column types are missing ").put(fileLength);
+            if (memSize < offset) {
+                throw validationException(metaMem).put("File is too small, column types are missing ").put(memSize);
             }
 
             if (offset < columnCount || (
-                    columnCount > 0 && (offset < 0 || offset >= fileLength))) {
+                    columnCount > 0 && (offset < 0 || offset >= memSize))) {
                 throw validationException(metaMem).put("Incorrect columnCount: ").put(columnCount);
             }
 
@@ -793,15 +793,15 @@ public final class TableUtils {
 
             // validate column names
             for (int i = 0; i < columnCount; i++) {
-                if (offset + 4 >= fileLength) {
+                if (offset + 4 >= memSize) {
                     throw validationException(metaMem).put("File is too small, column length for column ").put(i).put(" is missing");
                 }
                 int strLength = metaMem.getInt(offset);
                 if (strLength == TableUtils.NULL_LEN) {
                     throw validationException(metaMem).put("NULL column name at [").put(i).put(']');
                 }
-                if (strLength < 1 || strLength >= 256 || offset + Vm.getStorageLength(strLength) > fileLength) {
-                    // EXT4 and many others do not allow files to by > 255 bytes
+                if (strLength < 1 || strLength > 255 || offset + Vm.getStorageLength(strLength) > memSize) {
+                    // EXT4 and many others do not allow file name length > 255 bytes
                     throw validationException(metaMem)
                             .put("Column name length of ")
                             .put(strLength).put(" is invalid at offset ")
@@ -816,8 +816,8 @@ public final class TableUtils {
                     throw validationException(metaMem).put("Duplicate column: ").put(name).put(" at [").put(i).put(']');
                 }
 
-                if (offset >= fileLength) {
-                    throw validationException(metaMem).put("File is too small, column names are missing ").put(fileLength);
+                if (offset >= memSize) {
+                    throw validationException(metaMem).put("File is too small, column names are missing ").put(memSize);
                 }
             }
         } catch (Throwable e) {
