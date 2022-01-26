@@ -301,4 +301,12 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
         intervalApplied = true;
     }
+
+    public void subtractEquals(Function function) {
+        if (isEmptySet()) return;
+
+        IntervalUtils.addHiLoInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.SUBTRACT, staticIntervals);
+        dynamicRangeList.add(function);
+        intervalApplied = true;
+    }
 }

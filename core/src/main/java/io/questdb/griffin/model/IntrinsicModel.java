@@ -28,8 +28,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
 
-import static io.questdb.griffin.SqlKeywords.isNullKeyword;
-
 public class IntrinsicModel implements Mutable {
     public static final ObjectFactory<IntrinsicModel> FACTORY = IntrinsicModel::new;
     public static final int TRUE = 1;
@@ -134,6 +132,11 @@ public class IntrinsicModel implements Mutable {
 
     public void subtractIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
         runtimeIntervalBuilder.subtractIntervals(seq, lo, lim, position);
+        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
+    }
+
+    public void subtractEquals(Function function) {
+        runtimeIntervalBuilder.subtractEquals(function);
         if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
     }
 
