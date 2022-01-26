@@ -1940,6 +1940,61 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMetadataFileDoesNotExist2() throws Exception {
+        String tableName = "testMetadataFileDoesNotExist";
+        createTable(tableName, PartitionBy.HOUR);
+        spinLockTimeoutUs = 10000;
+        AtomicInteger openCount = new AtomicInteger(1000);
+
+        assertMemoryLeak(() -> {
+            try (Path temp = new Path()) {
+                temp.of(engine.getConfiguration().getRoot()).concat("dummy_non_existing_path").$();
+                ff = new FilesFacadeImpl() {
+                    long metaFd = -1;
+
+                    @Override
+                    public long length(long fd) {
+                        if (fd == metaFd) {
+                            return Files.length(temp);
+                        }
+                        return Files.length(fd);
+                    }
+
+                    @Override
+                    public long length(LPSZ name) {
+                        if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && openCount.decrementAndGet() < 0) {
+                            return Files.length(temp);
+                        }
+                        return Files.length(name);
+                    }
+
+                    @Override
+                    public long openRO(LPSZ name) {
+                        if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && openCount.decrementAndGet() < 0) {
+                            return metaFd = Files.openRO(name);
+                        }
+                        return Files.openRO(name);
+                    }
+                };
+
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
+                        writer.addColumn("col10", ColumnType.SYMBOL);
+                    }
+                    engine.releaseAllWriters();
+                    try {
+                        openCount.set(0);
+                        reader.reload();
+                        Assert.fail();
+                    } catch (CairoException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "Metadata read timeout");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testMetadataVersionDoesNotMatch() throws Exception {
         String tableName = "testMetadataVersionDoesNotMatch";
         createTable(tableName, PartitionBy.HOUR);

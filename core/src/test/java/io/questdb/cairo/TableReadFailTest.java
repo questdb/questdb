@@ -54,11 +54,11 @@ public class TableReadFailTest extends AbstractCairoTest {
     public void testMetaFileMissingConstructor() throws Exception {
         FilesFacade ff = new FilesFacadeImpl() {
             @Override
-            public long length(LPSZ path) {
+            public long openRO(LPSZ path) {
                 if (Chars.endsWith(path, TableUtils.META_FILE_NAME)) {
                     return -1;
                 }
-                return super.length(path);
+                return super.openRO(path);
             }
         };
         assertConstructorFail(ff);

@@ -282,6 +282,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
     @Test
     public void setMaxUncommittedRowsFailsToSwapMetadataUntilWriterReopen2() throws Exception {
         assertMemoryLeak(() -> {
+            spinLockTimeoutUs = 1000;
             try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
                 CairoTestUtils.create(tbl.timestamp("ts")
                         .col("i", ColumnType.INT)
@@ -316,11 +317,11 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                 engine.releaseAllWriters();
                 ff = new FilesFacadeImpl() {
                     @Override
-                    public long length(LPSZ from) {
+                    public long openRO(LPSZ from) {
                         if (Chars.endsWith(from, TableUtils.META_FILE_NAME)) {
                             return -1;
                         }
-                        return super.length(from);
+                        return super.openRO(from);
                     }
 
                 };
@@ -328,7 +329,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (CairoException | SqlException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(), "File not found:");
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-only");
                 }
             }
         });
