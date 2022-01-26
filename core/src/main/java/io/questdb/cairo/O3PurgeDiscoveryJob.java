@@ -87,13 +87,46 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
     ) {
         boolean partitionInTxnFile = txReader.getPartitionSizeByPartitionTimestamp(partitionTimestamp) > 0;
         if (partitionInTxnFile) {
-            processPartition0(ff, path, tableRootLen, txReader, txnScoreboard, partitionTimestamp, partitionBy, partitionList, lo, hi);
+            processPartition0(
+                    ff,
+                    path,
+                    tableRootLen,
+                    txReader,
+                    txnScoreboard,
+                    partitionTimestamp,
+                    partitionBy,
+                    partitionList,
+                    lo,
+                    hi
+            );
         } else {
-            processDetachedPartition(ff, path, tableRootLen, txReader, txnScoreboard, partitionTimestamp, partitionBy, partitionList, lo, hi);
+            processDetachedPartition(
+                    ff,
+                    path,
+                    tableRootLen,
+                    txReader,
+                    txnScoreboard,
+                    partitionTimestamp,
+                    partitionBy,
+                    partitionList,
+                    lo,
+                    hi
+            );
         }
     }
 
-    private static void processDetachedPartition(FilesFacade ff, Path path, int tableRootLen, TxReader txReader, TxnScoreboard txnScoreboard, long partitionTimestamp, int partitionBy, DirectLongList partitionList, int lo, int hi) {
+    private static void processDetachedPartition(
+            FilesFacade ff,
+            Path path,
+            int tableRootLen,
+            TxReader txReader,
+            TxnScoreboard txnScoreboard,
+            long partitionTimestamp,
+            int partitionBy,
+            DirectLongList partitionList,
+            int lo,
+            int hi
+    ) {
         // Partition is dropped or not fully committed.
         // It is only possible to delete when there are no readers
         long lastTxn = txReader.getTxn();
@@ -109,13 +142,14 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                         .$ts(partitionTimestamp)
                         .$(", nameTxn=").$(nameTxn - 1)
                         .I$();
-                deleteParitionDirectory(
+                deletePartitionDirectory(
                         ff,
                         path,
                         tableRootLen,
                         partitionTimestamp,
                         partitionBy,
-                        nameTxn - 1);
+                        nameTxn - 1
+                );
                 lastTxn = nameTxn;
             } else {
                 break;
@@ -159,7 +193,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                             .$(", nameTxnNext=").$(nextNameVersion)
                             .$(", lastCommittedPartitionName=").$(lastCommittedPartitionName)
                             .I$();
-                    deleteParitionDirectory(
+                    deletePartitionDirectory(
                             ff,
                             path,
                             tableRootLen,
@@ -171,13 +205,14 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
         }
     }
 
-    private static void deleteParitionDirectory(
+    private static void deletePartitionDirectory(
             FilesFacade ff,
             Path path,
             int tableRootLen,
             long partitionTimestamp,
             int partitionBy,
-            long previousNameVersion) {
+            long previousNameVersion
+    ) {
         path.trimTo(tableRootLen);
         TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
         TableUtils.txnPartitionConditionally(path, previousNameVersion);
@@ -337,13 +372,13 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
             if (index < len) {
                 long partitionVersion = Numbers.parseLong(fileNameSink, index + 1, len);
                 // When reader locks transaction 100 it opens partition version .99 or lower.
-                // Also when there is no transaction version in the name, it is counted as -1.
+                // Also, when there is no transaction version in the name, it is counted as -1.
                 // By adding +1 here we kill 2 birds in with one stone, partition versions are aligned with
                 // txn scoreboard reader locks and no need to add -1 which allows us to use 128bit
                 // sort to sort 2 x 64bit unsigned integers
                 partitionList.add(partitionVersion + 1);
             } else {
-                // This should be -1 but it is only possible to correctly sort 2 unsigned longs
+                // This should be -1, but it is only possible to correctly sort 2 unsigned longs
                 // as 128bit integer sort
                 // Set 0 instead of -1 and revert it later on. There should be not possible to have .0 in the partition name
                 partitionList.add(0);
