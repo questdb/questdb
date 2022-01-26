@@ -34,7 +34,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
@@ -51,6 +52,7 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
 
     private static final int MAX_NUM_OF_SKIPPED_COLS = 2;
     private static final int NEW_COLUMN_RANDOMIZE_FACTOR = 2;
+    private static final int UPPERCASE_TABLE_RANDOMIZE_FACTOR = 2;
 
     private final Rnd random = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
     private final AtomicLong timestampMillis = new AtomicLong(1465839830102300L);
@@ -79,7 +81,8 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
     private boolean pinTablesToThreads;
 
     private SOCountDownLatch threadPushFinished;
-    private CharSequenceObjHashMap<TableData> tables;
+    private LowerCaseCharSequenceObjHashMap<TableData> tables;
+    private ConcurrentHashMap<CharSequence> tableNames;
 
     private int duplicatesFactor = -1;
     private int columnReorderingFactor = -1;
@@ -160,8 +163,15 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
 
     // return false means could not assert and should be called again
     boolean checkTable(TableData table) {
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, table.getName())) {
-            LOG.info().$("table.getName(): ").$(table.getName()).$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
+        final CharSequence tableName = tableNames.get(table.getName());
+        if (tableName == null) {
+            LOG.info().$(table.getName()).$(" has not been created yet").$();
+            table.notReady();
+            return false;
+        }
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            LOG.info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
+                    .$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
             if (table.size() <= reader.size()) {
                 final TableReaderMetadata metadata = reader.getMetadata();
                 final CharSequence expected = table.generateRows(metadata);
@@ -263,7 +273,17 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
     }
 
     private CharSequence getTableName(int tableIndex) {
-        return "weather" + tableIndex;
+        return getTableName(tableIndex, false);
+    }
+
+    private CharSequence getTableName(int tableIndex, boolean randomCase) {
+        final String tableName;
+        if (randomCase) {
+            tableName = random.nextInt(UPPERCASE_TABLE_RANDOMIZE_FACTOR) == 0 ? "WEATHER" : "weather";
+        } else {
+            tableName = "weather";
+        }
+        return tableName + tableIndex;
     }
 
     @Override
@@ -315,24 +335,37 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
         this.pinTablesToThreads = pinTablesToThreads;
 
         threadPushFinished = new SOCountDownLatch(numOfThreads - 1);
-        tables = new CharSequenceObjHashMap<>();
+        tables = new LowerCaseCharSequenceObjHashMap<>();
+        tableNames = new ConcurrentHashMap<>();
     }
 
-    private TableData pickTable(int threadId) {
-        return tables.get(getTableName(pinTablesToThreads ? threadId : random.nextInt(numOfTables)));
+    private CharSequence pickTableName(int threadId) {
+        return getTableName(pinTablesToThreads ? threadId : random.nextInt(numOfTables), true);
     }
 
     void runTest() throws Exception {
         runTest((factoryType, thread, name, event, segment, position) -> {
+            if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_LOCK_SUCCESS) {
+                handleWriterLockSuccessEvent(name);
+            }
             if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                if (threadPushFinished.getCount() > 0) {
-                    // we are still sending, no point to check the table yet
-                    return;
-                }
-                final TableData table = tables.get(name);
-                table.ready();
+                handleWriterReturnEvent(name);
             }
         });
+    }
+
+    void handleWriterLockSuccessEvent(CharSequence name) {
+        final String tableName = name.toString();
+        tableNames.putIfAbsent(tableName.toLowerCase(), tableName);
+    }
+
+    void handleWriterReturnEvent(CharSequence name) {
+        if (threadPushFinished.getCount() > 0) {
+            // we are still sending, no point to check the table yet
+            return;
+        }
+        final TableData table = tables.get(name);
+        table.ready();
     }
 
     void runTest(PoolListener listener) throws Exception {
@@ -351,9 +384,9 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
                         try (Socket socket = getSocket()) {
                             for (int n = 0; n < numOfIterations; n++) {
                                 for (int j = 0; j < numOfLines; j++) {
-                                    final TableData table = pickTable(threadId);
-                                    final CharSequence tableName = table.getName();
                                     final LineData line = generateLine();
+                                    final CharSequence tableName = pickTableName(threadId);
+                                    final TableData table = tables.get(tableName);
                                     table.addLine(line);
                                     sendToSocket(socket, line.toLine(tableName));
                                 }

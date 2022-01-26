@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.line.tcp.load.TableData;
 import io.questdb.std.Os;
 import org.junit.Test;
@@ -40,14 +39,14 @@ public class LineTcpCommitTimeoutTest extends AbstractLineTcpReceiverFuzzTest {
 
         initLoadParameters(5, 5, 3, 3, 50, true);
 
-        runTest((factoryType, thread, name, event, segment, position) -> {
-            if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                // with the settings above we are ingesting 25 rows into each table
-                // we expect a commit after 22 rows and the last 3 rows should be committed 300 ms after ingestion stops
-                // we do not expect commit by the maintenance job at all as maintenanceInterval is set much higher than commitTimeout
-                setError("Table writer is not expected to be released, maintenanceInterval is set higher than timeoutInterval");
-            }
-        });
+        runTest();
+    }
+
+    void handleWriterReturnEvent(CharSequence name) {
+        // with the settings above we are ingesting 25 rows into each table
+        // we expect a commit after 22 rows and the last 3 rows should be committed 300 ms after ingestion stops
+        // we do not expect commit by the maintenance job at all as maintenanceInterval is set much higher than commitTimeout
+        setError("Table writer is not expected to be released, maintenanceInterval is set higher than timeoutInterval");
     }
 
     void assertTable(TableData table) {
