@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.mig;
 
-import io.questdb.cairo.vm.MemoryCMARWImpl;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -42,24 +42,41 @@ final class Mig614 {
     static void migrate(MigrationContext migrationContext) {
         final FilesFacade ff = migrationContext.getFf();
         final Path path = migrationContext.getTablePath();
+        final Path path2 = migrationContext.getTablePath2();
 
-        try (MemoryMARW metaMem = migrationContext.getRwMemory()) {
-            metaMem.of(ff, path.concat(META_FILE_NAME), ff.getPageSize(), ff.length(path), MemoryTag.NATIVE_DEFAULT);
+        try (MemoryMARW rwMemory = migrationContext.getRwMemory()) {
+            path2.concat(TXN_FILE_NAME).$();
+            openFileSafe(rwMemory, ff, path2, TX_OFFSET_STRUCT_VERSION);
 
-            try (MemoryMARW txMem = new MemoryCMARWImpl(
-                    ff,
-                    migrationContext.getTablePath2().concat(TXN_FILE_NAME).$(),
-                    ff.getPageSize(),
-                    ff.length(path),
-                    MemoryTag.NATIVE_DEFAULT)
-            ) {
-                // Copy structure version from txn to meta.
-                long structureVersion = txMem.getLong(TX_OFFSET_STRUCT_VERSION);
-                LOG.advisory().$("copying structure version [version=").$(structureVersion)
-                        .$(", migration=614")
-                        .I$();
-                metaMem.putLong(META_OFFSET_STRUCTURE_VERSION, structureVersion);
-            }
+            // Copy structure version from txn to meta.
+            long structureVersion = rwMemory.getLong(TX_OFFSET_STRUCT_VERSION);
+            path.concat(META_FILE_NAME).$();
+            openFileSafe(rwMemory, ff, path, META_OFFSET_STRUCTURE_VERSION);
+
+            LOG.advisory().$("copying structure version [version=").$(structureVersion)
+                    .$(", migration=614, metadata=").$(path)
+                    .I$();
+
+            rwMemory.putLong(META_OFFSET_STRUCTURE_VERSION, structureVersion);
         }
+    }
+
+    private static void openFileSafe(MemoryMARW metaMem, FilesFacade ff, Path path, long readOffset) {
+        long fileLen = ff.length(path);
+
+        if (fileLen < 0) {
+            throw CairoException.instance(ff.errno()).put("cannot read file length: ").put(path);
+        }
+
+        if (fileLen < readOffset + Long.BYTES) {
+            throw CairoException.instance(0).put("File length ").put(fileLen).put(" is too small at ").put(path);
+        }
+
+        metaMem.of(
+                ff,
+                path,
+                ff.getPageSize(),
+                fileLen,
+                MemoryTag.NATIVE_DEFAULT);
     }
 }

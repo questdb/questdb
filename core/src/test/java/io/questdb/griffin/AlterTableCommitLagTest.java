@@ -316,11 +316,11 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                 engine.releaseAllWriters();
                 ff = new FilesFacadeImpl() {
                     @Override
-                    public boolean exists(LPSZ from) {
+                    public long length(LPSZ from) {
                         if (Chars.endsWith(from, TableUtils.META_FILE_NAME)) {
-                            return false;
+                            return -1;
                         }
-                        return super.exists(from);
+                        return super.length(from);
                     }
 
                 };

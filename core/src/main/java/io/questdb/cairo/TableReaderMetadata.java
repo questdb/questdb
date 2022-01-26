@@ -151,9 +151,10 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
 
     @Override
     public void close() {
-        metaMem = Misc.free(metaMem);
+        // TableReaderMetadata is re-usable after close, don't assign nulls
+        Misc.free(metaMem);
         Misc.free(path);
-        transitionMeta = Misc.free(transitionMeta);
+        Misc.free(transitionMeta);
     }
 
     public long createTransitionIndex(long txnStructureVersion) {
@@ -162,11 +163,10 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         }
 
         transitionMeta.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-        if (transitionMeta.size() > TableUtils.META_OFFSET_STRUCTURE_VERSION + 8) {
-            if (txnStructureVersion != transitionMeta.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION)) {
-                // No match
-                return -1;
-            }
+        if (transitionMeta.size() >= TableUtils.META_OFFSET_STRUCTURE_VERSION + 8
+                && txnStructureVersion != transitionMeta.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION)) {
+            // No match
+            return -1;
         }
 
         tmpValidationMap.clear();
