@@ -30,7 +30,7 @@ import io.questdb.mp.Job;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.IORequestProcessor;
-import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -41,7 +41,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob, Job {
     private final static Log LOG = LogFactory.getLog(LineTcpNetworkIOJob.class);
     private final IODispatcher<LineTcpConnectionContext> dispatcher;
     private final int workerId;
-    private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8 = new LowerCaseCharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8 = new CharSequenceObjHashMap<>();
     private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
     private final MillisecondClock millisecondClock;
     private final long maintenanceInterval;

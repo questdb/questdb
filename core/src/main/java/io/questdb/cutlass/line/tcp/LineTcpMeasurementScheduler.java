@@ -176,7 +176,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     public boolean doMaintenance(
-            LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8,
+            CharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8,
             int workerId,
             long millis
     ) {
