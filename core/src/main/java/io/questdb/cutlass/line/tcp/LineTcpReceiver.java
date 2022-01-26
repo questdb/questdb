@@ -57,7 +57,7 @@ public class LineTcpReceiver implements Closeable {
     ) {
         this.contextFactory = new LineTcpConnectionContextFactory(lineConfiguration);
         this.dispatcher = IODispatchers.create(
-                lineConfiguration.getNetDispatcherConfiguration(),
+                lineConfiguration.getDispatcherConfiguration(),
                 contextFactory
         );
         this.dedicatedPools = dedicatedPools;
