@@ -63,7 +63,7 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public IODispatcherConfiguration getNetDispatcherConfiguration() {
+    public IODispatcherConfiguration getDispatcherConfiguration() {
         return ioDispatcherConfiguration;
     }
 

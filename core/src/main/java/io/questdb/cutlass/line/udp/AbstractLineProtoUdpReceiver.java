@@ -81,7 +81,7 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
             }
 
             lexer = new LineUdpLexer(configuration.getMsgBufferSize());
-            parser = new LineUdpParserImpl(engine, configuration.getCairoSecurityContext(), configuration.getTimestampAdapter());
+            parser = new LineUdpParserImpl(engine, configuration);
             lexer.withParser(parser);
 
             if (!configuration.ownThread()) {

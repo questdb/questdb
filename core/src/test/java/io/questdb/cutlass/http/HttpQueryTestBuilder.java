@@ -45,6 +45,7 @@ import io.questdb.std.str.Path;
 import org.junit.rules.TemporaryFolder;
 
 import java.util.Arrays;
+import java.util.concurrent.BrokenBarrierException;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
@@ -304,6 +305,6 @@ public class HttpQueryTestBuilder {
 
     @FunctionalInterface
     public interface HttpClientCode {
-        void run(CairoEngine engine) throws InterruptedException, SqlException;
+        void run(CairoEngine engine) throws InterruptedException, SqlException, BrokenBarrierException;
     }
 }
