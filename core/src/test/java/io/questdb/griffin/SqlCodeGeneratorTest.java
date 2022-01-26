@@ -1497,7 +1497,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "52.98405941762054\tHYRX\n" +
                 "72.30015763133606\tHYRX\n";
         assertQuery(expected,
-//                "x",
                 "select * from x where b = 'HYRX' and a > 41 and test_match()",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,0) b from long_sequence(20)), index(b)",
                 null,
@@ -1525,6 +1524,90 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "a\tb\n" +
                         "75.88175403454873\tABC\n" +
                         "57.78947915182423\tABC\n");
+    }
+
+    @Test
+    public void testFilterWithIndexedBindVariableSingleIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testFilterWithSymbolBindVariable("select * from x where b = $1", true);
+    }
+
+    @Test
+    public void testFilterWithNamedBindVariableSingleIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testFilterWithSymbolBindVariable("select * from x where b = :b", true);
+    }
+
+    @Test
+    public void testFilterWithIndexedBindVariableIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testFilterWithSymbolBindVariable("select * from x where b = $1 and a != 0", true);
+    }
+
+    @Test
+    public void testFilterWithNamedBindVariableIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testFilterWithSymbolBindVariable("select * from x where b = :b and a != 0", true);
+    }
+
+    @Test
+    public void testFilterWithIndexedBindVariableSingleNonIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testFilterWithSymbolBindVariable("select * from x where b = $1", false);
+    }
+
+    @Test
+    public void testFilterWithNamedBindVariableSingleNonIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testFilterWithSymbolBindVariable("select * from x where b = :b", false);
+    }
+
+    @Test
+    public void testFilterWithIndexedBindVariableNonIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testFilterWithSymbolBindVariable("select * from x where b = $1 and a != 0", false);
+    }
+
+    @Test
+    public void testFilterWithNamedBindVariableNonIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testFilterWithSymbolBindVariable("select * from x where b = :b and a != 0", false);
+    }
+
+    private void testFilterWithSymbolBindVariable(String query, boolean indexed) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_double(0)*100 a," +
+                    " rnd_symbol(5,4,4,1) b," +
+                    " timestamp_sequence(0, 100000000000) k" +
+                    " from" +
+                    " long_sequence(20)" +
+                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
+
+            try (
+                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                assertCursor(
+                        "a\tb\tk\n" +
+                                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n",
+                        factory,
+                        true,
+                        true,
+                        false
+                );
+            }
+        });
     }
 
     @Test
@@ -3741,20 +3824,62 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestByMissingKeyValueIndexedWithIndexedBindVariable() throws Exception {
+    public void testLatestByIndexedKeyValueWithIndexedBindVariable() throws Exception {
         bindVariableService.clear();
         bindVariableService.setStr(0, "HYRX");
-        testLatestByMissingKeyValueIndexedWithBindVariable("select * from x where b = $1 latest on k partition by b");
+        testLatestByKeyValueWithBindVariable("select * from x where b = $1 latest on k partition by b", true);
     }
 
     @Test
-    public void testLatestByMissingKeyValueIndexedWithNamedBindVariable() throws Exception {
+    public void testLatestByIndexedKeyValueWithNamedBindVariable() throws Exception {
         bindVariableService.clear();
         bindVariableService.setStr("b", "HYRX");
-        testLatestByMissingKeyValueIndexedWithBindVariable("select * from x where b = :b latest on k partition by b");
+        testLatestByKeyValueWithBindVariable("select * from x where b = :b latest on k partition by b", true);
     }
 
-    private void testLatestByMissingKeyValueIndexedWithBindVariable(String query) throws Exception {
+    @Test
+    public void testLatestByIndexedKeyValueWithFilterAndIndexedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testLatestByKeyValueWithBindVariable("select * from x where b = $1 and a != 0 latest on k partition by b", true);
+    }
+
+    @Test
+    public void testLatestByIndexedKeyValueWithFilterAndNamedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testLatestByKeyValueWithBindVariable("select * from x where b = :b latest on k partition by b", true);
+    }
+
+    @Test
+    public void testLatestByNonIndexedKeyValueWithIndexedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testLatestByKeyValueWithBindVariable("select * from x where b = $1 latest on k partition by b", false);
+    }
+
+    @Test
+    public void testLatestByNonIndexedKeyValueWithNamedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testLatestByKeyValueWithBindVariable("select * from x where b = :b latest on k partition by b", false);
+    }
+
+    @Test
+    public void testLatestByNonIndexedKeyValueWithFilterAndIndexedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testLatestByKeyValueWithBindVariable("select * from x where b = $1 and a != 0 latest on k partition by b", false);
+    }
+
+    @Test
+    public void testLatestByNonIndexedKeyValueWithFilterAndNamedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testLatestByKeyValueWithBindVariable("select * from x where b = :b and a != 0 latest on k partition by b", false);
+    }
+
+    private void testLatestByKeyValueWithBindVariable(String query, boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as " +
                     "(" +
@@ -3764,7 +3889,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     " timestamp_sequence(0, 100000000000) k" +
                     " from" +
                     " long_sequence(50)" +
-                    "), index(b) timestamp(k) partition by DAY", sqlExecutionContext);
+                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
 
             try (
                     RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
@@ -3776,6 +3901,66 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         true,
                         true,
                         false
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testLatestByIndexedKeyValuesWithIndexedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        bindVariableService.setStr(1, "VTJW");
+        testLatestByKeyValuesWithBindVariable("select * from x where b in ($1,$2) latest on k partition by b", true);
+    }
+
+    @Test
+    public void testLatestByIndexedKeyValuesWithNamedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b1", "HYRX");
+        bindVariableService.setStr("b2", "VTJW");
+        testLatestByKeyValuesWithBindVariable("select * from x where b in (:b1,:b2) latest on k partition by b", true);
+    }
+
+    @Test
+    public void testLatestByNonIndexedKeyValuesWithIndexedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        bindVariableService.setStr(1, "VTJW");
+        testLatestByKeyValuesWithBindVariable("select * from x where b in ($1,$2) latest on k partition by b", false);
+    }
+
+    @Test
+    public void testLatestByNonIndexedKeyValuesWithNamedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b1", "HYRX");
+        bindVariableService.setStr("b2", "VTJW");
+        testLatestByKeyValuesWithBindVariable("select * from x where b in (:b1,:b2) latest on k partition by b", false);
+    }
+
+    private void testLatestByKeyValuesWithBindVariable(String query, boolean indexed) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_double(0)*100 a," +
+                    " rnd_symbol(5,4,4,1) b," +
+                    " timestamp_sequence(0, 100000000000) k" +
+                    " from" +
+                    " long_sequence(50)" +
+                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
+
+            try (
+                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                assertCursor(
+                        "a\tb\tk\n" +
+                                "66.97969295620055\tVTJW\t1970-02-13T23:33:20.000000Z\n" +
+                                "89.98921791869131\tHYRX\t1970-02-18T14:40:00.000000Z\n",
+                        factory,
+                        true,
+                        true,
+                        true
                 );
             }
         });

@@ -49,9 +49,9 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
     ) {
         super(configuration, metadata, dataFrameCursorFactory, columnIndex, keyValueFuncs, symbolMapReader);
         if (filter != null) {
-            this.cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, filter, columnIndexes);
+            this.cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, deferredSymbolKeys, filter, columnIndexes);
         } else {
-            this.cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, rows, columnIndexes);
+            this.cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, deferredSymbolKeys, rows, columnIndexes);
         }
         this.filter = filter;
     }

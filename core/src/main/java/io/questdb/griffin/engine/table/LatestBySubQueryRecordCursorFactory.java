@@ -59,15 +59,15 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         super(metadata, dataFrameCursorFactory, configuration);
         if (indexed) {
             if (filter != null) {
-                this.cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, filter, columnIndexes);
+                this.cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, null, filter, columnIndexes);
             } else {
-                this.cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, rows, columnIndexes);
+                this.cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, null, rows, columnIndexes);
             }
         } else {
             if (filter != null) {
-                this.cursor = new LatestByValuesFilteredRecordCursor(columnIndex, rows, symbolKeys, filter, columnIndexes);
+                this.cursor = new LatestByValuesFilteredRecordCursor(columnIndex, rows, symbolKeys, null, filter, columnIndexes);
             } else {
-                this.cursor = new LatestByValuesRecordCursor(columnIndex, rows, symbolKeys, columnIndexes);
+                this.cursor = new LatestByValuesRecordCursor(columnIndex, rows, symbolKeys, null, columnIndexes);
             }
         }
         this.columnIndex = columnIndex;

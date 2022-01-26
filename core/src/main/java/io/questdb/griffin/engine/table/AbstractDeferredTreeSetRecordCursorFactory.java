@@ -36,10 +36,11 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class AbstractDeferredTreeSetRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
-    // this instance is shared between factory and cursor
+    // the following two instances are shared between factory and cursor
     // factory will be resolving symbols for cursor and if successful
     // symbol keys will be added to this hash set
     protected final IntHashSet symbolKeys;
+    protected final IntHashSet deferredSymbolKeys;
     private final int columnIndex;
     private final ObjList<Function> deferredSymbolFuncs;
 
@@ -60,6 +61,7 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
 
         final int nKeyValues = keyValueFuncs.size();
         final IntHashSet symbolKeys = new IntHashSet(nKeyValues);
+        IntHashSet deferredSymbolKeys = null;
         ObjList<Function> deferredFuncs = null;
 
         for (int i = 0; i < nKeyValues; i++) {
@@ -70,6 +72,7 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                 if (deferredFuncs == null) {
                     deferredFuncs = new ObjList<>();
+                    deferredSymbolKeys = new IntHashSet();
                 }
                 deferredFuncs.add(symbolFunc);
             } else {
@@ -79,6 +82,7 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
 
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;
+        this.deferredSymbolKeys = deferredSymbolKeys;
         this.deferredSymbolFuncs = deferredFuncs;
     }
 
@@ -87,18 +91,15 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        if (deferredSymbolFuncs != null && deferredSymbolFuncs.size() > 0) {
+        if (deferredSymbolFuncs != null) {
+            deferredSymbolKeys.clear();
             StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
-            for (int i = 0, n = deferredSymbolFuncs.size(); i < n; ) {
+            for (int i = 0, n = deferredSymbolFuncs.size(); i < n; i++) {
                 Function symbolFunc = deferredSymbolFuncs.get(i);
                 final CharSequence symbol = symbolFunc.getStr(null);
                 int symbolKey = symbolTable.keyOf(symbol);
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                    symbolKeys.add(TableUtils.toIndexKey(symbolKey));
-                    deferredSymbolFuncs.remove(symbol);
-                    n--;
-                } else {
-                    i++;
+                    deferredSymbolKeys.add(TableUtils.toIndexKey(symbolKey));
                 }
             }
         }
