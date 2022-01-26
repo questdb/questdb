@@ -1314,7 +1314,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 null,
                 true,
                 true,
-                false
+                true
         );
     }
 
