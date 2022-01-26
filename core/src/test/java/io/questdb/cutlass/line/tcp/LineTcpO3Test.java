@@ -160,7 +160,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
             long clientFd = Net.socketTcp(true);
             Assert.assertTrue(clientFd >= 0);
 
-            long ilpSockAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), lineConfiguration.getNetDispatcherConfiguration().getBindPort());
+            long ilpSockAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), lineConfiguration.getDispatcherConfiguration().getBindPort());
             WorkerPool sharedWorkerPool = new WorkerPool(sharedWorkerPoolConfiguration);
             try (
                     LineTcpReceiver ignored = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine);
