@@ -103,11 +103,12 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.txFile = new TxReader(ff).ofRO(path, partitionBy);
             path.trimTo(rootLen);
 
-            long deadline = this.configuration.getMicrosecondClock().getTicks() + this.configuration.getSpinLockTimeoutUs();
-            long prevStructVersion = metadata.getStructureVersion();
+            long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
+            long metadataStructureVersion = metadata.getStructureVersion();
             do {
                 readTxnSlow(deadline);
-            } while (!reloadStruct(prevStructVersion, txFile.getStructureVersion(), deadline));
+            } while (metadataStructureVersion != txFile.getStructureVersion()
+                    && !reloadMetadata(txFile.getStructureVersion(), deadline));
 
             openSymbolMaps();
             partitionCount = txFile.getPartitionCount();
@@ -467,76 +468,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void reshuffleSymbolMapReaders(long pTransitionIndex, int columnCount) {
-        final long index = pTransitionIndex + 8;
-        final long stateAddress = index + columnCount * 8L;
-
-        if (columnCount > this.columnCount) {
-            symbolMapReaders.setPos(columnCount);
-        }
-
-        Vect.memset(stateAddress, columnCount, 0);
-
-        // this is a silly exercise in walking the index
-        for (int i = 0; i < columnCount; i++) {
-
-            // prevent writing same entry more than once
-            if (Unsafe.getUnsafe().getByte(stateAddress + i) == -1) {
-                continue;
-            }
-
-            Unsafe.getUnsafe().putByte(stateAddress + i, (byte) -1);
-
-            int copyFrom = Unsafe.getUnsafe().getInt(index + i * 8L);
-
-            // don't copy entries to themselves, unless symbol map was deleted
-            if (copyFrom == i + 1 && copyFrom < columnCount) {
-                SymbolMapReader reader = symbolMapReaders.getQuick(copyFrom);
-                if (reader != null && reader.isDeleted()) {
-                    symbolMapReaders.setQuick(copyFrom, reloadSymbolMapReader(copyFrom, reader));
-                }
-                continue;
-            }
-
-            // check where we source entry:
-            // 1. from another entry
-            // 2. create new instance
-            SymbolMapReader tmp;
-            if (copyFrom > 0) {
-                tmp = copyOrRenewSymbolMapReader(symbolMapReaders.getAndSetQuick(copyFrom - 1, null), i);
-
-                int copyTo = Unsafe.getUnsafe().getInt(index + i * 8L + 4);
-
-                // now we copied entry, what do we do with value that was already there?
-                // do we copy it somewhere else?
-                while (copyTo > 0) {
-                    // Yeah, we do. This can get recursive!
-                    // prevent writing same entry twice
-                    if (Unsafe.getUnsafe().getByte(stateAddress + copyTo - 1) == -1) {
-                        break;
-                    }
-                    Unsafe.getUnsafe().putByte(stateAddress + copyTo - 1, (byte) -1);
-
-                    tmp = copyOrRenewSymbolMapReader(tmp, copyTo - 1);
-                    copyTo = Unsafe.getUnsafe().getInt(index + (copyTo - 1) * 8L + 4);
-                }
-                Misc.free(tmp);
-            } else {
-                // new instance
-                Misc.free(symbolMapReaders.getAndSetQuick(i, reloadSymbolMapReader(i, null)));
-            }
-        }
-
-        // ended up with fewer columns than before?
-        // free resources for the "extra" symbol map readers and contract the list
-        if (columnCount < this.columnCount) {
-            for (int i = columnCount; i < this.columnCount; i++) {
-                Misc.free(symbolMapReaders.getQuick(i));
-            }
-            symbolMapReaders.setPos(columnCount);
-        }
-    }
-
     public long size() {
         return rowCount;
     }
@@ -823,6 +754,23 @@ public class TableReader implements Closeable, SymbolTableSource {
         return txnScoreboard;
     }
 
+    private void handleMetadataLoadException(long deadline, CairoException ex) {
+        // This is temporary solution until we can get multiple version of metadata not overwriting each other
+        if (isMetaFileMissingFileSystemError(ex)) {
+            if (configuration.getMicrosecondClock().getTicks() < deadline) {
+                LOG.info().$("error reloading metadata [table=").$(tableName)
+                        .$(", errno=").$(ex.getErrno())
+                        .$(", error=").$(ex.getFlyweightMessage()).I$();
+                Os.pause();
+            } else {
+                LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeoutUs()).utf8("μs]").$();
+                throw CairoException.instance(ex.getErrno()).put("Metadata read timeout. Last error: ").put(ex.getFlyweightMessage());
+            }
+        } else {
+            throw ex;
+        }
+    }
+
     private void insertPartition(int partitionIndex, long timestamp) {
         final int columnBase = getColumnBase(partitionIndex);
         final int columnSlotSize = getColumnBase(1);
@@ -856,10 +804,15 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private TableReaderMetadata openMetaFile() {
-        try {
-            return new TableReaderMetadata(ff, path.concat(TableUtils.META_FILE_NAME).$());
-        } finally {
-            path.trimTo(rootLen);
+        long deadline = this.configuration.getMicrosecondClock().getTicks() + this.configuration.getSpinLockTimeoutUs();
+        while (true) {
+            try {
+                return new TableReaderMetadata(ff, path.concat(TableUtils.META_FILE_NAME).$());
+            } catch (CairoException ex) {
+                handleMetadataLoadException(deadline, ex);
+            } finally {
+                path.trimTo(rootLen);
+            }
         }
     }
 
@@ -1182,19 +1135,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 }
             } catch (CairoException ex) {
                 // This is temporary solution until we can get multiple version of metadata not overwriting each other
-                if (isMetaFileMissingFileSystemError(ex)) {
-                    if (configuration.getMicrosecondClock().getTicks() < deadline) {
-                        LOG.info().$("error reloading metadata [table=").$(tableName)
-                                .$(", errno=").$(ex.getErrno())
-                                .$(", error=").$(ex.getFlyweightMessage()).I$();
-                        Os.pause();
-                    } else {
-                        LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeoutUs()).utf8("μs]").$();
-                        throw CairoException.instance(ex.getErrno()).put("Metadata read timeout. Last error: ").put(ex.getFlyweightMessage());
-                    }
-                } else {
-                    throw ex;
-                }
+                handleMetadataLoadException(deadline, ex);
             }
         }
     }
@@ -1373,6 +1314,76 @@ public class TableReader implements Closeable, SymbolTableSource {
             } finally {
                 path.trimTo(rootLen);
             }
+        }
+    }
+
+    private void reshuffleSymbolMapReaders(long pTransitionIndex, int columnCount) {
+        final long index = pTransitionIndex + 8;
+        final long stateAddress = index + columnCount * 8L;
+
+        if (columnCount > this.columnCount) {
+            symbolMapReaders.setPos(columnCount);
+        }
+
+        Vect.memset(stateAddress, columnCount, 0);
+
+        // this is a silly exercise in walking the index
+        for (int i = 0; i < columnCount; i++) {
+
+            // prevent writing same entry more than once
+            if (Unsafe.getUnsafe().getByte(stateAddress + i) == -1) {
+                continue;
+            }
+
+            Unsafe.getUnsafe().putByte(stateAddress + i, (byte) -1);
+
+            int copyFrom = Unsafe.getUnsafe().getInt(index + i * 8L);
+
+            // don't copy entries to themselves, unless symbol map was deleted
+            if (copyFrom == i + 1 && copyFrom < columnCount) {
+                SymbolMapReader reader = symbolMapReaders.getQuick(copyFrom);
+                if (reader != null && reader.isDeleted()) {
+                    symbolMapReaders.setQuick(copyFrom, reloadSymbolMapReader(copyFrom, reader));
+                }
+                continue;
+            }
+
+            // check where we source entry:
+            // 1. from another entry
+            // 2. create new instance
+            SymbolMapReader tmp;
+            if (copyFrom > 0) {
+                tmp = copyOrRenewSymbolMapReader(symbolMapReaders.getAndSetQuick(copyFrom - 1, null), i);
+
+                int copyTo = Unsafe.getUnsafe().getInt(index + i * 8L + 4);
+
+                // now we copied entry, what do we do with value that was already there?
+                // do we copy it somewhere else?
+                while (copyTo > 0) {
+                    // Yeah, we do. This can get recursive!
+                    // prevent writing same entry twice
+                    if (Unsafe.getUnsafe().getByte(stateAddress + copyTo - 1) == -1) {
+                        break;
+                    }
+                    Unsafe.getUnsafe().putByte(stateAddress + copyTo - 1, (byte) -1);
+
+                    tmp = copyOrRenewSymbolMapReader(tmp, copyTo - 1);
+                    copyTo = Unsafe.getUnsafe().getInt(index + (copyTo - 1) * 8L + 4);
+                }
+                Misc.free(tmp);
+            } else {
+                // new instance
+                Misc.free(symbolMapReaders.getAndSetQuick(i, reloadSymbolMapReader(i, null)));
+            }
+        }
+
+        // ended up with fewer columns than before?
+        // free resources for the "extra" symbol map readers and contract the list
+        if (columnCount < this.columnCount) {
+            for (int i = columnCount; i < this.columnCount; i++) {
+                Misc.free(symbolMapReaders.getQuick(i));
+            }
+            symbolMapReaders.setPos(columnCount);
         }
     }
 

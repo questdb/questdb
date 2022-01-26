@@ -1571,6 +1571,82 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddColumnPartitionConcurrentCreateReader() throws Throwable {
+        ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
+        assertMemoryLeak(() -> {
+            CyclicBarrier start = new CyclicBarrier(2);
+            AtomicInteger done = new AtomicInteger();
+            AtomicInteger columnsAdded = new AtomicInteger();
+            AtomicInteger reloadCount = new AtomicInteger();
+            int totalColAddCount = Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64 ? 500 : 50;
+
+            String tableName = "tbl_meta_test";
+            createTable(tableName, PartitionBy.HOUR);
+            Rnd rnd = TestUtils.generateRandom(LOG);
+
+            Thread writerThread = new Thread(() -> {
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
+                    start.await();
+                    for (int i = 0; i < totalColAddCount; i++) {
+                        writer.addColumn("col" + i, ColumnType.SYMBOL);
+                        columnsAdded.incrementAndGet();
+
+                        if (rnd.nextBoolean()) {
+                            // Add partition
+                            TableWriter.Row row = writer.newRow(i * Timestamps.HOUR_MICROS);
+                            row.append();
+                            writer.commit();
+                        }
+
+                        if (rnd.nextBoolean() && writer.getPartitionCount() > 0) {
+                            // Remove partition
+                            int partitionNum = rnd.nextInt() % writer.getPartitionCount();
+                            writer.removePartition(partitionNum * Timestamps.HOUR_MICROS);
+                        }
+                    }
+                } catch (Throwable e) {
+                    exceptions.add(e);
+                    LOG.error().$(e).$();
+                } finally {
+                    done.incrementAndGet();
+                }
+            });
+
+            Thread readerThread = new Thread(() -> {
+                try {
+                    start.await();
+                    int colAdded = -1, newColsAdded;
+                    while (colAdded < totalColAddCount) {
+                        if (colAdded < (newColsAdded = columnsAdded.get())) {
+                            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                                Assert.assertEquals(reader.getTxnStructureVersion(), reader.getMetadata().getStructureVersion());
+                                colAdded = newColsAdded;
+                                reloadCount.incrementAndGet();
+                            }
+                            engine.releaseAllReaders();
+                        }
+                        Os.pause();
+                    }
+                } catch (Throwable e) {
+                    exceptions.add(e);
+                    LOG.error().$(e).$();
+                }
+            });
+            writerThread.start();
+            readerThread.start();
+
+            writerThread.join();
+            readerThread.join();
+            Assert.assertTrue(reloadCount.get() > totalColAddCount / 10);
+            LOG.infoW().$("total reload count ").$(reloadCount.get()).$();
+        });
+
+        if (exceptions.size() != 0) {
+            throw exceptions.poll();
+        }
+    }
+
+    @Test
     public void testAppendNullTimestamp() throws Exception {
         try (TableModel model = new TableModel(configuration, "all", PartitionBy.NONE)
                 .col("int", ColumnType.INT)

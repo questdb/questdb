@@ -132,7 +132,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
         long lastTxn = txReader.getTxn();
         for (int i = hi - 2, n = lo - 1; i > n; i -= 2) {
             long nameTxn = partitionList.get(i);
-            boolean rangeUnlocked = isRangeUnlocked(txnScoreboard, nameTxn, lastTxn);
+            boolean rangeUnlocked = txnScoreboard.isRangeAvailable(nameTxn, lastTxn);
             if (rangeUnlocked) {
                 // nameTxn can be deleted
                 // -1 here is to compensate +1 added when partition version parsed from folder name
@@ -180,7 +180,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                 long previousNameVersion = partitionList.get(i - 2);
 
                 boolean rangeUnlocked = previousNameVersion < nextNameVersion
-                        && isRangeUnlocked(txnScoreboard, previousNameVersion, nextNameVersion);
+                        && txnScoreboard.isRangeAvailable(previousNameVersion, nextNameVersion);
 
                 if (rangeUnlocked) {
                     // previousNameVersion can be deleted
@@ -229,15 +229,6 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                     .$(", errno=").$(errno)
                     .I$();
         }
-    }
-
-    private static boolean isRangeUnlocked(TxnScoreboard txnScoreboard, long fromTxn, long toTxn) {
-        for (long txn = fromTxn; txn < toTxn; txn++) {
-            if (txnScoreboard.getActiveReaderCount(txn) > 0) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private void discoverPartitions(

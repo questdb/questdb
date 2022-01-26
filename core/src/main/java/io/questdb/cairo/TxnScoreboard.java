@@ -65,12 +65,6 @@ public class TxnScoreboard implements Closeable, Mutable {
         throw CairoException.instance(0).put("max txn-inflight limit reached [txn=").put(txn).put(", min=").put(min).put(", size=").put(pow2EntryCount).put(']');
     }
 
-    public long releaseTxn(long txn) {
-        long released = releaseTxn(mem, txn);
-        assert released > -1 : "released count " + txn + " must be positive: " + (released + 1);
-        return released;
-    }
-
     @Override
     public void clear() {
         // Do full close, all memory used is native but instance will be reusable
@@ -90,12 +84,12 @@ public class TxnScoreboard implements Closeable, Mutable {
         }
     }
 
-    public boolean isTxnAvailable(long txn) {
-        return getActiveReaderCount(txn) == 0;
-    }
-
     public long getActiveReaderCount(long txn) {
         return getCount(mem, toInternalTxn(txn));
+    }
+
+    public int getEntryCount() {
+        return pow2EntryCount;
     }
 
     public long getMin() {
@@ -107,8 +101,12 @@ public class TxnScoreboard implements Closeable, Mutable {
         return fromInternalTxn(min);
     }
 
-    public int getEntryCount() {
-        return pow2EntryCount;
+    public boolean isRangeAvailable(long fromTxn, long toTxn) {
+        return isRangeAvailable0(mem, toInternalTxn(fromTxn), toInternalTxn(toTxn));
+    }
+
+    public boolean isTxnAvailable(long txn) {
+        return getActiveReaderCount(txn) == 0;
     }
 
     public TxnScoreboard ofRO(@Transient Path root) {
@@ -146,6 +144,12 @@ public class TxnScoreboard implements Closeable, Mutable {
         return this;
     }
 
+    public long releaseTxn(long txn) {
+        long released = releaseTxn(mem, txn);
+        assert released > -1 : "released count " + txn + " must be positive: " + (released + 1);
+        return released;
+    }
+
     /**
      * Table readers use 0 txn as the empty table transaction number.
      * The scoreboard only supports txn > 0, so we have to patch the value
@@ -178,6 +182,8 @@ public class TxnScoreboard implements Closeable, Mutable {
     private native static long acquireTxn0(long pTxnScoreboard, long txn);
 
     private native static long releaseTxn0(long pTxnScoreboard, long txn);
+
+    private native static boolean isRangeAvailable0(long pTxnScoreboard, long txnFrom, long txnTo);
 
     private static native long getCount(long pTxnScoreboard, long txn);
 

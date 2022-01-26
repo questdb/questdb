@@ -169,6 +169,17 @@ public:
         // a newly created scoreboard. So, this CAS should only succeed single time.
         min.compare_exchange_strong(expected, L_MIN);
     }
+
+    bool isRangeAvailable(int64_t from, int64_t to) {
+        if (to >= min && from <= max) {
+            for (int64_t txn = from; txn < to; txn++) {
+                if (get_count(txn) > 0) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
 };
 
 extern "C" {
@@ -201,6 +212,11 @@ JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getScoreboardSize
 JNIEXPORT void JNICALL Java_io_questdb_cairo_TxnScoreboard_init
         (JAVA_STATIC, jlong p_txn_scoreboard, jlong entryCount) {
     reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->init(entryCount);
+}
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_TxnScoreboard_isRangeAvailable0
+        (JAVA_STATIC, jlong p_txn_scoreboard, jlong from, jlong to) {
+    return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->isRangeAvailable(from, to);
 }
 
 }

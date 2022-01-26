@@ -54,8 +54,11 @@ public class TableReadFailTest extends AbstractCairoTest {
     public void testMetaFileMissingConstructor() throws Exception {
         FilesFacade ff = new FilesFacadeImpl() {
             @Override
-            public boolean exists(LPSZ path) {
-                return !Chars.endsWith(path, TableUtils.META_FILE_NAME) && super.exists(path);
+            public long length(LPSZ path) {
+                if (Chars.endsWith(path, TableUtils.META_FILE_NAME)) {
+                    return -1;
+                }
+                return super.length(path);
             }
         };
         assertConstructorFail(ff);
@@ -64,6 +67,7 @@ public class TableReadFailTest extends AbstractCairoTest {
     @Test
     public void testReloadTimeout() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
+            spinLockTimeoutUs = 1000;
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
                     .col("a", ColumnType.INT)
                     .col("b", ColumnType.LONG)
@@ -203,6 +207,11 @@ public class TableReadFailTest extends AbstractCairoTest {
                     @Override
                     public FilesFacade getFilesFacade() {
                         return ff;
+                    }
+
+                    @Override
+                    public long getSpinLockTimeoutUs() {
+                        return 1000;
                     }
                 }, "all");
                 Assert.fail();
