@@ -105,8 +105,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private final int maxBlobSizeOnQuery;
     private final NetworkFacade nf;
     private final boolean dumpNetworkTraffic;
-    private final int idleSendCountBeforeGivingUp;
-    private final int idleRecvCountBeforeGivingUp;
     private final String serverVersion;
     private final PGAuthenticator authenticator;
     private final SqlExecutionContextImpl sqlExecutionContext;
@@ -188,8 +186,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         );
         this.maxBlobSizeOnQuery = configuration.getMaxBlobSizeOnQuery();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
-        this.idleSendCountBeforeGivingUp = configuration.getIdleSendCountBeforeGivingUp();
-        this.idleRecvCountBeforeGivingUp = configuration.getIdleRecvCountBeforeGivingUp();
         this.serverVersion = configuration.getServerVersion();
         this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword());
         this.locale = configuration.getDefaultDateLocale();
@@ -1204,26 +1200,26 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private void doSendWithRetries(int bufferOffset, int bufferSize) throws PeerDisconnectedException, PeerIsSlowToReadException {
         int offset = bufferOffset;
         int remaining = bufferSize;
-        int idleSendCount = 0;
 
-        while (remaining > 0 && idleSendCount < idleSendCountBeforeGivingUp) {
+        while (remaining > 0) {
             int m = nf.send(
                     getFd(),
                     sendBuffer + offset,
                     remaining
             );
             if (m < 0) {
+                LOG.info().$("disconnected on write [code=").$(m).$(']').$();
                 throw PeerDisconnectedException.INSTANCE;
+            }
+            if (m == 0) {
+                // The socket is not ready for write.
+                break;
             }
 
             dumpBuffer('<', sendBuffer + offset, m);
 
-            if (m > 0) {
-                remaining -= m;
-                offset += m;
-            } else {
-                idleSendCount++;
-            }
+            remaining -= m;
+            offset += m;
         }
 
         if (remaining > 0) {
@@ -2088,30 +2084,14 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         int n = doReceive(remaining);
         LOG.debug().$("recv [n=").$(n).$(']').$();
         if (n < 0) {
+            LOG.info().$("disconnected on read [code=").$(n).$(']').$();
             throw PeerDisconnectedException.INSTANCE;
         }
-
         if (n == 0) {
-            int retriesRemaining = idleRecvCountBeforeGivingUp;
-            while (retriesRemaining > 0) {
-                n = doReceive(remaining);
-                if (n == 0) {
-                    retriesRemaining--;
-                    continue;
-                }
-
-                if (n < 0) {
-                    LOG.info().$("disconnect [code=").$(n).$(']').$();
-                    throw PeerDisconnectedException.INSTANCE;
-                }
-
-                break;
-            }
-
-            if (retriesRemaining == 0) {
-                throw PeerIsSlowToWriteException.INSTANCE;
-            }
+            // The socket is not ready for read.
+            throw PeerIsSlowToWriteException.INSTANCE;
         }
+
         recvBufferWriteOffset += n;
         return n;
     }
