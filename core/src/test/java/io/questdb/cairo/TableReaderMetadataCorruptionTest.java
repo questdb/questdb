@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
@@ -38,16 +39,48 @@ import org.junit.Test;
 public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
 
     @Test
-    public void testColumnCountIsBeyondFileSize() throws Exception {
+    public void testColumnNameInvalid() throws Exception {
+        final String[] names = new String[]{"a", "b", "c", "d", "e", "f"};
+        final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
+
+        assertMetaConstructorFailure(
+                names,
+                types,
+                names.length,
+                5,
+                "File is too small, column names are missing 356",
+                4906,
+                356
+        );
+    }
+
+    @Test
+    public void testColumnNameMissing() throws Exception {
         final String[] names = new String[]{"a", "b", "c", "d", "b", "f"};
         final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
 
         assertMetaConstructorFailure(
                 names,
                 types,
-                names.length + 1,
+                names.length + 10,
                 5,
-                "Index flag is only supported for SYMBOL" //failed validation on garbage flags value
+                "Index flag is only supported for SYMBOL at [6]" //failed validation on garbage flags value
+        );
+    }
+
+    @Test
+    public void testColumnNameMissing2() throws Exception {
+        final String[] names = new String[]{"a", "b", "c", "d", "b", "f"};
+        final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
+
+        assertMetaConstructorFailure(
+                names,
+                types,
+                names.length + 1000,
+                5,
+                "File is too small, column types are missing 4096",
+                4096,
+                4096
         );
     }
 
@@ -62,6 +95,70 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 names.length,
                 5,
                 "Duplicate"
+        );
+    }
+
+    @Test
+    public void testFileIsTooSmall() throws Exception {
+        final String[] names = new String[]{"a", "b", "c", "d", "b", "f"};
+        final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
+
+        assertMetaConstructorFailure(
+                names,
+                types,
+                names.length + 10,
+                5,
+                "File is too small",
+                4906,
+                1
+        );
+    }
+
+    @Test
+    public void testFileIsTooSmallForColumnNames() throws Exception {
+        final String[] names = new String[]{"a", "b", "c", "d", "b", "f"};
+        final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
+
+        assertMetaConstructorFailure(
+                names,
+                types,
+                names.length,
+                5,
+                "File is too small, column length for column 3 is missing",
+                4906,
+                342
+        );
+    }
+
+    @Test
+    public void testFileIsTooSmallForColumnNames2() throws Exception {
+        final String[] names = new String[]{"a", "b", "c", "d", "b", "f"};
+        final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
+
+        assertMetaConstructorFailure(
+                names,
+                types,
+                names.length - 1,
+                -1,
+                "Column name length of 0 is invalid at offset 308",
+                4906,
+                342
+        );
+    }
+
+    @Test
+    public void testFileIsTooSmallForColumnTypes() throws Exception {
+        final String[] names = new String[]{"a", "b", "c", "d", "b", "f"};
+        final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
+
+        assertMetaConstructorFailure(
+                names,
+                types,
+                names.length + 10,
+                5,
+                "File is too small, column types are missing",
+                4906,
+                128
         );
     }
 
@@ -154,11 +251,11 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
     }
 
     private void assertMetaConstructorFailure(String[] names, int[] types, int columnCount, int timestampIndex, String contains) throws Exception {
-        assertMetaConstructorFailure(names, types, columnCount, timestampIndex, contains, FilesFacadeImpl.INSTANCE.getPageSize());
-        assertMetaConstructorFailure(names, types, columnCount, timestampIndex, contains, 65536);
+        assertMetaConstructorFailure(names, types, columnCount, timestampIndex, contains, FilesFacadeImpl.INSTANCE.getPageSize(), -1);
+        assertMetaConstructorFailure(names, types, columnCount, timestampIndex, contains, 65536, -1);
     }
 
-    private void assertMetaConstructorFailure(String[] names, int[] types, int columnCount, int timestampIndex, String contains, long pageSize) throws Exception {
+    private void assertMetaConstructorFailure(String[] names, int[] types, int columnCount, int timestampIndex, String contains, long pageSize, long trimSize) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path()) {
                 path.of(root).concat("x");
@@ -168,7 +265,6 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 }
 
                 try (MemoryMA mem = Vm.getMAInstance()) {
-
                     mem.of(FilesFacadeImpl.INSTANCE, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), pageSize, MemoryTag.MMAP_DEFAULT);
 
                     mem.putInt(columnCount);
@@ -186,6 +282,15 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                     for (int i = 0; i < names.length; i++) {
                         mem.putStr(names[i]);
                     }
+                }
+
+                if (trimSize > -1) {
+                    FilesFacade ff = FilesFacadeImpl.INSTANCE;
+                    path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
+                    long fd = ff.openRW(path);
+                    assert fd > -1;
+                    ff.truncate(fd, trimSize);
+                    ff.close(fd);
                 }
 
                 try {
@@ -217,7 +322,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                     }
 
                     try {
-                        metadata.createTransitionIndex();
+                        metadata.createTransitionIndex(0);
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "Invalid metadata at ");
                     }
