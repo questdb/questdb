@@ -3897,16 +3897,9 @@ create table tab as (
     @Test
     public void testSlowClient() throws Exception {
         assertMemoryLeak(() -> {
-
+            final int delayedAttempts = 1000;
             DelayingNetworkFacade nf = new DelayingNetworkFacade();
-            int idleSendCountBeforeGivingUp = 10_000;
             PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
-
-                @Override
-                public int getIdleSendCountBeforeGivingUp() {
-                    return idleSendCountBeforeGivingUp;
-                }
-
                 @Override
                 public NetworkFacade getNetworkFacade() {
                     return nf;
@@ -3925,7 +3918,7 @@ create table tab as (
             ) {
                 String sql = "SELECT * FROM long_sequence(100) x";
 
-                nf.startDelaying(idleSendCountBeforeGivingUp);
+                nf.startDelaying(delayedAttempts);
 
                 boolean hasResultSet = statement.execute(sql);
                 // Temporary log showing a value of hasResultSet, as it is currently impossible to stop the server and complete the test.
@@ -3938,16 +3931,9 @@ create table tab as (
     @Test
     public void testSlowClient2() throws Exception {
         assertMemoryLeak(() -> {
-
+            final int delayedAttempts = 1000;
             DelayingNetworkFacade nf = new DelayingNetworkFacade();
-            int idleSendCountBeforeGivingUp = 10_000;
             PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
-
-                @Override
-                public int getIdleSendCountBeforeGivingUp() {
-                    return idleSendCountBeforeGivingUp;
-                }
-
                 @Override
                 public NetworkFacade getNetworkFacade() {
                     return nf;
@@ -3984,7 +3970,7 @@ create table tab as (
                         "    FROM sensors)\n" +
                         "ON readings.sensorId = sensId";
 
-                nf.startDelaying(idleSendCountBeforeGivingUp);
+                nf.startDelaying(delayedAttempts);
 
                 boolean hasResultSet = statement.execute(sql);
                 // Temporary log showing a value of hasResultSet, as it is currently impossible to stop the server and complete the test.
