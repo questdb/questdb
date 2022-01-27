@@ -12,9 +12,11 @@ steps:
       scriptPath: $(Build.SourcesDirectory)/ci/coverage.sh
       args: $(System.PullRequest.PullRequestNumber)
       failOnStandardError: true
-    condition:
-      and(and(eq(variables['os'], 'Linux'), eq(variables['jdk'], '1.11')),
-      not(eq(variables['System.PullRequest.PullRequestId'], '')) )
+    condition: |
+      and(
+        eq(variables['testset'], 'coverage'),
+        eq(variables['SOURCE_CODE_CHANGED'], 'true')
+      )
   - task: Cache@2
     inputs:
       key: '"questdb_main" | "maven"'
@@ -45,34 +47,7 @@ steps:
     timeoutInMinutes: 55
     condition: |
       and(
-           and(
-              and( eq(variables['os'], 'Linux'), eq(variables['jdk'], '1.11') ),
-              not( eq(variables['System.PullRequest.PullRequestId'], '') )
-          ),
-          eq(variables['SOURCE_CODE_CHANGED'], 'true')
-      )
-  - task: Maven@3
-    displayName: "Run tests with Maven (all)"
-    inputs:
-      mavenPomFile: "pom.xml"
-      mavenOptions: "$(MAVEN_OPTS)"
-      goals: "clean test"
-      options:
-        "--batch-mode --quiet -P build-web-console
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
-      jdkVersionOption: $(jdk)
-    timeoutInMinutes: 55
-    condition: |
-      and(
-        not(
-          or(
-            and(
-              eq(variables['os'], 'Linux'),
-              eq(variables['jdk'], '1.11')
-            ),
-            eq(variables['os'], 'Windows')
-          )
-        ),
+        eq(variables['testset'], 'coverage'),
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
   - task: Maven@3
@@ -125,11 +100,8 @@ steps:
       DIFF_CONVER_THRESHOLD_PCT: $(DIFF_CONVER_THRESHOLD_PCT)
     condition: |
       and(
-          and(
-             and( eq(variables['os'], 'Linux'), eq(variables['jdk'], '1.11') ),
-             not( eq(variables['System.PullRequest.PullRequestId'], '') )
-         ),
-         eq(variables['SOURCE_CODE_CHANGED'], 'true')
+        eq(variables['testset'], 'coverage'),
+        eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
   - task: ArchiveFiles@2
     displayName: "Tests failed -- Compress logs"
