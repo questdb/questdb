@@ -1467,7 +1467,7 @@ public class TableReaderTest extends AbstractCairoTest {
             Thread readerThread = new Thread(() -> {
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                     start.await();
-                    int colAdded = -1, newColsAdded;
+                    int colAdded = 0, newColsAdded;
                     while (colAdded < totalColAddCount) {
                         if (colAdded < (newColsAdded = columnsAdded.get())) {
                             reader.reload();
@@ -1487,13 +1487,16 @@ public class TableReaderTest extends AbstractCairoTest {
 
             writerThread.join();
             readerThread.join();
-            Assert.assertTrue(reloadCount.get() >= totalColAddCount / 10);
+
+            if (exceptions.size() != 0) {
+                for (Throwable ex : exceptions) {
+                    ex.printStackTrace();
+                }
+                Assert.fail();
+            }
+            Assert.assertTrue(reloadCount.get() > 0);
             LOG.infoW().$("total reload count ").$(reloadCount.get()).$();
         });
-
-        if (exceptions.size() != 0) {
-            throw exceptions.poll();
-        }
     }
 
     @Test
