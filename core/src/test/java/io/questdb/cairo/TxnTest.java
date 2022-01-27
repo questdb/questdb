@@ -176,7 +176,7 @@ public class TxnTest extends AbstractCairoTest {
                         path.of(engine.getConfiguration().getRoot()).concat(tableName);
                         txReader.ofRO(path, PartitionBy.HOUR);
                         MicrosecondClock microClock = engine.getConfiguration().getMicrosecondClock();
-                        long duration = 500000;
+                        long duration = 5_000_000;
                         start.await();
                         while (done.get() == 0 || partitionCountCheck.get() != txReader.getPartitionCount() - 1) {
                             TableUtils.safeReadTxn(txReader, microClock, duration);
@@ -283,7 +283,7 @@ public class TxnTest extends AbstractCairoTest {
                         path.of(engine.getConfiguration().getRoot()).concat(tableName);
                         txReader.ofRO(path, PartitionBy.HOUR);
                         MicrosecondClock microClock = engine.getConfiguration().getMicrosecondClock();
-                        long duration = 500000;
+                        long duration = 5_000_000;
                         start.await();
                         while (done.get() == 0 || partitionCountCheck.get() != txReader.getPartitionCount() - 1) {
                             TableUtils.safeReadTxn(txReader, microClock, duration);
