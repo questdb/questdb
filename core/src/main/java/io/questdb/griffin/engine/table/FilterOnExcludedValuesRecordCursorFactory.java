@@ -42,6 +42,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     private final ObjList<Function> keyExcludedValueFunctions = new ObjList<>();
     private final ObjList<CharSequence> includedValues = new ObjList<>();
     private final ObjList<CharSequence> excludedValues = new ObjList<>();
+    private final boolean dynamicExcludedValues;
     private final boolean followedOrderByAdvice;
     private final int indexDirection;
     private final int maxSymbolNotEqualsCount;
@@ -63,6 +64,14 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
         this.indexDirection = indexDirection;
         this.maxSymbolNotEqualsCount = maxSymbolNotEqualsCount;
         final int nKeyValues = keyValues.size();
+        boolean dynamicValues = false;
+        for (int i = 0; i < nKeyValues; i++) {
+            if (!keyValues.getQuick(i).isConstant()) {
+                dynamicValues = true;
+                break;
+            }
+        }
+        this.dynamicExcludedValues = dynamicValues;
         this.keyExcludedValueFunctions.addAll(keyValues);
         this.columnIndex = columnIndex;
         this.filter = filter;
@@ -94,39 +103,64 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     }
 
     public void recalculateIncludedValues(TableReader tableReader) {
-        excludedValues.clear();
+        boolean excludeNull = false;
         for (int i = 0, n = keyExcludedValueFunctions.size(); i < n; i++) {
-            excludedValues.add(Chars.toString(keyExcludedValueFunctions.getQuick(i).getStr(null)));
+            final CharSequence value = keyExcludedValueFunctions.getQuick(i).getStr(null);
+            if (value != null) {
+                excludedValues.add(Chars.toString(value));
+            } else {
+                excludeNull = true;
+            }
         }
+
+        if (dynamicExcludedValues) {
+            // In case of bind variable excluded values that may change between
+            // query executions the sets have to be subtracted from scratch.
+            includedValues.clear();
+            cursorFactories.clear();
+        }
+
         final SymbolMapReaderImpl symbolMapReader = (SymbolMapReaderImpl) tableReader.getSymbolMapReader(columnIndex);
         for (int i = 0, n = symbolMapReader.getSymbolCount(); i < n; i++) {
             final CharSequence symbol = symbolMapReader.valueOf(i);
             if (excludedValues.indexOf(symbol) < 0 && includedValues.indexOf(symbol) < 0) {
-                final RowCursorFactory rowCursorFactory;
                 int symbolKey = symbolMapReader.keyOf(symbol);
-                if (filter == null) {
-                    rowCursorFactory = new SymbolIndexRowCursorFactory(
-                            columnIndex,
-                            symbolKey,
-                            cursorFactories.size() == 0,
-                            indexDirection,
-                            null
-                    );
-                } else {
-                    rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(
-                            columnIndex,
-                            symbolKey,
-                            filter,
-                            cursorFactories.size() == 0,
-                            indexDirection,
-                            columnIndexes,
-                            null
-                    );
-                }
                 includedValues.add(Chars.toString(symbol));
-                cursorFactories.add(rowCursorFactory);
+                addRowCursorFactory(symbolKey);
             }
         }
+
+        // We need to include null values to the result set to follow
+        // the behavior of the NOT IN() SQL function.
+        if (!excludeNull && symbolMapReader.containsNullValue()) {
+            addRowCursorFactory(SymbolTable.VALUE_IS_NULL);
+        }
+
+        excludedValues.clear();
+    }
+
+    private void addRowCursorFactory(int symbolKey) {
+        final RowCursorFactory rowCursorFactory;
+        if (filter == null) {
+            rowCursorFactory = new SymbolIndexRowCursorFactory(
+                    columnIndex,
+                    symbolKey,
+                    cursorFactories.size() == 0,
+                    indexDirection,
+                    null
+            );
+        } else {
+            rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(
+                    columnIndex,
+                    symbolKey,
+                    filter,
+                    cursorFactories.size() == 0,
+                    indexDirection,
+                    columnIndexes,
+                    null
+            );
+        }
+        cursorFactories.add(rowCursorFactory);
     }
 
     @Override
