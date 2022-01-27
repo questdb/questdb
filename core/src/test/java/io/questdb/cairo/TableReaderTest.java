@@ -1439,7 +1439,7 @@ public class TableReaderTest extends AbstractCairoTest {
             AtomicInteger done = new AtomicInteger();
             AtomicInteger columnsAdded = new AtomicInteger();
             AtomicInteger reloadCount = new AtomicInteger();
-            int totalColAddCount = Os.type == Os.LINUX_ARM64 ? 100 : 10;
+            int totalColAddCount = Os.type == Os.LINUX_ARM64 || Os.type == Os.LINUX_AMD64 ? 100 : 10;
 
             String tableName = "tbl_meta_test";
             createTable(tableName, PartitionBy.DAY);
@@ -1487,7 +1487,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             writerThread.join();
             readerThread.join();
-            Assert.assertTrue(reloadCount.get() > totalColAddCount / 10);
+            Assert.assertTrue(reloadCount.get() >= totalColAddCount / 10);
             LOG.infoW().$("total reload count ").$(reloadCount.get()).$();
         });
 
