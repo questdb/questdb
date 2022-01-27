@@ -74,6 +74,7 @@ public class AbstractCairoTest {
     public TestName testName = new TestName();
     public static long writerAsyncCommandBusyWaitTimeout = -1;
     public static long writerAsyncCommandMaxTimeout = -1;
+    public static long spinLockTimeoutUs = -1;
 
     @BeforeClass
     public static void setUpStatic() {
@@ -115,6 +116,14 @@ public class AbstractCairoTest {
             public long getCommitLag() {
                 if (configOverrideCommitLag >= 0) return configOverrideCommitLag;
                 return super.getCommitLag();
+            }
+
+            @Override
+            public long getSpinLockTimeoutUs() {
+                if (spinLockTimeoutUs > -1) {
+                    return spinLockTimeoutUs;
+                }
+                return 5_000_000;
             }
 
             @Override
@@ -203,6 +212,7 @@ public class AbstractCairoTest {
         writerAsyncCommandBusyWaitTimeout = -1;
         writerAsyncCommandMaxTimeout = -1;
         pageFrameMaxSize = -1;
+        spinLockTimeoutUs = -1;
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {

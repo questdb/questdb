@@ -72,6 +72,12 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
         this.memoryTag = memoryTag;
         openFile(ff, name);
+        if (size < 0) {
+            size = ff.length(fd);
+            if (size < 0) {
+                throw CairoException.instance(ff.errno()).put("Could not get length: ").put(name);
+            }
+        }
         map(ff, name, size);
     }
 
@@ -95,10 +101,6 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     private void openFile(FilesFacade ff, LPSZ name) {
         close();
         this.ff = ff;
-        boolean exists = ff.exists(name);
-        if (!exists) {
-            throw CairoException.instance(0).put("File not found: ").put(name);
-        }
         fd = TableUtils.openRO(ff, name, LOG);
     }
 
