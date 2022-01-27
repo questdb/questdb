@@ -59,4 +59,6 @@ public interface LineUdpReceiverConfiguration {
     int ownThreadAffinity();
 
     LineProtoTimestampAdapter getTimestampAdapter();
+
+    int getDefaultPartitionBy();
 }
