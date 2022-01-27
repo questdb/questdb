@@ -63,6 +63,7 @@ public interface CompiledQuery {
      * If execution happened async, QueryFuture.await() method should be called for blocking wait
      * or QueryFuture.await(long) for wait with specified timeout.
      * @param eventSubSeq - temporary SCSequence instance to track completion of async ALTER command
+     * @return query future that can be used to monitor query progress
      * @throws SqlException - throws exception if command execution fails
      */
     QueryFuture execute(SCSequence eventSubSeq) throws SqlException;

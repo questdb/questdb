@@ -112,13 +112,13 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
-    public void skipTo(long rowNumber) {
+    public void skipTo(long rowCount) {
         if (!dataFrameCursor.supportsRandomAccess() || filter != null) {
-            super.skipTo(rowNumber);
+            super.skipTo(rowCount);
             return;
         }
 
-        DataFrame dataFrame = dataFrameCursor.skipTo(rowNumber);
+        DataFrame dataFrame = dataFrameCursor.skipTo(rowCount);
         if (dataFrame != null) {
             rowCursor = rowCursorFactory.getCursor(dataFrame);
             recordA.jumpTo(dataFrame.getPartitionIndex(), dataFrame.getRowLo()); //move to partition, rowlo doesn't matter

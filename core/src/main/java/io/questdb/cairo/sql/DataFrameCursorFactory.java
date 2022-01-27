@@ -46,7 +46,9 @@ public interface DataFrameCursorFactory extends Sinkable, Closeable {
     }
 
     /**
-     * Returns 0 for ASC, 1 for DESC
+     * Order of records in the data frame in regard to timestamp.
+     *
+     * @return 0 for ascending and 1 for descending
      */
     int getOrder();
 
