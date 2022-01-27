@@ -35,13 +35,24 @@
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
         (JNIEnv *e, jclass cls, jlong lpszFrom, jlong lpszTo) {
-    const char *from = (const char *) lpszFrom;
-    const char *to = (const char *) lpszTo;
-    if (CopyFile(from, to, TRUE) == FALSE) {
-        SaveLastError();
-        return -1;
+
+    int fromLen = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszFrom, -1, NULL, 0);
+    int toLen = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszTo, -1, NULL, 0);
+    if (fromLen > 0 && toLen) {
+        wchar_t fromBuf[fromLen];
+        wchar_t toBuf[toLen];
+
+        MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszFrom, -1, fromBuf, fromLen);
+        MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszTo, -1, toBuf, toLen);
+
+        if (CopyFileW(fromBuf, toBuf, TRUE) == FALSE) {
+            SaveLastError();
+            return -1;
+        }
+        return 1;
     }
-    return 1;
+    // invalid UTF8 paths
+    return -1;
 }
 
 int set_file_pos(HANDLE fd, jlong offset) {
@@ -49,7 +60,7 @@ int set_file_pos(HANDLE fd, jlong offset) {
         return 1;
     }
     long highPos = (long) (offset >> 32);
-    int r = SetFilePointer(fd, (DWORD) offset, &highPos, FILE_BEGIN) != INVALID_SET_FILE_POINTER;
+    int r = SetFilePointer(fd, (LONG) offset, &highPos, FILE_BEGIN) != INVALID_SET_FILE_POINTER;
     if (r == INVALID_SET_FILE_POINTER) {
         SaveLastError();
     }
@@ -57,7 +68,7 @@ int set_file_pos(HANDLE fd, jlong offset) {
 }
 
 HANDLE openUtf8(jlong lpszName, DWORD dwDesiredAccess, DWORD dwShareMode, DWORD dwCreationDisposition) {
-    size_t len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, NULL, 0);
+    int len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, NULL, 0);
     if (len > 0) {
         wchar_t buf[len];
         MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, buf, len);
@@ -157,7 +168,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_exists0(JNIEnv *e, jclass cl, jlong lpszName) {
-    size_t len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, NULL, 0);
+    int len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, NULL, 0);
     if (len > 0) {
         wchar_t buf[len];
         MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, buf, len);
@@ -437,7 +448,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
     return (jlong) address;
 }
 
-static inline jlong _io_questdb_std_Files_mremap0
+static inline jlong internal_mremap0
         (jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
     jlong newAddress = Java_io_questdb_std_Files_mmap0((JNIEnv *) NULL, (jclass) NULL, fd, newLen, offset, flags, 0);
     // Note that unmapping will not flush dirty pages because the mapping to address is shared with newAddress
@@ -447,12 +458,12 @@ static inline jlong _io_questdb_std_Files_mremap0
 
 JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_Files_mremap0
         (jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
-    return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
+    return internal_mremap0(fd, address, previousLen, newLen, offset, flags);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mremap0
         (JNIEnv *e, jclass cl, jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
-    return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
+    return internal_mremap0(fd, address, previousLen, newLen, offset, flags);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getPageSize
@@ -481,7 +492,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_remove
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rmdir
         (JNIEnv *e, jclass cl, jlong lpszName) {
-    size_t len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, NULL, 0);
+    int len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, NULL, 0);
     if (len > 0) {
         wchar_t buf[len];
         MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, buf, len);
@@ -640,7 +651,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rename(JNIEnv *e, jclass cl, jlong lpszOld, jlong lpszNew) {
 
-    size_t len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszOld, -1, NULL, 0);
+    int len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszOld, -1, NULL, 0);
     if (len > 0) {
         wchar_t buf1[len];
         MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszOld, -1, buf1, len);
