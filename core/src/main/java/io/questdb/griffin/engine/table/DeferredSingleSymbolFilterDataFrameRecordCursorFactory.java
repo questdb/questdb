@@ -38,7 +38,7 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
     private final SingleSymbolFilter symbolFilter;
     private final IntList columnIndexes;
     private final IntList columnSizes;
-    private final CharSequence symbolValue;
+    private final Function symbolFunc;
     private int symbolKey;
     private boolean convertedToFrame;
     private TableReaderPageFrameCursor pageFrameCursor;
@@ -46,7 +46,7 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
     public DeferredSingleSymbolFilterDataFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             int tableSymColIndex,
-            CharSequence symbolValue,
+            Function symbolFunc,
             RowCursorFactory rowCursorFactory,
             RecordMetadata metadata,
             DataFrameCursorFactory dataFrameCursorFactory,
@@ -65,7 +65,7 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
                 columnIndexes,
                 columnSizes
         );
-        this.symbolValue = symbolValue;
+        this.symbolFunc = symbolFunc;
         this.symbolKey = SymbolTable.VALUE_NOT_FOUND;
         this.columnIndexes = columnIndexes;
         this.symbolColumnIndex = columnIndexes.indexOf(tableSymColIndex, 0, columnIndexes.size());
@@ -115,8 +115,9 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
 
         pageFrameCursor.of(dataFrameCursor);
         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-            StaticSymbolTable symbolMapReader = pageFrameCursor.getSymbolTable(symbolColumnIndex);
-            this.symbolKey = symbolMapReader.keyOf(symbolValue);
+            final CharSequence symbol = symbolFunc.getStr(null);
+            final StaticSymbolTable symbolMapReader = pageFrameCursor.getSymbolTable(symbolColumnIndex);
+            this.symbolKey = symbolMapReader.keyOf(symbol);
             if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
                 this.symbolKey = TableUtils.toIndexKey(symbolKey);
             }

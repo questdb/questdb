@@ -39,7 +39,7 @@
         <test.exclude>None</test.exclude>
     </properties>
 
-    <version>6.1.4-SNAPSHOT</version>
+    <version>6.2.1-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>

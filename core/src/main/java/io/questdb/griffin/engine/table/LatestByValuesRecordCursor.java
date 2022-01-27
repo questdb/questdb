@@ -29,17 +29,25 @@ import io.questdb.cairo.sql.DataFrame;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor {
 
     private final int columnIndex;
     private final IntIntHashMap map;
     private final IntHashSet symbolKeys;
+    private final IntHashSet deferredSymbolKeys;
 
-    public LatestByValuesRecordCursor(int columnIndex, DirectLongList rows, IntHashSet symbolKeys, @NotNull IntList columnIndexes) {
+    public LatestByValuesRecordCursor(
+            int columnIndex,
+            DirectLongList rows,
+            @NotNull IntHashSet symbolKeys,
+            @Nullable IntHashSet deferredSymbolKeys,
+            @NotNull IntList columnIndexes) {
         super(rows, columnIndexes);
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;
+        this.deferredSymbolKeys = deferredSymbolKeys;
         this.map = new IntIntHashMap(Numbers.ceilPow2(symbolKeys.size()));
     }
 
@@ -66,6 +74,14 @@ class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor {
     }
 
     private void prepare() {
+        if (deferredSymbolKeys != null) {
+            // We need to clean up the map when there are deferred keys since
+            // they may contain bind variables.
+            map.clear();
+            for (int i = 0, n = deferredSymbolKeys.size(); i < n; i++) {
+                map.put(deferredSymbolKeys.get(i), 0);
+            }
+        }
         for (int i = 0, n = symbolKeys.size(); i < n; i++) {
             map.put(symbolKeys.get(i), 0);
         }
