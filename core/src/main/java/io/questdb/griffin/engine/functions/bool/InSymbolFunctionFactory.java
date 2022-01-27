@@ -86,7 +86,8 @@ public class InSymbolFunctionFactory implements FunctionFactory {
             }
         }
         SymbolFunction var = (SymbolFunction) args.getQuick(0);
-        if (var.isConstant()) {
+        if (var.isConstant() && deferredValues == null) {
+            // Fast path for all constants case.
             return BooleanConstant.of(set.contains(var.getSymbol(null)));
         }
         return new Func(var, set, deferredValues);
