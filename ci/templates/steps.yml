@@ -5,7 +5,7 @@ steps:
     submodules: false
   - bash: sudo sysctl -w fs.file-max=500000
     displayName: "Increase file count on Linux"
-    condition: eq(variables['Agent.OS'], 'Linux')
+    condition: eq(variables['os'], 'Linux')
   - task: ShellScript@2
     displayName: "List of coverage classes PR build"
     inputs:
@@ -13,7 +13,7 @@ steps:
       args: $(System.PullRequest.PullRequestNumber)
       failOnStandardError: true
     condition:
-      and(and(eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11')),
+      and(and(eq(variables['os'], 'Linux'), eq(variables['jdk'], '1.11')),
       not(eq(variables['System.PullRequest.PullRequestId'], '')) )
   - task: Cache@2
     inputs:
@@ -44,13 +44,13 @@ steps:
     condition: |
       and(
            and(
-              and( eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11') ),
+              and( eq(variables['os'], 'Linux'), eq(variables['jdk'], '1.11') ),
               not( eq(variables['System.PullRequest.PullRequestId'], '') )
           ),
           eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
   - task: Maven@3
-    displayName: "Run tests with Maven"
+    displayName: "Run tests with Maven (all)"
     inputs:
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
@@ -63,8 +63,48 @@ steps:
     condition: |
       and(
         not(
-          and( eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11') )
+          or(
+            and(
+              eq(variables['os'], 'Linux'),
+              eq(variables['jdk'], '1.11')
+            ),
+            eq(variables['os'], 'Windows')
+          )
         ),
+        eq(variables['SOURCE_CODE_CHANGED'], 'true')
+      )
+  - task: Maven@3
+    displayName: "Run tests with Maven (non griffin)"
+    inputs:
+      mavenPomFile: "pom.xml"
+      mavenOptions: "$(MAVEN_OPTS)"
+      goals: "clean test"
+      options:
+        "--batch-mode --quiet -P build-web-console
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false
+        -Dtest.exclude=**/griffin/** -DfailIfNoTests=false"
+      jdkVersionOption: $(jdk)
+    timeoutInMinutes: 55
+    condition: |
+      and(
+        eq(variables['testset'], 'non-griffin'),
+        eq(variables['SOURCE_CODE_CHANGED'], 'true')
+      )
+  - task: Maven@3
+    displayName: "Run tests with Maven (griffin)"
+    inputs:
+      mavenPomFile: "pom.xml"
+      mavenOptions: "$(MAVEN_OPTS)"
+      goals: "clean test"
+      options:
+        "--batch-mode --quiet -P build-web-console
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false
+        -Dtest=griffin.** -DfailIfNoTests=false"
+      jdkVersionOption: $(jdk)
+    timeoutInMinutes: 55
+    condition: |
+      and(
+        eq(variables['testset'], 'griffin'),
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
   - bash:
@@ -86,7 +126,7 @@ steps:
     condition: |
       and(
           and(
-             and( eq(variables['Agent.OS'], 'Linux'), eq(variables['jdk'], '1.11') ),
+             and( eq(variables['os'], 'Linux'), eq(variables['jdk'], '1.11') ),
              not( eq(variables['System.PullRequest.PullRequestId'], '') )
          ),
          eq(variables['SOURCE_CODE_CHANGED'], 'true')

@@ -75,6 +75,7 @@ public class AbstractCairoTest {
 
     @Rule
     public TestName testName = new TestName();
+    public static long spinLockTimeoutUs = -1;
 
     @BeforeClass
     public static void setUpStatic() {
@@ -124,6 +125,14 @@ public class AbstractCairoTest {
             @Override
             public CharSequence getInputRoot() {
                 return inputRoot;
+            }
+
+            @Override
+            public long getSpinLockTimeoutUs() {
+                if (spinLockTimeoutUs > -1) {
+                    return spinLockTimeoutUs;
+                }
+                return 5_000_000;
             }
 
             @Override
@@ -204,6 +213,7 @@ public class AbstractCairoTest {
         writerAsyncCommandBusyWaitTimeout = -1;
         writerAsyncCommandMaxTimeout = -1;
         pageFrameMaxSize = -1;
+        spinLockTimeoutUs = -1;
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
