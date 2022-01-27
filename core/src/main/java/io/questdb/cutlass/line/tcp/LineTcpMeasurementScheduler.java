@@ -285,11 +285,14 @@ class LineTcpMeasurementScheduler implements Closeable {
 
                 final int idleTudKeyIndex = idleTableUpdateDetailsUtf16.keyIndex(tableNameUtf16);
                 if (idleTudKeyIndex < 0) {
-                    LOG.info().$("idle table going active [tableName=").$(tableNameUtf16).I$();
                     tab = idleTableUpdateDetailsUtf16.valueAt(idleTudKeyIndex);
+                    LOG.info().$("idle table going active [tableName=").$(tab.getTableNameUtf16()).I$();
                     if (tab.getWriter() == null) {
                         tab.closeNoLock();
-                        tab = unsafeAssignTableToWriterThread(tudKeyIndex, tableNameUtf16);
+                        // Use actual table name from the "details" to avoid case mismatches in the
+                        // WriterPool. There was an error in the LineTcpReceiverFuzzTest, which helped
+                        // to identify the cause
+                        tab = unsafeAssignTableToWriterThread(tudKeyIndex, tab.getTableNameUtf16());
                     } else {
                         idleTableUpdateDetailsUtf16.removeAt(idleTudKeyIndex);
                         tableUpdateDetailsUtf16.putAt(tudKeyIndex, tab.getTableNameUtf16(), tab);

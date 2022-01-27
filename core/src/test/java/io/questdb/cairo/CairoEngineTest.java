@@ -204,6 +204,7 @@ public class CairoEngineTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             createX();
 
+            spinLockTimeoutUs = 1000;
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 assertReader(engine, "x");
                 assertWriter(engine, "x");

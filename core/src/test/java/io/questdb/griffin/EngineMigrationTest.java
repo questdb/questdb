@@ -32,7 +32,6 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -44,7 +43,6 @@ import java.net.URL;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
-@Ignore
 public class EngineMigrationTest extends AbstractGriffinTest {
 
     public static void replaceDbContent(String path) throws IOException {
@@ -72,44 +70,50 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
     @Test
     public void test416() throws IOException, SqlException {
-        doMigration("/migration/data_416.zip", false, false);
+        doMigration("/migration/data_416.zip", false, false, false);
     }
 
     @Test
     public void test417() throws IOException, SqlException {
-        doMigration("/migration/data_417.zip", true, false);
+        doMigration("/migration/data_417.zip", true, false, false);
     }
 
     @Test
     public void test419() throws IOException, SqlException {
-        doMigration("/migration/data_419.zip", true, false);
+        doMigration("/migration/data_419.zip", true, false, false);
     }
 
     @Test
     public void test420() throws IOException, SqlException {
-        doMigration("/migration/data_420.zip", true, false);
+        doMigration("/migration/data_420.zip", true, false, false);
     }
 
     @Test
     public void test421() throws IOException, SqlException {
-        doMigration("/migration/data_421.zip", true, true);
+        doMigration("/migration/data_421.zip", true, true, false);
     }
 
     @Test
     public void test422() throws IOException, SqlException {
-        doMigration("/migration/data_422.zip", true, true);
+        doMigration("/migration/data_422.zip", true, true, false);
     }
 
     @Test
     public void test423() throws IOException, SqlException {
-        doMigration("/migration/data_423.zip", true, true);
+        doMigration("/migration/data_423.zip", true, true, false);
     }
 
     @Test
+    public void test424() throws IOException, SqlException {
+        doMigration("/migration/data_424.zip", true, true, true);
+    }
+
+    @Test
+    @Ignore
     public void testGenerateTables() throws SqlException, NumericException {
         generateMigrationTables();
         engine.releaseAllWriters();
-        assertData(true);
+        assertData(true, true);
     }
 
     private static void copyInputStream(byte[] buffer, File out, InputStream is) throws IOException {
@@ -176,7 +180,85 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "127\tY\t19592\t224361\t37963\t0.6930\t0.006817672510656014\t1975-11-29T09:47:45.706Z\t1969-12-31T23:59:56.186242Z\t\t\ttrue\taaa\t0x88926dd483caaf4031096402997f21c833b142e887fa119e380dc9b54493ff70\t00000000 23 c3 9d 75 26 f2 0d b5 7a 3f\t2153-10-17T15:10:00.000000Z\n");
     }
 
-    private void assertData(boolean withO3) throws SqlException {
+    private void assertColTops() throws SqlException {
+        String part1Expected = "x\tm\tts\ty\n" +
+                "1\ta\t1970-01-01T00:03:20.000000Z\tNaN\n" +
+                "2\tb\t1970-08-20T11:36:40.000000Z\tNaN\n" +
+                "3\tc\t1971-04-08T23:10:00.000000Z\tNaN\n" +
+                "4\tc\t1971-11-26T10:43:20.000000Z\tNaN\n" +
+                "5\tb\t1972-07-14T22:16:40.000000Z\tNaN\n" +
+                "6\t\t1973-03-03T09:50:00.000000Z\tNaN\n" +
+                "7\tc\t1973-10-20T21:23:20.000000Z\tNaN\n" +
+                "8\t\t1974-06-09T08:56:40.000000Z\tNaN\n" +
+                "9\tc\t1975-01-26T20:30:00.000000Z\tNaN\n" +
+                "10\tc\t1975-09-15T08:03:20.000000Z\tNaN\n" +
+                "11\tb\t1976-05-03T19:36:40.000000Z\tNaN\n" +
+                "12\tb\t1976-12-21T07:10:00.000000Z\tNaN\n" +
+                "13\tb\t1977-08-09T18:43:20.000000Z\tNaN\n" +
+                "14\t\t1978-03-29T06:16:40.000000Z\tNaN\n" +
+                "15\tb\t1978-11-15T17:50:00.000000Z\tNaN\n";
+
+        String part2Expected = "x\tm\tts\ty\n" +
+                "16\te\t1979-07-05T05:23:20.000000Z\t16\n" +
+                "17\td\t1980-02-21T16:56:40.000000Z\t17\n" +
+                "18\t\t1980-10-10T04:30:00.000000Z\t18\n" +
+                "19\te\t1981-05-29T16:03:20.000000Z\t19\n" +
+                "20\te\t1982-01-16T03:36:40.000000Z\t20\n" +
+                "21\tf\t1982-09-04T15:10:00.000000Z\t21\n" +
+                "22\tf\t1983-04-24T02:43:20.000000Z\t22\n" +
+                "23\te\t1983-12-11T14:16:40.000000Z\t23\n" +
+                "24\td\t1984-07-30T01:50:00.000000Z\t24\n" +
+                "25\tf\t1985-03-18T13:23:20.000000Z\t25\n" +
+                "26\te\t1985-11-05T00:56:40.000000Z\t26\n" +
+                "27\t\t1986-06-24T12:30:00.000000Z\t27\n" +
+                "28\te\t1987-02-11T00:03:20.000000Z\t28\n" +
+                "29\t\t1987-09-30T11:36:40.000000Z\t29\n" +
+                "30\te\t1988-05-18T23:10:00.000000Z\t30\n";
+
+        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_year where y = null", sink, part1Expected);
+        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_year where y != null", sink, part2Expected);
+
+        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_none where y = null", sink, part1Expected);
+        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_none where y != null", sink, part2Expected);
+
+        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_день where день = null", sink,
+                "x\tm\tts\tдень\n" +
+                        "1\tc\t1970-01-01T00:33:20.000000Z\tNaN\n" +
+                        "2\tb\t1970-01-01T06:06:40.000000Z\tNaN\n" +
+                        "3\tb\t1970-01-01T11:40:00.000000Z\tNaN\n" +
+                        "4\tc\t1970-01-01T17:13:20.000000Z\tNaN\n" +
+                        "5\tc\t1970-01-01T22:46:40.000000Z\tNaN\n" +
+                        "6\tc\t1970-01-02T04:20:00.000000Z\tNaN\n" +
+                        "7\tb\t1970-01-02T09:53:20.000000Z\tNaN\n" +
+                        "8\t\t1970-01-02T15:26:40.000000Z\tNaN\n" +
+                        "9\t\t1970-01-02T21:00:00.000000Z\tNaN\n" +
+                        "10\tc\t1970-01-03T02:33:20.000000Z\tNaN\n" +
+                        "11\tb\t1970-01-03T08:06:40.000000Z\tNaN\n" +
+                        "12\tb\t1970-01-03T13:40:00.000000Z\tNaN\n" +
+                        "13\tb\t1970-01-03T19:13:20.000000Z\tNaN\n" +
+                        "14\tb\t1970-01-04T00:46:40.000000Z\tNaN\n" +
+                        "15\t\t1970-01-04T06:20:00.000000Z\tNaN\n");
+
+        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_день where день != null", sink,
+                "x\tm\tts\tдень\n" +
+                        "16\te\t1970-01-03T07:36:40.000000Z\t16\n" +
+                        "17\tf\t1970-01-03T08:10:00.000000Z\t17\n" +
+                        "18\te\t1970-01-03T08:43:20.000000Z\t18\n" +
+                        "19\t\t1970-01-03T09:16:40.000000Z\t19\n" +
+                        "20\te\t1970-01-03T09:50:00.000000Z\t20\n" +
+                        "21\td\t1970-01-03T10:23:20.000000Z\t21\n" +
+                        "22\td\t1970-01-03T10:56:40.000000Z\t22\n" +
+                        "23\tf\t1970-01-03T11:30:00.000000Z\t23\n" +
+                        "24\t\t1970-01-03T12:03:20.000000Z\t24\n" +
+                        "25\td\t1970-01-03T12:36:40.000000Z\t25\n" +
+                        "26\te\t1970-01-03T13:10:00.000000Z\t26\n" +
+                        "27\te\t1970-01-03T13:43:20.000000Z\t27\n" +
+                        "28\tf\t1970-01-03T14:16:40.000000Z\t28\n" +
+                        "29\te\t1970-01-03T14:50:00.000000Z\t29\n" +
+                        "30\td\t1970-01-03T15:23:20.000000Z\t30\n");
+    }
+
+    private void assertData(boolean withO3, boolean withColTops) throws SqlException {
         assertNoneNts();
         assertNone();
         assertDay();
@@ -186,6 +268,9 @@ public class EngineMigrationTest extends AbstractGriffinTest {
             assertDayO3();
             assertMonthO3();
             assertYearO3();
+        }
+        if (withColTops) {
+            assertColTops();
         }
     }
 
@@ -1005,13 +1090,13 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 " rnd_bin(2,10, 2) o";
     }
 
-    private void doMigration(String dataZip, boolean freeTableId, boolean withO3) throws IOException, SqlException {
+    private void doMigration(String dataZip, boolean freeTableId, boolean withO3, boolean withColTops) throws IOException, SqlException {
         if (freeTableId) {
             engine.freeTableId();
         }
         replaceDbContent(dataZip);
         EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, true);
-        assertData(withO3);
+        assertData(withO3, withColTops);
         appendData();
         assertAppendedData();
     }
@@ -1154,5 +1239,63 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
             w.commit();
         }
+
+        compiler.compile(
+                "create table t_col_top_year as (" +
+                        "select " +
+                        " x" +
+                        ", rnd_symbol('a', 'b', 'c', null) m" +
+                        ", timestamp_sequence(200000000L, 20000000000000L) ts" +
+                        " from long_sequence(15)," +
+                        "), index(m) timestamp(ts) partition by YEAR",
+                sqlExecutionContext
+        );
+
+        compiler.compile("alter table t_col_top_year add column y long", sqlExecutionContext).execute(null).await();
+        compiler.compile("insert into t_col_top_year " +
+                        "select " +
+                        " x + 15 as x" +
+                        ", rnd_symbol('d', 'e', 'f', null) as m" +
+                        ", timestamp_sequence(200000000L + 15 * 20000000000000L, 20000000000000L) ts" +
+                        ", x + 15 as y" +
+                        " from long_sequence(15)",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table t_col_top_none as (" +
+                        "select x, m, ts from t_col_top_year where x <= 15" +
+                        "), index(m) timestamp(ts) partition by NONE",
+                sqlExecutionContext
+        );
+
+        compiler.compile("alter table t_col_top_none add column y long", sqlExecutionContext).execute(null).await();
+        compiler.compile("insert into t_col_top_none " +
+                        "select x, m, ts, y from t_col_top_year where x > 15" +
+                        " from long_sequence(15)",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table t_col_top_день as (" +
+                        "select " +
+                        " x" +
+                        ", rnd_symbol('a', 'b', 'c', null) m" +
+                        ", timestamp_sequence(2000000000L, 20000000000L) ts" +
+                        " from long_sequence(15)," +
+                        "), index(m) timestamp(ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile("alter table t_col_top_день add column день long", sqlExecutionContext).execute(null).await();
+        compiler.compile("insert into t_col_top_день " +
+                        "select " +
+                        " x + 15 as x" +
+                        ", rnd_symbol('d', 'e', 'f', null) as m" +
+                        ", timestamp_sequence(200000000L + 10 * 20000000000L, 2000000000L) ts" +
+                        ", x + 15 as y" +
+                        " from long_sequence(15)",
+                sqlExecutionContext
+        );
     }
 }
