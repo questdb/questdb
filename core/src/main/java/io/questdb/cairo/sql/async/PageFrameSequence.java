@@ -190,7 +190,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Mutable {
                 dispatchPubSeq.done(dispatchCursor);
             } else {
                 // non-dispatched frames will leave page frame cursor and reader dangling if not freed
-                pageFrameCursor = Misc.free(pageFrameCursor);
+//                this.pageFrameCursor = Misc.free(this.pageFrameCursor);
             }
         } catch (Throwable e) {
             Misc.free(pageFrameCursor);
