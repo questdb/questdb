@@ -135,6 +135,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final InputFormatConfiguration inputFormatConfiguration;
     private final LineProtoTimestampAdapter lineUdpTimestampAdapter;
+    private int lineUdpDefaultPartitionBy;
     private final String inputRoot;
     private final boolean lineUdpEnabled;
     private final int lineUdpOwnThreadAffinity;
@@ -343,7 +344,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long lineTcpMaintenanceInterval;
     private long lineTcpCommitTimeout;
     private String lineTcpAuthDbPath;
-    private int lineDefaultPartitionBy;
+    private int lineTcpDefaultPartitionBy;
     private int lineTcpAggressiveReadRetryCount;
     private long minIdleMsBeforeWriterRelease;
     private String httpVersion;
@@ -747,6 +748,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineUdpUnicast = getBoolean(properties, env, "line.udp.unicast", false);
             this.lineUdpCommitMode = getCommitMode(properties, env, "line.udp.commit.mode");
             this.lineUdpTimestampAdapter = getLineTimestampAdaptor(properties, env, "line.udp.timestamp");
+            String defaultUdpPartitionByProperty = getString(properties, env, "line.default.partition.by", "DAY");
+            this.lineUdpDefaultPartitionBy = PartitionBy.fromString(defaultUdpPartitionByProperty);
+            if (this.lineUdpDefaultPartitionBy == -1) {
+                log.info().$("invalid partition by ").$(lineUdpDefaultPartitionBy).$("), will use DAY for UDP").$();
+                this.lineUdpDefaultPartitionBy = PartitionBy.DAY;
+            }
 
             this.lineTcpEnabled = getBoolean(properties, env, "line.tcp.enabled", true);
             if (lineTcpEnabled) {
@@ -805,11 +812,11 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpMaintenanceInterval = getInt(properties, env, "line.tcp.maintenance.job.interval", 30_000);
                 this.lineTcpCommitTimeout = getInt(properties, env, "line.tcp.commit.timeout", 1000);
                 this.lineTcpAuthDbPath = getString(properties, env, "line.tcp.auth.db.path", null);
-                String defaultPartitionByProperty = getString(properties, env, "line.tcp.default.partition.by", "DAY");
-                this.lineDefaultPartitionBy = PartitionBy.fromString(defaultPartitionByProperty);
-                if (this.lineDefaultPartitionBy == -1) {
-                    log.info().$("invalid partition by ").$(defaultPartitionByProperty).$("), will use DAY").$();
-                    this.lineDefaultPartitionBy = PartitionBy.DAY;
+                String defaultTcpPartitionByProperty = getString(properties, env, "line.default.partition.by", "line.tcp.default.partition.by", "DAY");
+                this.lineTcpDefaultPartitionBy = PartitionBy.fromString(defaultTcpPartitionByProperty);
+                if (this.lineTcpDefaultPartitionBy == -1) {
+                    log.info().$("invalid partition by ").$(defaultTcpPartitionByProperty).$("), will use DAY for TCP").$();
+                    this.lineTcpDefaultPartitionBy = PartitionBy.DAY;
                 }
                 if (null != lineTcpAuthDbPath) {
                     this.lineTcpAuthDbPath = new File(root, this.lineTcpAuthDbPath).getAbsolutePath();
@@ -1051,6 +1058,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         return SqlJitMode.JIT_MODE_DISABLED;
+    }
+
+    private String getString(Properties properties, @Nullable Map<String, String> env, String key, String fallbackKey, String defaultValue) {
+        String value = overrideWithEnv(properties, env, key);
+        if (value == null) {
+            return getString(properties, env, fallbackKey, defaultValue);
+        }
+        return value;
     }
 
     private String getString(Properties properties, @Nullable Map<String, String> env, String key, String defaultValue) {
@@ -2212,6 +2227,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         public LineProtoTimestampAdapter getTimestampAdapter() {
             return lineUdpTimestampAdapter;
         }
+
+        @Override
+        public int getDefaultPartitionBy() {
+            return lineUdpDefaultPartitionBy;
+        }
     }
 
     private class PropLineTcpReceiverIODispatcherConfiguration implements IODispatcherConfiguration {
@@ -2379,7 +2399,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getDefaultPartitionBy() {
-            return lineDefaultPartitionBy;
+            return lineTcpDefaultPartitionBy;
         }
 
         @Override
