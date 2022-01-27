@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory;
@@ -196,7 +197,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
         try {
             this.metadata = metadata;
-            traverseAlgo.traverse(node, this);
+            try {
+                traverseAlgo.traverse(node, this);
+            } catch (SqlException e) {
+                // release parsed functions
+                Misc.free(functionStack.poll());
+                positionStack.clear();
+                throw e;
+            }
+
             final Function function = functionStack.poll();
             positionStack.pop();
             assert positionStack.size() == functionStack.size();
@@ -252,8 +261,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             mutableArgPositions.clear();
             mutableArgPositions.setPos(argCount);
             for (int n = 0; n < argCount; n++) {
-                mutableArgs.setQuick(n, functionStack.poll());
-                mutableArgPositions.setQuick(n, positionStack.pop());
+                final Function arg = functionStack.poll();
+                final int pos = positionStack.pop();
+
+                mutableArgs.setQuick(n, arg);
+                mutableArgPositions.setQuick(n, pos);
+
+                if (arg instanceof GroupByFunction) {
+                    Misc.freeObjList(mutableArgs);
+                    throw SqlException.position(pos).put("Aggregate function cannot be passed as an argument");
+                }
             }
             functionStack.push(createFunction(node, mutableArgs, mutableArgPositions));
         }
@@ -275,6 +292,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
         }
         ex.put(')');
+        Misc.freeObjList(args);
         return ex;
     }
 
@@ -314,6 +332,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
         }
         ex.put(')');
+        Misc.freeObjList(args);
         return ex;
     }
 
@@ -328,14 +347,17 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         try {
             function = factory.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
         } catch (SqlException e) {
+            Misc.freeObjList(args);
             throw e;
         } catch (Throwable e) {
             LOG.error().$("exception in function factory: ").$(e).$();
+            Misc.freeObjList(args);
             throw SqlException.position(position).put("exception in function factory");
         }
 
         if (function == null) {
             LOG.error().$("NULL function").$(" [signature=").$(factory.getSignature()).$(",class=").$(factory.getClass().getName()).$(']').$();
+            Misc.freeObjList(args);
             throw SqlException.position(position).put("bad function factory (NULL), check log");
         }
         return function;
@@ -643,6 +665,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             for (int k = candidateSigArgCount; k < argCount; k++) {
                 Function func = args.getQuick(k);
                 if (!(func.isConstant() || func.isRuntimeConstant())) {
+                    Misc.freeObjList(args);
                     throw SqlException.$(argPositions.getQuick(k), "constant expected");
                 }
             }
