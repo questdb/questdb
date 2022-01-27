@@ -62,12 +62,10 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
 
     @Override
     public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
-        if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-            final CharSequence symbol = symbolFunc.getStr(null);
-            symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbol);
-            if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                symbolKey++;
-            }
+        final CharSequence symbol = symbolFunc.getStr(null);
+        symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbol);
+        if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+            symbolKey++;
         }
     }
 
