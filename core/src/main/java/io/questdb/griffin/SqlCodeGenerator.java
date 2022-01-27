@@ -2343,32 +2343,42 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             final int columnCount = model.getColumns().size();
             ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
-            GroupByUtils.prepareGroupByFunctions(
-                    model,
-                    metadata,
-                    functionParser,
-                    executionContext,
-                    groupByFunctions,
-                    groupByFunctionPositions,
-                    valueTypes
-            );
+            try {
+                GroupByUtils.prepareGroupByFunctions(
+                        model,
+                        metadata,
+                        functionParser,
+                        executionContext,
+                        groupByFunctions,
+                        groupByFunctionPositions,
+                        valueTypes
+                );
+            } catch (SqlException e) {
+                Misc.freeObjList(groupByFunctions);
+                throw e;
+            }
 
             final ObjList<Function> recordFunctions = new ObjList<>(columnCount);
             final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
-            GroupByUtils.prepareGroupByRecordFunctions(
-                    model,
-                    metadata,
-                    listColumnFilterA,
-                    groupByFunctions,
-                    groupByFunctionPositions,
-                    recordFunctions,
-                    recordFunctionPositions,
-                    groupByMetadata,
-                    keyTypes,
-                    valueTypes.getColumnCount(),
-                    true,
-                    timestampIndex
-            );
+            try {
+                GroupByUtils.prepareGroupByRecordFunctions(
+                        model,
+                        metadata,
+                        listColumnFilterA,
+                        groupByFunctions,
+                        groupByFunctionPositions,
+                        recordFunctions,
+                        recordFunctionPositions,
+                        groupByMetadata,
+                        keyTypes,
+                        valueTypes.getColumnCount(),
+                        true,
+                        timestampIndex
+                );
+            } catch (SqlException e) {
+                Misc.freeObjList(recordFunctions);
+                throw e;
+            }
 
             if (keyTypes.getColumnCount() == 0) {
                 return new GroupByNotKeyedRecordCursorFactory(
