@@ -70,8 +70,8 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         collectCursor();
         if (frameCount > -1) {
             frameSequence.await();
-            frameSequence.clear();
         }
+        frameSequence.clear();
     }
 
     @Override

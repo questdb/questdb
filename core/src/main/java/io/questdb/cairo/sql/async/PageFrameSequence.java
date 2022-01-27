@@ -134,8 +134,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Mutable {
         PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext);
 
         try {
-            atom.init(pageFrameCursor, executionContext);
-
             final MPSequence dispatchPubSeq = bus.getPageFrameDispatchPubSeq();
             final RingQueue<PageFrameDispatchTask> pageFrameDispatchQueue = bus.getPageFrameDispatchQueue();
 
@@ -161,6 +159,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Mutable {
                     dispatchPubSeq,
                     pageFrameDispatchQueue
             );
+
+            // It is essential to init the atom after we prepared sequence for dispatch.
+            // If atom is to fail, we will be releasing whatever we prepared.
+            atom.init(pageFrameCursor, executionContext);
 
             // dispatch message only if there is anything to dispatch
             if (frameIndex > 0) {
@@ -188,12 +190,9 @@ public class PageFrameSequence<T extends StatefulAtom> implements Mutable {
                 PageFrameDispatchTask dispatchTask = pageFrameDispatchQueue.get(dispatchCursor);
                 dispatchTask.of(this);
                 dispatchPubSeq.done(dispatchCursor);
-            } else {
-                // non-dispatched frames will leave page frame cursor and reader dangling if not freed
-//                this.pageFrameCursor = Misc.free(this.pageFrameCursor);
             }
         } catch (Throwable e) {
-            Misc.free(pageFrameCursor);
+            this.pageFrameCursor = Misc.free(this.pageFrameCursor);
             throw e;
         }
         return this;
@@ -372,6 +371,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Mutable {
         this.reduceCounter.set(0);
         this.shard = shard;
         this.frameCount = frameCount;
+        assert this.pageFrameCursor == null;
         this.pageFrameCursor = pageFrameCursor;
         this.atom = atom;
         this.collectSubSeq = collectSubSeq;
