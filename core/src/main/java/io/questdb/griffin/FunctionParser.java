@@ -664,13 +664,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         if (candidateSigVarArgConst) {
             for (int k = candidateSigArgCount; k < argCount; k++) {
                 Function func = args.getQuick(k);
-                if (!func.isConstant()) {
+                if (!(func.isConstant() || func.isRuntimeConstant())) {
                     Misc.freeObjList(args);
                     throw SqlException.$(argPositions.getQuick(k), "constant expected");
                 }
             }
         }
-
 
         // it is possible that we have more undefined variables than
         // args in the descriptor, in case of vararg for example
