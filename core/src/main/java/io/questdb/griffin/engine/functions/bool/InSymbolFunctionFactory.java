@@ -38,7 +38,6 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.StringSink;
 
 public class InSymbolFunctionFactory implements FunctionFactory {
     @Override
@@ -60,16 +59,18 @@ public class InSymbolFunctionFactory implements FunctionFactory {
         for (int i = 1; i < n; i++) {
             Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {
-                case ColumnType.NULL:
                 case ColumnType.STRING:
-                case ColumnType.SYMBOL:
                     if (func.isRuntimeConstant()) {
+                        // string bind variable case
                         if (deferredValues == null) {
                             deferredValues = new ObjList<>();
                         }
                         deferredValues.add(func);
                         continue;
                     }
+                    // fall through
+                case ColumnType.SYMBOL:
+                case ColumnType.NULL:
                     CharSequence value = func.getStr(null);
                     if (value == null) {
                         set.add(null);
@@ -78,13 +79,6 @@ public class InSymbolFunctionFactory implements FunctionFactory {
                     }
                     break;
                 case ColumnType.CHAR:
-                    if (func.isRuntimeConstant()) {
-                        if (deferredValues == null) {
-                            deferredValues = new ObjList<>();
-                        }
-                        deferredValues.add(func);
-                        continue;
-                    }
                     set.add(String.valueOf(func.getChar(null)));
                     break;
                 default:
@@ -109,7 +103,6 @@ public class InSymbolFunctionFactory implements FunctionFactory {
         private final IntHashSet intSet = new IntHashSet();
         private final ObjList<Function> deferredValues;
         private final CharSequenceHashSet deferredSet;
-        private final StringSink sink = new StringSink();
         private final TestFunc intTest = this::testAsInt;
         private final TestFunc strTest = this::testAsString;
         private TestFunc testFunc;
@@ -149,14 +142,7 @@ public class InSymbolFunctionFactory implements FunctionFactory {
                 if (deferredValues != null) {
                     for (int i = 0, n = deferredValues.size(); i < n; i++) {
                         final Function func = deferredValues.getQuick(i);
-                        final int typeTag = ColumnType.tagOf(func.getType());
-                        if (typeTag == ColumnType.CHAR) {
-                            sink.clear();
-                            sink.put(func.getChar(null));
-                            intSet.add(symbolTable.keyOf(sink));
-                        } else {
-                            intSet.add(symbolTable.keyOf(func.getStr(null)));
-                        }
+                        intSet.add(symbolTable.keyOf(func.getStr(null)));
                     }
                 }
                 testFunc = intTest;
@@ -165,12 +151,7 @@ public class InSymbolFunctionFactory implements FunctionFactory {
                     deferredSet.clear();
                     for (int i = 0, n = deferredValues.size(); i < n; i++) {
                         final Function func = deferredValues.getQuick(i);
-                        final int typeTag = ColumnType.tagOf(func.getType());
-                        if (typeTag == ColumnType.CHAR) {
-                            deferredSet.add(String.valueOf(func.getChar(null)));
-                        } else {
-                            deferredSet.add(func.getStr(null));
-                        }
+                        deferredSet.add(func.getStr(null));
                     }
                 }
                 testFunc = strTest;
