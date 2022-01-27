@@ -36,6 +36,7 @@
         <runtime.assembly>none</runtime.assembly>
         <javac.target>11</javac.target>
         <argLine>-Dfile.encoding=UTF-8</argLine>
+        <test.exclude>None</test.exclude>
     </properties>
 
     <version>6.1.4-SNAPSHOT</version>
@@ -193,6 +194,9 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>2.17</version>
                 <configuration>
+                    <excludes>
+                        <exclude>${test.exclude}</exclude>
+                    </excludes>
                     <properties>
                         <property>
                             <name>listener</name>

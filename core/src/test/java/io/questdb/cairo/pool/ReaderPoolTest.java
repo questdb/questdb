@@ -437,13 +437,16 @@ public class ReaderPoolTest extends AbstractCairoTest {
     public void testGetReaderFailure() throws Exception {
         final int N = 3;
         final int K = 40;
+        AtomicInteger locked = new AtomicInteger(1);
 
         TestFilesFacade ff = new TestFilesFacade() {
             int count = N;
 
             @Override
+
             public long openRO(LPSZ name) {
-                if (count-- > 0) {
+                count--;
+                if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && locked.get() == 1) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -466,6 +469,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 Assert.assertEquals(0, pool.getBusyCount());
             }
 
+            locked.set(0);
             ObjHashSet<TableReader> readers = new ObjHashSet<>();
             for (int i = 0; i < K; i++) {
                 Assert.assertTrue(readers.add(pool.get("u")));
@@ -484,6 +488,11 @@ public class ReaderPoolTest extends AbstractCairoTest {
             @Override
             public FilesFacade getFilesFacade() {
                 return ff;
+            }
+
+            @Override
+            public long getSpinLockTimeoutUs() {
+                return 1000;
             }
         });
 
