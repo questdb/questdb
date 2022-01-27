@@ -34,7 +34,7 @@ import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
-public interface Function extends Closeable {
+public interface Function extends Closeable, StatefulAtom {
 
     static void init(
             ObjList<? extends Function> args,
@@ -129,9 +129,6 @@ public interface Function extends Closeable {
 
     default boolean isUndefined() {
         return getType() == ColumnType.UNDEFINED;
-    }
-
-    default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
     }
 
     default void assignType(int type, BindVariableService bindVariableService) throws SqlException {

@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql.async;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongList;
@@ -59,7 +60,7 @@ public class PageFrameReduceTask implements Closeable {
     }
 
     @SuppressWarnings({"unchecked", "unused"})
-    public <T> PageFrameSequence<T> getFrameSequence(Class<T> unused) {
+    public <T extends StatefulAtom> PageFrameSequence<T> getFrameSequence(Class<T> unused) {
         return (PageFrameSequence<T>) frameSequence;
     }
 
@@ -93,7 +94,6 @@ public class PageFrameReduceTask implements Closeable {
             LOG.info()
                     .$("cleanup [shard=").$(shard)
                     .$(", id=").$(frameSequence.getId())
-                    .$(", removing=").$(frameSequence.getCollectSubSeq())
                     .I$();
             frameSequence.reset();
         }

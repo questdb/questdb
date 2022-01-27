@@ -41,7 +41,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
-public class PageFrameSequence<T> implements Mutable {
+public class PageFrameSequence<T extends StatefulAtom> implements Mutable {
     private static final int OWNER_NONE = 0;
     private static final int OWNER_WORK_STEALING = 1;
     private static final int OWNER_ASYNC = 2;
@@ -134,8 +134,7 @@ public class PageFrameSequence<T> implements Mutable {
         PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext);
 
         try {
-            // todo: hack
-            ((Function) atom).init(pageFrameCursor, executionContext);
+            atom.init(pageFrameCursor, executionContext);
 
             final MPSequence dispatchPubSeq = bus.getPageFrameDispatchPubSeq();
             final RingQueue<PageFrameDispatchTask> pageFrameDispatchQueue = bus.getPageFrameDispatchQueue();
@@ -152,13 +151,13 @@ public class PageFrameSequence<T> implements Mutable {
                 frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
             }
 
-            of(
+            prepareForDispatch(
                     shard,
                     rnd.nextLong(),
                     frameIndex,
-                    collectSubSeq,
                     pageFrameCursor,
                     atom,
+                    collectSubSeq,
                     dispatchPubSeq,
                     pageFrameDispatchQueue
             );
@@ -202,10 +201,6 @@ public class PageFrameSequence<T> implements Mutable {
 
     public T getAtom() {
         return atom;
-    }
-
-    public SCSequence getCollectSubSeq() {
-        return collectSubSeq;
     }
 
     public int getDispatchStartIndex() {
@@ -361,13 +356,13 @@ public class PageFrameSequence<T> implements Mutable {
         }
     }
 
-    private void of(
+    private void prepareForDispatch(
             int shard,
             long frameSequenceId,
             int frameCount,
-            SCSequence collectSubSeq,
-            PageFrameCursor symbolTableSource,
+            PageFrameCursor pageFrameCursor,
             T atom,
+            SCSequence collectSubSeq,
             MPSequence dispatchPubSeq,
             RingQueue<PageFrameDispatchTask> pageFrameDispatchQueue
     ) {
@@ -377,9 +372,9 @@ public class PageFrameSequence<T> implements Mutable {
         this.reduceCounter.set(0);
         this.shard = shard;
         this.frameCount = frameCount;
-        this.collectSubSeq = collectSubSeq;
-        this.pageFrameCursor = symbolTableSource;
+        this.pageFrameCursor = pageFrameCursor;
         this.atom = atom;
+        this.collectSubSeq = collectSubSeq;
         this.dispatchPubSeq = dispatchPubSeq;
         this.pageFrameDispatchQueue = pageFrameDispatchQueue;
     }
