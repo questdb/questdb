@@ -75,3 +75,10 @@ stages:
       - CheckChanges
     jobs:
       - template: templates/hosted-jobs.yml
+
+  - stage: CoverageReports
+    displayName: "Coverage Report"
+    dependsOn:
+      - SelfHostedRunTestsBranches
+    jobs:
+      - template: templates/coverage-report-job.yml

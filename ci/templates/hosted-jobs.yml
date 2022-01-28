@@ -8,7 +8,7 @@ jobs:
           poolName: "Azure Pipelines"
           os: Linux
           jdk: "1.11"
-          testSet: "cover"
+          testset: "cover"
         mac-griffin:
           imageName: "macos-latest"
           poolName: "Azure Pipelines"
@@ -20,13 +20,13 @@ jobs:
           poolName: "Azure Pipelines"
           os: macOS
           jdk: "1.11"
-          testSet: "non-griffin"
+          testset: "non-griffin"
         windows-non-griffin:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
           jdk: "1.11"
-          testSet: "non-griffin"
+          testset: "non-griffin"
         windows-griffin:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
