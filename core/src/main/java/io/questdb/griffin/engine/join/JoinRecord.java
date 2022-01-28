@@ -153,7 +153,12 @@ public class JoinRecord implements Record {
 
     @Override
     public long getRowId() {
-        throw new UnsupportedOperationException();
+        return master.getRowId();
+    }
+
+    @Override
+    public long getUpdateRowId() {
+        return master.getUpdateRowId();
     }
 
     @Override

@@ -43,7 +43,7 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
             this.recordA = new VirtualRecord(functions);
             this.recordB = new VirtualRecord(functions);
         } else {
-            this.recordA = new VirtualRecordNoRowid(functions);
+            this.recordA = new VirtualRecord(functions);
             this.recordB = null;
         }
         this.supportsRandomAccess = supportsRandomAccess;
@@ -71,7 +71,7 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
 
     @Override
     public Record getRecordB() {
-        if (recordB != null) {
+        if (supportsRandomAccess) {
             return recordB;
         }
         throw new UnsupportedOperationException();

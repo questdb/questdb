@@ -2144,6 +2144,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean isParallelIndexingEnabled() {
             return parallelIndexingEnabled;
         }
+
+        @Override
+        public boolean enableDevelopmentUpdates() {
+            return false;
+        }
     }
 
     private class PropLineUdpReceiverConfiguration implements LineUdpReceiverConfiguration {
