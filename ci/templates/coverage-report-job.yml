@@ -9,7 +9,7 @@ jobs:
         lfs: false
         submodules: false
       - download: current
-          artifact: jacocoreport
+        artifact: jacocoreport
       - bash:
           if [ "$CODE_COVERAGE_TOOL_OPTION" == "JaCoCo" ] && [ "$IF_FORK" != "YES"
           ]; then $JAVA_HOME_11_X64/bin/java -jar
