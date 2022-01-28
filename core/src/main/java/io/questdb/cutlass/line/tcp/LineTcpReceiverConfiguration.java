@@ -81,7 +81,5 @@ public interface LineTcpReceiverConfiguration {
 
     boolean isEnabled();
 
-    int getAggressiveReadRetryCount();
-
     long getSymbolCacheWaitUsBeforeReload();
 }

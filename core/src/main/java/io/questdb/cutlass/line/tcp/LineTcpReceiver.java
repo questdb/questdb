@@ -131,13 +131,8 @@ public class LineTcpReceiver implements Closeable {
         public LineTcpConnectionContextFactory(LineTcpReceiverConfiguration configuration) {
             ObjectFactory<LineTcpConnectionContext> factory;
             if (null == configuration.getAuthDbPath()) {
-                if (configuration.getAggressiveReadRetryCount() > 0) {
-                    LOG.info().$("using aggressive context").$();
-                    factory = () -> new AggressiveRecvLineTcpConnectionContext(configuration, scheduler);
-                } else {
-                    LOG.info().$("using default context").$();
-                    factory = () -> new LineTcpConnectionContext(configuration, scheduler);
-                }
+                LOG.info().$("using default context").$();
+                factory = () -> new LineTcpConnectionContext(configuration, scheduler);
             } else {
                 LOG.info().$("using authenticating context").$();
                 AuthDb authDb = new AuthDb(configuration);
