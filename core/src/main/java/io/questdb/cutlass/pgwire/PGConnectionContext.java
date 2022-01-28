@@ -54,6 +54,9 @@ import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT
  * <a href="https://www.postgresql.org/docs/current/protocol-message-formats.html">Message formats</a>
  */
 public class PGConnectionContext implements IOContext, Mutable, WriterSource {
+
+    private final static Log LOG = LogFactory.getLog(PGConnectionContext.class);
+
     public static final String TAG_SET = "SET";
     public static final String TAG_BEGIN = "BEGIN";
     public static final String TAG_COMMIT = "COMMIT";
@@ -66,22 +69,27 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     public static final char STATUS_IN_TRANSACTION = 'T';
     public static final char STATUS_IN_ERROR = 'E';
     public static final char STATUS_IDLE = 'I';
+
     private static final int INT_BYTES_X = Numbers.bswap(Integer.BYTES);
     private static final int INT_NULL_X = Numbers.bswap(-1);
+
     private static final int SYNC_PARSE = 1;
     private static final int SYNC_DESCRIBE = 2;
     private static final int SYNC_BIND = 3;
     private static final int SYNC_DESCRIBE_PORTAL = 4;
-    private static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
+
+
     private static final int INIT_SSL_REQUEST = 80877103;
     private static final int INIT_STARTUP_MESSAGE = 196608;
     private static final int INIT_CANCEL_REQUEST = 80877102;
+
+    private static final int PREFIXED_MESSAGE_HEADER_LEN = 5;
+
+    private static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
     private static final byte MESSAGE_TYPE_COMMAND_COMPLETE = 'C';
     private static final byte MESSAGE_TYPE_EMPTY_QUERY = 'I';
     private static final byte MESSAGE_TYPE_DATA_ROW = 'D';
     private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
-    private final static Log LOG = LogFactory.getLog(PGConnectionContext.class);
-    private static final int PREFIXED_MESSAGE_HEADER_LEN = 5;
     private static final byte MESSAGE_TYPE_LOGIN_RESPONSE = 'R';
     private static final byte MESSAGE_TYPE_PARAMETER_STATUS = 'S';
     private static final byte MESSAGE_TYPE_ROW_DESCRIPTION = 'T';
@@ -92,13 +100,16 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private static final byte MESSAGE_TYPE_NO_DATA = 'n';
     private static final byte MESSAGE_TYPE_COPY_IN_RESPONSE = 'G';
     private static final byte MESSAGE_TYPE_PORTAL_SUSPENDED = 's';
+
     private static final int NO_TRANSACTION = 0;
     private static final int IN_TRANSACTION = 1;
     private static final int COMMIT_TRANSACTION = 2;
     private static final int ERROR_TRANSACTION = 3;
     private static final int ROLLING_BACK_TRANSACTION = 4;
+
     private static final String WRITER_LOCK_REASON = "pgConnection";
     private static final int PROTOCOL_TAIL_COMMAND_LENGTH = 64;
+
     private final long recvBuffer;
     private final long sendBuffer;
     private final int recvBufferSize;
@@ -134,7 +145,15 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final SCSequence tempSequence = new SCSequence();
+
+    //list of pair: column types (with format flag stored in first bit) AND additional type flag  
     private IntList activeSelectColumnTypes;
+
+    //stores result format codes (0=Text,1=Binary) from latest bind message
+    //we need it in case cursor gets invalidated and bind used non-default binary format for some column(s)
+    //pg clients (like asyncpg) fail when format sent by server is not the same as requested in bind message  
+    private final IntList bindSelectColumnFormats;
+
     private int parsePhaseBindVariableCount;
     private long sendBufferPtr;
     private boolean requireInitialMessage = false;
@@ -218,6 +237,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         final int rowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1; // 8
         this.typesAndInsertCache = new AssociativeCache<>(blockCount, rowCount);
         this.batchCallback = new PGConnectionBatchCallback();
+        this.bindSelectColumnFormats = new IntList();
     }
 
     class PGConnectionBatchCallback implements BatchCallback {
@@ -1776,6 +1796,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
 
         if (typesAndSelect != null) {
+            bindSelectColumnFormats.clear();
+
             short columnFormatCodeCount = getShort(lo, msgLimit, "could not read result set column format codes");
             if (columnFormatCodeCount > 0) {
 
@@ -1786,12 +1808,15 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
                 final long spaceNeeded = lo + (columnFormatCodeCount + 1) * Short.BYTES;
                 if (spaceNeeded <= msgLimit) {
+                    bindSelectColumnFormats.setPos(columnCount);
+
                     if (columnFormatCodeCount == columnCount) {
                         // good to go
                         for (int i = 0; i < columnCount; i++) {
                             lo += Short.BYTES;
                             final short code = getShortUnsafe(lo);
                             activeSelectColumnTypes.setQuick(2 * i, toColumnBinaryType(code, m.getColumnType(i)));
+                            bindSelectColumnFormats.setQuick(i, code);
                             activeSelectColumnTypes.setQuick(2 * i + 1, 0);
                         }
                     } else if (columnFormatCodeCount == 1) {
@@ -1799,6 +1824,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                         final short code = getShortUnsafe(lo);
                         for (int i = 0; i < columnCount; i++) {
                             activeSelectColumnTypes.setQuick(2 * i, toColumnBinaryType(code, m.getColumnType(i)));
+                            bindSelectColumnFormats.setQuick(i, code);
                             activeSelectColumnTypes.setQuick(2 * i + 1, 0);
                         }
                     } else {
@@ -1815,7 +1841,18 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                             .$(']').$();
                     throw BadProtocolException.INSTANCE;
                 }
+            } else if (columnFormatCodeCount == 0) {
+                //if count == 0 then we've to use default and clear binary flags that might come from cached statements
+                final RecordMetadata m = typesAndSelect.getFactory().getMetadata();
+                final int columnCount = m.getColumnCount();
+                bindSelectColumnFormats.setPos(columnCount);
+
+                for (int i = 0; i < columnCount; i++) {
+                    activeSelectColumnTypes.setQuick(2 * i, toColumnBinaryType((short) 0, m.getColumnType(i)));
+                    bindSelectColumnFormats.setQuick(i, 0);
+                }
             }
+
         }
 
         syncActions.add(SYNC_BIND);
@@ -2319,6 +2356,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     currentFactory = Misc.free(currentFactory);
                     compileQuery(compiler);
                     buildSelectColumnTypes();
+                    applyLatestBindColumnFormats();
                 } catch (Throwable e) {
                     currentFactory = Misc.free(currentFactory);
                     throw e;
@@ -2335,9 +2373,19 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         LOG.debug().$("wrapper query [q=`").$(wrapper.queryText).$("`]").$();
         this.activeBindVariableTypes = wrapper.bindVariableTypes;
         this.parsePhaseBindVariableCount = wrapper.bindVariableTypes.size();
-        this.activeSelectColumnTypes = wrapper.selectColumnTypes;
+        this.activeSelectColumnTypes = wrapper.selectColumnTypes;//here!!!
         if (compileQuery(compiler) && typesAndSelect != null) {
             buildSelectColumnTypes();
+        }
+        applyLatestBindColumnFormats();
+    }
+
+    //replace column formats in activeSelectColumnTypes with those from latest bind call 
+    private void applyLatestBindColumnFormats() {
+        for (int i = 0; i < bindSelectColumnFormats.size(); i++) {
+            int newValue = toColumnBinaryType((short) bindSelectColumnFormats.get(i),
+                    toColumnType(activeSelectColumnTypes.getQuick(2 * i)));
+            activeSelectColumnTypes.setQuick(2 * i, newValue);
         }
     }
 

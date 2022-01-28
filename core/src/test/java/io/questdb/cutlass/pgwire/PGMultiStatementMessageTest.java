@@ -29,6 +29,7 @@ import io.questdb.log.LogFactory;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
+import org.postgresql.jdbc.PgConnection;
 import org.postgresql.util.PSQLException;
 
 import java.io.Closeable;
@@ -1396,6 +1397,132 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
+    @Test//test interleaved extended query execution they don't spill bind formats
+    public void testDifferentExtendedQueriesExecutedInExtendedModeDontSpillFormats() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGWireServer server = createPGServer(2)) {
+                try (Connection connection = getConnection(Mode.ExtendedForPrepared, false, -1);
+                     Statement stmt = connection.createStatement()) {
+                    connection.setAutoCommit(true);
+
+                    boolean hasResult = stmt.execute("CREATE TABLE mytable(l int, s text); INSERT INTO mytable VALUES(53, 'z');");
+                    assertResults(stmt, hasResult, zero(), one());
+
+                    PreparedStatement pstmt = connection.prepareStatement("SELECT * FROM mytable");
+                    hasResult = pstmt.execute();
+                    assertResults(pstmt, hasResult, data(row(53L, "z")));
+                    pstmt.close();
+                }
+            }
+
+            try (PGWireServer server = createPGServer(2)) {
+                try (Connection connection = getConnection(Mode.ExtendedForPrepared, true, -1);
+                     Statement stmt = connection.createStatement()) {
+                    connection.setAutoCommit(true);
+
+                    PreparedStatement pstmt1 = connection.prepareStatement("SELECT l FROM mytable where 1=1");
+                    boolean hasResult = pstmt1.execute();
+                    assertResults(pstmt1, hasResult, data(row(53L)));
+                }
+            }
+        });
+    }
+
+    @Test//edge case - run the same query with binary protocol in extended mode and then the same in query block
+    public void testQueryExecutedInBatchModeDoesntUseCachedStatementBinaryFormat() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGWireServer server = createPGServer(2)) {
+                try (Connection connection = getConnection(Mode.ExtendedForPrepared, false, 1);
+                     Statement stmt = connection.createStatement()) {
+                    connection.setAutoCommit(true);
+
+                    boolean hasResult = stmt.execute("CREATE TABLE mytable(l int, s text); INSERT INTO mytable VALUES(33, 'x');");
+                    assertResults(stmt, hasResult, zero(), one());
+
+                    ((PgConnection) connection).setForceBinary(true);//force binary transfer for int column
+
+                    PreparedStatement pstmt = connection.prepareStatement("SELECT * FROM mytable");
+                    hasResult = pstmt.execute();
+                    assertResults(pstmt, hasResult, data(row(33L, "x")));
+                    pstmt.close();
+
+                    hasResult = stmt.execute("SELECT * FROM mytable");
+                    assertResults(stmt, hasResult, data(row(33L, "x")));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCachedTextFormatPgStatementReturnsDataUsingBinaryFormatWhenClientRequestsIt() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGWireServer server = createPGServer(2)) {
+                try (Connection connection = getConnection(Mode.ExtendedForPrepared, false, 1);
+                     Statement stmt = connection.createStatement()) {
+                    connection.setAutoCommit(true);
+
+                    boolean hasResult = stmt.execute("CREATE TABLE mytable(l int, s text); INSERT INTO mytable VALUES(1, 'a');");
+                    assertResults(stmt, hasResult, zero(), one());
+
+                    PreparedStatement pstmt = connection.prepareStatement("SELECT * FROM mytable");
+                    hasResult = pstmt.execute();
+                    assertResults(pstmt, hasResult, data(row(1L, "a")));
+                    pstmt.close();
+                }
+            }
+
+            try (PGWireServer server = createPGServer(2)) {
+                try (Connection connection = getConnection(Mode.ExtendedForPrepared, true, 1);
+                     Statement stmt = connection.createStatement()) {
+                    connection.setAutoCommit(true);
+
+                    ((PgConnection) connection).setForceBinary(true);//force binary transfer for int column
+
+                    PreparedStatement pstmt = connection.prepareStatement("SELECT * FROM mytable");
+                    boolean hasResult = pstmt.execute();
+                    assertResults(pstmt, hasResult, data(row(1L, "a")));
+                    pstmt.close();
+                }
+            }
+
+        });
+    }
+
+    @Test
+    public void testCachedPgStatementReturnsDataUsingProperFormatOnRecompilation() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGWireServer server = createPGServer(2)) {
+                try (Connection connection = getConnection(Mode.ExtendedForPrepared, false, 1);
+                     Statement stmt = connection.createStatement()) {
+                    connection.setAutoCommit(true);
+
+                    boolean hasResult = stmt.execute("CREATE TABLE mytable(l int, s text);");
+                    assertResults(stmt, hasResult, zero());
+
+                    PreparedStatement pstmt = connection.prepareStatement("SELECT * FROM mytable");
+                    hasResult = pstmt.execute();
+                    assertResults(pstmt, hasResult, empty());
+
+                    hasResult = stmt.execute("DROP TABLE mytable; CREATE TABLE mytable(l int, s text); INSERT INTO mytable VALUES(1, 'a'); ");
+                    assertResults(stmt, hasResult, zero(), zero(), one());
+
+                    pstmt.close();
+                }
+
+                try (Connection connection = getConnection(Mode.ExtendedForPrepared, true, -1);
+                     PreparedStatement pstmt = connection.prepareStatement("SELECT * FROM mytable")) {
+
+                    boolean hasResult = pstmt.execute();
+                    assertResults(pstmt, hasResult, data(row(1L, "a")));
+                }
+
+            }
+        });
+
+
+    }
+
+
     //test when no earlier transaction nor begin/commit/rollback then block is wrapped in implicit transaction and committed at the end
     //test when there's rollback/commit in middle and rest is wrapped in transaction
     //test when there's error in the middle then implicit transaction is rolled back 
@@ -1404,15 +1531,26 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     //test if there's begin in the middle then this piece of block is not committed
     //test if there's earlier transaction with commit or rollback then later begin includes lines wrapped in implicit transactions
 
+
     class PGTestSetup implements Closeable {
         final PGWireServer server;
         final Connection connection;
         final Statement statement;
 
-        PGTestSetup() throws SQLException {
+        PGTestSetup(boolean useSimpleMode) throws SQLException {
             server = createPGServer(2);
-            connection = getConnection(true, true);
+            connection = getConnection(useSimpleMode, true);
             statement = connection.createStatement();
+        }
+
+        PGTestSetup(Mode mode, int prepareThreshold) throws SQLException {
+            server = createPGServer(2);
+            connection = getConnection(mode, true, prepareThreshold);
+            statement = connection.createStatement();
+        }
+
+        PGTestSetup() throws SQLException {
+            this(true);
         }
 
         @Override
@@ -1453,26 +1591,28 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             return "Row{" + Arrays.toString(cols) + '}';
         }
     }
-    
+
     static class Result {
         //jdbc result with empty result set
         static final Result EMPTY = new Result();
         //jdbc result with no result set and update count = 0
         static final Result ZERO = new Result(0);
-        
+        //jdbc result with no result set and update count = 1
+        static final Result ONE = new Result(1);
+
         Row[] rows;
         int updateCount;
-        
-        Result(Row... rows){
+
+        Result(Row... rows) {
             this.rows = rows;
         }
 
-        Result(int updateCount){
-            this.updateCount = updateCount; 
+        Result(int updateCount) {
+            this.updateCount = updateCount;
         }
-        
-        boolean hasData(){
-            return rows != null; 
+
+        boolean hasData() {
+            return rows != null;
         }
     }
 
@@ -1490,6 +1630,10 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     static Result zero() {
         return Result.ZERO;
+    }
+
+    static Result one() {
+        return Result.ONE;
     }
 
     static Result empty() {
@@ -1530,7 +1674,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
         //check there are no more results
         assertFalse("No more results expected", s.getMoreResults());
-        assertEquals("No more results expected", -1, s.getUpdateCount());
+        assertEquals("No more results expected but got update count", -1, s.getUpdateCount());
     }
 
     private static void assertResultSet(Statement s, Row[] rows) throws SQLException {

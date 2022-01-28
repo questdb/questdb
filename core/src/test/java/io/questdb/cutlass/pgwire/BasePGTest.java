@@ -105,14 +105,33 @@ public class BasePGTest extends AbstractGriffinTest {
         }
     }
 
+    enum Mode {
+        Simple("simple"), Extended("extended"), ExtendedForPrepared("extendedForPrepared"), ExtendedCacheEverything("extendedCacheEverything");
+
+        private final String value;
+
+        Mode(String value) {
+            this.value = value;
+        }
+    }
+
     protected Connection getConnection(boolean simple, boolean binary) throws SQLException {
+        if (simple) {
+            return getConnection(Mode.Simple, binary, -2);
+        } else {
+            return getConnection(Mode.Extended, binary, -2);
+        }
+    }
+
+    protected Connection getConnection(Mode mode, boolean binary, int prepareThreshold) throws SQLException {
         Properties properties = new Properties();
         properties.setProperty("user", "admin");
         properties.setProperty("password", "quest");
         properties.setProperty("sslmode", "disable");
         properties.setProperty("binaryTransfer", Boolean.toString(binary));
-        if (simple) {
-            properties.setProperty("preferQueryMode", "simple");
+        properties.setProperty("preferQueryMode", mode.value);
+        if (prepareThreshold > -2) {//-1 has special meaning in pg jdbc ...
+            properties.setProperty("prepareThreshold", String.valueOf(prepareThreshold));
         }
 
         TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
