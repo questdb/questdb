@@ -3,42 +3,18 @@ jobs:
     displayName: "on"
     strategy:
       matrix:
-        mac-griffin:
-          imageName: "macos-latest"
-          poolName: "Azure Pipelines"
-          os: macOS
-          jdk: "1.11"
-          testSet: "griffin"
-        mac-non-griffin:
-          imageName: "macos-latest"
-          poolName: "Azure Pipelines"
-          os: macOS
-          jdk: "1.11"
-          testset: "non-griffin"
-        windows-non-griffin:
-          imageName: "windows-latest"
-          poolName: "Azure Pipelines"
-          os: Windows
-          jdk: "1.11"
-          testset: "non-griffin"
-        windows-griffin:
-          imageName: "windows-latest"
-          poolName: "Azure Pipelines"
-          os: Windows
-          jdk: "1.11"
-          testset: "griffin"
-        linux-jdk8:
+        linux-griffin:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
-          jdk: "1.8"
-          testset: "none"
-        linux-jdk17:
+          jdk: "1.11"
+          testset: "coverage-griffin"
+        linux-non-griffin:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
-          jdk: "1.17"
-          testset: "none"
+          jdk: "1.11"
+          testset: "coverage-non-griffin"
     pool:
       vmImage: $(imageName)
       name: $(poolName)

@@ -16,11 +16,15 @@ jobs:
         lfs: false
         submodules: false
       - download: current
-        artifact: jacocoreport
+        artifact: coverage-griffin
+      - download: current
+        artifact: coverage-non-griffin
       - bash:
           $JAVA_HOME_11_X64/bin/java -jar
-          $(Build.SourcesDirectory)/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar -c
-          $(Pipeline.Workspace)\jacocoreport\jacoco.xml --github-token $(GH_TOKEN) --repo
+          $(Build.SourcesDirectory)/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar
+          -c $(Pipeline.Workspace)\coverage-griffin\jacoco.xml
+          -c $(Pipeline.Workspace)\coverage-non-griffin\jacoco.xml
+          --github-token $(GH_TOKEN) --repo
           "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) -t  $(DIFF_COVER_THRESHOLD_PCT) -type jacoco;
         displayName: "Diff coverage PR report"
         condition: |

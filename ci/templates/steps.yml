@@ -22,13 +22,29 @@ steps:
       jdkVersionOption: $(jdk)
     condition: or(eq(variables['SOURCE_CODE_CHANGED'], 'false'), eq(variables['testset'], 'none'))
   - task: Maven@3
-    displayName: "Run tests with Maven with Code Coverage"
+      displayName: "Run all tests"
+      inputs:
+        mavenPomFile: "core/pom.xml"
+        mavenOptions: "$(MAVEN_OPTS)"
+        goals: "test"
+        options:
+          "--batch-mode --quiet -P build-web-console
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
+        jdkVersionOption: $(jdk)
+      timeoutInMinutes: 55
+      condition: |
+        and(
+          eq(variables['testset'], 'none'),
+          eq(variables['SOURCE_CODE_CHANGED'], 'true')
+        )
+  - task: Maven@3
+    displayName: "Run tests with Maven with Code Coverage (griffin)"
     inputs:
       mavenPomFile: "core/pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "test"
       options:
-        "--batch-mode --quiet -P build-web-console
+        "--batch-mode --quiet -P build-web-console -Dtest=griffin.**
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
       jdkVersionOption: $(jdk)
       codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
@@ -36,9 +52,27 @@ steps:
     timeoutInMinutes: 55
     condition: |
       and(
-        eq(variables['testset'], 'coverage'),
+        eq(variables['testset'], 'coverage-griffin'),
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
+  - task: Maven@3
+      displayName: "Run tests with Maven with Code Coverage (non-griffin)"
+      inputs:
+        mavenPomFile: "core/pom.xml"
+        mavenOptions: "$(MAVEN_OPTS)"
+        goals: "test"
+        options:
+          "--batch-mode --quiet -P build-web-console -Dtest.exclude=**/griffin/**
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
+        jdkVersionOption: $(jdk)
+        codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
+        codeCoverageClassFilter: "$(COVERAGE_DIFF)"
+      timeoutInMinutes: 55
+      condition: |
+        and(
+          eq(variables['testset'], 'coverage-non-griffin'),
+          eq(variables['SOURCE_CODE_CHANGED'], 'true')
+        )
   - task: Maven@3
     displayName: "Run tests with Maven (non griffin)"
     inputs:
@@ -87,9 +121,9 @@ steps:
       artifactName: MavenFailedTestsLogs
   - publish: '$(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco.xml'
     displayName: 'Publish jacoco report'
-    artifact: jacocoreport
+    artifact: $(testset)
     condition: |
       and(
-        eq(variables['testset'], 'coverage'),
+        or(eq(variables['testset'], 'coverage-griffin'),eq(variables['testset'], 'coverage-non-griffin'))
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
