@@ -79,6 +79,6 @@ stages:
   - stage: CoverageReports
     displayName: "Coverage Report"
     dependsOn:
-      - SelfHostedRunTestsBranches
+      - HostedRunTestsBranches
     jobs:
       - template: templates/coverage-report-job.yml
