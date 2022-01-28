@@ -211,7 +211,7 @@ const MonacoEditor = () => {
 
       if (request?.query) {
         void quest
-          .queryRaw(request.query, { limit: "0,1000" })
+          .queryRaw(request.query, { limit: "0,1000", explain: true })
           .then((result) => {
             setRequest(undefined)
             dispatch(actions.query.stopRunning())
@@ -239,7 +239,11 @@ const MonacoEditor = () => {
               dispatch(
                 actions.query.addNotification({
                   content: (
-                    <QueryResult {...result.timings} rowCount={result.count} />
+                    <QueryResult
+                      {...result.timings}
+                      jitCompiled={result?.explain?.jitCompiled ?? false}
+                      rowCount={result.count}
+                    />
                   ),
                   sideContent: (
                     <Text
