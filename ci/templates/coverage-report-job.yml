@@ -28,7 +28,7 @@ jobs:
           DIFF_CONVER_THRESHOLD_PCT: $(DIFF_CONVER_THRESHOLD_PCT)
         condition: |
           and(
-            eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'jacoco')
+            eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'jacoco'),
             eq(variables['SOURCE_CODE_CHANGED'], 'true')
           )
 
