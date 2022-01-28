@@ -22,42 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line.tcp;
+package io.questdb.griffin.update;
 
-public class AggressiveRecvLineTcpConnectionContext extends LineTcpConnectionContext {
+import io.questdb.cairo.sql.Record;
 
-    private final int aggressiveReadRetryCount;
+import java.io.Closeable;
 
-    AggressiveRecvLineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler) {
-        super(configuration, scheduler);
-        this.aggressiveReadRetryCount = configuration.getAggressiveReadRetryCount();
-    }
-
-    @Override
-    IOContextResult handleIO(NetworkIOJob netIoJob) {
-        IOContextResult rc;
-        read();
-        do {
-            rc = parseMeasurements(netIoJob);
-        } while (rc == IOContextResult.NEEDS_READ && read());
-        return rc;
-    }
+public interface UpdateStatementMasterCursor extends Closeable {
+    void setMaster(Record master);
+    Record getRecord();
+    boolean hasNext();
 
     @Override
-    protected boolean read() {
-        if (super.read()) {
-            return true;
-        }
-
-        int remaining = aggressiveReadRetryCount;
-
-        while (remaining > 0) {
-            if (super.read()) {
-                return true;
-            }
-            remaining--;
-        }
-
-        return false;
-    }
+    void close();
 }

@@ -43,6 +43,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.tasks.TableWriterTask;
 
 import java.util.concurrent.locks.LockSupport;
+import io.questdb.griffin.update.UpdateStatement;
 
 public class CompiledQueryImpl implements CompiledQuery {
     private static final Log LOG = LogFactory.getLog(CompiledQueryImpl.class);
@@ -50,6 +51,7 @@ public class CompiledQueryImpl implements CompiledQuery {
     private final AlterTableQueryFuture alterFuture = new AlterTableQueryFuture();
     private RecordCursorFactory recordCursorFactory;
     private InsertStatement insertStatement;
+    private UpdateStatement updateStatement;
     private TextLoader textLoader;
     private AlterStatement alterStatement;
     private short type;
@@ -84,6 +86,17 @@ public class CompiledQueryImpl implements CompiledQuery {
     @Override
     public short getType() {
         return type;
+    }
+
+    @Override
+    public UpdateStatement getUpdateStatement() {
+        return updateStatement;
+    }
+
+    public CompiledQuery ofUpdate(UpdateStatement updateStatement) {
+        this.updateStatement = updateStatement;
+        this.type = UPDATE;
+        return this;
     }
 
     @Override

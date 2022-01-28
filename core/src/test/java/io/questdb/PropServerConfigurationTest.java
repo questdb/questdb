@@ -197,9 +197,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(0, configuration.getLineUdpReceiverConfiguration().getBindIPv4Address());
         Assert.assertEquals(9009, configuration.getLineUdpReceiverConfiguration().getPort());
         Assert.assertEquals(-402587133, configuration.getLineUdpReceiverConfiguration().getGroupIPv4Address());
-
         Assert.assertEquals(1000000, configuration.getLineUdpReceiverConfiguration().getCommitRate());
-
+        Assert.assertEquals(PartitionBy.DAY, configuration.getLineUdpReceiverConfiguration().getDefaultPartitionBy());
         Assert.assertEquals(2048, configuration.getLineUdpReceiverConfiguration().getMsgBufferSize());
         Assert.assertEquals(10000, configuration.getLineUdpReceiverConfiguration().getMsgCount());
         Assert.assertEquals(8388608, configuration.getLineUdpReceiverConfiguration().getReceiveBufferSize());
@@ -267,7 +266,6 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().haltOnError());
         Assert.assertEquals(30_000, configuration.getLineTcpReceiverConfiguration().getMaintenanceInterval());
         Assert.assertEquals(PartitionBy.DAY, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
-        Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getAggressiveReadRetryCount());
         Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getWriterIdleTimeout());
         Assert.assertEquals(0, configuration.getCairoConfiguration().getSampleByIndexSearchPageSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getWriterCommandQueueCapacity());
@@ -452,6 +450,35 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testPartitionBy() throws ServerConfigurationException, JsonException {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(PartitionBy.DAY, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
+        Assert.assertEquals(PartitionBy.DAY, configuration.getLineUdpReceiverConfiguration().getDefaultPartitionBy());
+
+        properties.setProperty("line.tcp.default.partition.by", "YEAR");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(PartitionBy.YEAR, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
+        Assert.assertEquals(PartitionBy.DAY, configuration.getLineUdpReceiverConfiguration().getDefaultPartitionBy());
+
+        properties.setProperty("line.default.partition.by", "MONTH");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(PartitionBy.MONTH, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
+        Assert.assertEquals(PartitionBy.MONTH, configuration.getLineUdpReceiverConfiguration().getDefaultPartitionBy());
+
+        properties.setProperty("line.default.partition.by", "DAY");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(PartitionBy.DAY, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
+        Assert.assertEquals(PartitionBy.DAY, configuration.getLineUdpReceiverConfiguration().getDefaultPartitionBy());
+
+        properties.setProperty("line.default.partition.by", "YEAR");
+        properties.setProperty("line.tcp.default.partition.by", "MONTH");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(PartitionBy.YEAR, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
+        Assert.assertEquals(PartitionBy.YEAR, configuration.getLineUdpReceiverConfiguration().getDefaultPartitionBy());
+    }
+
+    @Test
     public void testSetAllFromFile() throws IOException, ServerConfigurationException, JsonException {
         try (InputStream is = PropServerConfigurationTest.class.getResourceAsStream("/server.conf")) {
             Properties properties = new Properties();
@@ -592,6 +619,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(4 * 1024 * 1024, configuration.getLineUdpReceiverConfiguration().getMsgBufferSize());
             Assert.assertEquals(4000, configuration.getLineUdpReceiverConfiguration().getMsgCount());
             Assert.assertEquals(512, configuration.getLineUdpReceiverConfiguration().getReceiveBufferSize());
+            Assert.assertEquals(PartitionBy.MONTH, configuration.getLineUdpReceiverConfiguration().getDefaultPartitionBy());
             Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().isEnabled());
             Assert.assertEquals(2, configuration.getLineUdpReceiverConfiguration().ownThreadAffinity());
             Assert.assertTrue(configuration.getLineUdpReceiverConfiguration().ownThread());
@@ -636,7 +664,6 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().haltOnError());
             Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getMaintenanceInterval());
             Assert.assertEquals(PartitionBy.MONTH, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
-            Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getAggressiveReadRetryCount());
             Assert.assertEquals(5_000, configuration.getLineTcpReceiverConfiguration().getWriterIdleTimeout());
             Assert.assertEquals(16, configuration.getCairoConfiguration().getPartitionPurgeListCapacity());
 

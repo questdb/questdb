@@ -37,8 +37,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.nio.charset.StandardCharsets;
-
 public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
@@ -63,6 +61,16 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         String expected = "host\tuptime_format\ttimestamp\n" +
                 "linux-questdb\t 1:18\t2019-12-10T15:06:00.000000Z\n";
         String lines = "system,host=linux-questdb uptime_format=\" 1:18\" 1575990360000000000";
+        assertThat(expected, lines, "system");
+    }
+
+    @Test
+    public void testO3() throws Exception {
+        String expected = "host\tuptime_format\ttimestamp\n" +
+                "linux-questdb\t 1:18\t2019-12-10T15:06:00.000000Z\n" +
+                "linux-questdb\t 4:38\t2019-12-10T15:06:01.000000Z\n";
+        String lines = "system,host=linux-questdb uptime_format=\" 4:38\" 1575990361000000000\n"
+                + "system,host=linux-questdb uptime_format=\" 1:18\" 1575990360000000000\n";
         assertThat(expected, lines, "system");
     }
 
@@ -711,7 +719,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     private void assertThat(String expected, String lines, CharSequence tableName, CairoConfiguration configuration) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (LineUdpParserImpl parser = new LineUdpParserImpl(engine, AllowAllCairoSecurityContext.INSTANCE, LineProtoNanoTimestampAdapter.INSTANCE)) {
+                try (LineUdpParserImpl parser = new LineUdpParserImpl(engine, new DefaultLineUdpReceiverConfiguration())) {
                     byte[] bytes = lines.getBytes(Files.UTF_8);
                     int len = bytes.length;
                     long mem = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);

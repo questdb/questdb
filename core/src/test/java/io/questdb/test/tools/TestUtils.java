@@ -637,6 +637,14 @@ public final class TestUtils {
         return useful;
     }
 
+    @NotNull
+    public static Rnd generateRandom(Log log) {
+        long s0 = System.nanoTime();
+        long s1 = System.currentTimeMillis();
+        System.out.println("random seed " + s0 + ", " + s1);
+        return new Rnd(s0, s1);
+    }
+
     public static int getJavaVersion() {
         String version = System.getProperty("java.version");
         if (version.startsWith("1.")) {

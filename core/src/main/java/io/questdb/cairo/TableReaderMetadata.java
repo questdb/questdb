@@ -33,10 +33,10 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 
 public class TableReaderMetadata extends BaseRecordMetadata implements Closeable {
-    private final MemoryMR metaMem;
     private final Path path;
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
+    private MemoryMR metaMem;
     private int id;
     private MemoryMR transitionMeta;
 
@@ -54,10 +54,13 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     }
 
     public void applyTransitionIndex(long pTransitionIndex) {
-        // re-open _meta file
-        this.metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-        this.columnNameIndexMap.clear();
+        //  swap meta and transitionMeta
+        MemoryMR temp = this.metaMem;
+        this.metaMem = this.transitionMeta;
+        transitionMeta = temp;
+        transitionMeta.close(); // Memory is safe to double close, do not assign null to transitionMeta
 
+        this.columnNameIndexMap.clear();
         final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
         final long index = pTransitionIndex + 8;
         final long stateAddress = index + columnCount * 8L;
@@ -148,21 +151,27 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
 
     @Override
     public void close() {
+        // TableReaderMetadata is re-usable after close, don't assign nulls
         Misc.free(metaMem);
         Misc.free(path);
+        Misc.free(transitionMeta);
     }
 
-    public long createTransitionIndex() {
+    public long createTransitionIndex(long txnStructureVersion) {
         if (transitionMeta == null) {
             transitionMeta = Vm.getMRInstance();
         }
 
         transitionMeta.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-        try (MemoryMR metaMem = transitionMeta) {
-            tmpValidationMap.clear();
-            TableUtils.validate(ff, metaMem, tmpValidationMap, ColumnType.VERSION);
-            return TableUtils.createTransitionIndex(metaMem, this.metaMem, this.columnCount, this.columnNameIndexMap);
+        if (transitionMeta.size() >= TableUtils.META_OFFSET_STRUCTURE_VERSION + 8
+                && txnStructureVersion != transitionMeta.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION)) {
+            // No match
+            return -1;
         }
+
+        tmpValidationMap.clear();
+        TableUtils.validate(transitionMeta, tmpValidationMap, ColumnType.VERSION);
+        return TableUtils.createTransitionIndex(transitionMeta, this.metaMem, this.columnCount, this.columnNameIndexMap);
     }
 
     @Override
@@ -186,6 +195,10 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         return metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
     }
 
+    public long getStructureVersion() {
+        return metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
+    }
+
     public int getVersion() {
         return metaMem.getInt(TableUtils.META_OFFSET_VERSION);
     }
@@ -194,9 +207,9 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         this.path.of(path).$();
         try {
             this.metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-            this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             this.columnNameIndexMap.clear();
-            TableUtils.validate(ff, metaMem, this.columnNameIndexMap, expectedVersion);
+            TableUtils.validate(metaMem, this.columnNameIndexMap, expectedVersion);
+            this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             this.id = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
             this.columnMetadata.clear();

@@ -135,6 +135,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final InputFormatConfiguration inputFormatConfiguration;
     private final LineProtoTimestampAdapter lineUdpTimestampAdapter;
+    private int lineUdpDefaultPartitionBy;
     private final String inputRoot;
     private final boolean lineUdpEnabled;
     private final int lineUdpOwnThreadAffinity;
@@ -296,8 +297,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgConnectionPoolInitialCapacity;
     private String pgPassword;
     private String pgUsername;
-    private int pgIdleRecvCountBeforeGivingUp;
-    private int pgIdleSendCountBeforeGivingUp;
     private int pgMaxBlobSizeOnQuery;
     private int pgRecvBufferSize;
     private int pgSendBufferSize;
@@ -343,8 +342,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long lineTcpMaintenanceInterval;
     private long lineTcpCommitTimeout;
     private String lineTcpAuthDbPath;
-    private int lineDefaultPartitionBy;
-    private int lineTcpAggressiveReadRetryCount;
+    private int lineTcpDefaultPartitionBy;
     private long minIdleMsBeforeWriterRelease;
     private String httpVersion;
     private int httpMinWorkerCount;
@@ -576,8 +574,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgConnectionPoolInitialCapacity = getInt(properties, env, "pg.connection.pool.capacity", 64);
                 this.pgPassword = getString(properties, env, "pg.password", "quest");
                 this.pgUsername = getString(properties, env, "pg.user", "admin");
-                this.pgIdleRecvCountBeforeGivingUp = getInt(properties, env, "pg.idle.recv.count.before.giving.up", 10_000);
-                this.pgIdleSendCountBeforeGivingUp = getInt(properties, env, "pg.idle.send.count.before.giving.up", 10_000);
                 this.pgMaxBlobSizeOnQuery = getIntSize(properties, env, "pg.max.blob.size.on.query", 512 * 1024);
                 this.pgRecvBufferSize = getIntSize(properties, env, "pg.recv.buffer.size", 1024 * 1024);
                 this.pgSendBufferSize = getIntSize(properties, env, "pg.send.buffer.size", 1024 * 1024);
@@ -747,6 +743,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineUdpUnicast = getBoolean(properties, env, "line.udp.unicast", false);
             this.lineUdpCommitMode = getCommitMode(properties, env, "line.udp.commit.mode");
             this.lineUdpTimestampAdapter = getLineTimestampAdaptor(properties, env, "line.udp.timestamp");
+            String defaultUdpPartitionByProperty = getString(properties, env, "line.default.partition.by", "DAY");
+            this.lineUdpDefaultPartitionBy = PartitionBy.fromString(defaultUdpPartitionByProperty);
+            if (this.lineUdpDefaultPartitionBy == -1) {
+                log.info().$("invalid partition by ").$(lineUdpDefaultPartitionBy).$("), will use DAY for UDP").$();
+                this.lineUdpDefaultPartitionBy = PartitionBy.DAY;
+            }
 
             this.lineTcpEnabled = getBoolean(properties, env, "line.tcp.enabled", true);
             if (lineTcpEnabled) {
@@ -805,16 +807,15 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpMaintenanceInterval = getInt(properties, env, "line.tcp.maintenance.job.interval", 30_000);
                 this.lineTcpCommitTimeout = getInt(properties, env, "line.tcp.commit.timeout", 1000);
                 this.lineTcpAuthDbPath = getString(properties, env, "line.tcp.auth.db.path", null);
-                String defaultPartitionByProperty = getString(properties, env, "line.tcp.default.partition.by", "DAY");
-                this.lineDefaultPartitionBy = PartitionBy.fromString(defaultPartitionByProperty);
-                if (this.lineDefaultPartitionBy == -1) {
-                    log.info().$("invalid partition by ").$(defaultPartitionByProperty).$("), will use DAY").$();
-                    this.lineDefaultPartitionBy = PartitionBy.DAY;
+                String defaultTcpPartitionByProperty = getString(properties, env, "line.default.partition.by", "line.tcp.default.partition.by", "DAY");
+                this.lineTcpDefaultPartitionBy = PartitionBy.fromString(defaultTcpPartitionByProperty);
+                if (this.lineTcpDefaultPartitionBy == -1) {
+                    log.info().$("invalid partition by ").$(defaultTcpPartitionByProperty).$("), will use DAY for TCP").$();
+                    this.lineTcpDefaultPartitionBy = PartitionBy.DAY;
                 }
                 if (null != lineTcpAuthDbPath) {
                     this.lineTcpAuthDbPath = new File(root, this.lineTcpAuthDbPath).getAbsolutePath();
                 }
-                this.lineTcpAggressiveReadRetryCount = getInt(properties, env, "line.tcp.aggressive.read.retry.count", 0);
                 this.minIdleMsBeforeWriterRelease = getLong(properties, env, "line.tcp.min.idle.ms.before.writer.release", 10_000);
             }
 
@@ -1051,6 +1052,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         return SqlJitMode.JIT_MODE_DISABLED;
+    }
+
+    private String getString(Properties properties, @Nullable Map<String, String> env, String key, String fallbackKey, String defaultValue) {
+        String value = overrideWithEnv(properties, env, key);
+        if (value == null) {
+            return getString(properties, env, fallbackKey, defaultValue);
+        }
+        return value;
     }
 
     private String getString(Properties properties, @Nullable Map<String, String> env, String key, String defaultValue) {
@@ -2135,6 +2144,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean isParallelIndexingEnabled() {
             return parallelIndexingEnabled;
         }
+
+        @Override
+        public boolean enableDevelopmentUpdates() {
+            return false;
+        }
     }
 
     private class PropLineUdpReceiverConfiguration implements LineUdpReceiverConfiguration {
@@ -2211,6 +2225,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public LineProtoTimestampAdapter getTimestampAdapter() {
             return lineUdpTimestampAdapter;
+        }
+
+        @Override
+        public int getDefaultPartitionBy() {
+            return lineUdpDefaultPartitionBy;
         }
     }
 
@@ -2379,7 +2398,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getDefaultPartitionBy() {
-            return lineDefaultPartitionBy;
+            return lineTcpDefaultPartitionBy;
         }
 
         @Override
@@ -2450,11 +2469,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isEnabled() {
             return lineTcpEnabled;
-        }
-
-        @Override
-        public int getAggressiveReadRetryCount() {
-            return lineTcpAggressiveReadRetryCount;
         }
 
         @Override
@@ -2671,16 +2685,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public IODispatcherConfiguration getDispatcherConfiguration() {
             return propPGWireDispatcherConfiguration;
-        }
-
-        @Override
-        public int getIdleRecvCountBeforeGivingUp() {
-            return pgIdleRecvCountBeforeGivingUp;
-        }
-
-        @Override
-        public int getIdleSendCountBeforeGivingUp() {
-            return pgIdleSendCountBeforeGivingUp;
         }
 
         @Override

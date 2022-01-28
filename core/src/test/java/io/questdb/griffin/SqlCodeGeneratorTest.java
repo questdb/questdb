@@ -157,42 +157,19 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testBindVariableInIndexLookup() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (deviceName SYMBOL capacity 1000 index, time TIMESTAMP, slot SYMBOL, port SYMBOL, downStream DOUBLE, upStream DOUBLE) timestamp(time) partition by DAY", sqlExecutionContext);
-            compiler.compile("create table src as (select rnd_symbol(15000, 4,4,0) sym, timestamp_sequence(0, 100000) ts, rnd_double() val from long_sequence(5000))", sqlExecutionContext);
-            compiler.compile("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src", sqlExecutionContext);
-            try (
-                    RecordCursorFactory factory = compiler.compile("select distinct deviceName from alcatel_traffic_tmp", sqlExecutionContext).getRecordCursorFactory();
-                    RecordCursorFactory lookupFactory = compiler.compile("select * from alcatel_traffic_tmp where deviceName = $1", sqlExecutionContext).getRecordCursorFactory()
-            ) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    final Record deviceNameRecord = cursor.getRecord();
-                    while (cursor.hasNext()) {
-                        CharSequence device = deviceNameRecord.getStr(0);
-
-                        bindVariableService.clear();
-                        bindVariableService.setStr(0, device);
-                        try (RecordCursor lookupCursor = lookupFactory.getCursor(sqlExecutionContext)) {
-                            Record lookupRecord = lookupCursor.getRecord();
-                            final boolean hasNext = lookupCursor.hasNext();
-                            Assert.assertTrue(hasNext);
-                            do {
-                                TestUtils.assertEquals(device, lookupRecord.getSym(0));
-                                TestUtils.assertEquals(device, lookupRecord.getSym(2));
-                            } while (lookupCursor.hasNext());
-                        }
-                    }
-                }
-            }
-        });
+    public void testBindVariableInIndexedLookup() throws Exception {
+        testBindVariableInIndexedLookup(true);
     }
 
     @Test
-    public void testBindVariableInIndexLookupList() throws Exception {
+    public void testBindVariableInNonIndexedLookup() throws Exception {
+        testBindVariableInIndexedLookup(false);
+    }
+
+    private void testBindVariableInIndexedLookup(boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (" +
-                            "deviceName SYMBOL capacity 1000 index, " +
+                            "deviceName SYMBOL capacity 1000" + (indexed ? " index, " : " , ") +
                             "time TIMESTAMP, " +
                             "slot SYMBOL, " +
                             "port SYMBOL, " +
@@ -209,12 +186,87 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     sqlExecutionContext);
             compiler.compile("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src",
                     sqlExecutionContext);
+            // =
+            try (
+                    RecordCursorFactory lookupFactory = compiler.compile(
+                            "select * from alcatel_traffic_tmp where deviceName in $1",
+                            sqlExecutionContext
+                    ).getRecordCursorFactory()
+            ) {
+                bindVariableService.clear();
+                bindVariableService.setStr(0, "FKBW");
+                sink.clear();
+                try (RecordCursor cursor = lookupFactory.getCursor(sqlExecutionContext)) {
+                    printer.print(cursor, lookupFactory.getMetadata(), true, sink);
+                    TestUtils.assertEquals(
+                            "deviceName\ttime\tslot\tport\tdownStream\tupStream\n" +
+                                    "FKBW\t1970-01-01T00:00:02.300000Z\tFKBW\t\t0.04998168904446332\t0.04998168904446332\n",
+                            sink
+                    );
+                }
+            }
+            // !=
+            try (
+                    RecordCursorFactory lookupFactory = compiler.compile(
+                            "select * from alcatel_traffic_tmp where deviceName != $1 and time < '1970-01-01T00:00:00.300000Z'",
+                            sqlExecutionContext
+                    ).getRecordCursorFactory()
+            ) {
+                bindVariableService.clear();
+                bindVariableService.setStr(0, "FKBW");
+                sink.clear();
+                try (RecordCursor cursor = lookupFactory.getCursor(sqlExecutionContext)) {
+                    printer.print(cursor, lookupFactory.getMetadata(), true, sink);
+                    TestUtils.assertEquals(
+                            "deviceName\ttime\tslot\tport\tdownStream\tupStream\n" +
+                                    "OQCN\t1970-01-01T00:00:00.000000Z\tOQCN\t\t0.004671510951376301\t0.004671510951376301\n" +
+                                    "MIWT\t1970-01-01T00:00:00.100000Z\tMIWT\t\t0.8736195736185558\t0.8736195736185558\n" +
+                                    "QUUG\t1970-01-01T00:00:00.200000Z\tQUUG\t\t0.6124307350390543\t0.6124307350390543\n",
+                            sink
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testBindVariableInListIndexedLookup() throws Exception {
+        testBindVariableInLookupList(true);
+    }
+
+    @Test
+    public void testBindVariableInListNonIndexedLookup() throws Exception {
+        testBindVariableInLookupList(false);
+    }
+
+    private void testBindVariableInLookupList(boolean indexed) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (" +
+                            "deviceName SYMBOL capacity 1000" + (indexed ? " index, " : " , ") +
+                            "time TIMESTAMP, " +
+                            "slot SYMBOL, " +
+                            "port SYMBOL, " +
+                            "downStream DOUBLE, " +
+                            "upStream DOUBLE" +
+                            ") timestamp(time) partition by DAY",
+                    sqlExecutionContext);
+            compiler.compile("create table src as (" +
+                            "    select rnd_symbol(15000, 4,4,0) sym, " +
+                            "           timestamp_sequence(0, 100000) ts, " +
+                            "           rnd_double() val " +
+                            "    from long_sequence(500)" +
+                            ")",
+                    sqlExecutionContext);
+            compiler.compile("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src",
+                    sqlExecutionContext);
+            // in
             try (
                     RecordCursorFactory lookupFactory = compiler.compile(
                             "select * from alcatel_traffic_tmp where deviceName in ($1,$2)",
                             sqlExecutionContext
                     ).getRecordCursorFactory()
             ) {
+                bindVariableService.clear();
                 bindVariableService.setStr(0, "FKBW");
                 bindVariableService.setStr(1, "SHRI");
                 sink.clear();
@@ -224,6 +276,28 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "deviceName\ttime\tslot\tport\tdownStream\tupStream\n" +
                                     "FKBW\t1970-01-01T00:00:02.300000Z\tFKBW\t\t0.04998168904446332\t0.04998168904446332\n" +
                                     "SHRI\t1970-01-01T00:00:02.900000Z\tSHRI\t\t0.007781200348629724\t0.007781200348629724\n",
+                            sink
+                    );
+                }
+            }
+            // not in
+            try (
+                    RecordCursorFactory lookupFactory = compiler.compile(
+                            "select * from alcatel_traffic_tmp where deviceName not in ($1,$2) and time < '1970-01-01T00:00:00.300000Z'",
+                            sqlExecutionContext
+                    ).getRecordCursorFactory()
+            ) {
+                bindVariableService.clear();
+                bindVariableService.setStr(0, "FKBW");
+                bindVariableService.setStr(1, "SHRI");
+                sink.clear();
+                try (RecordCursor cursor = lookupFactory.getCursor(sqlExecutionContext)) {
+                    printer.print(cursor, lookupFactory.getMetadata(), true, sink);
+                    TestUtils.assertEquals(
+                            "deviceName\ttime\tslot\tport\tdownStream\tupStream\n" +
+                                    "OQCN\t1970-01-01T00:00:00.000000Z\tOQCN\t\t0.004671510951376301\t0.004671510951376301\n" +
+                                    "MIWT\t1970-01-01T00:00:00.100000Z\tMIWT\t\t0.8736195736185558\t0.8736195736185558\n" +
+                                    "QUUG\t1970-01-01T00:00:00.200000Z\tQUUG\t\t0.6124307350390543\t0.6124307350390543\n",
                             sink
                     );
                 }
@@ -1423,7 +1497,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "52.98405941762054\tHYRX\n" +
                 "72.30015763133606\tHYRX\n";
         assertQuery(expected,
-//                "x",
                 "select * from x where b = 'HYRX' and a > 41 and test_match()",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,0) b from long_sequence(20)), index(b)",
                 null,
@@ -1451,6 +1524,148 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "a\tb\n" +
                         "75.88175403454873\tABC\n" +
                         "57.78947915182423\tABC\n");
+    }
+
+    @Test
+    public void testFilterWithIndexedBindVariableSingleIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testFilterWithSymbolBindVariable("select * from x where b = $1", true);
+    }
+
+    @Test
+    public void testFilterWithNamedBindVariableSingleIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testFilterWithSymbolBindVariable("select * from x where b = :b", true);
+    }
+
+    @Test
+    public void testFilterWithIndexedBindVariableIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testFilterWithSymbolBindVariable("select * from x where b = $1 and a != 0", true);
+    }
+
+    @Test
+    public void testFilterWithNamedBindVariableIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testFilterWithSymbolBindVariable("select * from x where b = :b and a != 0", true);
+    }
+
+    @Test
+    public void testFilterWithIndexedBindVariableSingleNonIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testFilterWithSymbolBindVariable("select * from x where b = $1", false);
+    }
+
+    @Test
+    public void testFilterWithNamedBindVariableSingleNonIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testFilterWithSymbolBindVariable("select * from x where b = :b", false);
+    }
+
+    @Test
+    public void testFilterWithIndexedBindVariableNonIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testFilterWithSymbolBindVariable("select * from x where b = $1 and a != 0", false);
+    }
+
+    @Test
+    public void testFilterWithNamedBindVariableNonIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testFilterWithSymbolBindVariable("select * from x where b = :b and a != 0", false);
+    }
+
+    private void testFilterWithSymbolBindVariable(String query, boolean indexed) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_double(0)*100 a," +
+                    " rnd_symbol(5,4,4,1) b," +
+                    " timestamp_sequence(0, 100000000000) k" +
+                    " from" +
+                    " long_sequence(20)" +
+                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
+
+            try (
+                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                assertCursor(
+                        "a\tb\tk\n" +
+                                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n",
+                        factory,
+                        true,
+                        true,
+                        false
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testFilterNotEqualsWithIndexedBindVariableSingleIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testFilterWithSymbolBindVariableNotEquals("select * from x where b != $1", true);
+    }
+
+    @Test
+    public void testFilterNotEqualsWithNamedBindVariableSingleIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testFilterWithSymbolBindVariableNotEquals("select * from x where b != :b", true);
+    }
+
+    @Test
+    public void testFilterNotEqualsWithIndexedBindVariableSingleNonIndexedSymbolNotEquals() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testFilterWithSymbolBindVariableNotEquals("select * from x where b != $1", false);
+    }
+
+    @Test
+    public void testFilterNotEqualsWithNamedBindVariableSingleNonIndexedSymbolNotEquals() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testFilterWithSymbolBindVariableNotEquals("select * from x where b != :b", false);
+    }
+
+    private void testFilterWithSymbolBindVariableNotEquals(String query, boolean indexed) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_double(0)*100 a," +
+                    " rnd_symbol(5,4,4,0) b," +
+                    " timestamp_sequence(0, 100000000000) k" +
+                    " from" +
+                    " long_sequence(5)" +
+                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
+
+            try (
+                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                assertCursor(
+                        "a\tb\tk\n" +
+                                "55.99161804800813\tRXGZ\t1970-01-02T03:46:40.000000Z\n" +
+                                "62.76954028373309\tPEHN\t1970-01-03T07:33:20.000000Z\n" +
+                                "31.00545983862456\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                                "0.35983672154330515\tCPSW\t1970-01-05T15:06:40.000000Z\n",
+                        factory,
+                        true,
+                        true,
+                        false
+                );
+            }
+        });
     }
 
     @Test
@@ -3667,6 +3882,149 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByIndexedKeyValueWithIndexedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testLatestByKeyValueWithBindVariable("select * from x where b = $1 latest on k partition by b", true);
+    }
+
+    @Test
+    public void testLatestByIndexedKeyValueWithNamedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testLatestByKeyValueWithBindVariable("select * from x where b = :b latest on k partition by b", true);
+    }
+
+    @Test
+    public void testLatestByIndexedKeyValueWithFilterAndIndexedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testLatestByKeyValueWithBindVariable("select * from x where b = $1 and a != 0 latest on k partition by b", true);
+    }
+
+    @Test
+    public void testLatestByIndexedKeyValueWithFilterAndNamedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testLatestByKeyValueWithBindVariable("select * from x where b = :b latest on k partition by b", true);
+    }
+
+    @Test
+    public void testLatestByNonIndexedKeyValueWithIndexedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testLatestByKeyValueWithBindVariable("select * from x where b = $1 latest on k partition by b", false);
+    }
+
+    @Test
+    public void testLatestByNonIndexedKeyValueWithNamedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testLatestByKeyValueWithBindVariable("select * from x where b = :b latest on k partition by b", false);
+    }
+
+    @Test
+    public void testLatestByNonIndexedKeyValueWithFilterAndIndexedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testLatestByKeyValueWithBindVariable("select * from x where b = $1 and a != 0 latest on k partition by b", false);
+    }
+
+    @Test
+    public void testLatestByNonIndexedKeyValueWithFilterAndNamedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testLatestByKeyValueWithBindVariable("select * from x where b = :b and a != 0 latest on k partition by b", false);
+    }
+
+    private void testLatestByKeyValueWithBindVariable(String query, boolean indexed) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_double(0)*100 a," +
+                    " rnd_symbol(5,4,4,1) b," +
+                    " timestamp_sequence(0, 100000000000) k" +
+                    " from" +
+                    " long_sequence(50)" +
+                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
+
+            try (
+                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                assertCursor(
+                        "a\tb\tk\n" +
+                                "89.98921791869131\tHYRX\t1970-02-18T14:40:00.000000Z\n",
+                        factory,
+                        true,
+                        true,
+                        false
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testLatestByIndexedKeyValuesWithIndexedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        bindVariableService.setStr(1, "VTJW");
+        testLatestByKeyValuesWithBindVariable("select * from x where b in ($1,$2) latest on k partition by b", true);
+    }
+
+    @Test
+    public void testLatestByIndexedKeyValuesWithNamedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b1", "HYRX");
+        bindVariableService.setStr("b2", "VTJW");
+        testLatestByKeyValuesWithBindVariable("select * from x where b in (:b1,:b2) latest on k partition by b", true);
+    }
+
+    @Test
+    public void testLatestByNonIndexedKeyValuesWithIndexedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        bindVariableService.setStr(1, "VTJW");
+        testLatestByKeyValuesWithBindVariable("select * from x where b in ($1,$2) latest on k partition by b", false);
+    }
+
+    @Test
+    public void testLatestByNonIndexedKeyValuesWithNamedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b1", "HYRX");
+        bindVariableService.setStr("b2", "VTJW");
+        testLatestByKeyValuesWithBindVariable("select * from x where b in (:b1,:b2) latest on k partition by b", false);
+    }
+
+    private void testLatestByKeyValuesWithBindVariable(String query, boolean indexed) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_double(0)*100 a," +
+                    " rnd_symbol(5,4,4,1) b," +
+                    " timestamp_sequence(0, 100000000000) k" +
+                    " from" +
+                    " long_sequence(50)" +
+                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
+
+            try (
+                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                assertCursor(
+                        "a\tb\tk\n" +
+                                "66.97969295620055\tVTJW\t1970-02-13T23:33:20.000000Z\n" +
+                                "89.98921791869131\tHYRX\t1970-02-18T14:40:00.000000Z\n",
+                        factory,
+                        true,
+                        true,
+                        true
+                );
+            }
+        });
+    }
+
+    @Test
     public void testLatestByMissingKeyValueIndexedColumnDereference() throws Exception {
         assertQuery(null,
                 "select b,k,a from x where b in ('XYZ') latest on k partition by b",
@@ -4645,7 +5003,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from long_sequence(20)" +
                         ")",
-                5,
+                "with tab as (x where b in ('BB')) tab ".length(),
                 "latest by query does not provide dedicated TIMESTAMP column"
         );
     }
@@ -5057,7 +5415,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testNamedBindVariableInWhere() throws Exception {
         assertMemoryLeak(() -> {
-
             final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
             try (
                     CairoEngine engine = new CairoEngine(configuration);
