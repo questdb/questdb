@@ -360,23 +360,43 @@ public class PGJobContextTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testBindVariablesInFilterBinaryTransfer() throws Exception {
-        testBindVariablesInFilter(true);
+    public void testBindVariableInFilterBinaryTransfer() throws Exception {
+        testBindVariableInFilter(true);
     }
 
     @Test
-    public void testBindVariablesInFilterOnSymbolBinaryTransfer() throws Exception {
-        testBindVariablesInFilterOnSymbol(true);
+    public void testBindVariablesWithIndexedSymbolInFilterBinaryTransfer() throws Exception {
+        testBindVariablesWithIndexedSymbolInFilter(true, true);
     }
 
     @Test
-    public void testBindVariablesInFilterOnSymbolStringTransfer() throws Exception {
-        testBindVariablesInFilterOnSymbol(false);
+    public void testBindVariablesWithNonIndexedSymbolInFilterBinaryTransfer() throws Exception {
+        testBindVariablesWithIndexedSymbolInFilter(true, false);
     }
 
     @Test
-    public void testBindVariablesInFilterStringTransfer() throws Exception {
-        testBindVariablesInFilter(false);
+    public void testSymbolBindVariableInFilterBinaryTransfer() throws Exception {
+        testSymbolBindVariableInFilter(true);
+    }
+
+    @Test
+    public void testBindVariableInFilterStringTransfer() throws Exception {
+        testBindVariableInFilter(false);
+    }
+
+    @Test
+    public void testBindVariablesWithIndexedSymbolInFilterStringTransfer() throws Exception {
+        testBindVariablesWithIndexedSymbolInFilter(false, true);
+    }
+
+    @Test
+    public void testBindVariablesWithNonIndexedSymbolInFilterStringTransfer() throws Exception {
+        testBindVariablesWithIndexedSymbolInFilter(false, false);
+    }
+
+    @Test
+    public void testSymbolBindVariableInFilterStringTransfer() throws Exception {
+        testSymbolBindVariableInFilter(false);
     }
 
     @Test
@@ -4828,7 +4848,7 @@ create table tab as (
         });
     }
 
-    private void testBindVariablesInFilter(boolean binary) throws Exception {
+    private void testBindVariableInFilter(boolean binary) throws Exception {
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer ignored = createPGServer(1);
@@ -4861,7 +4881,94 @@ create table tab as (
         });
     }
 
-    private void testBindVariablesInFilterOnSymbol(boolean binary) throws Exception {
+    private void testBindVariablesWithIndexedSymbolInFilter(boolean binary, boolean indexed) throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, binary)
+            ) {
+                connection.setAutoCommit(false);
+                connection.prepareStatement("create table x (device_id symbol" + (indexed ? " index," : ",") + " column_name symbol, value double, timestamp timestamp) timestamp(timestamp) partition by day").execute();
+                connection.prepareStatement("insert into x (device_id, column_name, value, timestamp) values ('d1', 'c1', 101.1, 0)").execute();
+                connection.prepareStatement("insert into x (device_id, column_name, value, timestamp) values ('d1', 'c1', 101.2, 1)").execute();
+                connection.prepareStatement("insert into x (device_id, column_name, value, timestamp) values ('d1', 'c1', 101.3, 2)").execute();
+                connection.prepareStatement("insert into x (device_id, column_name, value, timestamp) values ('d2', 'c1', 201.1, 0)").execute();
+                connection.prepareStatement("insert into x (device_id, column_name, value, timestamp) values ('d2', 'c1', 201.2, 1)").execute();
+                connection.prepareStatement("insert into x (device_id, column_name, value, timestamp) values ('d2', 'c1', 201.3, 2)").execute();
+                connection.prepareStatement("insert into x (device_id, column_name, value, timestamp) values ('d3', 'c1', 301.1, 0)").execute();
+                connection.prepareStatement("insert into x (device_id, column_name, value, timestamp) values ('d3', 'c1', 301.2, 1)").execute();
+                connection.commit();
+
+                // single key value in filter
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id = ? and timestamp > ?")) {
+                    ps.setString(1, "d1");
+                    ps.setTimestamp(2, new Timestamp(1));
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                        "d1,c1,101.30000000000001,1970-01-01 00:00:00.000002\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id != ? and timestamp > ?")) {
+                    ps.setString(1, "d1");
+                    ps.setTimestamp(2, new Timestamp(1));
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                        "d2,c1,201.3,1970-01-01 00:00:00.000002\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                // multiple key values in filter
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id in (?, ?) and timestamp > ?")) {
+                    ps.setString(1, "d1");
+                    ps.setString(2, "d2");
+                    ps.setTimestamp(3, new Timestamp(0));
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                        "d2,c1,201.20000000000002,1970-01-01 00:00:00.000001\n" +
+                                        "d1,c1,101.2,1970-01-01 00:00:00.000001\n" +
+                                        "d2,c1,201.3,1970-01-01 00:00:00.000002\n" +
+                                        "d1,c1,101.30000000000001,1970-01-01 00:00:00.000002\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("select * from x where device_id not in (?, ?) and timestamp > ?")) {
+                    ps.setString(1, "d2");
+                    ps.setString(2, "d3");
+                    ps.setTimestamp(3, new Timestamp(0));
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
+                                        "d1,c1,101.2,1970-01-01 00:00:00.000001\n" +
+                                        "d1,c1,101.30000000000001,1970-01-01 00:00:00.000002\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    private void testSymbolBindVariableInFilter(boolean binary) throws Exception {
         assertMemoryLeak(() -> {
             // create and initialize table outside of PG wire
             // to ensure we do not collaterally initialize execution context on function parser

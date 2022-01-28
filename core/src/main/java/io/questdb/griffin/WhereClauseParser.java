@@ -60,6 +60,10 @@ final class WhereClauseParser implements Mutable {
     // TODO: configure size
     private final ObjectPool<IntrinsicModel> models = new ObjectPool<>(IntrinsicModel.FACTORY, 8);
     private final CharSequenceHashSet tempKeys = new CharSequenceHashSet();
+    private final CharSequenceHashSet tempKeyValues = new CharSequenceHashSet();
+    private final CharSequenceHashSet tempKeyExcludedValues = new CharSequenceHashSet();
+    private final IntList tempKeyValuePos = new IntList();
+    private final IntList tempKeyExcludedValuePos = new IntList();
     private final IntList tempPos = new IntList();
     private final CharSequenceHashSet tempK = new CharSequenceHashSet();
     private final IntList tempP = new IntList();
@@ -80,6 +84,10 @@ final class WhereClauseParser implements Mutable {
         this.tempPos.clear();
         this.tempK.clear();
         this.tempP.clear();
+        this.tempKeyValues.clear();
+        this.tempKeyExcludedValues.clear();
+        this.tempKeyValuePos.clear();
+        this.tempKeyExcludedValuePos.clear();
         this.csPool.clear();
         this.timestamp = null;
         this.preferredKeyColumn = null;
@@ -191,26 +199,26 @@ final class WhereClauseParser implements Mutable {
                                 // compute overlap of values
                                 // if values do overlap, keep only our value
                                 // otherwise invalidate entire model
-                                if (model.keyValues.contains(value)) {
+                                if (tempKeyValues.contains(value)) {
                                     // when we have "x in ('a,'b') and x = 'a')" the x='b' can never happen
                                     // so we have to clear all other key values
-                                    if (model.keyValues.size() > 1) {
-                                        model.keyValues.clear();
-                                        model.keyValuePositions.clear();
-                                        model.keyValues.add(value);
-                                        model.keyValuePositions.add(b.position);
+                                    if (tempKeyValues.size() > 1) {
+                                        tempKeyValues.clear();
+                                        tempKeyValuePos.clear();
+                                        tempKeyValues.add(value);
+                                        tempKeyValuePos.add(b.position);
                                         node.intrinsicValue = IntrinsicModel.TRUE;
                                     }
                                 } else {
-                                    if (model.keyExcludedValues.contains(value)) {
-                                        if (model.keyExcludedValues.size() > 1) {
-                                            int removedIndex = model.keyExcludedValues.remove(value);
+                                    if (tempKeyExcludedValues.contains(value)) {
+                                        if (tempKeyExcludedValues.size() > 1) {
+                                            int removedIndex = tempKeyExcludedValues.remove(value);
                                             if (removedIndex > -1) {
-                                                model.keyExcludedValuePositions.removeIndex(index);
+                                                tempKeyExcludedValuePos.removeIndex(index);
                                             }
                                         } else {
-                                            model.keyExcludedValues.clear();
-                                            model.keyExcludedValuePositions.clear();
+                                            tempKeyExcludedValues.clear();
+                                            tempKeyExcludedValuePos.clear();
                                         }
                                         removeNodes(b, keyExclNodes);
                                     }
@@ -220,12 +228,12 @@ final class WhereClauseParser implements Mutable {
                                 }
                             } else if (model.keyColumn == null || m.getIndexValueBlockCapacity(index) > m.getIndexValueBlockCapacity(model.keyColumn)) {
                                 model.keyColumn = columnName;
-                                model.keyValues.clear();
-                                model.keyValuePositions.clear();
-                                model.keyExcludedValues.clear();
-                                model.keyExcludedValuePositions.clear();
-                                model.keyValues.add(value);
-                                model.keyValuePositions.add(b.position);
+                                tempKeyValues.clear();
+                                tempKeyValuePos.clear();
+                                tempKeyExcludedValues.clear();
+                                tempKeyExcludedValuePos.clear();
+                                tempKeyValues.add(value);
+                                tempKeyValuePos.add(b.position);
                                 resetNodes();
                                 node.intrinsicValue = IntrinsicModel.TRUE;
                             }
@@ -259,6 +267,25 @@ final class WhereClauseParser implements Mutable {
             return true;
         } else if (function.isRuntimeConstant()) {
             model.intersectEquals(function);
+            node.intrinsicValue = IntrinsicModel.TRUE;
+            return true;
+        }
+        return false;
+    }
+
+    private boolean analyzeTimestampNotEqualsFunction(
+            IntrinsicModel model,
+            ExpressionNode node,
+            Function function,
+            int functionPosition
+    ) throws SqlException {
+        if (function.isConstant()) {
+            long value = getTimestampFromConstFunction(function, functionPosition);
+            model.subtractIntervals(value, value);
+            node.intrinsicValue = IntrinsicModel.TRUE;
+            return true;
+        } else if (function.isRuntimeConstant()) {
+            model.subtractEquals(function);
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
         }
@@ -645,9 +672,9 @@ final class WhereClauseParser implements Mutable {
                 throw SqlException.$(node.position, "Multiple lambda expressions not supported");
             }
 
-            model.keyValues.clear();
-            model.keyValuePositions.clear();
-            model.keyValuePositions.add(node.position);
+            tempKeyValues.clear();
+            tempKeyValuePos.clear();
+            tempKeyValuePos.add(node.position);
             model.keySubQuery = node.rhs.queryModel;
 
             // revert previously processed nodes
@@ -790,15 +817,15 @@ final class WhereClauseParser implements Mutable {
             // clear values if this is new column
             // and reset intrinsic values on nodes associated with old column
             if (newColumn) {
-                model.keyValues.clear();
-                model.keyValuePositions.clear();
-                model.keyValues.addAll(tempKeys);
-                model.keyValuePositions.addAll(tempPos);
+                tempKeyValues.clear();
+                tempKeyValuePos.clear();
+                tempKeyValues.addAll(tempKeys);
+                tempKeyValuePos.addAll(tempPos);
                 return revertProcessedNodes(keyNodes, model, columnName, node);
             } else {
-                if (model.keyValues.size() == 0) {
-                    model.keyValues.addAll(tempKeys);
-                    model.keyValuePositions.addAll(tempPos);
+                if (tempKeyValues.size() == 0) {
+                    tempKeyValues.addAll(tempKeys);
+                    tempKeyValuePos.addAll(tempPos);
                 }
             }
 
@@ -819,11 +846,13 @@ final class WhereClauseParser implements Mutable {
             IntrinsicModel model,
             ExpressionNode node,
             RecordMetadata m,
+            FunctionParser functionParser,
+            SqlExecutionContext executionContext,
             boolean canUseIndex
     ) throws SqlException {
         checkNodeValid(node);
-        return analyzeNotEquals0(translator, model, node, node.lhs, node.rhs, m, canUseIndex)
-                || analyzeNotEquals0(translator, model, node, node.rhs, node.lhs, m, canUseIndex);
+        return analyzeNotEquals0(translator, model, node, node.lhs, node.rhs, m, functionParser, executionContext, canUseIndex)
+                || analyzeNotEquals0(translator, model, node, node.rhs, node.lhs, m, functionParser, executionContext, canUseIndex);
     }
 
     private boolean analyzeNotEquals0(
@@ -833,6 +862,8 @@ final class WhereClauseParser implements Mutable {
             ExpressionNode a,
             ExpressionNode b,
             RecordMetadata m,
+            FunctionParser functionParser,
+            SqlExecutionContext executionContext,
             boolean latestByMultiColumn
     ) throws SqlException {
         if (nodesEqual(a, b)) {
@@ -840,15 +871,20 @@ final class WhereClauseParser implements Mutable {
             return true;
         }
 
-        if (a.type == ExpressionNode.LITERAL && b.type == ExpressionNode.CONSTANT) {
+        if (a.type == ExpressionNode.LITERAL && (b.type == ExpressionNode.CONSTANT || isFunc(b))) {
             if (isTimestamp(a)) {
-                if (isNullKeyword(b.token)) {
-                    node.intrinsicValue = IntrinsicModel.FALSE;
-                    return false;
+                if (b.type == ExpressionNode.CONSTANT) {
+                    if (isNullKeyword(b.token)) {
+                        node.intrinsicValue = IntrinsicModel.FALSE;
+                        return false;
+                    }
+                    model.subtractIntervals(b.token, 1, b.token.length() - 1, b.position);
+                    node.intrinsicValue = IntrinsicModel.TRUE;
+                    return true;
                 }
-                model.subtractIntervals(b.token, 1, b.token.length() - 1, b.position);
-                node.intrinsicValue = IntrinsicModel.TRUE;
-                return true;
+                Function function = functionParser.parseFunction(b, m, executionContext);
+                checkFunctionCanBeTimestamp(m, executionContext, function, b.position);
+                return analyzeTimestampNotEqualsFunction(model, node, function, b.position);
             } else {
                 CharSequence columnName = translator.translateAlias(a.token);
                 int index = m.getColumnIndexQuiet(columnName);
@@ -864,43 +900,43 @@ final class WhereClauseParser implements Mutable {
                         if (columnIsPreferredOrIndexedAndNotPartOfMultiColumnLatestBy(columnName, m, latestByMultiColumn)) {
                             CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
                             if (Chars.equalsIgnoreCaseNc(model.keyColumn, columnName)) {
-                                if (model.keyExcludedValues.contains(value)) {
+                                if (tempKeyExcludedValues.contains(value)) {
                                     // when we have "x not in ('a,'b') and x != 'a')" the x='b' can never happen
                                     // so we have to clear all other key values
-                                    if (model.keyExcludedValues.size() > 1) {
-                                        model.keyExcludedValues.clear();
-                                        model.keyExcludedValuePositions.clear();
-                                        model.keyExcludedValues.add(value);
-                                        model.keyExcludedValuePositions.add(b.position);
+                                    if (tempKeyExcludedValues.size() > 1) {
+                                        tempKeyExcludedValues.clear();
+                                        tempKeyExcludedValuePos.clear();
+                                        tempKeyExcludedValues.add(value);
+                                        tempKeyExcludedValuePos.add(b.position);
                                         node.intrinsicValue = IntrinsicModel.TRUE;
                                     }
                                 } else {
-                                    if (model.keyValues.contains(value)) {
-                                        if (model.keyValues.size() > 1) {
-                                            int removedIndex = model.keyValues.remove(value);
+                                    if (tempKeyValues.contains(value)) {
+                                        if (tempKeyValues.size() > 1) {
+                                            int removedIndex = tempKeyValues.remove(value);
                                             if (removedIndex > -1) {
-                                                model.keyValuePositions.removeIndex(index);
+                                                tempKeyValuePos.removeIndex(index);
                                             }
-                                            model.keyValuePositions.remove(b.position);
+                                            tempKeyValuePos.remove(b.position);
                                         } else {
-                                            model.keyValues.clear();
-                                            model.keyValuePositions.clear();
+                                            tempKeyValues.clear();
+                                            tempKeyValuePos.clear();
                                         }
                                         removeNodes(b, keyNodes);
                                     }
-                                    model.keyExcludedValues.add(value);
-                                    model.keyExcludedValuePositions.add(b.position);
+                                    tempKeyExcludedValues.add(value);
+                                    tempKeyExcludedValuePos.add(b.position);
                                     node.intrinsicValue = IntrinsicModel.TRUE;
                                     return false;
                                 }
                             } else if (model.keyColumn == null || m.getIndexValueBlockCapacity(index) > m.getIndexValueBlockCapacity(model.keyColumn)) {
                                 model.keyColumn = columnName;
-                                model.keyValues.clear();
-                                model.keyValuePositions.clear();
-                                model.keyExcludedValues.clear();
-                                model.keyExcludedValuePositions.clear();
-                                model.keyExcludedValues.add(value);
-                                model.keyExcludedValuePositions.add(b.position);
+                                tempKeyValues.clear();
+                                tempKeyValuePos.clear();
+                                tempKeyExcludedValues.clear();
+                                tempKeyExcludedValuePos.clear();
+                                tempKeyExcludedValues.add(value);
+                                tempKeyExcludedValuePos.add(b.position);
                                 resetNodes();
                                 node.intrinsicValue = IntrinsicModel.TRUE;
                             }
@@ -1041,16 +1077,16 @@ final class WhereClauseParser implements Mutable {
             // clear values if this is new column
             // and reset intrinsic values on nodes associated with old column
             if (newColumn) {
-                model.keyExcludedValues.clear();
-                model.keyExcludedValuePositions.clear();
-                model.keyExcludedValues.addAll(tempKeys);
-                model.keyExcludedValuePositions.addAll(tempPos);
+                tempKeyExcludedValues.clear();
+                tempKeyExcludedValuePos.clear();
+                tempKeyExcludedValues.addAll(tempKeys);
+                tempKeyExcludedValuePos.addAll(tempPos);
                 revertProcessedNodes(keyExclNodes, model, columnName, notNode);
                 return;
             } else {
-                if (model.keyExcludedValues.size() == 0) {
-                    model.keyExcludedValues.addAll(tempKeys);
-                    model.keyExcludedValuePositions.addAll(tempPos);
+                if (tempKeyExcludedValues.size() == 0) {
+                    tempKeyExcludedValues.addAll(tempKeys);
+                    tempKeyExcludedValuePos.addAll(tempPos);
                 }
             }
 
@@ -1065,7 +1101,7 @@ final class WhereClauseParser implements Mutable {
     }
 
     private void applyKeyExclusions(AliasTranslator translator, IntrinsicModel model) {
-        if (model.keyColumn != null && model.keyValues.size() > 0 && keyExclNodes.size() > 0) {
+        if (model.keyColumn != null && tempKeyValues.size() > 0 && keyExclNodes.size() > 0) {
             OUT:
             for (int i = 0, n = keyExclNodes.size(); i < n; i++) {
                 ExpressionNode parent = keyExclNodes.getQuick(i);
@@ -1087,7 +1123,7 @@ final class WhereClauseParser implements Mutable {
 
                     final CharSequence column = translator.translateAlias(col.token);
                     if (Chars.equals(column, model.keyColumn)) {
-                        model.excludeValue(val);
+                        excludeKeyValue(model, val);
                         parent.intrinsicValue = IntrinsicModel.TRUE;
                         if (model.intrinsicValue == IntrinsicModel.FALSE) {
                             break;
@@ -1101,7 +1137,7 @@ final class WhereClauseParser implements Mutable {
                     if (Chars.equals(column, model.keyColumn)) {
                         for (int j = node.paramCount - 2; j > -1; j--) {
                             ExpressionNode val = node.args.getQuick(j);
-                            model.excludeValue(val);
+                            excludeKeyValue(model, val);
                             if (model.intrinsicValue == IntrinsicModel.FALSE) {
                                 break OUT;
                             }
@@ -1112,6 +1148,32 @@ final class WhereClauseParser implements Mutable {
             }
         }
         keyExclNodes.clear();
+    }
+
+    private void excludeKeyValue(IntrinsicModel model, ExpressionNode val) {
+        final int index;
+        if (isNullKeyword(val.token)) {
+            index = tempKeyValues.removeNull();
+            if (index > -1) {
+                tempKeyValuePos.removeIndex(index);
+            }
+        } else {
+            int keyIndex = Chars.isQuoted(val.token) ? tempKeyValues.keyIndex(val.token, 1, val.token.length() - 1) : tempKeyValues.keyIndex(val.token);
+            if (keyIndex < 0) {
+                index = tempKeyValues.getListIndexAt(keyIndex);
+                tempKeyValues.removeAt(keyIndex);
+            } else {
+                index = -1;
+            }
+        }
+
+        if (index > -1) {
+            tempKeyValuePos.removeIndex(index);
+        }
+
+        if (tempKeyValues.size() == 0) {
+            model.intrinsicValue = IntrinsicModel.FALSE;
+        }
     }
 
     private ExpressionNode collapseIntrinsicNodes(ExpressionNode node) {
@@ -1149,6 +1211,11 @@ final class WhereClauseParser implements Mutable {
             SqlExecutionContext executionContext,
             boolean latestByMultiColumn
     ) throws SqlException {
+        this.tempKeyValues.clear();
+        this.tempKeyExcludedValues.clear();
+        this.tempKeyValuePos.clear();
+        this.tempKeyExcludedValuePos.clear();
+
         this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
         this.preferredKeyColumn = preferredKeyColumn;
 
@@ -1166,6 +1233,7 @@ final class WhereClauseParser implements Mutable {
                 metadata,
                 executionContext,
                 latestByMultiColumn)) {
+            createKeyValueBindVariables(model, functionParser, executionContext);
             return model;
         }
         ExpressionNode root = node;
@@ -1202,7 +1270,50 @@ final class WhereClauseParser implements Mutable {
         }
         applyKeyExclusions(translator, model);
         model.filter = collapseIntrinsicNodes(root);
+        createKeyValueBindVariables(model, functionParser, executionContext);
         return model;
+    }
+
+    private void createKeyValueBindVariables(
+            IntrinsicModel model,
+            FunctionParser functionParser,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        for (int i = 0, n = tempKeyValues.size(); i < n; i++) {
+            Function func = createKeyValueBindVariable(
+                    functionParser,
+                    executionContext,
+                    tempKeyValuePos.getQuick(i),
+                    tempKeyValues.get(i));
+            model.keyValueFuncs.add(func);
+        }
+        tempKeyValues.clear();
+        tempKeyValuePos.clear();
+
+        for (int i = 0, n = tempKeyExcludedValues.size(); i < n; i++) {
+            Function func = createKeyValueBindVariable(
+                    functionParser,
+                    executionContext,
+                    tempKeyExcludedValuePos.getQuick(i),
+                    tempKeyExcludedValues.get(i));
+            model.keyExcludedValueFuncs.add(func);
+        }
+        tempKeyExcludedValues.clear();
+        tempKeyExcludedValuePos.clear();
+    }
+
+    private Function createKeyValueBindVariable(
+            FunctionParser functionParser,
+            SqlExecutionContext executionContext,
+            int position,
+            CharSequence value
+    ) throws SqlException {
+        Function func = functionParser.createBindVariable(executionContext, position, value);
+        if (func.isRuntimeConstant() && func.getType() == ColumnType.UNDEFINED) {
+            func.assignType(ColumnType.STRING, executionContext.getBindVariableService());
+        }
+        func.init(null, executionContext);
+        return func;
     }
 
     ExpressionNode extractWithin(
@@ -1442,7 +1553,7 @@ final class WhereClauseParser implements Mutable {
             case INTRINSIC_OP_EQUAL:
                 return analyzeEquals(translator, model, node, m, functionParser, executionContext, latestByMultiColumn);
             case INTRINSIC_OP_NOT_EQ:
-                return analyzeNotEquals(translator, model, node, m, latestByMultiColumn);
+                return analyzeNotEquals(translator, model, node, m, functionParser, executionContext, latestByMultiColumn);
             case INTRINSIC_OP_NOT:
                 return (isInKeyword(node.rhs.token) && analyzeNotIn(translator, model, node, m, functionParser, metadata, executionContext, latestByMultiColumn))
                         ||
@@ -1472,11 +1583,11 @@ final class WhereClauseParser implements Mutable {
         CharSequenceHashSet values;
         IntList positions;
         if (includedValues) {
-            values = model.keyValues;
-            positions = model.keyValuePositions;
+            values = tempKeyValues;
+            positions = tempKeyValuePos;
         } else {
-            values = model.keyExcludedValues;
-            positions = model.keyExcludedValuePositions;
+            values = tempKeyExcludedValues;
+            positions = tempKeyExcludedValuePos;
         }
         tempK.clear();
         tempP.clear();

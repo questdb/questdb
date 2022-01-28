@@ -39,11 +39,11 @@ public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractDe
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
-            String symbol,
+            Function symbolFunc,
             @Nullable Function filter,
             @NotNull IntList columnIndexes
     ) {
-        super(metadata, dataFrameCursorFactory, columnIndex, symbol, filter);
+        super(metadata, dataFrameCursorFactory, columnIndex, symbolFunc, filter);
         this.columnIndexes = columnIndexes;
     }
 
