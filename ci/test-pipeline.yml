@@ -122,4 +122,4 @@ stages:
               -c $(Pipeline.Workspace)/coverage-non-griffin/jacoco.xml
               --github-token $(GH_TOKEN) --repo
               "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) -t  $(DIFF_COVER_THRESHOLD_PCT) -type jacoco;
-            displayName: "Diff coverage PR report
+            displayName: "Diff coverage PR report"
