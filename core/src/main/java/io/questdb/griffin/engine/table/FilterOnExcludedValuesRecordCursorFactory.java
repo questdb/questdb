@@ -112,15 +112,10 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
 
         final SymbolMapReaderImpl symbolMapReader = (SymbolMapReaderImpl) tableReader.getSymbolMapReader(columnIndex);
 
-        boolean excludeNull = false;
         // Generate excluded key set.
         for (int i = 0, n = keyExcludedValueFunctions.size(); i < n; i++) {
             final CharSequence value = keyExcludedValueFunctions.getQuick(i).getStr(null);
-            if (value != null) {
-                excludedKeys.add(symbolMapReader.keyOf(value));
-            } else {
-                excludeNull = true;
-            }
+            excludedKeys.add(symbolMapReader.keyOf(value));
         }
 
         // Append new keys to the included set filtering out the excluded ones.
@@ -131,7 +126,8 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
             }
         }
 
-        if (!excludeNull && symbolMapReader.containsNullValue() && !includedKeys.contains(SymbolTable.VALUE_IS_NULL)) {
+        if (symbolMapReader.containsNullValue()
+                && !excludedKeys.contains(SymbolTable.VALUE_IS_NULL) && !includedKeys.contains(SymbolTable.VALUE_IS_NULL)) {
             // If the table contains null values and they're not excluded, we need to include
             // them to the result set to match the behavior of the NOT IN() SQL function.
             includedKeys.add(SymbolTable.VALUE_IS_NULL);
