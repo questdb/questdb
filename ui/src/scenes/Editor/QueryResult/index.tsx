@@ -24,7 +24,6 @@
 
 import React from "react"
 import styled from "styled-components"
-import { Rocket2 } from "@styled-icons/remix-line/Rocket2"
 
 import { collapseTransition, Text, TransitionDuration } from "components"
 import { color } from "utils"
@@ -34,7 +33,6 @@ type Props = Timings &
   Readonly<{
     count: number
     rowCount: number
-    jitCompiled?: boolean
   }>
 
 const Wrapper = styled.div`
@@ -94,14 +92,7 @@ const formatTiming = (nanos: number) => {
   return `${nanos}ns`
 }
 
-const QueryResult = ({
-  compiler,
-  count,
-  execute,
-  fetch,
-  rowCount,
-  jitCompiled,
-}: Props) => {
+const QueryResult = ({ compiler, count, execute, fetch, rowCount }: Props) => {
   return (
     <Wrapper _height={95} duration={TransitionDuration.FAST}>
       <div>
@@ -126,11 +117,6 @@ const QueryResult = ({
           </DetailsText>
         </DetailsColumn>
         <DetailsColumn>
-          {jitCompiled && (
-            <DetailsText align="right" color="gray2" size="sm">
-              JIT Compiled <Rocket2 size="12px" />
-            </DetailsText>
-          )}
           <DetailsText align="right" color="gray2" size="sm">
             Count: {formatTiming(count)}
           </DetailsText>

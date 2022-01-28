@@ -238,12 +238,9 @@ const MonacoEditor = () => {
               setLastExecutedQuery(request.query)
               dispatch(
                 actions.query.addNotification({
+                  jitCompiled: result.explain?.jitCompiled ?? false,
                   content: (
-                    <QueryResult
-                      {...result.timings}
-                      jitCompiled={result?.explain?.jitCompiled ?? false}
-                      rowCount={result.count}
-                    />
+                    <QueryResult {...result.timings} rowCount={result.count} />
                   ),
                   sideContent: (
                     <Text
