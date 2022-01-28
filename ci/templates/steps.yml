@@ -124,6 +124,6 @@ steps:
     artifact: $(testset)
     condition: |
       and(
-        or(eq(variables['testset'], 'coverage-griffin'),eq(variables['testset'], 'coverage-non-griffin'))
+        or(eq(variables['testset'], 'coverage-griffin'),eq(variables['testset'], 'coverage-non-griffin')),
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
