@@ -75,7 +75,7 @@ stages:
       - CheckChanges
     jobs:
       - template: templates/hosted-jobs.yml
-          -
+
   - stage: HostedRunTestsCoverageBranches
     displayName: "Hosted Running tests with cover"
     dependsOn:
