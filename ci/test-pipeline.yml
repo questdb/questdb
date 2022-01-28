@@ -110,8 +110,8 @@ stages:
           - bash:
               $JAVA_HOME_11_X64/bin/java -jar
               $(Build.SourcesDirectory)/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar
-              -c $(Pipeline.Workspace)\coverage-griffin\jacoco.xml
-              -c $(Pipeline.Workspace)\coverage-non-griffin\jacoco.xml
+              -c $(Pipeline.Workspace)/coverage-griffin/jacoco.xml
+              -c $(Pipeline.Workspace)/coverage-non-griffin/jacoco.xml
               --github-token $(GH_TOKEN) --repo
               "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) -t  $(DIFF_COVER_THRESHOLD_PCT) -type jacoco;
             displayName: "Diff coverage PR report"
