@@ -44,14 +44,6 @@ jobs:
 
               echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]+:*.$ALL_CHANGES"
               echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]JaCoCo"
-
-              IS_FORK=$(curl https://api.github.com/repos/questdb/questdb/pulls/$(System.PullRequest.PullRequestNumber) -s | grep -e "\"fork\": true")
-              if [ -z "$IS_FORK" ]
-              then
-                echo "##vso[task.setvariable variable=IF_FORK;isOutput=true]NO"
-              else
-                echo "##vso[task.setvariable variable=IF_FORK;isOutput=true]YES"
-              fi
           fi
         name: check_coverage
         displayName: "List of coverage classes PR build"

@@ -34,7 +34,7 @@ steps:
     timeoutInMinutes: 55
     condition: |
       and(
-        eq(variables['testset'], 'none'),
+        eq(variables['testset'], 'all'),
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
   - task: Maven@3
