@@ -114,7 +114,7 @@ stages:
           - bash:
               curl
               https://github.com/questdb/questdb/raw/$(Build.SourceVersion)/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar > $(Pipeline.Workspace)/cover-checker-console-1.4.2-jar-with-dependencies.jar
-              displayName: "Download cover-checker-console"
+            displayName: "Download cover-checker-console"
           - bash:
               $JAVA_HOME_11_X64/bin/java -jar
               $(Pipeline.Workspace)/cover-checker-console-1.4.2-jar-with-dependencies.jar
