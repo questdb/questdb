@@ -22,15 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.model;
+package io.questdb.griffin.update;
 
-public interface ExecutionModel {
-    int QUERY = 1;
-    int CREATE_TABLE = 2;
-    int RENAME_TABLE = 3;
-    int INSERT = 4;
-    int COPY = 5;
-    int UPDATE = 6;
+import io.questdb.cairo.sql.Record;
 
-    int getModelType();
+import java.io.Closeable;
+
+public interface UpdateStatementMasterCursor extends Closeable {
+    void setMaster(Record master);
+    Record getRecord();
+    boolean hasNext();
+
+    @Override
+    void close();
 }

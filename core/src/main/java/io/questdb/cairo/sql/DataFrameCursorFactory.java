@@ -45,6 +45,8 @@ public interface DataFrameCursorFactory extends Sinkable, Closeable {
         throw new UnsupportedOperationException();
     }
 
+    boolean supportTableRowId(CharSequence tableName);
+
     /**
      * Order of records in the data frame in regard to timestamp.
      *
