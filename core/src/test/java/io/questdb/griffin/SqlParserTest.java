@@ -5897,6 +5897,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
             public FilesFacade getFilesFacade() {
                 return ff;
             }
+
+            @Override
+            public long getSpinLockTimeoutUs() {
+                return 1000;
+            }
         };
 
         assertMemoryLeak(() -> {

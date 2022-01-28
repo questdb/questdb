@@ -104,7 +104,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
     private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
-    private final ObjList<Function> symbolValueList = new ObjList<>();
     private final ObjList<VectorAggregateFunction> tempVaf = new ObjList<>();
     private final GenericRecordMetadata tempMetadata = new GenericRecordMetadata();
     private final ArrayColumnTypes arrayColumnTypes = new ArrayColumnTypes();
@@ -1110,7 +1109,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
-            final int nKeyValues = intrinsicModel.keyValues.size();
+            final int nKeyValues = intrinsicModel.keyValueFuncs.size();
             if (indexed) {
 
                 assert nKeyValues > 0;
@@ -1121,14 +1120,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(latestByIndex));
                 final RowCursorFactory rcf;
                 if (nKeyValues == 1) {
-                    final CharSequence symbolValue = intrinsicModel.keyValues.get(0);
-                    final int symbol = symbolMapReader.keyOf(symbolValue);
+                    final Function symbolValueFunc = intrinsicModel.keyValueFuncs.get(0);
+                    final int symbol = symbolValueFunc.isRuntimeConstant()
+                            ? SymbolTable.VALUE_NOT_FOUND
+                            : symbolMapReader.keyOf(symbolValueFunc.getStr(null));
 
                     if (filter == null) {
                         if (symbol == SymbolTable.VALUE_NOT_FOUND) {
                             rcf = new LatestByValueDeferredIndexedRowCursorFactory(
                                     columnIndexes.getQuick(latestByIndex),
-                                    Chars.toString(symbolValue),
+                                    symbolValueFunc,
                                     false
                             );
                         } else {
@@ -1156,7 +1157,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 metadata,
                                 dataFrameCursorFactory,
                                 latestByIndex,
-                                Chars.toString(symbolValue),
+                                symbolValueFunc,
                                 filter,
                                 columnIndexes
                         );
@@ -1176,7 +1177,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         metadata,
                         dataFrameCursorFactory,
                         latestByIndex,
-                        intrinsicModel.keyValues,
+                        intrinsicModel.keyValueFuncs,
                         symbolMapReader,
                         filter,
                         columnIndexes
@@ -1194,7 +1195,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         metadata,
                         dataFrameCursorFactory,
                         latestByIndex,
-                        intrinsicModel.keyValues,
+                        intrinsicModel.keyValueFuncs,
                         symbolMapReader,
                         filter,
                         columnIndexes
@@ -1202,13 +1203,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             // we have a single symbol key
-            int symbolKey = symbolMapReader.keyOf(intrinsicModel.keyValues.get(0));
+            final Function symbolKeyFunc = intrinsicModel.keyValueFuncs.get(0);
+            final int symbolKey = symbolKeyFunc.isRuntimeConstant()
+                    ? SymbolTable.VALUE_NOT_FOUND
+                    : symbolMapReader.keyOf(symbolKeyFunc.getStr(null));
             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                 return new LatestByValueDeferredFilteredRecordCursorFactory(
                         metadata,
                         dataFrameCursorFactory,
                         latestByIndex,
-                        Chars.toString(intrinsicModel.keyValues.get(0)),
+                        symbolKeyFunc,
                         filter,
                         columnIndexes
                 );
@@ -1225,7 +1229,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         // we select all values of "latest by" column
 
-        assert intrinsicModel.keyValues.size() == 0;
+        assert intrinsicModel.keyValueFuncs.size() == 0;
         // get the latest rows for all values of "latest by" column
 
         if (indexed && filter == null) {
@@ -2371,32 +2375,42 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             final int columnCount = model.getColumns().size();
             ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
-            GroupByUtils.prepareGroupByFunctions(
-                    model,
-                    metadata,
-                    functionParser,
-                    executionContext,
-                    groupByFunctions,
-                    groupByFunctionPositions,
-                    valueTypes
-            );
+            try {
+                GroupByUtils.prepareGroupByFunctions(
+                        model,
+                        metadata,
+                        functionParser,
+                        executionContext,
+                        groupByFunctions,
+                        groupByFunctionPositions,
+                        valueTypes
+                );
+            } catch (SqlException e) {
+                Misc.freeObjList(groupByFunctions);
+                throw e;
+            }
 
             final ObjList<Function> recordFunctions = new ObjList<>(columnCount);
             final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
-            GroupByUtils.prepareGroupByRecordFunctions(
-                    model,
-                    metadata,
-                    listColumnFilterA,
-                    groupByFunctions,
-                    groupByFunctionPositions,
-                    recordFunctions,
-                    recordFunctionPositions,
-                    groupByMetadata,
-                    keyTypes,
-                    valueTypes.getColumnCount(),
-                    true,
-                    timestampIndex
-            );
+            try {
+                GroupByUtils.prepareGroupByRecordFunctions(
+                        model,
+                        metadata,
+                        listColumnFilterA,
+                        groupByFunctions,
+                        groupByFunctionPositions,
+                        recordFunctions,
+                        recordFunctionPositions,
+                        groupByMetadata,
+                        keyTypes,
+                        valueTypes.getColumnCount(),
+                        true,
+                        timestampIndex
+                );
+            } catch (SqlException e) {
+                Misc.freeObjList(recordFunctions);
+                throw e;
+            }
 
             if (keyTypes.getColumnCount() == 0) {
                 return new GroupByNotKeyedRecordCursorFactory(
@@ -2783,8 +2797,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (intrinsicModel.keyColumn != null) {
                     // existence of column would have been already validated
                     final int keyColumnIndex = reader.getMetadata().getColumnIndexQuiet(intrinsicModel.keyColumn);
-                    final int nKeyValues = intrinsicModel.keyValues.size();
-                    final int nKeyExcludedValues = intrinsicModel.keyExcludedValues.size();
+                    final int nKeyValues = intrinsicModel.keyValueFuncs.size();
+                    final int nKeyExcludedValues = intrinsicModel.keyExcludedValueFuncs.size();
 
                     if (intrinsicModel.keySubQuery != null) {
                         final RecordCursorFactory rcf = generate(intrinsicModel.keySubQuery, executionContext);
@@ -2829,7 +2843,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     }
 
-                    if (intrinsicModel.keyExcludedValues.size() == 0) {
+                    if (intrinsicModel.keyExcludedValueFuncs.size() == 0) {
                         Function f = compileFilter(intrinsicModel, myMeta, executionContext);
                         if (f != null && f.isConstant()) {
                             try {
@@ -2842,20 +2856,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                         if (nKeyValues == 1) {
                             final RowCursorFactory rcf;
-                            final CharSequence symbol = intrinsicModel.keyValues.get(0);
-                            final int symbolKey = reader.getSymbolMapReader(keyColumnIndex).keyOf(symbol);
+                            final Function symbolFunc = intrinsicModel.keyValueFuncs.get(0);
+                            final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(keyColumnIndex);
+                            final int symbolKey = symbolFunc.isRuntimeConstant()
+                                    ? SymbolTable.VALUE_NOT_FOUND
+                                    : symbolMapReader.keyOf(symbolFunc.getStr(null));
 
                             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                                 if (f == null) {
                                     rcf = new DeferredSymbolIndexRowCursorFactory(keyColumnIndex,
-                                            functionParser.createBindVariable(executionContext, intrinsicModel.keyValuePositions.getQuick(0), symbol),
+                                            symbolFunc,
                                             true,
                                             indexDirection
                                     );
                                 } else {
                                     rcf = new DeferredSymbolIndexFilteredRowCursorFactory(
                                             keyColumnIndex,
-                                            functionParser.createBindVariable(executionContext, intrinsicModel.keyValuePositions.getQuick(0), symbol),
+                                            symbolFunc,
                                             f,
                                             true,
                                             indexDirection,
@@ -2876,7 +2893,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 return new DeferredSingleSymbolFilterDataFrameRecordCursorFactory(
                                         configuration,
                                         keyColumnIndex,
-                                        symbol,
+                                        symbolFunc,
                                         rcf,
                                         myMeta,
                                         dfcFactory,
@@ -2898,16 +2915,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             );
                         }
 
-                        symbolValueList.clear();
-
-                        for (int i = 0, n = intrinsicModel.keyValues.size(); i < n; i++) {
-                            symbolValueList.add(functionParser.createBindVariable(
-                                    executionContext,
-                                    intrinsicModel.keyValuePositions.getQuick(i),
-                                    intrinsicModel.keyValues.get(i))
-                            );
-                        }
-
                         if (orderByKeyColumn) {
                             myMeta.setTimestampIndex(-1);
                         }
@@ -2915,7 +2922,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         return new FilterOnValuesRecordCursorFactory(
                                 myMeta,
                                 dfcFactory,
-                                symbolValueList,
+                                intrinsicModel.keyValueFuncs,
                                 keyColumnIndex,
                                 reader,
                                 f,
@@ -2927,17 +2934,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         );
 
                     } else if (
-                            intrinsicModel.keyExcludedValues.size() > 0
+                            intrinsicModel.keyExcludedValueFuncs.size() > 0
                                     && reader.getSymbolMapReader(keyColumnIndex).getSymbolCount() < configuration.getMaxSymbolNotEqualsCount()
                     ) {
-                        symbolValueList.clear();
-                        for (int i = 0, n = intrinsicModel.keyExcludedValues.size(); i < n; i++) {
-                            symbolValueList.add(functionParser.createBindVariable(
-                                    executionContext,
-                                    intrinsicModel.keyExcludedValuePositions.getQuick(i),
-                                    intrinsicModel.keyExcludedValues.get(i))
-                            );
-                        }
                         Function f = compileFilter(intrinsicModel, myMeta, executionContext);
                         if (f != null && f.isConstant()) {
                             try {
@@ -2952,7 +2951,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         return new FilterOnExcludedValuesRecordCursorFactory(
                                 myMeta,
                                 dfcFactory,
-                                symbolValueList,
+                                intrinsicModel.keyExcludedValueFuncs,
                                 keyColumnIndex,
                                 f,
                                 model.getOrderByAdviceMnemonic(),

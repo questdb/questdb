@@ -26,6 +26,10 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Os;
+import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -127,11 +131,6 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     assertPartitionResult(expectedAfterDrop, "2018-01-07");
                 }
         );
-    }
-
-    @Test
-    public void testDropPartitionWrongSeparator() throws Exception {
-        assertFailure("alter table x DROP partition list '2018';'2018'", 41, "',' expected");
     }
 
     @Test
@@ -245,35 +244,46 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDropPartitionWhereTimestampsIsNotActivePartition() throws Exception {
+    public void testDropPartitionWithO3Version() throws Exception {
         assertMemoryLeak(() -> {
-                    createX("YEAR", 3 * 72000000000L);
+            String tableName = "x";
+            try (TableModel tm = new TableModel(engine.getConfiguration(), tableName, PartitionBy.DAY)) {
+                tm.timestamp();
+                TestUtils.createPopulateTable(compiler, sqlExecutionContext, tm, 100, "2020-01-01", 5);
+            }
+            compiler.compile("insert into " + tableName + " " +
+                    "select timestamp_sequence('2020-01-01', " + Timestamps.HOUR_MICROS + "L) " +
+                    "from long_sequence(50)", sqlExecutionContext);
 
-                    assertPartitionResult("count\n" +
-                                    "145\n",
-                            "2018");
+            assertPartitionResult("count\n44\n", "2020-01-01");
 
-                    assertPartitionResult("count\n" +
-                            "147\n", "2020");
-
-                    Assert.assertEquals(ALTER, compile("alter table x drop partition where timestamp < dateadd('d', -1, now() ) AND timestamp < now()", sqlExecutionContext).getType());
-
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
-
-                    assertPartitionResult(expectedAfterDrop, "2018");
-                    assertPartitionResult(expectedAfterDrop, "2020");
+            try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(tableName)) {
+                path.concat("2020-01-01.1").concat("timestamp.d").$();
+                Assert.assertTrue(FilesFacadeImpl.INSTANCE.exists(path));
+                if (Os.type == Os.WINDOWS) {
+                    engine.releaseAllReaders();
                 }
-        );
+
+                compile("alter table x drop partition where timestamp = '2020-01-01'", sqlExecutionContext);
+
+                assertPartitionResult("count\n0\n", "2020-01-01");
+                Assert.assertFalse(FilesFacadeImpl.INSTANCE.exists(path));
+            }
+        });
+    }
+
+    @Test
+    public void testDropPartitionWrongSeparator() throws Exception {
+        assertFailure("alter table x DROP partition list '2018';'2018'", 41, "',' expected");
     }
 
     @Test
     public void testDropPartitionsByDayUsingWhereClause() throws Exception {
         assertMemoryLeak(() -> {
-                    createX("DAY", 720000000);
+            createX("DAY", 720000000);
 
-                    String expectedBeforeDrop = "count\n" +
-                            "120\n";
+            String expectedBeforeDrop = "count\n" +
+                    "120\n";
 
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");

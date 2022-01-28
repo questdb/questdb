@@ -35,24 +35,28 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor {
 
     private final int columnIndex;
     private final IntHashSet found = new IntHashSet();
     private final IntHashSet symbolKeys;
+    private final IntHashSet deferredSymbolKeys;
     private final Function filter;
 
     public LatestByValuesIndexedFilteredRecordCursor(
             int columnIndex,
             DirectLongList rows,
-            IntHashSet symbolKeys,
+            @NotNull IntHashSet symbolKeys,
+            @Nullable IntHashSet deferredSymbolKeys,
             Function filter,
             @NotNull IntList columnIndexes
     ) {
         super(rows, columnIndexes);
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;
+        this.deferredSymbolKeys = deferredSymbolKeys;
         this.filter = filter;
     }
 
@@ -66,7 +70,10 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor
     protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException {
         filter.init(this, executionContext);
 
-        final int keyCount = symbolKeys.size();
+        int keyCount = symbolKeys.size();
+        if (deferredSymbolKeys != null) {
+            keyCount += deferredSymbolKeys.size();
+        }
         found.clear();
         DataFrame frame;
         // frame metadata is based on TableReader, which is "full" metadata
@@ -81,21 +88,33 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor
 
             for (int i = 0, n = symbolKeys.size(); i < n; i++) {
                 int symbolKey = symbolKeys.get(i);
-                int index = found.keyIndex(symbolKey);
-                if (index > -1) {
-                    RowCursor cursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi);
-                    while (cursor.hasNext()) {
-                        final long row = cursor.next();
-                        recordA.setRecordIndex(row);
-                        if (filter.getBool(recordA)) {
-                            rows.add(Rows.toRowID(partitionIndex, row));
-                            found.addAt(index, symbolKey);
-                            break;
-                        }
+                addFoundKey(symbolKey, indexReader, partitionIndex, rowLo, rowHi);
+            }
+            if (deferredSymbolKeys != null) {
+                for (int i = 0, n = deferredSymbolKeys.size(); i < n; i++) {
+                    int symbolKey = deferredSymbolKeys.get(i);
+                    if (!symbolKeys.contains(symbolKey)) {
+                        addFoundKey(symbolKey, indexReader, partitionIndex, rowLo, rowHi);
                     }
                 }
             }
         }
         rows.sortAsUnsigned();
+    }
+
+    private void addFoundKey(int symbolKey, BitmapIndexReader indexReader, int partitionIndex, long rowLo, long rowHi) {
+        int index = found.keyIndex(symbolKey);
+        if (index > -1) {
+            RowCursor cursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi);
+            while (cursor.hasNext()) {
+                final long row = cursor.next();
+                recordA.setRecordIndex(row);
+                if (filter.getBool(recordA)) {
+                    rows.add(Rows.toRowID(partitionIndex, row));
+                    found.addAt(index, symbolKey);
+                    break;
+                }
+            }
+        }
     }
 }

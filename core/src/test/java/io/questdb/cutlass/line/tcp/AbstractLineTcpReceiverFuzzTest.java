@@ -34,7 +34,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
@@ -44,27 +45,32 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static io.questdb.cairo.ColumnType.DOUBLE;
-import static io.questdb.cairo.ColumnType.STRING;
+import static io.questdb.cairo.ColumnType.*;
 
 class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
     private static final Log LOG = LogFactory.getLog(AbstractLineTcpReceiverFuzzTest.class);
 
     private static final int MAX_NUM_OF_SKIPPED_COLS = 2;
     private static final int NEW_COLUMN_RANDOMIZE_FACTOR = 2;
+    private static final int UPPERCASE_TABLE_RANDOMIZE_FACTOR = 2;
 
     private final Rnd random = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
     private final AtomicLong timestampMillis = new AtomicLong(1465839830102300L);
     private final short[] colTypes = new short[]{STRING, DOUBLE, DOUBLE, DOUBLE, STRING, DOUBLE};
     private final String[][] colNameBases = new String[][]{
-            {"location", "Location", "LOCATION", "loCATion", "LocATioN"},
+            {"terület", "TERÜLet", "tERülET", "TERÜLET"},
             {"temperature", "TEMPERATURE", "Temperature", "TempeRaTuRe"},
             {"humidity", "HUMIdity", "HumiditY", "HUmiDIty", "HUMIDITY", "Humidity"},
             {"hőmérséklet", "HŐMÉRSÉKLET", "HŐmérséKLEt", "hőMÉRséKlET"},
-            {"terület", "TERÜLet", "tERülET", "TERÜLET"},
+            {"notes", "NOTES", "NotEs", "noTeS"},
             {"ветер", "Ветер", "ВЕТЕР", "вЕТЕр", "ВетЕР"}
     };
-    private final String[] colValueBases = new String[]{"us-midwest", "8", "2", "1", "europe", "6"};
+    private final String[] colValueBases = new String[]{"europe", "8", "2", "1", "note", "6"};
+    private final String[][] tagNameBases = new String[][]{
+            {"location", "Location", "LOCATION", "loCATion", "LocATioN"},
+            {"city", "ciTY", "CITY"}
+    };
+    private final String[] tagValueBases = new String[]{"us-midwest", "London"};
     private final char[] nonAsciiChars = {'ó', 'í', 'Á', 'ч', 'Ъ', 'Ж', 'ю', 0x3000, 0x3080, 0x3a55};
 
     private int numOfLines;
@@ -75,7 +81,8 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
     private boolean pinTablesToThreads;
 
     private SOCountDownLatch threadPushFinished;
-    private CharSequenceObjHashMap<TableData> tables;
+    private LowerCaseCharSequenceObjHashMap<TableData> tables;
+    private ConcurrentHashMap<CharSequence> tableNames;
 
     private int duplicatesFactor = -1;
     private int columnReorderingFactor = -1;
@@ -83,29 +90,54 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
     private int nonAsciiValueFactor = -1;
     private int newColumnFactor = -1;
     private boolean diffCasesInColNames = false;
+    private boolean exerciseTags = true;
+    private boolean sendStringsAsSymbols = false;
 
     private volatile String errorMsg = null;
 
+    private CharSequence addTag(LineData line, int tagIndex) {
+        final CharSequence tagName = generateTagName(tagIndex, false);
+        final CharSequence tagValue = generateTagValue(tagIndex);
+        line.addTag(tagName, tagValue);
+        return tagName;
+    }
+
     private CharSequence addColumn(LineData line, int colIndex) {
-        final CharSequence colName = generateName(colIndex, false);
-        final CharSequence colValue = generateValue(colIndex);
-        line.add(colName, colValue);
+        final CharSequence colName = generateColumnName(colIndex, false);
+        final CharSequence colValue = generateColumnValue(colIndex);
+        line.addColumn(colName, colValue);
         return colName;
+    }
+
+    private void addDuplicateTag(LineData line, int tagIndex, CharSequence tagName) {
+        if (shouldFuzz(duplicatesFactor)) {
+            final CharSequence tagValueDupe = generateTagValue(tagIndex);
+            line.addTag(tagName, tagValueDupe);
+        }
     }
 
     private void addDuplicateColumn(LineData line, int colIndex, CharSequence colName) {
         if (shouldFuzz(duplicatesFactor)) {
-            final CharSequence colValueDupe = generateValue(colIndex);
-            line.add(colName, colValueDupe);
+            final CharSequence colValueDupe = generateColumnValue(colIndex);
+            line.addColumn(colName, colValueDupe);
+        }
+    }
+
+    private void addNewTag(LineData line) {
+        if (shouldFuzz(newColumnFactor)) {
+            final int extraTagIndex = random.nextInt(tagNameBases.length);
+            final CharSequence tagNameNew = generateTagName(extraTagIndex, true);
+            final CharSequence tagValueNew = generateTagValue(extraTagIndex);
+            line.addTag(tagNameNew, tagValueNew);
         }
     }
 
     private void addNewColumn(LineData line) {
         if (shouldFuzz(newColumnFactor)) {
             final int extraColIndex = random.nextInt(colNameBases.length);
-            final CharSequence colNameNew = generateName(extraColIndex, true);
-            final CharSequence colValueNew = generateValue(extraColIndex);
-            line.add(colNameNew, colValueNew);
+            final CharSequence colNameNew = generateColumnName(extraColIndex, true);
+            final CharSequence colValueNew = generateColumnValue(extraColIndex);
+            line.addColumn(colNameNew, colValueNew);
         }
     }
 
@@ -131,8 +163,15 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
 
     // return false means could not assert and should be called again
     boolean checkTable(TableData table) {
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, table.getName())) {
-            LOG.info().$("table.getName(): ").$(table.getName()).$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
+        final CharSequence tableName = tableNames.get(table.getName());
+        if (tableName == null) {
+            LOG.info().$(table.getName()).$(" has not been created yet").$();
+            table.notReady();
+            return false;
+        }
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            LOG.info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
+                    .$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
             if (table.size() <= reader.size()) {
                 final TableReaderMetadata metadata = reader.getMetadata();
                 final CharSequence expected = table.generateRows(metadata);
@@ -146,8 +185,8 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
         }
     }
 
-    private int[] generateColumnOrdering() {
-        final int[] columnOrdering = new int[colNameBases.length];
+    private int[] generateOrdering(int numOfCols) {
+        final int[] columnOrdering = new int[numOfCols];
         if (shouldFuzz(columnReorderingFactor)) {
             final List<Integer> indexes = new ArrayList<>();
             for (int i = 0; i < columnOrdering.length; i++) {
@@ -167,6 +206,15 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
 
     private LineData generateLine() {
         final LineData line = new LineData(timestampMillis.incrementAndGet());
+        if (exerciseTags) {
+            final int[] tagIndexes = getTagIndexes();
+            for (int i = 0; i < tagIndexes.length; i++) {
+                final int tagIndex = tagIndexes[i];
+                final CharSequence tagName = addTag(line, tagIndex);
+                addDuplicateTag(line, tagIndex, tagName);
+                addNewTag(line);
+            }
+        }
         final int[] columnIndexes = getColumnIndexes();
         for (int i = 0; i < columnIndexes.length; i++) {
             final int colIndex = columnIndexes[i];
@@ -177,33 +225,65 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
         return line;
     }
 
-    private String generateName(int index, boolean randomize) {
-        final int caseIndex = diffCasesInColNames ? random.nextInt(colNameBases[index].length) : 0;
-        final String postfix = randomize ? Integer.toString(random.nextInt(NEW_COLUMN_RANDOMIZE_FACTOR)) : "";
-        return colNameBases[index][caseIndex] + postfix;
+    private String generateTagName(int index, boolean randomize) {
+        return generateName(tagNameBases[index], randomize);
     }
 
-    private String generateValue(int index) {
+    private String generateColumnName(int index, boolean randomize) {
+        return generateName(colNameBases[index], randomize);
+    }
+
+    private String generateName(String[] names, boolean randomize) {
+        final int caseIndex = diffCasesInColNames ? random.nextInt(names.length) : 0;
+        final String postfix = randomize ? Integer.toString(random.nextInt(NEW_COLUMN_RANDOMIZE_FACTOR)) : "";
+        return names[caseIndex] + postfix;
+    }
+
+    private String generateTagValue(int index) {
+        return generateValue(SYMBOL, tagValueBases[index]);
+    }
+
+    private String generateColumnValue(int index) {
+        return generateValue(colTypes[index], colValueBases[index]);
+    }
+
+    private String generateValue(short type, String valueBase) {
         final String postfix;
-        switch (colTypes[index]) {
+        switch (type) {
             case DOUBLE:
                 postfix = random.nextInt(9) + ".0";
-                break;
+                return valueBase + postfix;
+            case SYMBOL:
+                postfix = Character.toString(shouldFuzz(nonAsciiValueFactor) ? nonAsciiChars[random.nextInt(nonAsciiChars.length)] : random.nextChar());
+                return valueBase + postfix;
             case STRING:
                 postfix = Character.toString(shouldFuzz(nonAsciiValueFactor) ? nonAsciiChars[random.nextInt(nonAsciiChars.length)] : random.nextChar());
-                break;
+                return sendStringsAsSymbols ? valueBase + postfix : "\"" + valueBase + postfix + "\"";
             default:
-                postfix = "";
+                return valueBase;
         }
-        return colValueBases[index] + postfix;
+    }
+
+    private int[] getTagIndexes() {
+        return skipColumns(generateOrdering(tagNameBases.length));
     }
 
     private int[] getColumnIndexes() {
-        return skipColumns(generateColumnOrdering());
+        return skipColumns(generateOrdering(colNameBases.length));
     }
 
     private CharSequence getTableName(int tableIndex) {
-        return "weather" + tableIndex;
+        return getTableName(tableIndex, false);
+    }
+
+    private CharSequence getTableName(int tableIndex, boolean randomCase) {
+        final String tableName;
+        if (randomCase) {
+            tableName = random.nextInt(UPPERCASE_TABLE_RANDOMIZE_FACTOR) == 0 ? "WEATHER" : "weather";
+        } else {
+            tableName = "weather";
+        }
+        return tableName + tableIndex;
     }
 
     @Override
@@ -228,13 +308,16 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
         };
     }
 
-    void initFuzzParameters(int duplicatesFactor, int columnReorderingFactor, int columnSkipFactor, int newColumnFactor, int nonAsciiValueFactor, boolean diffCasesInColNames) {
+    void initFuzzParameters(int duplicatesFactor, int columnReorderingFactor, int columnSkipFactor, int newColumnFactor, int nonAsciiValueFactor,
+                            boolean diffCasesInColNames, boolean exerciseTags, boolean sendStringsAsSymbols) {
         this.duplicatesFactor = duplicatesFactor;
         this.columnReorderingFactor = columnReorderingFactor;
         this.columnSkipFactor = columnSkipFactor;
         this.nonAsciiValueFactor = nonAsciiValueFactor;
         this.newColumnFactor = newColumnFactor;
         this.diffCasesInColNames = diffCasesInColNames;
+        this.exerciseTags = exerciseTags;
+        this.sendStringsAsSymbols = sendStringsAsSymbols;
     }
 
     void initLoadParameters(int numOfLines, int numOfIterations, int numOfThreads, int numOfTables, long waitBetweenIterationsMillis) {
@@ -252,24 +335,37 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
         this.pinTablesToThreads = pinTablesToThreads;
 
         threadPushFinished = new SOCountDownLatch(numOfThreads - 1);
-        tables = new CharSequenceObjHashMap<>();
+        tables = new LowerCaseCharSequenceObjHashMap<>();
+        tableNames = new ConcurrentHashMap<>();
     }
 
-    private TableData pickTable(int threadId) {
-        return tables.get(getTableName(pinTablesToThreads ? threadId : random.nextInt(numOfTables)));
+    private CharSequence pickTableName(int threadId) {
+        return getTableName(pinTablesToThreads ? threadId : random.nextInt(numOfTables), true);
     }
 
     void runTest() throws Exception {
         runTest((factoryType, thread, name, event, segment, position) -> {
+            if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_LOCK_SUCCESS) {
+                handleWriterLockSuccessEvent(name);
+            }
             if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                if (threadPushFinished.getCount() > 0) {
-                    // we are still sending, no point to check the table yet
-                    return;
-                }
-                final TableData table = tables.get(name);
-                table.ready();
+                handleWriterReturnEvent(name);
             }
         });
+    }
+
+    void handleWriterLockSuccessEvent(CharSequence name) {
+        final String tableName = name.toString();
+        tableNames.putIfAbsent(tableName.toLowerCase(), tableName);
+    }
+
+    void handleWriterReturnEvent(CharSequence name) {
+        if (threadPushFinished.getCount() > 0) {
+            // we are still sending, no point to check the table yet
+            return;
+        }
+        final TableData table = tables.get(name);
+        table.ready();
     }
 
     void runTest(PoolListener listener) throws Exception {
@@ -288,9 +384,9 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
                         try (Socket socket = getSocket()) {
                             for (int n = 0; n < numOfIterations; n++) {
                                 for (int j = 0; j < numOfLines; j++) {
-                                    final TableData table = pickTable(threadId);
-                                    final CharSequence tableName = table.getName();
                                     final LineData line = generateLine();
+                                    final CharSequence tableName = pickTableName(threadId);
+                                    final TableData table = tables.get(tableName);
                                     table.addLine(line);
                                     sendToSocket(socket, line.toLine(tableName));
                                 }

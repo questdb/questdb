@@ -67,7 +67,7 @@ public interface LineTcpReceiverConfiguration {
 
     long getWriterIdleTimeout();
 
-    IODispatcherConfiguration getNetDispatcherConfiguration();
+    IODispatcherConfiguration getDispatcherConfiguration();
 
     int getNetMsgBufferSize();
 
@@ -80,8 +80,6 @@ public interface LineTcpReceiverConfiguration {
     WorkerPoolAwareConfiguration getWriterWorkerPoolConfiguration();
 
     boolean isEnabled();
-
-    int getAggressiveReadRetryCount();
 
     long getSymbolCacheWaitUsBeforeReload();
 }

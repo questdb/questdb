@@ -24,8 +24,8 @@
 
 package io.questdb.test.tools;
 
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -69,18 +69,6 @@ public final class TestUtils {
             if (a.byteAt(i) != b.byteAt(i)) return false;
         }
         return true;
-    }
-
-    public static long connect(long fd, long sockAddr) {
-        Assert.assertTrue(fd > -1);
-        return Net.connect(fd, sockAddr);
-    }
-
-    public static void await(CyclicBarrier barrier) {
-        try {
-            barrier.await();
-        } catch (Throwable ignore) {
-        }
     }
 
     public static void assertConnect(long fd, long sockAddr) {
@@ -423,13 +411,16 @@ public final class TestUtils {
         }
 
         // Checks that the same tag used for allocation and freeing native memory
-        for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
-            long actualMemByTag = Unsafe.getMemUsedByTag(i);
-            if (memoryUsageByTag[i] != actualMemByTag) {
-                Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i), memoryUsageByTag[i], actualMemByTag);
+        long memAfter = Unsafe.getMemUsed();
+        if (mem != memAfter) {
+            for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
+                long actualMemByTag = Unsafe.getMemUsedByTag(i);
+                if (memoryUsageByTag[i] != actualMemByTag) {
+                    Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i), memoryUsageByTag[i], actualMemByTag);
+                }
             }
+            Assert.assertEquals(mem, memAfter);
         }
-        Assert.assertEquals(mem, Unsafe.getMemUsed());
     }
 
     public static void assertReader(CharSequence expected, TableReader reader, MutableCharSink sink) {
@@ -507,6 +498,18 @@ public final class TestUtils {
         assertEquals(expected, sink);
     }
 
+    public static void await(CyclicBarrier barrier) {
+        try {
+            barrier.await();
+        } catch (Throwable ignore) {
+        }
+    }
+
+    public static long connect(long fd, long sockAddr) {
+        Assert.assertTrue(fd > -1);
+        return Net.connect(fd, sockAddr);
+    }
+
     public static void copyMimeTypes(String targetDir) throws IOException {
         try (InputStream stream = TestUtils.class.getResourceAsStream("/site/conf/mime.types")) {
             Assert.assertNotNull(stream);
@@ -520,15 +523,6 @@ public final class TestUtils {
                 }
             }
         }
-    }
-
-    public static boolean drainEngineCmdQueue(CairoEngine engine) {
-        boolean useful = false;
-        while (engine.tick()) {
-            useful = true;
-            // drain the engine queue
-        }
-        return useful;
     }
 
     public static void createPopulateTable(
@@ -632,6 +626,23 @@ public final class TestUtils {
             }
             Files.mkdirs(path.of(root).slash$(), 509);
         }
+    }
+
+    public static boolean drainEngineCmdQueue(CairoEngine engine) {
+        boolean useful = false;
+        while (engine.tick()) {
+            useful = true;
+            // drain the engine queue
+        }
+        return useful;
+    }
+
+    @NotNull
+    public static Rnd generateRandom(Log log) {
+        long s0 = System.nanoTime();
+        long s1 = System.currentTimeMillis();
+        System.out.println("random seed " + s0 + ", " + s1);
+        return new Rnd(s0, s1);
     }
 
     public static int getJavaVersion() {

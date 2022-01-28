@@ -34,10 +34,10 @@ import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 
 import java.util.Arrays;
-import java.util.Iterator;
 import java.util.Map;
 
 public class ReaderPool extends AbstractPool implements ResourcePool<TableReader> {
@@ -234,10 +234,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         int casFailures = 0;
         int closeReason = deadline < Long.MAX_VALUE ? PoolConstants.CR_IDLE : PoolConstants.CR_POOL_CLOSE;
 
-        Iterator<Entry> iterator = entries.values().iterator();
-        while (iterator.hasNext()) {
-            Entry e = iterator.next();
-
+        for (Entry e : entries.values()) {
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
                     R r;
@@ -318,14 +315,20 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             return false;
         }
 
-        if (Unsafe.arrayGetVolatile(e.allocations, index) != UNALLOCATED) {
+        final long owner = Unsafe.arrayGetVolatile(e.allocations, index);
+        if (owner != UNALLOCATED) {
 
             LOG.debug().$('\'').$(name).$("' is back [at=").$(e.index).$(':').$(index).$(", thread=").$(thread).$(']').$();
             notifyListener(thread, name, PoolListener.EV_RETURN, e.index, index);
 
+            // release the entry for anyone to pick up
             e.releaseTimes[index] = clock.getTicks();
             Unsafe.arrayPutOrdered(e.allocations, index, UNALLOCATED);
-            return !isClosed();
+            final boolean closed = isClosed();
+
+            // When pool is closed we will race against release thread
+            // to release our entry. No need to bother releasing map entry, pool is going down.
+            return !closed || !Unsafe.cas(e.allocations, index, UNALLOCATED, owner);
         }
 
         LOG.error().$('\'').$(name).$("' is available [at=").$(e.index).$(':').$(index).$(']').$();
@@ -366,13 +369,13 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         public void close() {
             if (isOpen()) {
                 goPassive();
-                if (pool != null && entry != null && pool.returnToPool(this)) {
-                    return;
+                final ReaderPool pool = this.pool;
+                if (pool != null && entry != null) {
+                    if (pool.returnToPool(this)) {
+                        return;
+                    }
                 }
-                final Entry e = this.entry;
-                if (e == null || Unsafe.cas(e.allocations, index, UNALLOCATED, Thread.currentThread().getId())) {
-                    super.close();
-                }
+                super.close();
             }
         }
 

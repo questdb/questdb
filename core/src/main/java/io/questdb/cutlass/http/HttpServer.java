@@ -58,7 +58,6 @@ public class HttpServer implements Closeable {
     private final WorkerPool workerPool;
     private final WaitProcessor rescheduleContext;
 
-
     public HttpServer(HttpMinServerConfiguration configuration, WorkerPool pool, boolean localPool) {
         this.workerCount = pool.getWorkerCount();
         this.selectors = new ObjList<>(workerCount);

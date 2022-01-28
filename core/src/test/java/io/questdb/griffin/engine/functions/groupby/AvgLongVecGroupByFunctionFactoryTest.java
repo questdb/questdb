@@ -87,4 +87,29 @@ public class AvgLongVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 true
         );
     }
+
+    @Test
+    public void testAvgLongOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table test as(select 21474836475L * x as x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1000000));", sqlExecutionContext);
+            String expected = "sym\tavg\n" +
+                    "a\t1.0731625369352276E16\n" +
+                    "b\t1.0731385513028126E16\n" +
+                    "c\t1.0749264817744848E16\n";
+
+
+            assertSql("select sym, avg(cast(x as double)) from test order by sym", expected);
+            assertSql("select sym, avg(x) from test where x > 0 order by sym", expected);
+
+            final String diffExpected = "sym\tcolumn\n" +
+                    "a\ttrue\n" +
+                    "b\ttrue\n" +
+                    "c\ttrue\n";
+
+            // Here 6000 is a hack.
+            // Difference between avg(double) and avg(long) depends on column values range and rows count.
+            assertSql("with a as (select sym, avg(x) from test), b as (select sym, avg(x) from test where x > 0) " +
+                    "select a.sym, b.avg-a.avg < 6000 from a join b on(sym) order by sym", diffExpected);
+        });
+    }
 }
