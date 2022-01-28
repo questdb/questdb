@@ -62,7 +62,7 @@ public class HttpQueryTestBuilder {
     private int workerCount = 1;
     private long startWriterWaitTimeout = 500_000;
     private long maxWriterWaitTimeout = 30_000_000L;
-    private boolean jitEnabled = false;
+    private int jitMode = SqlJitMode.JIT_MODE_DISABLED;
     private FilesFacade filesFacade = new FilesFacadeImpl();
     private QueryFutureUpdateListener queryFutureUpdateListener;
 
@@ -123,7 +123,7 @@ public class HttpQueryTestBuilder {
 
                     @Override
                     public int getSqlJitMode() {
-                        return jitEnabled ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED;
+                        return jitMode;
                     }
                 };
             }
@@ -301,8 +301,8 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
-    public HttpQueryTestBuilder withJitEnabled() {
-        this.jitEnabled = true;
+    public HttpQueryTestBuilder withJitMode(int jitMode) {
+        this.jitMode = jitMode;
         return this;
     }
 

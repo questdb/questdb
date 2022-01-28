@@ -6612,7 +6612,7 @@ public class IODispatcherTest {
                 .withWorkerCount(workerCount)
                 .withTelemetry(telemetry)
                 .withTempFolder(temp)
-                .withJitEnabled()
+                .withJitMode(SqlJitMode.JIT_MODE_ENABLED)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()
                         .withServerKeepAlive(!http1)
                         .withSendBufferSize(16 * 1024)
