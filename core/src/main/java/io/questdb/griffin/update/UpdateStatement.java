@@ -22,45 +22,49 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin.update;
 
-import io.questdb.cairo.sql.DataFrameCursorFactory;
-import io.questdb.std.Chars;
-import io.questdb.std.str.CharSink;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Misc;
 
-public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorFactory {
-    private final CairoEngine engine;
+import java.io.Closeable;
+
+public class UpdateStatement implements Closeable {
     private final String tableName;
     private final int tableId;
     private final long tableVersion;
+    private RecordCursorFactory updateToDataCursorFactory;
 
-    public AbstractDataFrameCursorFactory(CairoEngine engine, String tableName, int tableId, long tableVersion) {
-        this.engine = engine;
+    public UpdateStatement(
+            String tableName,
+            int tableId,
+            long tableVersion,
+            RecordCursorFactory updateToCursorFactory
+    ) {
         this.tableName = tableName;
         this.tableId = tableId;
         this.tableVersion = tableVersion;
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("{\"name\":\"").put(this.getClass().getSimpleName()).put("\", \"table\":\"").put(tableName).put("\"}");
-    }
-
-    protected TableReader getReader(CairoSecurityContext sqlContext) {
-        return engine.getReader(
-                sqlContext,
-                tableName,
-                tableId,
-                tableVersion
-        );
+        this.updateToDataCursorFactory = updateToCursorFactory;
     }
 
     @Override
     public void close() {
+        updateToDataCursorFactory = Misc.free(updateToDataCursorFactory);
     }
 
-    @Override
-    public boolean supportTableRowId(CharSequence tableName) {
-        return Chars.equalsIgnoreCaseNc(tableName, this.tableName);
+    public int getTableId() {
+        return tableId;
+    }
+
+    public CharSequence getTableName() {
+        return tableName;
+    }
+
+    public long getTableVersion() {
+        return tableVersion;
+    }
+
+    public RecordCursorFactory getUpdateToDataCursorFactory() {
+        return updateToDataCursorFactory;
     }
 }

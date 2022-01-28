@@ -22,36 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.update;
 
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Sinkable;
-import io.questdb.std.str.CharSink;
+import io.questdb.cairo.sql.Record;
 
 import java.io.Closeable;
 
-/**
- * A factory interface for dataframe cursors
- */
-public interface DataFrameCursorFactory extends Sinkable, Closeable {
+public interface UpdateStatementMasterCursor extends Closeable {
+    void setMaster(Record master);
+    Record getRecord();
+    boolean hasNext();
 
-    DataFrameCursor getCursor(SqlExecutionContext executionContext) throws SqlException;
-
-    /**
-     * @param sink to print data frame cursor to
-     */
-    default void toSink(CharSink sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    boolean supportTableRowId(CharSequence tableName);
-
-    /**
-     * Returns 0 for ASC, 1 for DESC
-     */
-    int getOrder();
-
-    int ORDER_ASC = 0;
-    int ORDER_DESC = 1;
+    @Override
+    void close();
 }

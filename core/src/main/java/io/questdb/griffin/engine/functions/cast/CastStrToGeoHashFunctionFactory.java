@@ -59,7 +59,7 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
         return newInstance(argPosition, geoType, value);
     }
 
-    public Function newInstance(int argPosition, int geoType, Function value) throws SqlException {
+    public static Function newInstance(int argPosition, int geoType, Function value) throws SqlException {
         if (value.isConstant()) {
             try {
                 final int bits = ColumnType.getGeoHashBits(geoType);
