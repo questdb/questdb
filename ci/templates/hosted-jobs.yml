@@ -51,9 +51,13 @@ jobs:
     timeoutInMinutes: 60
     variables:
       SOURCE_CODE_CHANGED:
-        $[
-        stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']
-        ]
+        $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
+      COVERAGE_DIFF:
+        $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
+      CODE_COVERAGE_TOOL_OPTION:
+        $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
+      IF_FORK:
+        $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.IF_FORK']]
       MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
       MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m"
     steps:

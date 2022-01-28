@@ -8,15 +8,13 @@ jobs:
       - bash: |
           # No PR - cannot detect changed files, default to true
           echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
-          CHANGED_CORE_FILES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PR_ID/files -s  | grep -oP 'filename": "(core|benchmarks)/*\/\K[^.]+')
+          CHANGED_CORE_FILES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$(System.PullRequest.PullRequestNumber)/files -s  | grep -oP 'filename": "(core|benchmarks)/*\/\K[^.]+')
           if [ -z "$CHANGED_CORE_FILES" ]
             then
               echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]false"
             else
               echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
           fi
-        env:
-          PR_ID: $(System.PullRequest.PullRequestNumber)
         name: check_changes
         displayName: "Check changed files"
       - bash: |
@@ -26,14 +24,14 @@ jobs:
 
           if [ -z "$COV_CLASSES" ]
           then
-              echo "##vso[task.setvariable variable=COVERAGE_DIFF;]-:*"
-              echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;]None"
+              echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]-:*"
+              echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]None"
           else
               ALL_CHANGES=$COV_CLASSES
               PAGE=1
               while true; do
                 PAGE=$((PAGE+1))
-                COV_CLASSES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PR_ID/files?per_page=100\&page=$PAGE -s \
+                COV_CLASSES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$(System.PullRequest.PullRequestNumber)/files?per_page=100\&page=$PAGE -s \
                   | grep -oP 'filename": "core/src/main/java/io/questdb.*\/\K[^.]+' \
                   | tr '\n' ',' | sed -e 's/,/,+:*./g' | sed 's/,+:\*\.$//')
                 if [ -z "$COV_CLASSES" ]
@@ -44,18 +42,16 @@ jobs:
                 fi
               done
 
-              echo "##vso[task.setvariable variable=COVERAGE_DIFF;]+:*.$ALL_CHANGES"
-              echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;]JaCoCo"
+              echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]+:*.$ALL_CHANGES"
+              echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]JaCoCo"
 
-              IS_FORK=$(curl https://api.github.com/repos/questdb/questdb/pulls/$1 -s | grep -e "\"fork\": true")
+              IS_FORK=$(curl https://api.github.com/repos/questdb/questdb/pulls/$(System.PullRequest.PullRequestNumber) -s | grep -e "\"fork\": true")
               if [ -z "$IS_FORK" ]
               then
-                echo "##vso[task.setvariable variable=IF_FORK;]NO"
+                echo "##vso[task.setvariable variable=IF_FORK;isOutput=true]NO"
               else
-                echo "##vso[task.setvariable variable=IF_FORK;]YES"
+                echo "##vso[task.setvariable variable=IF_FORK;isOutput=true]YES"
               fi
           fi
+        name: check_coverage
         displayName: "List of coverage classes PR build"
-        env:
-          PR_ID: $(System.PullRequest.PullRequestNumber)
-        condition: eq(variables['SOURCE_CODE_CHANGED'], 'true')

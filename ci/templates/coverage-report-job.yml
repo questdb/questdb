@@ -7,9 +7,9 @@ jobs:
       SOURCE_CODE_CHANGED:
         $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
       CODE_COVERAGE_TOOL_OPTION:
-        $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.CODE_COVERAGE_TOOL_OPTION']]
+        $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
       IF_FORK:
-        $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.IF_FORK']]
+        $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.IF_FORK']]
     steps:
       - checkout: self
         fetchDepth: 1
@@ -19,24 +19,16 @@ jobs:
         artifact: jacocoreport
       - bash:
           $JAVA_HOME_11_X64/bin/java -jar
-          $SOURCES/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar -c
-          $COVERAGE_REPORT_PATH --github-token $SYSTEM_ACCESSTOKEN --repo
-          "questdb/questdb" --pr $PR_ID -t $DIFF_COVER_THRESHOLD_PCT -type jacoco;
+          $(Build.SourcesDirectory)/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar -c
+          $(Pipeline.Workspace)\jacocoreport\jacoco.xml --github-token $(GH_TOKEN) --repo
+          "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) -t  $(DIFF_COVER_THRESHOLD_PCT) -type jacoco;
         displayName: "Diff coverage PR report"
-        env:
-          CODE_COVERAGE_TOOL_OPTION: "$(CODE_COVERAGE_TOOL_OPTION)"
-          IF_FORK: "$(IF_FORK)"
-          SYSTEM_ACCESSTOKEN: $(GH_TOKEN)
-          PR_ID: $(System.PullRequest.PullRequestNumber)
-          SOURCES: $(Build.SourcesDirectory)
-          COVERAGE_REPORT_PATH: $(Pipeline.Workspace)\jacocoreport\jacoco.xml
-          DIFF_CONVER_THRESHOLD_PCT: $(DIFF_COVER_THRESHOLD_PCT)
         condition: |
           and(
             and(
               eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
               eq(variables['SOURCE_CODE_CHANGED'], 'true')
             ),
-            not(eq(variables['$IF_FORK'], 'YES'))
+            eq(variables['$IF_FORK'], 'NO')
           )
 
