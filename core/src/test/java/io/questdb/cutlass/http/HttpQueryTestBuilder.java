@@ -29,6 +29,7 @@ import io.questdb.TelemetryJob;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cutlass.http.processors.*;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlCompiler;
@@ -61,6 +62,7 @@ public class HttpQueryTestBuilder {
     private int workerCount = 1;
     private long startWriterWaitTimeout = 500_000;
     private long maxWriterWaitTimeout = 30_000_000L;
+    private boolean jitEnabled = false;
     private FilesFacade filesFacade = new FilesFacadeImpl();
     private QueryFutureUpdateListener queryFutureUpdateListener;
 
@@ -117,6 +119,11 @@ public class HttpQueryTestBuilder {
                     @Override
                     public long getWriterAsyncCommandMaxTimeout() {
                         return maxWriterWaitTimeout;
+                    }
+
+                    @Override
+                    public int getSqlJitMode() {
+                        return jitEnabled ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED;
                     }
                 };
             }
@@ -291,6 +298,11 @@ public class HttpQueryTestBuilder {
 
     public HttpQueryTestBuilder withQueryFutureUpdateListener(QueryFutureUpdateListener queryFutureUpdateListener) {
         this.queryFutureUpdateListener = queryFutureUpdateListener;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withJitEnabled() {
+        this.jitEnabled = true;
         return this;
     }
 
