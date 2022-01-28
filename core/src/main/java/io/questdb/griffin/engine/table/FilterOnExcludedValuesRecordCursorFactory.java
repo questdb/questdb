@@ -131,9 +131,9 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
             }
         }
 
-        // We need to include null values to the result set to follow
-        // the behavior of the NOT IN() SQL function.
         if (!excludeNull && symbolMapReader.containsNullValue() && !includedKeys.contains(SymbolTable.VALUE_IS_NULL)) {
+            // If the table contains null values and they're not excluded, we need to include
+            // them to the result set to match the behavior of the NOT IN() SQL function.
             includedKeys.add(SymbolTable.VALUE_IS_NULL);
             addRowCursorFactory(SymbolTable.VALUE_IS_NULL);
         }
