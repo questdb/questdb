@@ -217,8 +217,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             return count;
         }
 
-        public void skipTo(long count) {
-            base.skipTo(count);
+        public void skipTo(long rowCount) {
+            base.skipTo(rowCount);
         }
     }
 }

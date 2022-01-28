@@ -26,8 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
@@ -727,6 +726,10 @@ public class TableWriter implements Closeable {
 
     public int getPartitionCount() {
         return txWriter.getPartitionCount();
+    }
+
+    public long getPartitionTimestamp(int partitionIndex) {
+        return txWriter.getPartitionTimestamp(partitionIndex);
     }
 
     public long getRawMetaMemory() {
@@ -3563,17 +3566,17 @@ public class TableWriter implements Closeable {
         o3TimestampMem.putLong128(timestamp, getO3RowCount0());
     }
 
-    private void openColumnFiles(CharSequence name, int i, int plen) {
-        MemoryMAR mem1 = getPrimaryColumn(i);
-        MemoryMAR mem2 = getSecondaryColumn(i);
+    private void openColumnFiles(CharSequence name, int columnIndex, int pathTrimToLen) {
+        MemoryMAR mem1 = getPrimaryColumn(columnIndex);
+        MemoryMAR mem2 = getSecondaryColumn(columnIndex);
 
         try {
-            mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
+            mem1.of(ff, dFile(path.trimTo(pathTrimToLen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
             if (mem2 != null) {
-                mem2.of(ff, iFile(path.trimTo(plen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
+                mem2.of(ff, iFile(path.trimTo(pathTrimToLen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
             }
         } finally {
-            path.trimTo(plen);
+            path.trimTo(pathTrimToLen);
         }
     }
 

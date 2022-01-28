@@ -22,29 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.update;
 
-/**
- * Used internally for vector-based row access
- */
-public interface RowCursor {
-    /**
-     * @return true if cursor has more rows, otherwise false.
-     */
+import io.questdb.cairo.sql.Record;
+
+import java.io.Closeable;
+
+public interface UpdateStatementMasterCursor extends Closeable {
+    void setMaster(Record master);
+    Record getRecord();
     boolean hasNext();
 
-    /**
-     * @return numeric index of the next row
-     */
-    long next();
-
-    /**
-     * Iterates or jumps to given position. Jumping to position has to be performed before
-     * attempting to iterate row cursor.
-     *
-     * @param position row position to jump
-     */
-    default void jumpTo(long position) {
-        while (position-- > 0 && hasNext()) next();
-    }
+    @Override
+    void close();
 }
