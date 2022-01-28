@@ -133,11 +133,6 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public int getAggressiveReadRetryCount() {
-        return 0;
-    }
-
-    @Override
     public long getSymbolCacheWaitUsBeforeReload() {
         return 500_000;
     }
