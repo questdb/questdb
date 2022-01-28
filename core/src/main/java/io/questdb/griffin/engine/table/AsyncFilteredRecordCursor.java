@@ -49,7 +49,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     private long frameRowIndex;
     private long frameRowCount;
     private int frameIndex;
-    private int frameCount;
+    private int frameLimit;
     private PageFrameSequence<?> frameSequence;
 
     public AsyncFilteredRecordCursor(Function filter) {
@@ -63,12 +63,12 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 .$("closing [shard=").$(frameSequence.getShard())
                 .$(", id=").$(frameSequence.getId())
                 .$(", frameIndex=").$(frameIndex)
-                .$(", frameCount=").$(frameCount)
+                .$(", frameCount=").$(frameLimit)
                 .$(", cursor=").$(cursor)
                 .I$();
 
         collectCursor();
-        if (frameCount > -1) {
+        if (frameLimit > -1) {
             frameSequence.await();
         }
         frameSequence.clear();
@@ -98,7 +98,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         collectCursor();
 
         // do we have more frames?
-        if (frameIndex < frameCount) {
+        if (frameIndex < frameLimit) {
             fetchNextFrame();
             if (frameRowCount > 0) {
                 record.setRowIndex(rows.get(frameRowIndex++));
@@ -131,7 +131,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         }
         filter.toTop();
         frameSequence.toTop();
-        if (frameCount > -1) {
+        if (frameLimit > -1) {
             frameIndex = -1;
             fetchNextFrame();
         }
@@ -190,7 +190,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 // 1. dispatch task hasn't been published
                 frameSequence.stealWork();
             }
-        } while (this.frameIndex < frameCount);
+        } while (this.frameIndex < frameLimit);
     }
 
     void of(SqlExecutionContext executionContext, SCSequence collectSubSeq, PageFrameSequence<?> frameSequence) throws SqlException {
@@ -200,11 +200,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         this.queue = executionContext.getMessageBus().getPageFrameReduceQueue(shard);
         PageAddressCache pageAddressCache = frameSequence.getPageAddressCache();
         this.frameIndex = -1;
-        this.frameCount = frameSequence.getFrameCount() - 1;
+        this.frameLimit = frameSequence.getFrameCount() - 1;
         record.of(frameSequence.getSymbolTableSource(), pageAddressCache);
         // when frameCount is 0 our collect sequence is not subscribed
         // we should not be attempting to fetch queue using it
-        if (frameCount > -1) {
+        if (frameLimit > -1) {
             fetchNextFrame();
         }
     }

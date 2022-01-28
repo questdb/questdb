@@ -41,7 +41,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
-public class PageFrameSequence<T extends StatefulAtom> implements Mutable {
+public class PageFrameSequence<T extends StatefulAtom> {
     private static final int OWNER_NONE = 0;
     private static final int OWNER_WORK_STEALING = 1;
     private static final int OWNER_ASYNC = 2;
@@ -101,7 +101,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Mutable {
         }
     }
 
-    @Override
     public void clear() {
         // prepare different frame sequence using the same object instance
         this.frameCount = 0;
@@ -127,69 +126,19 @@ public class PageFrameSequence<T extends StatefulAtom> implements Mutable {
         initWorkerRecords(executionContext.getWorkerCount() + 1);
 
         final Rnd rnd = executionContext.getAsyncRandom();
-        final MessageBus bus = executionContext.getMessageBus();
-        // before thread begins we will need to pick a shard
-        // of queues that we will interact with
-        final int shard = rnd.nextInt(bus.getPageFrameReduceShardCount());
-        PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext);
-
         try {
-            final MPSequence dispatchPubSeq = bus.getPageFrameDispatchPubSeq();
-            final RingQueue<PageFrameDispatchTask> pageFrameDispatchQueue = bus.getPageFrameDispatchQueue();
+            final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext);
+            final int frameCount = setupAddressCache(base, pageFrameCursor);
 
-            // pass one to cache page addresses
-            // this has to be separate pass to ensure there no cache reads
-            // while cache might be resizing
-            this.pageAddressCache.of(base.getMetadata());
-
-            PageFrame frame;
-            int frameIndex = 0;
-            while ((frame = pageFrameCursor.next()) != null) {
-                this.pageAddressCache.add(frameIndex++, frame);
-                frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
-            }
-
-            prepareForDispatch(
-                    shard,
-                    rnd.nextLong(),
-                    frameIndex,
-                    pageFrameCursor,
-                    atom,
-                    collectSubSeq,
-                    dispatchPubSeq,
-                    pageFrameDispatchQueue
-            );
+            prepareForDispatch(rnd, frameCount, pageFrameCursor, atom, collectSubSeq);
 
             // It is essential to init the atom after we prepared sequence for dispatch.
             // If atom is to fail, we will be releasing whatever we prepared.
             atom.init(pageFrameCursor, executionContext);
 
             // dispatch message only if there is anything to dispatch
-            if (frameIndex > 0) {
-                long dispatchCursor;
-                do {
-                    dispatchCursor = dispatchPubSeq.next();
-                    if (dispatchCursor < 0) {
-                        stealWork();
-                        LockSupport.parkNanos(1);
-                    } else {
-                        break;
-                    }
-                } while (true);
-
-                // We need to subscribe publisher sequence before we return
-                // control to the caller of this method. However, this sequence
-                // will be unsubscribed asynchronously.
-                bus.getPageFrameCollectFanOut(shard).and(collectSubSeq);
-                LOG.info()
-                        .$("added [shard=").$(shard)
-                        .$(", id=").$(id)
-                        .$(", seq=").$(collectSubSeq)
-                        .I$();
-
-                PageFrameDispatchTask dispatchTask = pageFrameDispatchQueue.get(dispatchCursor);
-                dispatchTask.of(this);
-                dispatchPubSeq.done(dispatchCursor);
+            if (frameCount > 0) {
+                dispatch();
             }
         } catch (Throwable e) {
             this.pageFrameCursor = Misc.free(this.pageFrameCursor);
@@ -346,6 +295,33 @@ public class PageFrameSequence<T extends StatefulAtom> implements Mutable {
         return workerId;
     }
 
+    private void dispatch() {
+        long dispatchCursor;
+        do {
+            dispatchCursor = dispatchPubSeq.next();
+            if (dispatchCursor < 0) {
+                stealWork();
+                LockSupport.parkNanos(1);
+            } else {
+                break;
+            }
+        } while (true);
+
+        // We need to subscribe publisher sequence before we return
+        // control to the caller of this method. However, this sequence
+        // will be unsubscribed asynchronously.
+        messageBus.getPageFrameCollectFanOut(shard).and(collectSubSeq);
+        LOG.info()
+                .$("added [shard=").$(shard)
+                .$(", id=").$(id)
+                .$(", seq=").$(collectSubSeq)
+                .I$();
+
+        PageFrameDispatchTask dispatchTask = pageFrameDispatchQueue.get(dispatchCursor);
+        dispatchTask.of(this);
+        dispatchPubSeq.done(dispatchCursor);
+    }
+
     private void initWorkerRecords(int workerCount) {
         if (records == null || records.length < workerCount) {
             this.records = new PageAddressCacheRecord[workerCount];
@@ -356,26 +332,38 @@ public class PageFrameSequence<T extends StatefulAtom> implements Mutable {
     }
 
     private void prepareForDispatch(
-            int shard,
-            long frameSequenceId,
+            Rnd rnd,
             int frameCount,
             PageFrameCursor pageFrameCursor,
             T atom,
-            SCSequence collectSubSeq,
-            MPSequence dispatchPubSeq,
-            RingQueue<PageFrameDispatchTask> pageFrameDispatchQueue
+            SCSequence collectSubSeq
     ) {
-        this.id = frameSequenceId;
+        this.id = rnd.nextLong();
         this.doneLatch.reset();
         this.valid.set(true);
         this.reduceCounter.set(0);
-        this.shard = shard;
+        this.shard = rnd.nextInt(messageBus.getPageFrameReduceShardCount());
         this.frameCount = frameCount;
         assert this.pageFrameCursor == null;
         this.pageFrameCursor = pageFrameCursor;
         this.atom = atom;
         this.collectSubSeq = collectSubSeq;
-        this.dispatchPubSeq = dispatchPubSeq;
-        this.pageFrameDispatchQueue = pageFrameDispatchQueue;
+        this.dispatchPubSeq = messageBus.getPageFrameDispatchPubSeq();
+        this.pageFrameDispatchQueue = messageBus.getPageFrameDispatchQueue();
+    }
+
+    private int setupAddressCache(RecordCursorFactory base, PageFrameCursor pageFrameCursor) {
+        // pass one to cache page addresses
+        // this has to be separate pass to ensure there no cache reads
+        // while cache might be resizing
+        this.pageAddressCache.of(base.getMetadata());
+
+        PageFrame frame;
+        int frameIndex = 0;
+        while ((frame = pageFrameCursor.next()) != null) {
+            this.pageAddressCache.add(frameIndex++, frame);
+            frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
+        }
+        return frameIndex;
     }
 }

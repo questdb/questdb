@@ -60,8 +60,6 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
     public void close() {
         base.close();
         filter.close();
-        // todo: close ?
-        frameSequence.clear();
     }
 
     @Override
