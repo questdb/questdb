@@ -1,6 +1,12 @@
 jobs:
   - job: linux_arm64
     displayName: "on linux-arm64"
+    strategy:
+      matrix:
+        griffin:
+          testSet: "griffin"
+        non-griffin:
+          testSet: "non-griffin"
     pool:
       name: "arm64"
       vmImage:
