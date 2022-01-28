@@ -3,6 +3,13 @@ jobs:
     displayName: "Check changes"
     pool:
       vmImage: "ubuntu-latest"
+    variables:
+      SOURCE_CODE_CHANGED:
+        $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
+      CODE_COVERAGE_TOOL_OPTION:
+        $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.CODE_COVERAGE_TOOL_OPTION']]
+      IF_FORK:
+        $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.IF_FORK']]
     steps:
       - checkout: self
         fetchDepth: 1
@@ -11,12 +18,10 @@ jobs:
       - download: current
         artifact: jacocoreport
       - bash:
-          if [ "$CODE_COVERAGE_TOOL_OPTION" == "JaCoCo" ] && [ "$IF_FORK" != "YES"
-          ]; then $JAVA_HOME_11_X64/bin/java -jar
+          $JAVA_HOME_11_X64/bin/java -jar
           $SOURCES/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar -c
           $COVERAGE_REPORT_PATH --github-token $SYSTEM_ACCESSTOKEN --repo
-          "questdb/questdb" --pr $PR_ID -t $DIFF_CONVER_THRESHOLD_PCT -type jacoco;
-          fi
+          "questdb/questdb" --pr $PR_ID -t $DIFF_COVER_THRESHOLD_PCT -type jacoco;
         displayName: "Diff coverage PR report"
         env:
           CODE_COVERAGE_TOOL_OPTION: "$(CODE_COVERAGE_TOOL_OPTION)"
@@ -25,10 +30,13 @@ jobs:
           PR_ID: $(System.PullRequest.PullRequestNumber)
           SOURCES: $(Build.SourcesDirectory)
           COVERAGE_REPORT_PATH: $(Pipeline.Workspace)\jacocoreport\jacoco.xml
-          DIFF_CONVER_THRESHOLD_PCT: $(DIFF_CONVER_THRESHOLD_PCT)
+          DIFF_CONVER_THRESHOLD_PCT: $(DIFF_COVER_THRESHOLD_PCT)
         condition: |
           and(
-            eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'jacoco'),
-            eq(variables['SOURCE_CODE_CHANGED'], 'true')
+            and(
+              eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
+              eq(variables['SOURCE_CODE_CHANGED'], 'true')
+            ),
+            not(eq(variables['$IF_FORK'], 'YES'))
           )
 
