@@ -71,6 +71,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
      *
      * @param executionContext name of a SQL execution context
      * @return instance of cursor
+     * @throws SqlException when cursor cannot be produced due a deferred SQL syntax error
      */
     RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException;
 
