@@ -23,7 +23,6 @@ jobs:
           os: macOS
           jdk: "1.11"
           testset: "all"
-          includeTests: "*"
           excludeTests: "**/griffin/**,**/cairo/**"
         windows-griffin:
           imageName: "windows-latest"
@@ -45,7 +44,6 @@ jobs:
           os: Windows
           jdk: "1.11"
           testset: "all"
-          includeTests: "*"
           excludeTests: "**/griffin/**,**/cairo/**"
         linux-jdk8:
           imageName: "ubuntu-latest"
