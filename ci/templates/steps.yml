@@ -97,10 +97,10 @@ steps:
       pathToPublish: $(ARCHIVED_LOGS)
       artifactName: MavenFailedTestsLogs
   - publish: '$(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco.xml'
-      displayName: 'Publish jacoco report'
-      artifact: jacocoreport
+    displayName: 'Publish jacoco report'
+    artifact: jacocoreport
     condition: |
       and(
-        eq(variables['testset'], 'griffin'),
+        eq(variables['testset'], 'coverage'),
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
