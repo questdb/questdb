@@ -81,7 +81,7 @@ stages:
     dependsOn:
       - CheckChanges
     jobs:
-      - template: templates/hosted-covered-jobs.yml
+      - template: templates/hosted-cover-jobs.yml
 
   - stage: CoverageReports
     displayName: "Coverage Report"
