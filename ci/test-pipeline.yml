@@ -42,7 +42,33 @@ stages:
               project=$(System.TeamProject) --use-git-aliases true
             displayName: "Set default Azure DevOps organization and project"
           - task: LambdaInvokeFunction@1
-            displayName: "Start Agent"
+            displayName: "Start Agent 1"
+            name: "Start_Agent"
+            inputs:
+              awsCredentials: "ondemand-dev"
+              regionName: "eu-west-1"
+              functionName: "ondemand-pipeline"
+              payload: |
+                {
+                  "pool": "arm64",
+                  "buildid": "$(Build.BuildId)"
+                }
+              outputVariable: "functionResult"
+          - task: LambdaInvokeFunction@1
+            displayName: "Start Agent 2"
+            name: "Start_Agent"
+            inputs:
+              awsCredentials: "ondemand-dev"
+              regionName: "eu-west-1"
+              functionName: "ondemand-pipeline"
+              payload: |
+                {
+                  "pool": "arm64",
+                  "buildid": "$(Build.BuildId)"
+                }
+              outputVariable: "functionResult"
+          - task: LambdaInvokeFunction@1
+            displayName: "Start Agent 3"
             name: "Start_Agent"
             inputs:
               awsCredentials: "ondemand-dev"
