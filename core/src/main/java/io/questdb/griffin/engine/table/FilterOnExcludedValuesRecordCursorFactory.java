@@ -40,9 +40,9 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     private final Function filter;
     private final ObjList<RowCursorFactory> cursorFactories;
     private final ObjList<Function> keyExcludedValueFunctions = new ObjList<>();
-    private final ObjList<CharSequence> includedValues = new ObjList<>();
-    private final ObjList<CharSequence> excludedValues = new ObjList<>();
-    private final boolean dynamicExcludedValues;
+    private final IntHashSet includedKeys = new IntHashSet();
+    private final IntHashSet excludedKeys = new IntHashSet();
+    private final boolean dynamicExcludedKeys;
     private final boolean followedOrderByAdvice;
     private final int indexDirection;
     private final int maxSymbolNotEqualsCount;
@@ -71,7 +71,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
                 break;
             }
         }
-        this.dynamicExcludedValues = dynamicValues;
+        this.dynamicExcludedKeys = dynamicValues;
         this.keyExcludedValueFunctions.addAll(keyValues);
         this.columnIndex = columnIndex;
         this.filter = filter;
@@ -88,7 +88,6 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     @Override
     public void close() {
         Misc.free(filter);
-        Misc.free(includedValues);
         Misc.free(keyExcludedValueFunctions);
     }
 
@@ -103,40 +102,41 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     }
 
     public void recalculateIncludedValues(TableReader tableReader) {
+        excludedKeys.clear();
+        if (dynamicExcludedKeys) {
+            // In case of bind variable excluded values that may change between
+            // query executions the sets have to be subtracted from scratch.
+            includedKeys.clear();
+            cursorFactories.clear();
+        }
+
+        final SymbolMapReaderImpl symbolMapReader = (SymbolMapReaderImpl) tableReader.getSymbolMapReader(columnIndex);
+
         boolean excludeNull = false;
+        // Generate excluded key set.
         for (int i = 0, n = keyExcludedValueFunctions.size(); i < n; i++) {
             final CharSequence value = keyExcludedValueFunctions.getQuick(i).getStr(null);
             if (value != null) {
-                excludedValues.add(Chars.toString(value));
+                excludedKeys.add(symbolMapReader.keyOf(value));
             } else {
                 excludeNull = true;
             }
         }
 
-        if (dynamicExcludedValues) {
-            // In case of bind variable excluded values that may change between
-            // query executions the sets have to be subtracted from scratch.
-            includedValues.clear();
-            cursorFactories.clear();
-        }
-
-        final SymbolMapReaderImpl symbolMapReader = (SymbolMapReaderImpl) tableReader.getSymbolMapReader(columnIndex);
-        for (int i = 0, n = symbolMapReader.getSymbolCount(); i < n; i++) {
-            final CharSequence symbol = symbolMapReader.valueOf(i);
-            if (excludedValues.indexOf(symbol) < 0 && includedValues.indexOf(symbol) < 0) {
-                int symbolKey = symbolMapReader.keyOf(symbol);
-                includedValues.add(Chars.toString(symbol));
-                addRowCursorFactory(symbolKey);
+        // Append new keys to the included set filtering out the excluded ones.
+        for (int k = 0, n = symbolMapReader.getSymbolCount(); k < n; k++) {
+            if (!excludedKeys.contains(k) && !includedKeys.contains(k)) {
+                includedKeys.add(k);
+                addRowCursorFactory(k);
             }
         }
 
         // We need to include null values to the result set to follow
         // the behavior of the NOT IN() SQL function.
-        if (!excludeNull && symbolMapReader.containsNullValue()) {
+        if (!excludeNull && symbolMapReader.containsNullValue() && !includedKeys.contains(SymbolTable.VALUE_IS_NULL)) {
+            includedKeys.add(SymbolTable.VALUE_IS_NULL);
             addRowCursorFactory(SymbolTable.VALUE_IS_NULL);
         }
-
-        excludedValues.clear();
     }
 
     private void addRowCursorFactory(int symbolKey) {
