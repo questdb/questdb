@@ -22,21 +22,21 @@ steps:
       jdkVersionOption: $(jdk)
     condition: or(eq(variables['SOURCE_CODE_CHANGED'], 'false'), eq(variables['testset'], 'none'))
   - task: Maven@3
-      displayName: "Run all tests"
-      inputs:
-        mavenPomFile: "core/pom.xml"
-        mavenOptions: "$(MAVEN_OPTS)"
-        goals: "test"
-        options:
-          "--batch-mode --quiet -P build-web-console
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
-        jdkVersionOption: $(jdk)
-      timeoutInMinutes: 55
-      condition: |
-        and(
-          eq(variables['testset'], 'none'),
-          eq(variables['SOURCE_CODE_CHANGED'], 'true')
-        )
+    displayName: "Run all tests"
+    inputs:
+      mavenPomFile: "core/pom.xml"
+      mavenOptions: "$(MAVEN_OPTS)"
+      goals: "test"
+      options:
+        "--batch-mode --quiet -P build-web-console
+      -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
+      jdkVersionOption: $(jdk)
+    timeoutInMinutes: 55
+    condition: |
+      and(
+        eq(variables['testset'], 'none'),
+        eq(variables['SOURCE_CODE_CHANGED'], 'true')
+      )
   - task: Maven@3
     displayName: "Run tests with Maven with Code Coverage (griffin)"
     inputs:
