@@ -58,7 +58,4 @@ jobs:
         displayName: "List of coverage classes PR build"
         env:
           PR_ID: $(System.PullRequest.PullRequestNumber)
-        condition: |
-          and(
-            eq(variables['SOURCE_CODE_CHANGED'], 'true')
-          )
+        condition: eq(variables['SOURCE_CODE_CHANGED'], 'true')
