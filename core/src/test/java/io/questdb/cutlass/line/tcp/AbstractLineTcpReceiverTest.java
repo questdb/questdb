@@ -96,7 +96,6 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected String authKeyId = null;
     protected int msgBufferSize = 256 * 1024;
     protected long minIdleMsBeforeWriterRelease = 30000;
-    protected int aggressiveReadRetryCount = 0;
     protected long maintenanceInterval = 25;
     protected long commitTimeout = 25;
 
@@ -149,11 +148,6 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         @Override
         public long getWriterIdleTimeout() {
             return minIdleMsBeforeWriterRelease;
-        }
-
-        @Override
-        public int getAggressiveReadRetryCount() {
-            return aggressiveReadRetryCount;
         }
     };
 

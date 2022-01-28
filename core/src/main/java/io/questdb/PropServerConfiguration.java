@@ -343,7 +343,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long lineTcpCommitTimeout;
     private String lineTcpAuthDbPath;
     private int lineTcpDefaultPartitionBy;
-    private int lineTcpAggressiveReadRetryCount;
     private long minIdleMsBeforeWriterRelease;
     private String httpVersion;
     private int httpMinWorkerCount;
@@ -817,7 +816,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 if (null != lineTcpAuthDbPath) {
                     this.lineTcpAuthDbPath = new File(root, this.lineTcpAuthDbPath).getAbsolutePath();
                 }
-                this.lineTcpAggressiveReadRetryCount = getInt(properties, env, "line.tcp.aggressive.read.retry.count", 0);
                 this.minIdleMsBeforeWriterRelease = getLong(properties, env, "line.tcp.min.idle.ms.before.writer.release", 10_000);
             }
 
@@ -2466,11 +2464,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isEnabled() {
             return lineTcpEnabled;
-        }
-
-        @Override
-        public int getAggressiveReadRetryCount() {
-            return lineTcpAggressiveReadRetryCount;
         }
 
         @Override
