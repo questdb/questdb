@@ -56,23 +56,23 @@ steps:
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
   - task: Maven@3
-      displayName: "Run tests with Maven with Code Coverage (non-griffin)"
-      inputs:
-        mavenPomFile: "core/pom.xml"
-        mavenOptions: "$(MAVEN_OPTS)"
-        goals: "test"
-        options:
-          "--batch-mode --quiet -P build-web-console -Dtest.exclude=**/griffin/**
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
-        jdkVersionOption: $(jdk)
-        codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
-        codeCoverageClassFilter: "$(COVERAGE_DIFF)"
-      timeoutInMinutes: 55
-      condition: |
-        and(
-          eq(variables['testset'], 'coverage-non-griffin'),
-          eq(variables['SOURCE_CODE_CHANGED'], 'true')
-        )
+    displayName: "Run tests with Maven with Code Coverage (non-griffin)"
+    inputs:
+      mavenPomFile: "core/pom.xml"
+      mavenOptions: "$(MAVEN_OPTS)"
+      goals: "test"
+      options:
+        "--batch-mode --quiet -P build-web-console -Dtest.exclude=**/griffin/**
+      -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
+      jdkVersionOption: $(jdk)
+      codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
+      codeCoverageClassFilter: "$(COVERAGE_DIFF)"
+    timeoutInMinutes: 55
+    condition: |
+      and(
+        eq(variables['testset'], 'coverage-non-griffin'),
+        eq(variables['SOURCE_CODE_CHANGED'], 'true')
+      )
   - task: Maven@3
     displayName: "Run tests with Maven (non griffin)"
     inputs:
