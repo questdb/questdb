@@ -6,6 +6,17 @@ steps:
   - bash: sudo sysctl -w fs.file-max=500000
     displayName: "Increase file count on Linux"
     condition: eq(variables['os'], 'Linux')
+  - task: ShellScript@2
+    displayName: "List of coverage classes PR build"
+    inputs:
+      scriptPath: $(Build.SourcesDirectory)/ci/coverage.sh
+      args: $(System.PullRequest.PullRequestNumber)
+      failOnStandardError: true
+    condition: |
+      and(
+        eq(variables['testset'], 'coverage'),
+        eq(variables['SOURCE_CODE_CHANGED'], 'true')
+      )
   - task: Cache@2
     inputs:
       key: '"questdb_main" | "maven"'

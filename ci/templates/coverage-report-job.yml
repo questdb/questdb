@@ -10,13 +10,6 @@ jobs:
         submodules: false
       - download: current
         artifact: jacocoreport
-      - task: ShellScript@2
-        displayName: "List of coverage classes PR build"
-        inputs:
-          scriptPath: $(Build.SourcesDirectory)/ci/coverage.sh
-          args: $(System.PullRequest.PullRequestNumber)
-          failOnStandardError: true
-        condition: eq(variables['SOURCE_CODE_CHANGED'], 'true')
       - bash:
           if [ "$CODE_COVERAGE_TOOL_OPTION" == "JaCoCo" ] && [ "$IF_FORK" != "YES"
           ]; then $JAVA_HOME_11_X64/bin/java -jar
