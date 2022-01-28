@@ -25,6 +25,7 @@ jobs:
           os: Linux
           jdk: "1.11"
           testset: "coverage"
+          includeTests: "*"
           excludeTests: "**/griffin/**,**/cairo/**"
           testsetName: coverage-other
     pool:

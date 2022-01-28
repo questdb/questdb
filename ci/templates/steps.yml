@@ -28,7 +28,7 @@ steps:
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "test"
       options:
-        "--batch-mode --quiet -P build-web-console -Dtest=$(includeTests) -Dtest.exclude=$(excludeTests)
+        "--batch-mode --quiet -Dtest=$(includeTests) -Dtest.exclude=$(excludeTests)
       -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
       jdkVersionOption: $(jdk)
     timeoutInMinutes: 55
@@ -44,7 +44,7 @@ steps:
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "test"
       options:
-        "--batch-mode --quiet -P build-web-console -Dtest=$(includeTests) -Dtest.exclude=$(excludeTests)
+        "--batch-mode --quiet -Dtest=$(includeTests) -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
       jdkVersionOption: $(jdk)
       codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
