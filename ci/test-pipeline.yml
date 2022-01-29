@@ -51,9 +51,11 @@ stages:
               payload: |
                 {
                   "pool": "arm64",
-                  "buildid": "$(Build.BuildId)"
+                  "buildid": "$(Build.BuildId)-1"
                 }
               outputVariable: "functionResult"
+          - bash: |
+              echo "Instance: $(functionResult)"
           - task: LambdaInvokeFunction@1
             displayName: "Start Agent 2"
             name: "Start_Agent2"
@@ -64,9 +66,11 @@ stages:
               payload: |
                 {
                   "pool": "arm64",
-                  "buildid": "$(Build.BuildId)"
+                  "buildid": "$(Build.BuildId)-2"
                 }
               outputVariable: "functionResult"
+          - bash: |
+              echo "Instance: $(functionResult)"
           - task: LambdaInvokeFunction@1
             displayName: "Start Agent 3"
             name: "Start_Agent3"
@@ -77,7 +81,7 @@ stages:
               payload: |
                 {
                   "pool": "arm64",
-                  "buildid": "$(Build.BuildId)"
+                  "buildid": "$(Build.BuildId)-3"
                 }
               outputVariable: "functionResult"
           - bash: |
@@ -87,12 +91,22 @@ stages:
           - bash: |
               echo "Starting agent... for pool arm64"
               POOLID=$(az pipelines pool list | jq '.[]| select(.name == "arm64") | .id' -r)
-              while [ "$(az pipelines agent list --pool-id $POOLID | jq '.[]| select(.name == "arm64-$(Build.BuildId)") | .enabled' -r)" != "true" ]
+              while [ "$(az pipelines agent list --pool-id $POOLID | jq '.[]| select(.name == "arm64-$(Build.BuildId)-1") | .enabled' -r)" != "true" ]
               do
-                echo "Still waiting for agent arm64-$(Build.BuildId) ... "
+                echo "Still waiting for agent arm64-$(Build.BuildId)-1 ... "
                 sleep 3
               done
-              echo "Agent found ..."
+              while [ "$(az pipelines agent list --pool-id $POOLID | jq '.[]| select(.name == "arm64-$(Build.BuildId)-2") | .enabled' -r)" != "true" ]
+              do
+                echo "Still waiting for agent arm64-$(Build.BuildId)-2 ... "
+                sleep 3
+              done
+              while [ "$(az pipelines agent list --pool-id $POOLID | jq '.[]| select(.name == "arm64-$(Build.BuildId)-3") | .enabled' -r)" != "true" ]
+              do
+                echo "Still waiting for agent arm64-$(Build.BuildId)-3 ... "
+                sleep 3
+              done
+              echo "Agents found ..."
             name: "Check_agent"
             displayName: "Check agent"
       - template: templates/self-hosted-jobs.yml
