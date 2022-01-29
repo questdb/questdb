@@ -81,4 +81,9 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     public boolean recordCursorSupportsRandomAccess() {
         return supportsRandomAccess;
     }
+
+    @Override
+    public boolean supportsUpdateRowId(CharSequence tableName) {
+        return baseFactory.supportsUpdateRowId(tableName);
+    }
 }

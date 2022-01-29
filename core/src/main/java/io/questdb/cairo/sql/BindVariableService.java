@@ -164,6 +164,7 @@ public interface BindVariableService extends Mutable {
      * Set type of bind variable by index as binary
      *
      * @param index numeric index of the bind variable
+     * @param type type of GeoHash, specifies number of bits
      * @throws SqlException is throw when variable has already been defined with type
      *                      that is not compatible with Byte
      */
