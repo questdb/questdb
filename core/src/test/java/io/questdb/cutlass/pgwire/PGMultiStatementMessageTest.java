@@ -917,7 +917,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                     "DELETE FROM test; " +
                                     "INSERT INTO test VALUES (20, 'z');");
                 } catch (PSQLException e) {
-                    assertEquals("ERROR: unexpected token: test\n  Position: 84", e.getMessage());
+                    assertEquals("ERROR: unexpected token: FROM\n  Position: 79", e.getMessage());
                 }
 
                 boolean hasResult = statement.execute("select * from test; ");
@@ -941,7 +941,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "DELETE FROM testA; " +
                             "INSERT INTO testA VALUES (20, 'z');");
                 } catch (PSQLException e) {
-                    assertEquals("ERROR: unexpected token: testA\n  Position: 156", e.getMessage());
+                    assertEquals("ERROR: unexpected token: FROM\n  Position: 151", e.getMessage());
                 }
 
                 boolean hasResult = statement.execute("select * from testA; select * from testB;");
@@ -967,7 +967,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                     "INSERT INTO test VALUES (21, 'x');");
                     fail("PSQLException should be thrown");
                 } catch (PSQLException e) {
-                    assertEquals("ERROR: unexpected token: test\n  Position: 99", e.getMessage());
+                    assertEquals("ERROR: unexpected token: FROM\n  Position: 94", e.getMessage());
                 }
 
                 boolean hasResult = statement.execute("select * from test; ");
@@ -994,7 +994,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "DELETE FROM testB;");
                     fail("PSQLException should be thrown");
                 } catch (PSQLException e) {
-                    assertEquals("ERROR: unexpected token: testA\n  Position: 178", e.getMessage());
+                    assertEquals("ERROR: unexpected token: FROM\n  Position: 173", e.getMessage());
                 }
 
                 boolean hasResult = statement.execute("select * from testA; select  *from testB;");
@@ -1018,7 +1018,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "INSERT INTO test VALUES (21, 'x');");
                     fail("PSQLException should be thrown");
                 } catch (PSQLException e) {
-                    assertEquals("ERROR: unexpected token: test\n  Position: 92", e.getMessage());
+                    assertEquals("ERROR: unexpected token: FROM\n  Position: 87", e.getMessage());
                 }
 
                 boolean hasResult = statement.execute("select * from test; ");
@@ -1045,7 +1045,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "INSERT INTO testA VALUES (21, 'x');");
                     fail("PSQLException should be thrown");
                 } catch (PSQLException e) {
-                    assertEquals("ERROR: unexpected token: testA\n  Position: 176", e.getMessage());
+                    assertEquals("ERROR: unexpected token: FROM\n  Position: 171", e.getMessage());
                 }
 
                 boolean hasResult = statement.execute("select * from testA; select * from testB; ");

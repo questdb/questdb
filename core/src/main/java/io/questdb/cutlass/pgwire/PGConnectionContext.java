@@ -2353,11 +2353,10 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         LOG.debug().$("wrapper query [q=`").$(wrapper.queryText).$("`]").$();
         this.activeBindVariableTypes = wrapper.bindVariableTypes;
         this.parsePhaseBindVariableCount = wrapper.bindVariableTypes.size();
-        this.activeSelectColumnTypes = wrapper.selectColumnTypes;//here!!!
+        this.activeSelectColumnTypes = wrapper.selectColumnTypes;
         if (compileQuery(compiler) && typesAndSelect != null) {
             buildSelectColumnTypes();
         }
-        applyLatestBindColumnFormats();
     }
 
     //replace column formats in activeSelectColumnTypes with those from latest bind call 
