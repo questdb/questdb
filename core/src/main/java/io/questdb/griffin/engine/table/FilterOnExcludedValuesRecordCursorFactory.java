@@ -120,17 +120,15 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
 
         // Append new keys to the included set filtering out the excluded ones.
         for (int k = 0, n = symbolMapReader.getSymbolCount(); k < n; k++) {
-            if (!excludedKeys.contains(k) && !includedKeys.contains(k)) {
-                includedKeys.add(k);
+            if (!excludedKeys.contains(k) && includedKeys.add(k)) {
                 addRowCursorFactory(k);
             }
         }
 
         if (symbolMapReader.containsNullValue()
-                && !excludedKeys.contains(SymbolTable.VALUE_IS_NULL) && !includedKeys.contains(SymbolTable.VALUE_IS_NULL)) {
+                && !excludedKeys.contains(SymbolTable.VALUE_IS_NULL) && includedKeys.add(SymbolTable.VALUE_IS_NULL)) {
             // If the table contains null values and they're not excluded, we need to include
             // them to the result set to match the behavior of the NOT IN() SQL function.
-            includedKeys.add(SymbolTable.VALUE_IS_NULL);
             addRowCursorFactory(SymbolTable.VALUE_IS_NULL);
         }
     }
