@@ -2167,8 +2167,8 @@ public class SqlCompiler implements Closeable {
                     final int valueCount = values.size();
                     if (columnCount != valueCount) {
                         throw SqlException.$(
-                                        model.getEndOfRowTupleValuesPosition(t),
-                                        "row value count does not match column count [expected=").put(columnCount).put(", actual=").put(values.size())
+                                model.getEndOfRowTupleValuesPosition(t),
+                                "row value count does not match column count [expected=").put(columnCount).put(", actual=").put(values.size())
                                 .put(", tuple=").put(t + 1).put(']');
                     }
                     valueFunctions = new ObjList<>(columnCount);
@@ -2359,8 +2359,8 @@ public class SqlCompiler implements Closeable {
         for (int i = 0, n = model.getRowTupleCount(); i < n; i++) {
             if (columnSetSize > 0 && columnSetSize != model.getRowTupleValues(i).size()) {
                 throw SqlException.$(
-                                model.getEndOfRowTupleValuesPosition(i),
-                                "row value count does not match column count [expected=").put(columnSetSize).put(", actual=").put(model.getRowTupleValues(i).size())
+                        model.getEndOfRowTupleValuesPosition(i),
+                        "row value count does not match column count [expected=").put(columnSetSize).put(", actual=").put(model.getRowTupleValues(i).size())
                         .put(", tuple=").put(i + 1).put(']');
             }
         }
