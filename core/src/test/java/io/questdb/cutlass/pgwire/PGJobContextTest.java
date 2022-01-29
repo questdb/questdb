@@ -465,7 +465,7 @@ public class PGJobContextTest extends AbstractGriffinTest {
 
                 connection.prepareStatement("create table xyz(a int)").execute();
                 try (TableWriter ignored1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "xyz", "testing")) {
-                    connection.prepareStatement("drop table if exists xyz").execute();
+                    connection.prepareStatement("drop table xyz").execute();
                     Assert.fail();
                 } catch (SQLException e) {
                     TestUtils.assertContains(e.getMessage(), "Could not lock 'xyz'");
@@ -1435,7 +1435,7 @@ nodejs code:
 
 
                     compiler.compile("create table spot1 as (select * from test_batch)", sqlExecutionContext);
-                    compiler.compile("drop table if exists test_batch", sqlExecutionContext);
+                    compiler.compile("drop table test_batch", sqlExecutionContext);
                     compiler.compile("rename table spot1 to test_batch", sqlExecutionContext);
 
                     batchInsert.setLong(1, 0L);
@@ -2363,7 +2363,7 @@ nodejs code:
                             "null,1970-01-01 00:11:22.334455,null\n";
                     assertResultSet(expected, sink, rs);
                 }
-                statement.execute("drop table if exists tab");
+                statement.execute("drop table tab");
             }
         });
     }
@@ -2387,7 +2387,7 @@ nodejs code:
                             "null,null,null\n";
                     assertResultSet(expected, sink, rs);
                 }
-                statement.execute("drop table if exists tab");
+                statement.execute("drop table tab");
             }
         });
     }
@@ -2640,7 +2640,7 @@ nodejs code:
 
                 try (final Connection connection = getConnection(false, false)) {
                     queryTimestampsInRange(connection);
-                    try (PreparedStatement statement = connection.prepareStatement("drop table if exists xts")) {
+                    try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                         statement.execute();
                     }
                 }
@@ -2674,7 +2674,7 @@ nodejs code:
                 }
 
                 try (final Connection connection = getConnection(false, false);
-                     PreparedStatement statement = connection.prepareStatement("drop table if exists xts")) {
+                     PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                     statement.execute();
                 }
                 Assert.assertTrue("Exception is not thrown", caught);
@@ -2695,7 +2695,7 @@ nodejs code:
 
                 queryTimestampsInRange(connection);
 
-                try (PreparedStatement statement = connection.prepareStatement("drop table if exists xts")) {
+                try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                     statement.execute();
                 }
             }
@@ -2720,7 +2720,7 @@ nodejs code:
 
                     queryTimestampsInRange(connection);
 
-                    try (PreparedStatement statement = connection.prepareStatement("drop table if exists xts")) {
+                    try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                         statement.execute();
                     }
                 } finally {
@@ -3801,7 +3801,7 @@ create table tab as (
                         }
                     }
 
-                    try (PreparedStatement statement = connection.prepareStatement("drop table if exists xts")) {
+                    try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                         statement.execute();
                     }
                 }
@@ -3928,7 +3928,7 @@ create table tab as (
                         }
                     }
 
-                    try (PreparedStatement statement = connection.prepareStatement("drop table if exists xts")) {
+                    try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                         statement.execute();
                     }
                 }
@@ -5456,7 +5456,7 @@ create table tab as (
         // we are going to:
         // 1. create a table
         // 2. insert a record
-        // 3. drop table if exists
+        // 3. drop table
         // 4. attempt to insert a record (should fail)
         assertMemoryLeak(() -> {
             try (
@@ -5474,7 +5474,7 @@ create table tab as (
                 insert.setInt(1, 1);
                 insert.execute();
 
-                PreparedStatement drop = connection.prepareStatement("drop table if exists x");
+                PreparedStatement drop = connection.prepareStatement("drop table x");
                 drop.execute();
 
                 try {
@@ -5616,7 +5616,7 @@ create table tab as (
                     ResultSet rs0 = select.executeQuery();
                     rs0.close();
 
-                    connection.prepareStatement("drop table if exists y").execute();
+                    connection.prepareStatement("drop table y").execute();
                     connection.prepareStatement("create table y as ( " +
                             " select " +
                             " timestamp_sequence('1970-01-01T02:30:00.000000Z', 1000000000L) timestamp " +
