@@ -106,6 +106,7 @@ final public class PostOrderTreeTraversalAlgo {
     }
 
     public interface Visitor {
+
         void visit(ExpressionNode node) throws SqlException;
 
         /**
@@ -114,13 +115,19 @@ final public class PostOrderTreeTraversalAlgo {
          * node, nor its children nodes.
          *
          * Example. For the tree like
+         * <pre>
          *     A
          *   /  \
          *  B   C
          * the visit order will be:
-         * C -> B -> A
+         * C -&gt; B -&gt; A
          * while the descent order will be:
-         * A -> B -> C
+         * A -&gt; B -&gt; C
+         * </pre>
+         *
+         * @param node tree node to validate or abort the descent
+         * @throws SqlException to allow error reporting from descend validator
+         * @return true to allow descent and false otherwise
          */
         default boolean descend(ExpressionNode node) throws SqlException {
             return true;
