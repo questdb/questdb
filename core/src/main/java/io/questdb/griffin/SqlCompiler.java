@@ -939,18 +939,19 @@ public class SqlCompiler implements Closeable {
         return executor.execute(executionContext);
     }
 
-    /**
+    /*
      * Allows processing of batches of sql statements (sql scripts) separated by ';' .
      * Each query is processed in sequence and processing stops on first error and whole batch gets discarded .
      * Noteworthy difference between this and 'normal' query is that all empty queries get ignored, e.g.
-     * <br/>
-     * select 1;<br/>
-     * ; ;/* comment \*\/;--comment\n; - these get ignored <br/>
-     * update a set b=c  ; <br/>
+     * <br>
+     * select 1;<br>
+     * ; ;/* comment \*\/;--comment\n; - these get ignored <br>
+     * update a set b=c  ; <br>
      * <p>
      * Useful PG doc link :
      *
-     * @param batchCallback - callback to perform actions prior to or after batch part compilation, e.g. clear caches or execute command
+     * @param query            - block of queries to process
+     * @param batchCallback    - callback to perform actions prior to or after batch part compilation, e.g. clear caches or execute command
      * @see <a href="https://www.postgresql.org/docs/current/protocol-flow.html#id-1.10.5.7.4">PostgreSQL documentation</a>
      */
     public void compileBatch(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext, BatchCallback batchCallback)

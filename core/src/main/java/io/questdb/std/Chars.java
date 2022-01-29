@@ -672,7 +672,7 @@ public final class Chars {
         }
     }
     
-    /** Decodes bytes between lo,hi addresses into sink. 
+    /* Decodes bytes between lo,hi addresses into sink.
      *  Note: operation might fail in the middle and leave sink in inconsistent  state .
      *  @return true if input is proper utf8 and false otherwise . */
     public static boolean utf8Decode(long lo, long hi, CharSinkBase sink) {

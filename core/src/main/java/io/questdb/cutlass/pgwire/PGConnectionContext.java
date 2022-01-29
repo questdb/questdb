@@ -49,8 +49,8 @@ import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TI
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT;
 
 /**
- * Useful PostgreSQL documentation links:<br/>
- * <a href="https://www.postgresql.org/docs/current/protocol-flow.html">Wire protocol</a><br/>
+ * Useful PostgreSQL documentation links:<br>
+ * <a href="https://www.postgresql.org/docs/current/protocol-flow.html">Wire protocol</a><br>
  * <a href="https://www.postgresql.org/docs/current/protocol-message-formats.html">Message formats</a>
  */
 public class PGConnectionContext implements IOContext, Mutable, WriterSource {
