@@ -13,18 +13,25 @@ jobs:
           poolName: "Azure Pipelines"
           os: macOS
           jdk: "1.11"
-        windows:
+        windows-non-griffin:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
           jdk: "1.11"
+          testSet: "non-griffin"
+        windows-griffin:
+          imageName: "windows-latest"
+          poolName: "Azure Pipelines"
+          os: Windows
+          jdk: "1.11"
+          testset: "griffin"
         linux-jdk8:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
           jdk: "1.8"
         linux-jdk17:
-          imageName: "macos-latest"
+          imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
           jdk: "1.17"

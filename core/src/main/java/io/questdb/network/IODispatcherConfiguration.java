@@ -32,7 +32,7 @@ public interface IODispatcherConfiguration {
     int BIAS_READ = 1;
     int BIAS_WRITE = 2;
 
-    int getActiveConnectionLimit();
+    int getLimit();
 
     int getBindIPv4Address();
 
@@ -47,34 +47,34 @@ public interface IODispatcherConfiguration {
     EpollFacade getEpollFacade();
 
     default int getEventCapacity() {
-        return Numbers.ceilPow2(getActiveConnectionLimit());
+        return Numbers.ceilPow2(getLimit());
     }
 
     default int getIOQueueCapacity() {
-        return Numbers.ceilPow2(getActiveConnectionLimit());
+        return Numbers.ceilPow2(getLimit());
     }
 
-    long getIdleConnectionTimeout();
+    long getTimeout();
 
     int getInitialBias();
 
     default int getInterestQueueCapacity() {
-        return Numbers.ceilPow2(getActiveConnectionLimit());
+        return Numbers.ceilPow2(getLimit());
     }
 
-    default boolean useWindowsHint() {
+    default boolean getHint() {
         return false;
     }
 
     default int getListenBacklog() {
-        if (Os.type == Os.WINDOWS && useWindowsHint()) {
+        if (Os.type == Os.WINDOWS && getHint()) {
             // Windows OS might have a limit of 200 concurrent connections. To overcome
             // this limit we set backlog value to a hint as described here:
             /// https://docs.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-listen
             // the hint is -backlog
-            return -getActiveConnectionLimit();
+            return -getLimit();
         }
-        return getActiveConnectionLimit();
+        return getLimit();
     }
 
     NetworkFacade getNetworkFacade();
@@ -89,5 +89,5 @@ public interface IODispatcherConfiguration {
 
     int getSndBufSize();
 
-    long getQueuedConnectionTimeout();
+    long getQueueTimeout();
 }

@@ -36,24 +36,27 @@ import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 
 /**
- * LongTreeChain with a size limit - used to keep only the neccessary records
+ * LongTreeChain with a size limit - used to keep only the necessary records
  * instead of whole result set for queries with "limit L | limit L, H"  clause.
  * <p>
  * 1. "limit L" means we only need to keep :
- * L >=0 - first L records
- * L < 0 - last L records
+ * <p>
+ * L &gt;=0 - first L records
+ * L &lt; 0 - last L records
  * 2. "limit L, H" means we need to keep :
- * L < 0          - last  L records (but skip last H records, if H >=0 then don't skip anything    )
- * L >= 0, H >= 0 - first H records (but skip first L later, if H <= L then return empty set)
- * L >= 0, H < 0  - we can't optimize this case (because it spans from record L-th from the beginning up to
+ * L &lt; 0          - last  L records (but skip last H records, if H &gt;=0 then don't skip anything    )
+ * L &gt;= 0, H &gt;= 0 - first H records (but skip first L later, if H &lt;= L then return empty set)
+ * L &gt;= 0, H &lt; 0  - we can't optimize this case (because it spans from record L-th from the beginning up to
  * H-th from the end, and we don't  ) and need to revert to default behavior -
  * produce the whole set and skip .
+ * </p>
  * <p>
  * TreeChain stores repeating values (rowids) on valueChain as a linked list :
- * [latest rowid, offset to next] -> [old rowid, offset to next] -> [oldest rowid, -1L ]
+ * [latest rowid, offset to next] -&gt; [old rowid, offset to next] -&gt; [oldest rowid, -1L ]
  * -1L marks end of current node's value chain .
  * -2  marks an unused element on the value chain list for the current tree node
  * but should only happen once . It's meant to limit value chain allocations on delete/insert.
+ * </p>
  */
 public class LimitedSizeLongTreeChain extends AbstractRedBlackTree {
     //value marks end of value chain 

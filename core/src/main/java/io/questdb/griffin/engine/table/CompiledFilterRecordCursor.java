@@ -371,6 +371,11 @@ class CompiledFilterRecordCursor implements RecordCursor {
         }
 
         @Override
+        public long getUpdateRowId() {
+            return pageAddressCache.toTableRowID(frameIndex, index);
+        }
+
+        @Override
         public BinarySequence getBin(int columnIndex) {
             final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
             if (dataPageAddress == 0) {
@@ -701,6 +706,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
         // Index page addresses and page sizes are stored only for variable length columns.
         private LongList indexPageAddresses = new LongList();
         private LongList pageSizes = new LongList();
+        private LongList pageRowIdOffsets = new LongList();
 
         public PageAddressCache(CairoConfiguration configuration) {
             cacheSizeThreshold = configuration.getSqlJitPageAddressCacheThreshold() / Long.BYTES;
@@ -725,10 +731,12 @@ class CompiledFilterRecordCursor implements RecordCursor {
                 pageAddresses.clear();
                 indexPageAddresses.clear();
                 pageSizes.clear();
+                pageRowIdOffsets.clear();
             } else {
                 pageAddresses = new LongList();
                 indexPageAddresses = new LongList();
                 pageSizes = new LongList();
+                pageRowIdOffsets = new LongList();
             }
         }
 
@@ -744,6 +752,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
                     pageSizes.add(frame.getPageSize(columnIndex));
                 }
             }
+            pageRowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
         }
 
         public long getPageAddress(int frameIndex, int columnIndex) {
@@ -773,6 +782,10 @@ class CompiledFilterRecordCursor implements RecordCursor {
                 }
             }
             return false;
+        }
+
+        public long toTableRowID(int frameIndex, long index) {
+            return pageRowIdOffsets.get(frameIndex) + index;
         }
     }
 }

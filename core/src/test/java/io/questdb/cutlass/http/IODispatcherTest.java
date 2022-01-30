@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
+import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
@@ -48,10 +49,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.InputStream;
@@ -2143,6 +2141,65 @@ public class IODispatcherTest {
                         "\r\n" +
                         "0746\r\n" +
                         "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[37,7618,null,-9219078548506735248,\"286623354-12-11T19:15:45.735Z\",\"197633-02-20T09:12:49.579955Z\",null,0.8001632261203552,null,\"KFM\",false,[]],[109,-8207,-485549586,null,\"278802275-11-05T23:22:18.593Z\",\"122137-10-05T20:22:21.831563Z\",0.5780819,0.18586435581637295,\"DYOPH\",\"IMY\",false,[]],[-44,21057,-1604266757,4598876523645326656,null,\"204480-04-27T20:21:01.380246Z\",0.19736767,0.11591855759299885,\"DMIGQ\",\"VKH\",false,[]],[17,23522,-861621212,-6446120489339099836,null,\"79287-08-03T02:05:46.962686Z\",0.4349324,0.11296257318851766,\"CGFNW\",null,true,[]],[-104,12160,1772084256,-5828188148408093893,\"-270365729-01-24T04:33:47.165Z\",\"-252298-10-09T07:11:36.011048Z\",null,0.5764439692141042,\"BQQEM\",null,false,[]],[-99,-7837,-159178348,null,\"81404961-06-19T18:10:11.037Z\",null,0.5598187,0.5900836401674938,null,\"HPZ\",true,[]],[-127,5343,-238129044,-8851773155849999621,\"-152632412-11-30T22:15:09.334Z\",\"-90192-03-24T17:45:15.784841Z\",0.7806183,null,\"CLNXF\",\"UWP\",false,[]],[-59,-10912,1665107665,-8306574409611146484,\"-243146933-02-10T16:15:15.931Z\",\"-109765-04-18T07:45:05.739795Z\",0.52387,null,\"NIJEE\",\"RUG\",true,[]],[69,4771,21764960,-5708280760166173503,null,\"-248236-04-27T14:06:03.509521Z\",0.77833515,0.533524384058538,\"VOCUG\",\"UNE\",false,[]],[56,-17784,null,5637967617527425113,null,null,null,0.5815065874358148,null,\"EVQ\",true,[]],[58,29019,-416467698,null,\"-175203601-12-02T01:02:02.378Z\",\"201101-10-20T07:35:25.133598Z\",null,0.7430101994511517,\"DXCBJ\",null,true,[]]],\"count\":20}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
+    public void testJsonQueryCompilationStatsForJitCompiledFilter() throws Exception {
+        // Disable the test on ARM64.
+        Assume.assumeTrue(JitUtil.isJitSupported());
+
+        testJsonQuery(
+                10,
+                "GET /query?query=x%20where%20d%20%3D%200&limit=1&explain=true HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "01b0\r\n" +
+                        "{\"query\":\"x where d = 0\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[],\"count\":0,\"explain\":{\"jitCompiled\":true}}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
+    public void testJsonQueryCompilationStatsForNonJitCompiledFilter() throws Exception {
+        testJsonQuery(
+                10,
+                "GET /query?query=x%20where%20i%20%3D%20%27A%27&limit=1&explain=true HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "01b3\r\n" +
+                        "{\"query\":\"x where i = 'A'\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[],\"count\":0,\"explain\":{\"jitCompiled\":false}}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -4348,17 +4405,17 @@ public class IODispatcherTest {
 
             final IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration() {
                 @Override
-                public int getActiveConnectionLimit() {
+                public int getLimit() {
                     return activeConnectionLimit;
                 }
 
                 @Override
-                public long getQueuedConnectionTimeout() {
+                public long getQueueTimeout() {
                     return 300_000;
                 }
 
                 @Override
-                public boolean useWindowsHint() {
+                public boolean getHint() {
                     return true;
                 }
             };
@@ -4424,7 +4481,7 @@ public class IODispatcherTest {
                 } finally {
                     Net.freeSockAddr(sockAddr);
                     Unsafe.free(buf, 4096, MemoryTag.NATIVE_DEFAULT);
-                    Assert.assertFalse(configuration.getActiveConnectionLimit() < dispatcher.getConnectionCount());
+                    Assert.assertFalse(configuration.getLimit() < dispatcher.getConnectionCount());
                     serverRunning.set(false);
                     serverHaltLatch.await();
                 }
@@ -4666,12 +4723,12 @@ public class IODispatcherTest {
 
             final IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration() {
                 @Override
-                public int getActiveConnectionLimit() {
+                public int getLimit() {
                     return activeConnectionLimit;
                 }
 
                 @Override
-                public long getQueuedConnectionTimeout() {
+                public long getQueueTimeout() {
                     return queuedConnectionTimeoutInMs;
                 }
             };
@@ -5735,7 +5792,7 @@ public class IODispatcherTest {
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration() {
                         @Override
-                        public long getIdleConnectionTimeout() {
+                        public long getTimeout() {
                             // 0.5s idle timeout
                             return 500;
                         }
@@ -6556,6 +6613,7 @@ public class IODispatcherTest {
                 .withWorkerCount(workerCount)
                 .withTelemetry(telemetry)
                 .withTempFolder(temp)
+                .withJitMode(SqlJitMode.JIT_MODE_ENABLED)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()
                         .withServerKeepAlive(!http1)
                         .withSendBufferSize(16 * 1024)

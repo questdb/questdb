@@ -39,7 +39,10 @@ public interface RowCursor {
     long next();
 
     /**
-     * Iterates or jumps to given position.
+     * Iterates or jumps to given position. Jumping to position has to be performed before
+     * attempting to iterate row cursor.
+     *
+     * @param position row position to jump
      */
     default void jumpTo(long position) {
         while (position-- > 0 && hasNext()) next();

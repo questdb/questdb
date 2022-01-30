@@ -26,8 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
@@ -222,7 +221,7 @@ public class TableWriter implements Closeable {
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableName = Chars.toString(tableName);
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
-        this.o3PartitionUpdateQueue = new RingQueue<O3PartitionUpdateTask>(O3PartitionUpdateTask.CONSTRUCTOR, configuration.getO3PartitionUpdateQueueCapacity());
+        this.o3PartitionUpdateQueue = new RingQueue<>(O3PartitionUpdateTask.CONSTRUCTOR, configuration.getO3PartitionUpdateQueueCapacity());
         this.o3PartitionUpdatePubSeq = new MPSequence(this.o3PartitionUpdateQueue.getCycle());
         this.o3PartitionUpdateSubSeq = new SCSequence();
         o3PartitionUpdatePubSeq.then(o3PartitionUpdateSubSeq).then(o3PartitionUpdatePubSeq);
@@ -261,7 +260,7 @@ public class TableWriter implements Closeable {
             this.metaMem = Vm.getMRInstance();
 
             openMetaFile(ff, path, rootLen, metaMem);
-            this.metadata = new TableWriterMetadata(ff, metaMem);
+            this.metadata = new TableWriterMetadata(metaMem);
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
             this.txWriter = new TxWriter(ff).ofRW(path, partitionBy);
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
@@ -451,7 +450,7 @@ public class TableWriter implements Closeable {
             throwDistressException(err);
         }
 
-        txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
+        bumpStructureVersion();
 
         metadata.addColumn(name, configuration.getRandom().nextLong(), type, isIndexed, indexValueBlockCapacity);
 
@@ -549,7 +548,7 @@ public class TableWriter implements Closeable {
             throwDistressException(err);
         }
 
-        txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
+        bumpStructureVersion();
         indexers.extendAndSet(columnIndex, indexer);
         populateDenseIndexerList();
 
@@ -663,8 +662,7 @@ public class TableWriter implements Closeable {
         } else {
             return;
         }
-
-        txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
+        updateMetaStructureVersion();
     }
 
     @Override
@@ -728,6 +726,10 @@ public class TableWriter implements Closeable {
 
     public int getPartitionCount() {
         return txWriter.getPartitionCount();
+    }
+
+    public long getPartitionTimestamp(int partitionIndex) {
+        return txWriter.getPartitionTimestamp(partitionIndex);
     }
 
     public long getRawMetaMemory() {
@@ -924,7 +926,7 @@ public class TableWriter implements Closeable {
             throwDistressException(err);
         }
 
-        txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
+        bumpStructureVersion();
 
         metadata.removeColumn(name);
         if (timestamp) {
@@ -973,29 +975,22 @@ public class TableWriter implements Closeable {
             // what remains on disk
 
             // find out if we are removing min partition
-            setStateForTimestamp(path, timestamp, false);
             long nextMinTimestamp = minTimestamp;
             if (timestamp == txWriter.getPartitionTimestamp(0)) {
                 nextMinTimestamp = readMinTimestamp(txWriter.getPartitionTimestamp(1));
             }
+            long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
             txWriter.beginPartitionSizeUpdate();
             txWriter.removeAttachedPartitions(timestamp);
             txWriter.setMinTimestamp(nextMinTimestamp);
             txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
             txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
 
-            if (ff.exists(path.$())) {
-                int errno;
-                if ((errno = ff.rmdir(path.chop$().slash$())) != 0) {
-                    LOG.info().$("partition directory delete is postponed [path=").$(path)
-                            .$(", errno=").$(errno)
-                            .$(']').$();
-                } else {
-                    LOG.info().$("partition marked for delete [path=").$(path).$(']').$();
-                }
-            } else {
-                LOG.info().$("partition absent on disk now detached from table [path=").$(path).$(']').$();
-            }
+            // Call O3 methods to remove check TxnScoreboard and remove partition directly
+            o3PartitionRemoveCandidates.clear();
+            o3PartitionRemoveCandidates.add(timestamp, partitionNameTxn);
+            o3ProcessPartitionRemoveCandidates();
+
             return true;
         } finally {
             path.trimTo(rootLen);
@@ -1041,7 +1036,7 @@ public class TableWriter implements Closeable {
             throwDistressException(err);
         }
 
-        txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
+        bumpStructureVersion();
 
         metadata.renameColumn(currentName, newName);
 
@@ -1691,6 +1686,11 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void bumpStructureVersion() {
+        txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
+        assert txWriter.getStructureVersion() == metadata.getStructureVersion();
+    }
+
     private void cancelRowAndBump() {
         rowCancel();
         masterRef++;
@@ -1995,6 +1995,8 @@ public class TableWriter implements Closeable {
         ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
         ddlMem.putInt(metaMem.getInt(META_OFFSET_MAX_UNCOMMITTED_ROWS));
         ddlMem.putLong(metaMem.getLong(META_OFFSET_COMMIT_LAG));
+        ddlMem.putLong(txWriter.getStructureVersion() + 1);
+        metadata.setStructureVersion(txWriter.getStructureVersion() + 1);
     }
 
     /**
@@ -2109,7 +2111,7 @@ public class TableWriter implements Closeable {
             throwDistressException(err);
         }
 
-        txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
+        bumpStructureVersion();
         metadata.setTableVersion();
     }
 
@@ -3353,12 +3355,7 @@ public class TableWriter implements Closeable {
             } else {
                 // Var size column
                 if (o3RowCount > 0) {
-                    // Usually we would find var col size of row count as (index[count] - index[count-1])
-                    // but the record index[count] may not exist yet
-                    // so the data size has to be calculated as (index[count-1] + len(data[count-1]) + 4)
-                    // where len(data[count-1]) can be read as the int from var col data at offset index[count-1]
-                    long prevOffset = o3IndexMem.getLong((o3RowCount - 1) * 8);
-                    size = prevOffset + 2L * o3DataMem.getInt(prevOffset) + 4L;
+                    size = o3IndexMem.getLong(o3RowCount * 8);
                     o3IndexMem.jumpTo((o3RowCount + 1) * 8);
                 } else {
                     size = 0;
@@ -3569,17 +3566,17 @@ public class TableWriter implements Closeable {
         o3TimestampMem.putLong128(timestamp, getO3RowCount0());
     }
 
-    private void openColumnFiles(CharSequence name, int i, int plen) {
-        MemoryMAR mem1 = getPrimaryColumn(i);
-        MemoryMAR mem2 = getSecondaryColumn(i);
+    private void openColumnFiles(CharSequence name, int columnIndex, int pathTrimToLen) {
+        MemoryMAR mem1 = getPrimaryColumn(columnIndex);
+        MemoryMAR mem2 = getSecondaryColumn(columnIndex);
 
         try {
-            mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
+            mem1.of(ff, dFile(path.trimTo(pathTrimToLen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
             if (mem2 != null) {
-                mem2.of(ff, iFile(path.trimTo(plen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
+                mem2.of(ff, iFile(path.trimTo(pathTrimToLen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
             }
         } finally {
-            path.trimTo(plen);
+            path.trimTo(pathTrimToLen);
         }
     }
 
@@ -4406,7 +4403,7 @@ public class TableWriter implements Closeable {
     }
 
     private void rollbackSymbolTables() {
-        int expectedMapWriters = txWriter.unsafeReadWriterCount();
+        int expectedMapWriters = txWriter.unsafeReadSymbolColumnCount();
         for (int i = 0; i < expectedMapWriters; i++) {
             denseSymbolMapWriters.getQuick(i).rollback(txWriter.unsafeReadSymbolWriterIndexOffset(i));
         }
@@ -4758,6 +4755,16 @@ public class TableWriter implements Closeable {
         this.timestampSetter.accept(timestamp);
     }
 
+    private void updateMetaStructureVersion() {
+        try {
+            copyMetadataAndUpdateVersion();
+            finishMetaSwapUpdate();
+            clearTodoLog();
+        } finally {
+            ddlMem.close();
+        }
+    }
+
     private void validateSwapMeta(CharSequence columnName) {
         try {
             try {
@@ -4767,7 +4774,7 @@ public class TableWriter implements Closeable {
                 }
                 metaMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
                 validationMap.clear();
-                validate(ff, metaMem, validationMap, ColumnType.VERSION);
+                validate(metaMem, validationMap, ColumnType.VERSION);
             } finally {
                 metaMem.close();
                 path.trimTo(rootLen);
