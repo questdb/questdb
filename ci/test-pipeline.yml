@@ -51,39 +51,35 @@ stages:
               payload: |
                 {
                   "pool": "arm64",
-                  "buildid": "$(Build.BuildId)-1"
+                  "buildid": "$(Build.BuildId)"
                 }
               outputVariable: "functionResult"
-          - bash: |
-              echo "Instance: $(functionResult)"
-          - task: LambdaInvokeFunction@1
-            displayName: "Start Agent 2"
-            name: "Start_Agent2"
-            inputs:
-              awsCredentials: "ondemand-dev"
-              regionName: "eu-west-1"
-              functionName: "ondemand-pipeline"
-              payload: |
-                {
-                  "pool": "arm64",
-                  "buildid": "$(Build.BuildId)-2"
-                }
-              outputVariable: "functionResult"
-          - bash: |
-              echo "Instance: $(functionResult)"
-          - task: LambdaInvokeFunction@1
-            displayName: "Start Agent 3"
-            name: "Start_Agent3"
-            inputs:
-              awsCredentials: "ondemand-dev"
-              regionName: "eu-west-1"
-              functionName: "ondemand-pipeline"
-              payload: |
-                {
-                  "pool": "arm64",
-                  "buildid": "$(Build.BuildId)-3"
-                }
-              outputVariable: "functionResult"
+          #          - task: LambdaInvokeFunction@1
+          #            displayName: "Start Agent 2"
+          #            name: "Start_Agent2"
+          #            inputs:
+          #              awsCredentials: "ondemand-dev"
+          #              regionName: "eu-west-1"
+          #              functionName: "ondemand-pipeline"
+          #              payload: |
+          #                {
+          #                  "pool": "arm64",
+          #                  "buildid": "$(Build.BuildId)"
+          #                }
+          #              outputVariable: "functionResult"
+          #          - task: LambdaInvokeFunction@1
+          #            displayName: "Start Agent 3"
+          #            name: "Start_Agent3"
+          #            inputs:
+          #              awsCredentials: "ondemand-dev"
+          #              regionName: "eu-west-1"
+          #              functionName: "ondemand-pipeline"
+          #              payload: |
+          #                {
+          #                  "pool": "arm64",
+          #                  "buildid": "$(Build.BuildId)"
+          #                }
+          #              outputVariable: "functionResult"
           - bash: |
               echo "Instance: $(functionResult)"
             name: "Display_Instance"
@@ -91,22 +87,12 @@ stages:
           - bash: |
               echo "Starting agent... for pool arm64"
               POOLID=$(az pipelines pool list | jq '.[]| select(.name == "arm64") | .id' -r)
-              while [ "$(az pipelines agent list --pool-id $POOLID | jq '.[]| select(.name == "arm64-$(Build.BuildId)-1") | .enabled' -r)" != "true" ]
+              while [ "$(az pipelines agent list --pool-id $POOLID | jq '.[]| select(.name == "arm64-$(Build.BuildId)") | .enabled' -r)" != "true" ]
               do
-                echo "Still waiting for agent arm64-$(Build.BuildId)-1 ... "
+                echo "Still waiting for agent arm64-$(Build.BuildId) ... "
                 sleep 3
               done
-              while [ "$(az pipelines agent list --pool-id $POOLID | jq '.[]| select(.name == "arm64-$(Build.BuildId)-2") | .enabled' -r)" != "true" ]
-              do
-                echo "Still waiting for agent arm64-$(Build.BuildId)-2 ... "
-                sleep 3
-              done
-              while [ "$(az pipelines agent list --pool-id $POOLID | jq '.[]| select(.name == "arm64-$(Build.BuildId)-3") | .enabled' -r)" != "true" ]
-              do
-                echo "Still waiting for agent arm64-$(Build.BuildId)-3 ... "
-                sleep 3
-              done
-              echo "Agents found ..."
+              echo "Agent found ..."
             name: "Check_agent"
             displayName: "Check agent"
       - template: templates/self-hosted-jobs.yml
