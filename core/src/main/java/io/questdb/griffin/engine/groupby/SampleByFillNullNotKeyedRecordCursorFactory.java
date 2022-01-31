@@ -56,10 +56,12 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
         super(base, groupByMetadata, recordFunctions);
         try {
             final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
-            this.cursor = new SampleByFillValueNotKeyedRecordCursor(
+            final Peeker peeker = new Peeker(simpleMapValue, new SimpleMapValue(valueCount));
+            cursor = new SampleByFillValueNotKeyedRecordCursor(
                     groupByFunctions,
                     recordFunctions,
                     SampleByFillNullRecordCursorFactory.createPlaceholderFunctions(recordFunctions, recordFunctionPositions),
+                    peeker,
                     timestampIndex,
                     timestampSampler,
                     simpleMapValue,
@@ -68,6 +70,7 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
                     offsetFunc,
                     offsetFuncPos
             );
+            peeker.setCursor(cursor);
         } catch (Throwable e) {
             Misc.freeObjList(recordFunctions);
             throw e;

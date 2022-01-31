@@ -1047,6 +1047,20 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'v';
     }
 
+    public static boolean isLinearKeyword(CharSequence tok) {
+        if (tok.length() != 6) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'l'
+                && (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i++) | 32) == 'n'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i) | 32) == 'r';
+    }
+
     public static boolean isQuote(CharSequence tok) {
         return tok.length() == 1 && tok.charAt(0) == '\'';
     }

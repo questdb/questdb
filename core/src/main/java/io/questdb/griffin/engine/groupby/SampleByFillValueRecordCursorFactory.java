@@ -34,12 +34,12 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.constants.*;
+import io.questdb.griffin.engine.functions.groupby.InterpolationGroupByFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.griffin.SqlKeywords.isNullKeyword;
-import static io.questdb.griffin.SqlKeywords.isPrevKeyword;
+import static io.questdb.griffin.SqlKeywords.*;
 
 public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRecordCursorFactory {
     private final AbstractNoRecordSampleByCursor cursor;
@@ -76,6 +76,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
         );
         try {
             final ObjList<Function> placeholderFunctions = createPlaceholderFunctions(
+                    groupByFunctions,
                     recordFunctions,
                     recordFunctionPositions,
                     fillValues
@@ -102,6 +103,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
 
     @NotNull
     static ObjList<Function> createPlaceholderFunctions(
+            ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             @Transient IntList recordFunctionPositions,
             @NotNull @Transient ObjList<ExpressionNode> fillValues
@@ -121,6 +123,11 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                     placeholderFunctions.add(SampleByFillNullRecordCursorFactory.createPlaceHolderFunction(recordFunctionPositions, i, function.getType()));
                 } else if (isPrevKeyword(fillNode.token)) {
                     placeholderFunctions.add(function);
+                } else if (isLinearKeyword(fillNode.token)) {
+                    GroupByFunction interpolation = InterpolationGroupByFunction.newInstance((GroupByFunction) function);
+                    placeholderFunctions.add(interpolation);
+                    groupByFunctions.set(fillIndex - 1, interpolation);
+                    recordFunctions.set(i, interpolation);
                 } else {
                     placeholderFunctions.add(createPlaceHolderFunction(recordFunctionPositions, i, function.getType(), fillNode));
                 }

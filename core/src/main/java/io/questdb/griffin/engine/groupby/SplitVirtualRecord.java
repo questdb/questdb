@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.groupby.InterpolationGroupByFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
@@ -33,12 +34,21 @@ import io.questdb.std.str.CharSink;
 public class SplitVirtualRecord implements Record {
     private final ObjList<? extends Function> functionsA;
     private final ObjList<? extends Function> functionsB;
+    private final ObjList<InterpolationGroupByFunction> interpolations = new ObjList<>();
     private ObjList<? extends Function> current;
     private Record base;
 
     public SplitVirtualRecord(ObjList<? extends Function> functionsA, ObjList<? extends Function> functionsB) {
+        this.current = functionsA;
         this.functionsA = functionsA;
         this.functionsB = functionsB;
+
+        for (int i = 0, n = functionsB.size(); i < n; i++) {
+            Function f = functionsB.get(i);
+            if (f instanceof InterpolationGroupByFunction) {
+                interpolations.add((InterpolationGroupByFunction) f);
+            }
+        }
     }
 
     @Override
@@ -165,19 +175,27 @@ public class SplitVirtualRecord implements Record {
         return getFunction(col).getGeoLong(base);
     }
 
-    public void of(Record record) {
+    void of(Record record) {
         this.base = record;
     }
 
     public void setActiveA() {
-        if (current != functionsA) {
-            current = functionsA;
+        current = functionsA;
+        for (int i = 0, n = interpolations.size(); i < n; i++) {
+            interpolations.get(i).stopInterpolating();
         }
     }
 
-    public void setActiveB() {
-        if (current != functionsB) {
-            current = functionsB;
+    public void setActiveB(long startTime, long currentTime, long endTime) {
+        current = functionsB;
+        for (int i = 0, n = interpolations.size(); i < n; i++) {
+            interpolations.get(i).startInterpolating(startTime, currentTime, endTime);
+        }
+    }
+
+    public void setTarget(Record target) {
+        for (int i = 0, n = interpolations.size(); i < n; i++) {
+            interpolations.get(i).setTarget(target);
         }
     }
 

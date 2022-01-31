@@ -31,11 +31,14 @@ import io.questdb.std.ObjList;
 
 public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualRecordSampleByCursor {
     private final SimpleMapValue simpleMapValue;
+    private final Peeker peeker;
+    private boolean gapFill = false;
 
     public SampleByFillValueNotKeyedRecordCursor(
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             ObjList<Function> placeholderFunctions,
+            Peeker peeker,
             int timestampIndex, // index of timestamp column in base cursor
             TimestampSampler timestampSampler,
             SimpleMapValue simpleMapValue,
@@ -57,6 +60,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
         );
         this.simpleMapValue = simpleMapValue;
         this.record.of(simpleMapValue);
+        this.peeker = peeker;
     }
 
     @Override
@@ -66,7 +70,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
 
     @Override
     public boolean hasNext() {
-        if (baseRecord == null) {
+        if (baseRecord == null && !gapFill) {
             return false;
         }
 
@@ -76,14 +80,34 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
         final long expectedLocalEpoch = timestampSampler.nextTimestamp(nextSampleLocalEpoch);
         // is data timestamp ahead of next expected timestamp?
         if (expectedLocalEpoch < localEpoch) {
+            setActiveB(expectedLocalEpoch);
             this.sampleLocalEpoch = expectedLocalEpoch;
             this.nextSampleLocalEpoch = expectedLocalEpoch;
-            record.setActiveB();
             return true;
         }
-
-        record.setActiveA();
+        if (setActiveA(expectedLocalEpoch)) {
+            return peeker.reset();
+        }
         return notKeyedLoop(simpleMapValue);
+    }
+
+    private boolean setActiveA(long expectedLocalEpoch) {
+        if (gapFill) {
+            gapFill = false;
+            record.setActiveA();
+            this.sampleLocalEpoch = expectedLocalEpoch;
+            this.nextSampleLocalEpoch = expectedLocalEpoch;
+            return true;
+        }
+        return false;
+    }
+
+    private void setActiveB(long expectedLocalEpoch) {
+        if (!gapFill) {
+            record.setActiveB(sampleLocalEpoch, expectedLocalEpoch, localEpoch);
+            record.setTarget(peeker.peek());
+            gapFill = true;
+        }
     }
 
     @Override
