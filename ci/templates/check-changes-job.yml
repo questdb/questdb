@@ -6,55 +6,49 @@ jobs:
     steps:
       - checkout: none
       - bash: |
-          CHANGED_CORE_FILES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$(System.PullRequest.PullRequestNumber)/files -s  | grep -oP 'filename": "(core|benchmarks)/*\/\K[^.]+')
-          if [ -z "$CHANGED_CORE_FILES" ]
-            then
-              echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]false"
-            else
-              echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
-          fi
+          {
+            CHANGED_CORE_FILES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$(System.PullRequest.PullRequestNumber)/files -s  | grep -oP 'filename": "(core|benchmarks)/*\/\K[^.]+')
+            if [ -z "$CHANGED_CORE_FILES" ]
+              then
+                echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]false"
+              else
+                echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
+            fi
+          } || echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
         name: check_changes
-        condition: not(eq(variables['System.PullRequest.PullRequestNumber'], Null))
+        displayName: "Check changed files"
       - bash: |
-          # No PR - cannot detect changed files, default to true
-          echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]false"
-        name: check_changes
-        condition: eq(variables['System.PullRequest.PullRequestNumber'], Null)
-        displayName: "Check changed files (no PR)"
-      - bash: |
-          COV_CLASSES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$(System.PullRequest.PullRequestNumber)/files?per_page=100 -s \
+          {
+            COV_CLASSES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$(System.PullRequest.PullRequestNumber)/files?per_page=100 -s \
                 | grep -oP 'filename": "core/src/main/java/io/questdb.*\/\K[^.]+' \
                 | tr '\n' ',' | sed -e 's/,/,+:*./g' | sed 's/,+:\*\.$//')
 
-          if [ -z "$COV_CLASSES" ]
-          then
-              echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]-:*"
-              echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]None"
-          else
-              ALL_CHANGES=$COV_CLASSES
-              PAGE=1
-              while true; do
-                PAGE=$((PAGE+1))
-                COV_CLASSES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$(System.PullRequest.PullRequestNumber)/files?per_page=100\&page=$PAGE -s \
-                  | grep -oP 'filename": "core/src/main/java/io/questdb.*\/\K[^.]+' \
-                  | tr '\n' ',' | sed -e 's/,/,+:*./g' | sed 's/,+:\*\.$//')
-                if [ -z "$COV_CLASSES" ]
-                then
-                  break
-                else
-                  ALL_CHANGES="${ALL_CHANGES},+:*.${COV_CLASSES}"
-                fi
-              done
+            if [ -z "$COV_CLASSES" ]
+            then
+                echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]-:*"
+                echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]None"
+            else
+                ALL_CHANGES=$COV_CLASSES
+                PAGE=1
+                while true; do
+                  PAGE=$((PAGE+1))
+                  COV_CLASSES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$(System.PullRequest.PullRequestNumber)/files?per_page=100\&page=$PAGE -s \
+                    | grep -oP 'filename": "core/src/main/java/io/questdb.*\/\K[^.]+' \
+                    | tr '\n' ',' | sed -e 's/,/,+:*./g' | sed 's/,+:\*\.$//')
+                  if [ -z "$COV_CLASSES" ]
+                  then
+                    break
+                  else
+                    ALL_CHANGES="${ALL_CHANGES},+:*.${COV_CLASSES}"
+                  fi
+                done
 
-              echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]+:*.$ALL_CHANGES"
-              echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]JaCoCo"
-          fi
+                echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]+:*.$ALL_CHANGES"
+                echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]JaCoCo"
+            fi
+          } || {
+            echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]-:*"
+            echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]None"
+          }
         name: check_coverage
-        condition: not(eq(variables['System.PullRequest.PullRequestNumber'], Null))
         displayName: "List of coverage classes PR build"
-      - bash: |
-          echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]-:*"
-          echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]None"
-        name: check_coverage
-        condition: eq(variables['System.PullRequest.PullRequestNumber'], Null)
-        displayName: "List of coverage classes PR build (No PR)"
