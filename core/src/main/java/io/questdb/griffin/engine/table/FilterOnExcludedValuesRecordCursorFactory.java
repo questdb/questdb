@@ -38,7 +38,9 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     private final DataFrameRecordCursor cursor;
     private final int columnIndex;
     private final Function filter;
-    private final ObjList<RowCursorFactory> cursorFactories;
+    private final ObjList<SymbolFunctionRowCursorFactory> cursorFactories;
+    // Points at the next factory to be reused.
+    private int cursorFactoriesIdx;
     private final ObjList<Function> keyExcludedValueFunctions = new ObjList<>();
     private final IntHashSet includedKeys = new IntHashSet();
     private final IntHashSet excludedKeys = new IntHashSet();
@@ -102,12 +104,12 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     }
 
     public void recalculateIncludedValues(TableReader tableReader) {
+        cursorFactoriesIdx = 0;
         excludedKeys.clear();
         if (dynamicExcludedKeys) {
             // In case of bind variable excluded values that may change between
             // query executions the sets have to be subtracted from scratch.
             includedKeys.clear();
-            cursorFactories.clear();
         }
 
         final SymbolMapReaderImpl symbolMapReader = (SymbolMapReaderImpl) tableReader.getSymbolMapReader(columnIndex);
@@ -119,9 +121,11 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
         }
 
         // Append new keys to the included set filtering out the excluded ones.
+        // Note: both includedKeys and cursorFactories are guaranteed to be monotonically
+        // growing in terms of the collection size.
         for (int k = 0, n = symbolMapReader.getSymbolCount(); k < n; k++) {
             if (!excludedKeys.contains(k) && includedKeys.add(k)) {
-                addRowCursorFactory(k);
+                upsertRowCursorFactory(k);
             }
         }
 
@@ -129,17 +133,25 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
                 && !excludedKeys.contains(SymbolTable.VALUE_IS_NULL) && includedKeys.add(SymbolTable.VALUE_IS_NULL)) {
             // If the table contains null values and they're not excluded, we need to include
             // them to the result set to match the behavior of the NOT IN() SQL function.
-            addRowCursorFactory(SymbolTable.VALUE_IS_NULL);
+            upsertRowCursorFactory(SymbolTable.VALUE_IS_NULL);
         }
     }
 
-    private void addRowCursorFactory(int symbolKey) {
-        final RowCursorFactory rowCursorFactory;
+    private void upsertRowCursorFactory(int symbolKey) {
+        if (cursorFactoriesIdx < cursorFactories.size()) {
+            // Reuse the existing factory.
+            cursorFactories.get(cursorFactoriesIdx).of(symbolKey);
+            cursorFactoriesIdx++;
+            return;
+        }
+
+        // Create a new factory.
+        final SymbolFunctionRowCursorFactory rowCursorFactory;
         if (filter == null) {
             rowCursorFactory = new SymbolIndexRowCursorFactory(
                     columnIndex,
                     symbolKey,
-                    cursorFactories.size() == 0,
+                    false,
                     indexDirection,
                     null
             );
@@ -148,13 +160,14 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
                     columnIndex,
                     symbolKey,
                     filter,
-                    cursorFactories.size() == 0,
+                    false,
                     indexDirection,
                     columnIndexes,
                     null
             );
         }
         cursorFactories.add(rowCursorFactory);
+        cursorFactoriesIdx++;
     }
 
     @Override
