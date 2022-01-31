@@ -1,14 +1,6 @@
 jobs:
   - job: linux_arm64
     displayName: "on linux-arm64"
-    #    strategy:
-    #      matrix:
-    #        griffin:
-    #          includeTests: "griffin.**"
-    #        cairo:
-    #          includeTests: "cairo.**"
-    #        other:
-    #          excludeTests: "**/griffin/**,**/cairo/**"
     pool:
       name: "arm64"
       vmImage:
