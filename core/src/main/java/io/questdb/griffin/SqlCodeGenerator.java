@@ -27,8 +27,8 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
@@ -2028,6 +2028,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final int selectColumnCount = columns.size();
         final ExpressionNode timestamp = model.getTimestamp();
 
+        // If this is update query and column types don't match exactly
+        // to the column type of table to be updated we have to fall back to
+        // select-virtual
+        if (model.isUpdate()) {
+            boolean columnTypeMismatch = false;
+            ObjList<CharSequence> updateColumnNames = model.getUpdateTableColumnNames();
+            IntList updateColumnTypes = model.getUpdateTableColumnTypes();
+
+            for(int i = 0, n = columns.size(); i < n; i++) {
+                QueryColumn queryColumn = columns.getQuick(i);
+                CharSequence columnName = queryColumn.getAlias();
+                int index = metadata.getColumnIndexQuiet(queryColumn.getAst().token);
+                assert index > -1 : "wtf? " + queryColumn.getAst().token;
+
+                int updateColumnIndex = updateColumnNames.indexOf(columnName);
+                int updateColumnType = updateColumnTypes.get(updateColumnIndex);
+
+                if (updateColumnType != metadata.getColumnType(index)) {
+                    columnTypeMismatch = true;
+                    break;
+                }
+            }
+
+            if (columnTypeMismatch) {
+                return generateSelectVirtualWithSubquery(model, executionContext, factory);
+            }
+        }
+
         boolean entity;
         // the model is considered entity when it doesn't add any value to its nested model
         //
@@ -2414,7 +2442,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private RecordCursorFactory generateSelectVirtual(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final RecordCursorFactory factory = generateSubQuery(model, executionContext);
+        return generateSelectVirtualWithSubquery(model, executionContext, factory);
+    }
 
+    @NotNull
+    private VirtualRecordCursorFactory generateSelectVirtualWithSubquery(QueryModel model, SqlExecutionContext executionContext, RecordCursorFactory factory) throws SqlException {
         try {
             final ObjList<QueryColumn> columns = model.getColumns();
             final int columnCount = columns.size();
@@ -2438,18 +2470,47 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     virtualMetadata.setTimestampIndex(i);
                 }
 
-                final Function function = functionParser.parseFunction(
+                Function function = functionParser.parseFunction(
                         column.getAst(),
                         metadata,
                         executionContext
                 );
-                // define "undefined" functions as string
-                if (function.isUndefined()) {
-                    function.assignType(ColumnType.STRING, executionContext.getBindVariableService());
+                int targetColumnType = -1;
+                if (model.isUpdate()) {
+                    // Check the type of the column to be updated
+                    int columnIndex = model.getUpdateTableColumnNames().indexOf(column.getAlias());
+                    targetColumnType = model.getUpdateTableColumnTypes().get(columnIndex);
                 }
+
+                // define "undefined" functions as string unless it's update. Leave Undefined if update
+                if (function.isUndefined()) {
+                    if (!model.isUpdate()) {
+                        function.assignType(ColumnType.STRING, executionContext.getBindVariableService());
+                    } else {
+                        // Set bind variable the type of the column
+                        function.assignType(targetColumnType, executionContext.getBindVariableService());
+                    }
+                }
+
+                int columnType = function.getType();
+                if (targetColumnType != -1 && targetColumnType != columnType) {
+                    // This is an update and the target column does not match with column the update is trying to perform
+                    if (SqlCompiler.builtInFunctionCast(targetColumnType, function.getType())) {
+                        // All functions will be able to getLong() if they support getInt(), no need to generate cast here
+                        columnType = targetColumnType;
+                    } else {
+                        Function castFunction = functionParser.createImplicitCast(column.getAst().position, function, targetColumnType);
+                        if (castFunction != null) {
+                            function = castFunction;
+                            columnType = targetColumnType;
+                        }
+                        // else - update code will throw incompatibility exception. It will have better chance close resources then
+                    }
+                }
+
                 functions.add(function);
 
-                if (function instanceof SymbolFunction) {
+                if (function instanceof SymbolFunction && columnType == ColumnType.SYMBOL) {
                     virtualMetadata.add(
                             new TableColumnMetadata(
                                     Chars.toString(column.getAlias()),
@@ -2466,7 +2527,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             new TableColumnMetadata(
                                     Chars.toString(column.getAlias()),
                                     configuration.getRandom().nextLong(),
-                                    function.getType(),
+                                    columnType,
                                     function.getMetadata()
                             )
                     );
@@ -2591,7 +2652,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 boolean contextTimestampRequired = executionContext.isTimestampRequired();
                 // some "sample by" queries don't select any cols but needs timestamp col selected
                 // for example "select count() from x sample by 1h" implicitly needs timestamp column selected
-                if (topDownColumnCount > 0 || contextTimestampRequired) {
+                if (topDownColumnCount > 0 || contextTimestampRequired || model.isUpdate()) {
                     framingSupported = true;
                     for (int i = 0; i < topDownColumnCount; i++) {
                         int columnIndex = readerMeta.getColumnIndexQuiet(topDownColumns.getQuick(i).getName());

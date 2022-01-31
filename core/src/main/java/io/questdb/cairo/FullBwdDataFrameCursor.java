@@ -53,14 +53,14 @@ public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
     }
 
     @Override
-    public @Nullable DataFrame skipTo(long rowNumber) {
+    public @Nullable DataFrame skipTo(long rowCount) {
         int partitionCount = getTableReader().getPartitionCount();
 
         if (partitionCount < 1) {
             return null;
         }
 
-        long position = rowNumber;
+        long position = rowCount;
         long partitionRows = 0;
         int partitionIndex = partitionCount - 1;
 

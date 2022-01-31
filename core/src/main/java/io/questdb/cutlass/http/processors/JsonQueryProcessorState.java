@@ -82,6 +82,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private int queryState = QUERY_PREFIX;
     private int columnIndex;
     private boolean countRows = false;
+    private boolean explain = false;
     private long count;
     private long skip;
     private long stop;
@@ -91,6 +92,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private long compilerNanos;
     private boolean timings;
     private boolean queryCacheable = false;
+    private boolean queryJitCompiled = false;
 
     public JsonQueryProcessorState(
             HttpConnectionContext httpConnectionContext,
@@ -134,6 +136,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         queryState = QUERY_PREFIX;
         columnIndex = 0;
         countRows = false;
+        explain = false;
+        queryJitCompiled = false;
         continueExecution = Misc.free(continueExecution);
     }
 
@@ -158,6 +162,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.noMeta = Chars.equalsNc("true", request.getUrlParam("nm"));
         this.countRows = Chars.equalsNc("true", request.getUrlParam("count"));
         this.timings = Chars.equalsNc("true", request.getUrlParam("timings"));
+        this.explain = Chars.equalsNc("true", request.getUrlParam("explain"));
     }
 
     public LogRecord error() {
@@ -574,6 +579,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 socket.putQuoted("count").put(':').put(recordCountNanos);
                 socket.put('}');
             }
+            if (explain) {
+                socket.put(',').putQuoted("explain").put(':').put('{');
+                socket.putQuoted("jitCompiled").put(':').put(queryJitCompiled ? "true" : "false");
+                socket.put('}');
+            }
             socket.put('}');
             count = -1;
             socket.sendChunk(true);
@@ -605,7 +615,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     boolean of(RecordCursorFactory factory, SqlExecutionContextImpl sqlExecutionContext)
             throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         this.recordCursorFactory = factory;
-        queryCacheable = true;
+        this.queryCacheable = true;
+        this.queryJitCompiled = factory.usesCompiledFilter();
         this.cursor = factory.getCursor(sqlExecutionContext);
         final RecordMetadata metadata = factory.getMetadata();
         HttpRequestHeader header = httpConnectionContext.getRequestHeader();

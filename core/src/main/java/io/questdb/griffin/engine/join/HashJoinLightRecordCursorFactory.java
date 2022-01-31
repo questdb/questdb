@@ -98,6 +98,11 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         return false;
     }
 
+    @Override
+    public boolean supportsUpdateRowId(CharSequence tableName) {
+        return masterFactory.supportsUpdateRowId(tableName);
+    }
+
     private void buildMapOfSlaveRecords(RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
         slaveChain.clear();
         joinKeyMap.clear();

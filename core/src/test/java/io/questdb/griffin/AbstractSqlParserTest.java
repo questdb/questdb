@@ -54,8 +54,8 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
                     compiler.compile(query, sqlExecutionContext);
                     Assert.fail("Exception expected");
                 } catch (SqlException e) {
-                    Assert.assertEquals(position, e.getPosition());
                     TestUtils.assertContains(e.getFlyweightMessage(), contains);
+                    Assert.assertEquals(position, e.getPosition());
                 }
             });
         } finally {
@@ -143,7 +143,7 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
             ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
             Assert.assertEquals(model.getModelType(), modelType);
             ((Sinkable) model).toSink(sink);
-            if (model instanceof QueryModel) {
+            if (model instanceof QueryModel && model.getModelType() == ExecutionModel.QUERY) {
                 validateTopDownColumns((QueryModel) model);
             }
             TestUtils.assertEquals(expected, sink);
@@ -152,6 +152,10 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
 
     protected void assertQuery(String expected, String query, TableModel... tableModels) throws SqlException {
         assertModel(expected, query, ExecutionModel.QUERY, tableModels);
+    }
+
+    protected void assertUpdate(String expected, String query, TableModel... tableModels) throws SqlException {
+        assertModel(expected, query, ExecutionModel.UPDATE, tableModels);
     }
 
     private void createModelsAndRun(SqlParserTest.CairoAware runnable, TableModel... tableModels) throws SqlException {
