@@ -69,7 +69,7 @@ steps:
     inputs:
       pathToPublish: $(ARCHIVED_LOGS)
       artifactName: MavenFailedTestsLogs
-  - publish: '$(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco.xml'
+  - publish: '$(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco.exec'
     displayName: 'Publish jacoco report'
     artifact: $(testsetName)
     condition: |

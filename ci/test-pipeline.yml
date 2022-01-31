@@ -115,6 +115,14 @@ stages:
             artifact: coverage-griffin
           - download: current
             artifact: coverage-other
+          - task: Maven@3
+              displayName: "Merge coverage reports"
+              inputs:
+                mavenPomFile: "ci/jacoco-merge.xml"
+                goals: "verify"
+                options:
+                  "-Dhttp.keepAlive=false -DincludeRoot=$(Pipeline.Workspace) -DoutputDirectory=$(Pipeline.Workspace)/jacoco-aggregate"
+                jdkVersionOption: $(jdk)
           - bash:
               curl -L
               https://github.com/questdb/questdb/raw/$(Build.SourceVersion)/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar > $(Pipeline.Workspace)/cover-checker-console-1.4.2-jar-with-dependencies.jar
@@ -122,9 +130,7 @@ stages:
           - bash:
               $JAVA_HOME_11_X64/bin/java -jar
               $(Pipeline.Workspace)/cover-checker-console-1.4.2-jar-with-dependencies.jar
-              -c $(Pipeline.Workspace)/coverage-griffin/jacoco.xml
-              -c $(Pipeline.Workspace)/coverage-cairo/jacoco.xml
-              -c $(Pipeline.Workspace)/coverage-other/jacoco.xml
+              -c $(Pipeline.Workspace)/jacoco-aggregate/jacoco.xml
               --github-token $(GH_TOKEN) --repo
               "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) -t  $(DIFF_COVER_THRESHOLD_PCT) -type jacoco;
             displayName: "Diff coverage PR report"

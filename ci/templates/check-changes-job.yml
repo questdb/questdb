@@ -6,8 +6,7 @@ jobs:
     steps:
       - checkout: none
       - bash: |
-          PRID=$[System.PullRequest.PullRequestNumber]
-          echo PRID $PRID
+          echo $PRID
           if [[ $PRID == ?(-)+([0-9]) ]]
             then
               CHANGED_CORE_FILES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PRID/files -s  | grep -oP 'filename": "(core|benchmarks)/*\/\K[^.]+')
@@ -21,12 +20,12 @@ jobs:
               echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
           fi
         name: check_changes
+        env:
+          PRID: $(System.PullRequest.PullRequestNumber)
         displayName: "Check changed files"
       - bash: |
-          PRID=$[System.PullRequest.PullRequestNumber]
-          echo PRID
+          echo $PRID
           if [[ $PRID == ?(-)+([0-9]) ]]
-            then
               COV_CLASSES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PRID/files?per_page=100 -s \
                   | grep -oP 'filename": "core/src/main/java/io/questdb.*\/\K[^.]+' \
                   | tr '\n' ',' | sed -e 's/,/,+:*./g' | sed 's/,+:\*\.$//')
@@ -59,4 +58,6 @@ jobs:
                 echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]None"
           fi
         name: check_coverage
+        env:
+          PRID: $(System.PullRequest.PullRequestNumber)
         displayName: "List of coverage classes PR build"
