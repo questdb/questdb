@@ -14,12 +14,12 @@ jobs:
               echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
           fi
         name: check_changes
-        condition: not(eq(variables['System.PullRequest.PullRequestNumber], Null))
+        condition: not(eq(variables['System.PullRequest.PullRequestNumber'], Null))
       - bash: |
           # No PR - cannot detect changed files, default to true
           echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]false"
         name: check_changes
-        condition: eq(variables['System.PullRequest.PullRequestNumber], Null)
+        condition: eq(variables['System.PullRequest.PullRequestNumber'], Null)
         displayName: "Check changed files (no PR)"
       - bash: |
           COV_CLASSES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$(System.PullRequest.PullRequestNumber)/files?per_page=100 -s \
@@ -50,11 +50,11 @@ jobs:
               echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]JaCoCo"
           fi
         name: check_coverage
-        condition: not(eq(variables['System.PullRequest.PullRequestNumber], Null))
+        condition: not(eq(variables['System.PullRequest.PullRequestNumber'], Null))
         displayName: "List of coverage classes PR build"
       - bash: |
           echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]-:*"
           echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]None"
         name: check_coverage
-        condition: eq(variables['System.PullRequest.PullRequestNumber], Null)
+        condition: eq(variables['System.PullRequest.PullRequestNumber'], Null)
         displayName: "List of coverage classes PR build (No PR)"
