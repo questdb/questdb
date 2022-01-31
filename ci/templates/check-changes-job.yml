@@ -6,7 +6,8 @@ jobs:
     steps:
       - checkout: none
       - bash: |
-          if [  ${#PRID} -lt 1 ] && [ ! $PRID =~ '^[0-9]+$' ]
+          echo $PRID
+          if [  ${#PRID} -lt 1 ] || [ ! $PRID =~ '^[0-9]+$' ]
             then
               echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
             else
@@ -23,7 +24,8 @@ jobs:
           PRID: $(System.PullRequest.PullRequestNumber)
         displayName: "Check changed files"
       - bash: |
-          if [  ${#PRID} -lt 1 ] && [ ! $PRID =~ '^[0-9]+$' ]
+          echo $PRID
+          if [  ${#PRID} -lt 1 ] || [ ! $PRID =~ '^[0-9]+$' ]
             then
                 echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]-:*"
                 echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]None"
