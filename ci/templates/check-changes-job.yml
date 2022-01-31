@@ -7,10 +7,8 @@ jobs:
       - checkout: none
       - bash: |
           echo $PRID
-          if [  ${#PRID} -lt 1 ] || [ ! $PRID =~ '^[0-9]+$' ]
+          if [[ $PRID == ?(-)+([0-9]) ]]
             then
-              echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
-            else
               CHANGED_CORE_FILES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PRID/files -s  | grep -oP 'filename": "(core|benchmarks)/*\/\K[^.]+')
               if [ -z "$CHANGED_CORE_FILES" ]
                 then
@@ -18,6 +16,8 @@ jobs:
                 else
                   echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
               fi
+            else
+              echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
           fi
         name: check_changes
         env:
@@ -25,11 +25,8 @@ jobs:
         displayName: "Check changed files"
       - bash: |
           echo $PRID
-          if [  ${#PRID} -lt 1 ] || [ ! $PRID =~ '^[0-9]+$' ]
+          if [[ $PRID == ?(-)+([0-9]) ]]
             then
-                echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]-:*"
-                echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]None"
-            else
               COV_CLASSES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PRID/files?per_page=100 -s \
                   | grep -oP 'filename": "core/src/main/java/io/questdb.*\/\K[^.]+' \
                   | tr '\n' ',' | sed -e 's/,/,+:*./g' | sed 's/,+:\*\.$//')
@@ -57,6 +54,9 @@ jobs:
                   echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]+:*.$ALL_CHANGES"
                   echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]JaCoCo"
               fi
+            else
+                echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]-:*"
+                echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]None"
           fi
         name: check_coverage
         env:
