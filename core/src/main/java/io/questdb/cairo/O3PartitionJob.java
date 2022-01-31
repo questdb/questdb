@@ -57,7 +57,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     public static void processPartition(
             Path pathToTable,
             int partitionBy,
-            ObjList<MemoryMAR> columns,
+            ObjList<MemoryMA> columns,
             ObjList<MemoryCARW> oooColumns,
             long srcOooLo,
             long srcOooHi,
@@ -545,7 +545,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // srcOooHi is index inclusive of value
         final Path pathToTable = task.getPathToTable();
         final int partitionBy = task.getPartitionBy();
-        final ObjList<MemoryMAR> columns = task.getColumns();
+        final ObjList<MemoryMA> columns = task.getColumns();
         final ObjList<MemoryCARW> oooColumns = task.getO3Columns();
         final long srcOooLo = task.getSrcOooLo();
         final long srcOooHi = task.getSrcOooHi();
@@ -702,7 +702,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     private static void publishOpenColumnTasks(
             long txn,
-            ObjList<MemoryMAR> columns,
+            ObjList<MemoryMA> columns,
             ObjList<MemoryCARW> oooColumns,
             Path pathToTable,
             long srcOooLo,

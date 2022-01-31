@@ -31,6 +31,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.Path;
@@ -117,12 +118,6 @@ class LineTcpWriterJob implements Job, Closeable {
         return false;
     }
 
-    private void tickWriters() {
-        for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
-            assignedTables.getQuick(n).tick();
-        }
-    }
-
     private boolean drainQueue() {
         boolean busy = false;
         while (true) {
@@ -131,6 +126,7 @@ class LineTcpWriterJob implements Job, Closeable {
                 if (cursor == -1) {
                     return busy;
                 }
+                Os.pause();
             }
             busy = true;
             final LineTcpMeasurementEvent event = queue.get(cursor);
@@ -151,7 +147,18 @@ class LineTcpWriterJob implements Job, Closeable {
                                     .$(", threadId=").$(workerId)
                                     .I$();
                         }
+                        tab.recordCountB++;
+
+                        long t = System.nanoTime();
                         event.append(floatingCharSink);
+                        tab.sampleTime += (System.nanoTime() - t);
+
+                        if (tab.recordCountB > tab.recordCountA + 100_000) {
+                            System.out.println("total: " + (tab.sampleTime));
+                            tab.sampleTime = 0;
+                            tab.recordCountA = tab.recordCountB;
+                        }
+
                         eventProcessed = true;
                     } catch (Throwable ex) {
                         LOG.error()
@@ -180,6 +187,12 @@ class LineTcpWriterJob implements Job, Closeable {
             } else {
                 return false;
             }
+        }
+    }
+
+    private void tickWriters() {
+        for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
+            assignedTables.getQuick(n).tick();
         }
     }
 }

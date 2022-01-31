@@ -30,26 +30,25 @@ import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 
-public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
-    private static final Log LOG = LogFactory.getLog(MemoryPMARImpl.class);
+public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
+    private static final Log LOG = LogFactory.getLog(MemoryPDARImpl.class);
     private FilesFacade ff;
     private long fd = -1;
-    private long pageAddress = 0;
+    private final long pageAddress;
     private int mappedPage;
 
-    public MemoryPMARImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag) {
+    public MemoryPDARImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag) {
+        this.pageAddress = Unsafe.malloc(pageSize, memoryTag);
         of(ff, name, pageSize, memoryTag);
-    }
-
-    public MemoryPMARImpl() {
     }
 
     @Override
     public final void close(boolean truncate) {
         long sz = getAppendOffset();
-        releaseCurrentPage();
+        flushPage();
         super.close();
         if (fd != -1) {
             try {
@@ -87,25 +86,24 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
             // are we closed ?
             return;
         }
-        releaseCurrentPage();
+        flushPage();
         if (!ff.truncate(Math.abs(fd), getExtendSegmentSize())) {
             throw CairoException.instance(ff.errno()).put("Cannot truncate fd=").put(fd).put(" to ").put(getExtendSegmentSize()).put(" bytes");
         }
-        updateLimits(0, pageAddress = mapPage(0));
+        updateLimits(0, pageAddress);
         LOG.debug().$("truncated [fd=").$(fd).$(']').$();
     }
 
     @Override
     protected long mapWritePage(int page) {
-        releaseCurrentPage();
-        return pageAddress = mapPage(page);
+        flushPage();
+        mappedPage = page;
+        return pageAddress;
     }
 
     @Override
     protected void release(long address) {
-        long t = System.nanoTime();
         ff.munmap(address, getPageSize(), memoryTag);
-        System.out.println(System.nanoTime() - t);
     }
 
     @Override
@@ -127,27 +125,21 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         of(ff, name, ff.getMapPageSize(), memoryTag);
     }
 
-    public long mapPage(int page) {
-        // set page to "not mapped" in case mapping fails
-        final long address = TableUtils.mapRW(ff, fd, getExtendSegmentSize(), pageOffset(page), memoryTag);
-        mappedPage = page;
-        return address;
-    }
-
     public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag) {
-        close();
         this.memoryTag = memoryTag;
         this.ff = ff;
+        close();
         mappedPage = -1;
         setExtendSegmentSize(extendSegmentSize);
         fd = TableUtils.openFileRWOrFail(ff, name);
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", extendSegmentSize=").$(extendSegmentSize).$(']').$();
     }
 
-    void releaseCurrentPage() {
-        if (pageAddress != 0) {
-            release(pageAddress);
-            pageAddress = 0;
+    void flushPage() {
+        if (mappedPage != -1) {
+            final long offset = pageOffset(mappedPage);
+            ff.write(fd, pageAddress, getAppendOffset() - offset, offset);
+            mappedPage = -1;
         }
     }
 }

@@ -44,13 +44,14 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.Arrays;
+import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReadWriteLock;
 
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
     private final CairoEngine engine;
     private final CairoSecurityContext securityContext;
-    private final RingQueue<LineTcpMeasurementEvent> queue;
+    private final RingQueue<LineTcpMeasurementEvent>[] queue;
     private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> idleTableUpdateDetailsUtf16;
@@ -62,7 +63,7 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final Path path = new Path();
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final LineTcpReceiverConfiguration configuration;
-    private Sequence pubSeq;
+    private final MPSequence[] pubSeq;
     private LineTcpReceiver.SchedulerListener listener;
 
     LineTcpMeasurementScheduler(
@@ -95,30 +96,34 @@ class LineTcpMeasurementScheduler implements Closeable {
         loadByWriterThread = new long[writerWorkerPool.getWorkerCount()];
         int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();
         int queueSize = lineConfiguration.getWriterQueueCapacity();
-        queue = new RingQueue<>(
-                (address, addressSize) -> new LineTcpMeasurementEvent(
-                        address,
-                        addressSize,
-                        lineConfiguration.getMicrosecondClock(),
-                        lineConfiguration.getTimestampAdapter()
-                ),
-                getEventSlotSize(maxMeasurementSize),
-                queueSize,
-                MemoryTag.NATIVE_DEFAULT
-        );
-
-        pubSeq = new MPSequence(queueSize);
-
-        long commitInterval = configuration.getCommitTimeout()/2;
+        long commitInterval = configuration.getCommitTimeout() / 2;
         int nWriterThreads = writerWorkerPool.getWorkerCount();
-        if (nWriterThreads > 1) {
-            FanOut fanOut = new FanOut();
+        pubSeq = new MPSequence[nWriterThreads];
+        //noinspection unchecked
+        queue = new RingQueue[nWriterThreads];
             for (int i = 0; i < nWriterThreads; i++) {
+                MPSequence ps = new MPSequence(queueSize);
+                pubSeq[i] = ps;
+
+                RingQueue<LineTcpMeasurementEvent> q = new RingQueue<>(
+                        (address, addressSize) -> new LineTcpMeasurementEvent(
+                                address,
+                                addressSize,
+                                lineConfiguration.getMicrosecondClock(),
+                                lineConfiguration.getTimestampAdapter()
+                        ),
+                        getEventSlotSize(maxMeasurementSize),
+                        queueSize,
+                        MemoryTag.NATIVE_DEFAULT
+                );
+
+                queue[i] = q;
                 SCSequence subSeq = new SCSequence();
-                fanOut.and(subSeq);
+                ps.then(subSeq).then(ps);
+
                 final LineTcpWriterJob lineTcpWriterJob = new LineTcpWriterJob(
                         i,
-                        queue,
+                        q,
                         subSeq,
                         milliClock,
                         commitInterval,
@@ -127,76 +132,59 @@ class LineTcpMeasurementScheduler implements Closeable {
                 writerWorkerPool.assign(i, (Job) lineTcpWriterJob);
                 writerWorkerPool.assign(i, (Closeable) lineTcpWriterJob);
             }
-            pubSeq.then(fanOut).then(pubSeq);
-        } else {
-            SCSequence subSeq = new SCSequence();
-            pubSeq.then(subSeq).then(pubSeq);
-            final LineTcpWriterJob lineTcpWriterJob = new LineTcpWriterJob(
-                    0,
-                    queue,
-                    subSeq,
-                    milliClock,
-                    commitInterval,
-                    this
-            );
-            writerWorkerPool.assign(0, (Job) lineTcpWriterJob);
-            writerWorkerPool.assign(0, (Closeable) lineTcpWriterJob);
-        }
-
         this.tableStructureAdapter = new TableStructureAdapter(cairoConfiguration, configuration.getDefaultPartitionBy());
         writerIdleTimeout = lineConfiguration.getWriterIdleTimeout();
     }
 
     @Override
     public void close() {
-        // Both the writer and the network reader worker pools must have been closed so that their respective cleaners have run
-        if (null != pubSeq) {
-            pubSeq = null;
-            tableUpdateDetailsLock.writeLock().lock();
-            try {
-                ObjList<CharSequence> tableNames = tableUpdateDetailsUtf16.keys();
-                for (int n = 0, sz = tableNames.size(); n < sz; n++) {
-                    tableUpdateDetailsUtf16.get(tableNames.get(n)).closeLocals();
-                }
-                tableUpdateDetailsUtf16.clear();
-
-                tableNames = idleTableUpdateDetailsUtf16.keys();
-                for (int n = 0, sz = tableNames.size(); n < sz; n++) {
-                    TableUpdateDetails updateDetails = idleTableUpdateDetailsUtf16.get(tableNames.get(n));
-                    updateDetails.closeLocals();
-                }
-                idleTableUpdateDetailsUtf16.clear();
-            } finally {
-                tableUpdateDetailsLock.writeLock().unlock();
+        tableUpdateDetailsLock.writeLock().lock();
+        try {
+            ObjList<CharSequence> tableNames = tableUpdateDetailsUtf16.keys();
+            for (int n = 0, sz = tableNames.size(); n < sz; n++) {
+                tableUpdateDetailsUtf16.get(tableNames.get(n)).closeLocals();
             }
-            Misc.free(path);
-            Misc.free(ddlMem);
-            Misc.free(queue);
+            tableUpdateDetailsUtf16.clear();
+
+            tableNames = idleTableUpdateDetailsUtf16.keys();
+            for (int n = 0, sz = tableNames.size(); n < sz; n++) {
+                TableUpdateDetails updateDetails = idleTableUpdateDetailsUtf16.get(tableNames.get(n));
+                updateDetails.closeLocals();
+            }
+            idleTableUpdateDetailsUtf16.clear();
+        } finally {
+            tableUpdateDetailsLock.writeLock().unlock();
+        }
+        Misc.free(path);
+        Misc.free(ddlMem);
+        for (int i = 0, n = queue.length; i < n; i++) {
+            Misc.free(queue[i]);
         }
     }
 
     public boolean doMaintenance(
             CharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8,
-            int workerId,
+            int readerWorkerId,
             long millis
     ) {
         for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
             final CharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
-            final TableUpdateDetails tableUpdateDetails = tableUpdateDetailsUtf8.get(tableNameUtf8);
-            if (millis - tableUpdateDetails.getLastMeasurementMillis() >= writerIdleTimeout) {
+            final TableUpdateDetails tab = tableUpdateDetailsUtf8.get(tableNameUtf8);
+            if (millis - tab.getLastMeasurementMillis() >= writerIdleTimeout) {
                 tableUpdateDetailsLock.writeLock().lock();
                 try {
-                    if (tableUpdateDetails.getNetworkIOOwnerCount() == 1) {
-                        final long seq = getNextPublisherEventSequence();
+                    if (tab.getNetworkIOOwnerCount() == 1) {
+                        final int writerWorkerId = tab.getWriterThreadId();
+                        final long seq = getNextPublisherEventSequence(writerWorkerId);
                         if (seq > -1) {
-                            LineTcpMeasurementEvent event = queue.get(seq);
-                            event.createWriterReleaseEvent(tableUpdateDetails, true);
+                            LineTcpMeasurementEvent event = queue[writerWorkerId].get(seq);
+                            event.createWriterReleaseEvent(tab, true);
                             tableUpdateDetailsUtf8.remove(tableNameUtf8);
-                            final CharSequence tableNameUtf16 = tableUpdateDetails.getTableNameUtf16();
+                            final CharSequence tableNameUtf16 = tab.getTableNameUtf16();
                             tableUpdateDetailsUtf16.remove(tableNameUtf16);
-                            idleTableUpdateDetailsUtf16.put(tableNameUtf16, tableUpdateDetails);
-                            tableUpdateDetails.removeReference(workerId);
-                            pubSeq.done(seq);
+                            idleTableUpdateDetailsUtf16.put(tableNameUtf16, tab);
+                            tab.removeReference(readerWorkerId);
+                            pubSeq[writerWorkerId].done(seq);
                             if (listener != null) {
                                 // table going idle
                                 listener.onEvent(tableNameUtf16, 1);
@@ -206,7 +194,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         return true;
                     } else {
                         tableUpdateDetailsUtf8.remove(tableNameUtf8);
-                        tableUpdateDetails.removeReference(workerId);
+                        tab.removeReference(readerWorkerId);
                     }
                     return sz > 1;
                 } finally {
@@ -248,11 +236,11 @@ class LineTcpMeasurementScheduler implements Closeable {
         return new LineTcpNetworkIOJob(configuration, this, dispatcher, workerId);
     }
 
-    long getNextPublisherEventSequence() {
+    long getNextPublisherEventSequence(int writerWorkerId) {
         assert isOpen();
         long seq;
-        //noinspection StatementWithEmptyBody
-        while ((seq = pubSeq.next()) == -2) {
+        while ((seq = pubSeq[writerWorkerId].next()) == -2) {
+            LockSupport.parkNanos(1);
         }
         return seq;
     }
@@ -320,17 +308,12 @@ class LineTcpMeasurementScheduler implements Closeable {
         return null != pubSeq;
     }
 
-    @TestOnly
-    void setListener(LineTcpReceiver.SchedulerListener listener) {
-        this.listener = listener;
-    }
-
     boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser, FloatingDirectCharSink floatingDirectCharSink) {
-        TableUpdateDetails tableUpdateDetails;
+        TableUpdateDetails tab;
         try {
-            tableUpdateDetails = netIoJob.getLocalTableDetails(parser.getMeasurementName());
-            if (tableUpdateDetails == null) {
-                tableUpdateDetails = getTableUpdateDetailsFromSharedArea(netIoJob, parser);
+            tab = netIoJob.getLocalTableDetails(parser.getMeasurementName());
+            if (tab == null) {
+                tab = getTableUpdateDetailsFromSharedArea(netIoJob, parser);
             }
         } catch (EntryUnavailableException ex) {
             // Table writer is locked
@@ -346,22 +329,28 @@ class LineTcpMeasurementScheduler implements Closeable {
             return false;
         }
 
-        long seq = getNextPublisherEventSequence();
+        long seq = getNextPublisherEventSequence(tab.getWriterThreadId());
         if (seq > -1) {
             try {
-                queue.get(seq).createMeasurementEvent(
-                        tableUpdateDetails,
+                queue[tab.getWriterThreadId()].get(seq).createMeasurementEvent(
+                        tab,
                         parser,
                         floatingDirectCharSink,
                         netIoJob.getWorkerId()
                 );
             } finally {
-                pubSeq.done(seq);
+                pubSeq[tab.getWriterThreadId()].done(seq);
             }
-            tableUpdateDetails.incrementEventsProcessedSinceReshuffle();
+            tab.incrementEventsProcessedSinceReshuffle();
             return false;
         }
+        tab.missCount++;
         return true;
+    }
+
+    @TestOnly
+    void setListener(LineTcpReceiver.SchedulerListener listener) {
+        this.listener = listener;
     }
 
     @NotNull

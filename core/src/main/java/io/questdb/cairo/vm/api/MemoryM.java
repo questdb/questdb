@@ -49,6 +49,15 @@ public interface MemoryM extends Closeable {
 
     boolean isMapped(long offset, long len);
 
+    default long map(long offset, long size) {
+        if (isMapped(offset, size)) {
+            return addressOf(offset);
+        }
+        return 0;
+    }
+
+    long addressOf(long offset);
+
     default void allocate(long size) {
         TableUtils.allocateDiskSpace(getFilesFacade(), getFd(), size);
     }

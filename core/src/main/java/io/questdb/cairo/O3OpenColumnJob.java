@@ -72,8 +72,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcDataTop,
             long srcDataMax,
             int indexBlockCapacity,
-            MemoryMAR dstFixMem,
-            MemoryMAR dstVarMem,
+            MemoryMA dstFixMem,
+            MemoryMA dstVarMem,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter
     ) {
@@ -619,7 +619,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcTimestampAddr,
             long srcTimestampSize,
             long dstFixFd,
-            MemoryMAR dstFixMem,
+            MemoryMA dstFixMem,
             long dstLen,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter

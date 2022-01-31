@@ -34,7 +34,6 @@ import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 
 import java.util.Arrays;

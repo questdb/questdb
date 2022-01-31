@@ -39,7 +39,7 @@ public class LineTCPSenderMain {
         long start = System.nanoTime();
         try (LineTcpSender sender = new LineTcpSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
             for (int i = 0; i < count; i++) {
-                sender.metric("weather");
+                sender.metric("weather"+rnd.nextInt(4));
                 sender
                         .tag("location", "london")
                         .tag("by", "blah")
