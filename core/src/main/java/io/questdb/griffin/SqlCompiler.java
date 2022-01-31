@@ -2099,15 +2099,37 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery dropTable(SqlExecutionContext executionContext) throws SqlException {
+        // expected syntax: DROP TABLE [ IF EXISTS ] name [;]
         expectKeyword(lexer, "table");
-        final int tableNamePosition = lexer.getPosition();
-
-        CharSequence tableName = GenericLexer.unquote(expectToken(lexer, "table name"));
         CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok != null && !Chars.equals(tok, ';')) {
-            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token");
+        if (tok == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "expected [if exists] table-name");
         }
-        tableExistsOrFail(tableNamePosition, tableName, executionContext);
+        boolean hasIfExists = false;
+        if (SqlKeywords.isIfKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || !SqlKeywords.isExistsKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "expected exists");
+            }
+            hasIfExists = true;
+        } else {
+            lexer.unparse(); // tok has table name
+        }
+        final int tableNamePosition = lexer.getPosition();
+        CharSequence tableName = GenericLexer.unquote(expectToken(lexer, "table name"));
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !Chars.equals(tok, ';')) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("]");
+        }
+        if (TableUtils.TABLE_DOES_NOT_EXIST == engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName)) {
+            if (hasIfExists) {
+                return compiledQuery.ofDrop();
+            }
+            throw SqlException
+                    .$(tableNamePosition, "table '")
+                    .put(tableName)
+                    .put("' does not exist");
+        }
         engine.remove(executionContext.getCairoSecurityContext(), path, tableName);
         return compiledQuery.ofDrop();
     }

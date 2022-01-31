@@ -138,4 +138,12 @@ public class DropTableTest extends AbstractGriffinTest {
             Assert.assertEquals(CompiledQuery.DROP, cc.getType());
         });
     }
+
+    @Test
+    public void testDropIfExists() throws Exception {
+        assertMemoryLeak(() -> {
+            CompiledQuery cc = compiler.compile("drop table if exists 'una tabla de queso';", sqlExecutionContext);
+            Assert.assertEquals(CompiledQuery.DROP, cc.getType());
+        });
+    }
 }

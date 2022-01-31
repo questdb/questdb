@@ -77,6 +77,7 @@ import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
 import static io.questdb.std.Numbers.hexDigits;
+import static io.questdb.test.tools.TestUtils.assertContains;
 import static io.questdb.test.tools.TestUtils.drainEngineCmdQueue;
 import static org.junit.Assert.*;
 
@@ -3801,6 +3802,47 @@ create table tab as (
                     }
 
                     try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                        statement.execute();
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDropTable() throws Exception {
+        String [][] sqlExpectedErrMsg = {
+                {"drop table doesnt", "ERROR: table 'doesnt' does not exist"},
+                {"drop table", "ERROR: expected [if exists] table-name"},
+                {"drop doesnt", "ERROR: 'table' expected"},
+                {"drop", "ERROR: 'table' expected"},
+                {"drop table if doesnt", "ERROR: expected exists"},
+                {"drop table exists doesnt", "ERROR: unexpected token [doesnt]"},
+                {"drop table if exists", "ERROR: table name expected"},
+                {"drop table if exists;", "ERROR: table name expected"},
+        };
+        TestUtils.assertMemoryLeak(() -> {
+            try (final PGWireServer ignored = createPGServer(1);
+                 final Connection connection = getConnection(false, false)) {
+                for (int i=0 , n=sqlExpectedErrMsg.length; i < n; i++) {
+                    String []testData = sqlExpectedErrMsg[i];
+                    try (PreparedStatement statement = connection.prepareStatement(testData[0])) {
+                        statement.execute();
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        assertContains(e.getMessage(), testData[1]);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDropTableIfExistsDoesNotFailWhenTableDoesNotExist() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final PGWireServer ignored = createPGServer(1)) {
+                try (final Connection connection = getConnection(false, false)) {
+                    try (PreparedStatement statement = connection.prepareStatement("drop table if exists doesnt")) {
                         statement.execute();
                     }
                 }
