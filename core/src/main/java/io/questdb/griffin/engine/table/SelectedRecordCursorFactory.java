@@ -69,6 +69,11 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         return base.usesCompiledFilter();
     }
 
+    @Override
+    public boolean supportsUpdateRowId(CharSequence tableName) {
+        return base.supportsUpdateRowId(tableName);
+    }
+
     public boolean hasDescendingOrder() {
         return base.hasDescendingOrder();
     }

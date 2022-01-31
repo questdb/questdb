@@ -442,6 +442,12 @@ public final class TableUtils {
      * Maps a file in read-only mode.
      * <p>
      * Important note. Linux requires the offset to be page aligned.
+     * @param ff files facade, - intermediary to allow intercepting calls to the OS.
+     * @param fd file descriptor, previously provided by one of openFile() functions
+     * @param size size of the mapped file region
+     * @param offset offset in file to begin mapping
+     * @param memoryTag bucket to trace memory allocation calls
+     * @return read-only memory address
      */
     public static long mapRO(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
         assert offset % ff.getPageSize() == 0;
@@ -467,6 +473,13 @@ public final class TableUtils {
      * Maps a file in read-write mode.
      * <p>
      * Important note. Linux requires the offset to be page aligned.
+     *
+     * @param ff files facade, - intermediary to allow intercepting calls to the OS.
+     * @param fd file descriptor, previously provided by one of openFile() functions. File has to be opened read-write
+     * @param size size of the mapped file region
+     * @param offset offset in file to begin mapping
+     * @param memoryTag bucket to trace memory allocation calls
+     * @return read-write memory address
      */
     public static long mapRW(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
         assert offset % ff.getPageSize() == 0;
@@ -534,7 +547,13 @@ public final class TableUtils {
     }
 
     /**
-     * path member variable has to be set to location of "top" file.
+     * Reads 8 bytes from "top" file.
+     *
+     * @param ff files facade, - intermediary to intercept OS file system calls.
+     * @param path path has to be set to location of "top" file, excluding file name. Zero terminated string.
+     * @param name name of top file
+     * @param plen path length to truncate "path" back to, path is reusable.
+     * @param failIfCouldNotRead if true the method will throw exception if top file cannot be read. Otherwise, 0.
      *
      * @return number of rows column doesn't have when column was added to table that already had data.
      */

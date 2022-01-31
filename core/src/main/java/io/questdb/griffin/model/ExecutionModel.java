@@ -30,6 +30,7 @@ public interface ExecutionModel {
     int RENAME_TABLE = 3;
     int INSERT = 4;
     int COPY = 5;
+    int UPDATE = 6;
 
     int getModelType();
 }

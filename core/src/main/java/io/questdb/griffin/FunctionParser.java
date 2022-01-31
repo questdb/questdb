@@ -32,6 +32,8 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
+import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastSymbolToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.*;
@@ -42,6 +44,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
 
@@ -153,6 +156,46 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         return NullConstant.NULL;
     }
 
+    public Function createImplicitCast(int position, Function function, int toType) throws SqlException {
+        Function cast = createImplicitCastOrNull(position, function, toType);
+        if (cast != null && cast.isConstant()) {
+            Function constant = functionToConstant(cast);
+            // incoming function is now converted to a constant and can be closed here
+            // since the returning constant will not use the function as underlying arg
+            function.close();
+            return constant;
+        }
+        // Do not close incoming function if cast is not a constant
+        // it will be used inside the cast as an argument
+        return cast;
+    }
+
+    @Nullable
+    private Function createImplicitCastOrNull(int position, Function function, int toType) throws SqlException {
+        int fromType = function.getType();
+        switch (fromType) {
+            case ColumnType.STRING:
+            case ColumnType.SYMBOL:
+                if (toType == ColumnType.TIMESTAMP) {
+                    return new CastStrToTimestampFunctionFactory.Func(position, function);
+                }
+                if (ColumnType.isGeoHash(toType)) {
+                    return CastStrToGeoHashFunctionFactory.newInstance(position, toType, function);
+                }
+                break;
+            default:
+                if (ColumnType.isGeoHash(fromType)) {
+                    int fromGeoBits = ColumnType.getGeoHashBits(fromType);
+                    int toGeoBits = ColumnType.getGeoHashBits(toType);
+                    if (ColumnType.isGeoHash(toType) && toGeoBits < fromGeoBits) {
+                        return CastGeoHashToGeoHashFunctionFactory.newInstance(position, function, fromType, toType);
+                    }
+                }
+                break;
+        }
+        return null;
+    }
+
     public FunctionFactoryCache getFunctionFactoryCache() {
         return functionFactoryCache;
     }
@@ -210,11 +253,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             positionStack.pop();
             assert positionStack.size() == functionStack.size();
             if (function != null && function.isConstant() && (function instanceof ScalarFunction)) {
-                try {
-                    return functionToConstant(function);
-                } finally {
-                    function.close();
-                }
+                return functionToConstant(function);
             }
             return function;
         } finally {
@@ -735,6 +774,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     private Function functionToConstant(Function function) {
+        Function newFunction = functionToConstant0(function);
+        // Sometimes functionToConstant0 returns same instance as passed in parameter
+        if (newFunction != function) {
+            // and we want to close underlying function only in case it's different form returned newFunction
+            function.close();
+        }
+        return newFunction;
+    }
+
+    private Function functionToConstant0(Function function) {
         int type = function.getType();
         switch (ColumnType.tagOf(type)) {
             case ColumnType.INT:
