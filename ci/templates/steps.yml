@@ -75,5 +75,5 @@ steps:
     condition: |
       and(
         eq(variables['testset'], 'coverage'),
-        eq(variables['SOURCE_CODE_CHANGED'], 'true')
+        eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
       )
