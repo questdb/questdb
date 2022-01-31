@@ -116,13 +116,12 @@ stages:
           - download: current
             artifact: coverage-other
           - task: Maven@3
-              displayName: "Merge coverage reports"
-              inputs:
-                mavenPomFile: "ci/jacoco-merge.xml"
-                goals: "verify"
-                options:
-                  "-Dhttp.keepAlive=false -DincludeRoot=$(Pipeline.Workspace) -DoutputDirectory=$(Pipeline.Workspace)/jacoco-aggregate"
-                jdkVersionOption: $(jdk)
+            displayName: "Merge coverage reports"
+            inputs:
+              mavenPomFile: "ci/jacoco-merge.xml"
+              goals: "verify"
+              options:
+                "-Dhttp.keepAlive=false -DincludeRoot=$(Pipeline.Workspace) -DoutputDirectory=$(Pipeline.Workspace)/jacoco-aggregate"
           - bash:
               curl -L
               https://github.com/questdb/questdb/raw/$(Build.SourceVersion)/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar > $(Pipeline.Workspace)/cover-checker-console-1.4.2-jar-with-dependencies.jar
