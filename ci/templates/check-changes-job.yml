@@ -7,7 +7,7 @@ jobs:
       - checkout: none
       - bash: |
           {
-            CHANGED_CORE_FILES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$(System.PullRequest.PullRequestNumber)/files -s  | grep -oP 'filename": "(core|benchmarks)/*\/\K[^.]+')
+            CHANGED_CORE_FILES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PRID/files -s  | grep -oP 'filename": "(core|benchmarks)/*\/\K[^.]+')
             if [ -z "$CHANGED_CORE_FILES" ]
               then
                 echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]false"
@@ -16,10 +16,12 @@ jobs:
             fi
           } || echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
         name: check_changes
+        env:
+          PRID: $(System.PullRequest.PullRequestNumber)
         displayName: "Check changed files"
       - bash: |
           {
-            COV_CLASSES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$(System.PullRequest.PullRequestNumber)/files?per_page=100 -s \
+            COV_CLASSES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PRID/files?per_page=100 -s \
                 | grep -oP 'filename": "core/src/main/java/io/questdb.*\/\K[^.]+' \
                 | tr '\n' ',' | sed -e 's/,/,+:*./g' | sed 's/,+:\*\.$//')
 
@@ -32,7 +34,7 @@ jobs:
                 PAGE=1
                 while true; do
                   PAGE=$((PAGE+1))
-                  COV_CLASSES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$(System.PullRequest.PullRequestNumber)/files?per_page=100\&page=$PAGE -s \
+                  COV_CLASSES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PRID/files?per_page=100\&page=$PAGE -s \
                     | grep -oP 'filename": "core/src/main/java/io/questdb.*\/\K[^.]+' \
                     | tr '\n' ',' | sed -e 's/,/,+:*./g' | sed 's/,+:\*\.$//')
                   if [ -z "$COV_CLASSES" ]
@@ -51,4 +53,6 @@ jobs:
             echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]None"
           }
         name: check_coverage
+        env:
+          PRID: $(System.PullRequest.PullRequestNumber)
         displayName: "List of coverage classes PR build"
