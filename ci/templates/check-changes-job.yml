@@ -26,6 +26,7 @@ jobs:
       - bash: |
           echo $PRID
           if [[ $PRID == ?(-)+([0-9]) ]]
+            then
               COV_CLASSES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PRID/files?per_page=100 -s \
                   | grep -oP 'filename": "core/src/main/java/io/questdb.*\/\K[^.]+' \
                   | tr '\n' ',' | sed -e 's/,/,+:*./g' | sed 's/,+:\*\.$//')
