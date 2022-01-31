@@ -53,6 +53,7 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
     private static final int MAX_NUM_OF_SKIPPED_COLS = 2;
     private static final int NEW_COLUMN_RANDOMIZE_FACTOR = 2;
     private static final int UPPERCASE_TABLE_RANDOMIZE_FACTOR = 2;
+    private static final int SEND_SYMBOLS_WITH_SPACE_RANDOMIZE_FACTOR = 2;
 
     private final Rnd random = new Rnd(System.currentTimeMillis(), System.currentTimeMillis());
     private final AtomicLong timestampMillis = new AtomicLong(1465839830102300L);
@@ -92,6 +93,7 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
     private boolean diffCasesInColNames = false;
     private boolean exerciseTags = true;
     private boolean sendStringsAsSymbols = false;
+    private boolean sendSymbolsWithSpace = false;
 
     private volatile String errorMsg = null;
 
@@ -255,6 +257,10 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
                 return valueBase + postfix;
             case SYMBOL:
                 postfix = Character.toString(shouldFuzz(nonAsciiValueFactor) ? nonAsciiChars[random.nextInt(nonAsciiChars.length)] : random.nextChar());
+                if (sendSymbolsWithSpace && random.nextInt(SEND_SYMBOLS_WITH_SPACE_RANDOMIZE_FACTOR) == 0) {
+                    final int spaceIndex = random.nextInt(valueBase.length()-1);
+                    valueBase = valueBase.substring(0, spaceIndex) + "  " + valueBase.substring(spaceIndex);
+                }
                 return valueBase + postfix;
             case STRING:
                 postfix = Character.toString(shouldFuzz(nonAsciiValueFactor) ? nonAsciiChars[random.nextInt(nonAsciiChars.length)] : random.nextChar());
@@ -309,7 +315,7 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
     }
 
     void initFuzzParameters(int duplicatesFactor, int columnReorderingFactor, int columnSkipFactor, int newColumnFactor, int nonAsciiValueFactor,
-                            boolean diffCasesInColNames, boolean exerciseTags, boolean sendStringsAsSymbols) {
+                            boolean diffCasesInColNames, boolean exerciseTags, boolean sendStringsAsSymbols, boolean sendSymbolsWithSpace) {
         this.duplicatesFactor = duplicatesFactor;
         this.columnReorderingFactor = columnReorderingFactor;
         this.columnSkipFactor = columnSkipFactor;
@@ -318,6 +324,7 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
         this.diffCasesInColNames = diffCasesInColNames;
         this.exerciseTags = exerciseTags;
         this.sendStringsAsSymbols = sendStringsAsSymbols;
+        this.sendSymbolsWithSpace = sendSymbolsWithSpace;
     }
 
     void initLoadParameters(int numOfLines, int numOfIterations, int numOfThreads, int numOfTables, long waitBetweenIterationsMillis) {
