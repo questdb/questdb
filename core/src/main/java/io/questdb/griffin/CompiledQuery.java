@@ -31,6 +31,7 @@ import io.questdb.griffin.update.UpdateStatement;
 import io.questdb.mp.SCSequence;
 
 public interface CompiledQuery {
+    //these values should be covered in both JsonQueryProcessor and PGConnectionContext
     short SELECT = 1;
     short INSERT = 2;
     short TRUNCATE = 3;
@@ -48,6 +49,10 @@ public interface CompiledQuery {
     short LOCK = 14;
     short UNLOCK = 14;
     short VACUUM = 15;
+    short BEGIN = 16;
+    short COMMIT = 17;
+    short ROLLBACK = 18;
+    short CREATE_TABLE_AS_SELECT = 19;
 
     RecordCursorFactory getRecordCursorFactory();
 
@@ -71,4 +76,9 @@ public interface CompiledQuery {
      * @throws SqlException - throws exception if command execution fails
      */
     QueryFuture execute(SCSequence eventSubSeq) throws SqlException;
+
+    /**
+     * Returns number of rows inserted by this command . Used e.g. in pg wire protocol .
+     */
+    long getInsertCount();
 }
