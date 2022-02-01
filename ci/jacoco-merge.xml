@@ -40,10 +40,33 @@
     </properties>
 
     <build>
+        <sourceDirectory>../core</sourceDirectory> <!-- tested sources root, in proper layout: src/main/java -->
+        <outputDirectory>../core/target/classes
+        </outputDirectory> <!-- tested classes root, in proper layout: target/classes -->
+
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>default-compile</id>
+                        <phase>compile</phase>
+                        <goals>
+                            <goal>compile</goal>
+                        </goals>
+                        <configuration>
+                            <!-- Disable compilation, only build coverage report using compiled sources -->
+                            <skipMain>true</skipMain>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
+                <version>0.8.7</version>
                 <executions>
                     <execution>
                         <id>merge-results</id>
@@ -56,7 +79,7 @@
                                 <fileSet>
                                     <directory>${includeRoot}</directory>
                                     <includes>
-                                        <include>**/*coverage*/*.exec</include>
+                                        <include>**/*.exec</include>
                                     </includes>
                                 </fileSet>
                             </fileSets>
