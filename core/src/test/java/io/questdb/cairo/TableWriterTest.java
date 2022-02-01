@@ -767,6 +767,54 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCancelRowOutOfOrder() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int N = 47;
+            create(FF, PartitionBy.DAY, N);
+            Rnd rnd = new Rnd();
+
+            DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                populateProducts(writer, rnd, ts, 1, 0);
+                writer.commit();
+
+                TableWriter.Row r = writer.newRow(TimestampFormatUtils.parseTimestamp("2013-03-02T09:00:00.000Z"));
+                // One set of columns
+                r.putInt(0, rnd.nextPositiveInt());  // productId
+                r.putStr(1, "CANCELLED"); // productName
+                r.putSym(2, "CANCELLED2"); // supplier
+                r.putSym(3, "CANCELLED3"); // category
+                r.cancel();
+
+                // Another set of columns
+                r = writer.newRow(ts);
+                r.putSym(2, "GOOD"); // supplier
+                r.putSym(3, "GOOD2"); // category
+                r.putDouble(4, 123); // price
+                r.putByte(5, (byte) 45); // locationByte
+                r.putShort(6, (short) 678);
+                r.append();
+
+                writer.commit();
+
+                Assert.assertEquals(2, writer.size());
+            }
+
+            try (TableWriter writer = new TableWriter(AbstractCairoTest.configuration, PRODUCT)) {
+                Assert.assertEquals(2, writer.size());
+            }
+
+            try(TableReader rdr = new TableReader(configuration, PRODUCT)) {
+                String expected = "productId\tproductName\tsupplier\tcategory\tprice\tlocationByte\tlocationShort\tlocationInt\tlocationLong\ttimestamp\n" +
+                        "1148479920\tTJWCPSW\tHYRX\tPEHNRXGZSXU\t0.4621835429127854\tq\ttp0\tttmt7w\tcs4bdw4y4dpw\t2013-03-04T00:00:00.000000Z\n" +
+                        "NaN\t\tGOOD\tGOOD2\t123.0\te\t0p6\t\t\t2013-03-04T00:00:00.000000Z\n";
+                assertCursor(expected, rdr.getCursor(), rdr.getMetadata(), true);
+            }
+        });
+    }
+
+    @Test
     public void testCancelFirstRowFailurePartitioned() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             class X extends FilesFacadeImpl {
