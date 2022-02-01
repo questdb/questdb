@@ -35,7 +35,7 @@
         <nodejs.version>v16.13.1</nodejs.version>
         <runtime.assembly>none</runtime.assembly>
         <javac.target>11</javac.target>
-        <argLine>-Dfile.encoding=UTF-8</argLine>
+        <argLine>-ea -Dfile.encoding=UTF-8</argLine>
         <test.exclude>None</test.exclude>
     </properties>
 
