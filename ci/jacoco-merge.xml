@@ -34,8 +34,6 @@
     <name>Coverage report</name>
     <description>Coverage report module</description>
     <properties>
-        <includeRoot></includeRoot>
-        <outputDirectory></outputDirectory>
         <aggregatedReport>${project.build.directory}/coverage-reports/aggregate.exec</aggregatedReport>
     </properties>
 
@@ -77,7 +75,7 @@
                         <configuration>
                             <fileSets>
                                 <fileSet>
-                                    <directory>../..</directory>
+                                    <directory>${includeRoot}</directory>
                                     <includes>
                                         <include>**/*.exec</include>
                                     </includes>
@@ -95,6 +93,7 @@
                         <configuration>
                             <dataFile>${project.build.directory}/coverage-reports/aggregate.exec</dataFile>
                             <outputDirectory>${outputDirectory}</outputDirectory>
+                            <includes>${coverDiff}</includes>
                         </configuration>
                     </execution>
                 </executions>

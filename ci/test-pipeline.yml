@@ -123,29 +123,26 @@ stages:
               restoreKeys: |
               path: $(MAVEN_CACHE_FOLDER)
           - task: Maven@3
-            displayName: "Run tests with Coverage"
+            displayName: "Compile with Maven"
             inputs:
               mavenPomFile: "core/pom.xml"
               mavenOptions: "$(MAVEN_OPTS)"
-              goals: "test"
               options:
-                "--batch-mode --quiet -Dtest= -Dtest.exclude=**/griffin/**,**/cairo/**
-                -Dout=$(Build.SourcesDirectory)/ci/qlog.conf"
+                "compile -DskipTests"
               jdkVersionOption: "1.11"
-              codeCoverageToolOption: "JaCoCo"
-              codeCoverageClassFilter: "$(COVERAGE_DIFF)"
-            timeoutInMinutes: 55
           - download: current
             artifact: coverage-cairo
           - download: current
             artifact: coverage-griffin
+          - download: current
+            artifact: coverage-other
           - task: Maven@3
             displayName: "Merge coverage reports"
             inputs:
               mavenPomFile: "ci/jacoco-merge.xml"
               goals: "verify"
               options:
-                "-DincludeRoot=$(Pipeline.Workspace) -DoutputDirectory=$(Pipeline.Workspace)/jacoco-aggregate -X"
+                "-Dhttp.keepAlive=false -DincludeRoot=$(Pipeline.Workspace) -DoutputDirectory=$(Pipeline.Workspace)/jacoco-aggregate -DcoverDiff=$(COVERAGE_DIFF)"
           - bash:
               $JAVA_HOME_11_X64/bin/java -jar
               $(Build.SourcesDirectory)/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar
