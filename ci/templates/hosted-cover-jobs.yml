@@ -19,14 +19,6 @@ jobs:
           testset: "coverage"
           includeTests: "cairo.**"
           testsetName: coverage-cairo
-        linux-other:
-          imageName: "ubuntu-latest"
-          poolName: "Azure Pipelines"
-          os: Linux
-          jdk: "1.11"
-          testset: "coverage"
-          excludeTests: "**/griffin/**,**/cairo/**"
-          testsetName: coverage-other
     pool:
       vmImage: $(imageName)
       name: $(poolName)

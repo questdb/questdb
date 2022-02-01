@@ -51,6 +51,12 @@ jobs:
           os: Linux
           jdk: "1.8"
           testset: "none"
+        linux-jdk17:
+          imageName: "ubuntu-latest"
+          poolName: "Azure Pipelines"
+          os: Linux
+          jdk: "1.17"
+          testset: "none"
     pool:
       vmImage: $(imageName)
       name: $(poolName)

@@ -102,6 +102,16 @@ stages:
           CODE_COVERAGE_TOOL_OPTION:
             $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
           MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m"
+          COVERAGE_DIFF:
+            $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
+        condition: |
+          and(
+            and(
+              eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
+              eq(variables['SOURCE_CODE_CHANGED'], 'true')
+            ),
+            eq(variables['System.PullRequest.IsFork'], 'false')
+          )
         steps:
           - checkout: self
             fetchDepth: 1
@@ -113,58 +123,29 @@ stages:
               restoreKeys: |
               path: $(MAVEN_CACHE_FOLDER)
           - task: Maven@3
-            displayName: "Compile with Maven"
+            displayName: "Run tests with Coverage"
             inputs:
-              mavenPomFile: "pom.xml"
+              mavenPomFile: "core/pom.xml"
               mavenOptions: "$(MAVEN_OPTS)"
+              goals: "test"
               options:
-                "compile -DskipTests"
-              jdkVersionOption: "1.17"
+                "--batch-mode --quiet -Dtest=$(includeTests) -Dtest.exclude=$(excludeTests)
+                -Dout=$(Build.SourcesDirectory)/ci/qlog.conf"
+              jdkVersionOption: "1.11"
+              codeCoverageToolOption: "JaCoCo"
+              codeCoverageClassFilter: "$(COVERAGE_DIFF)"
+            timeoutInMinutes: 55
           - download: current
             artifact: coverage-cairo
-            condition: |
-              and(
-                and(
-                  eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
-                  eq(variables['SOURCE_CODE_CHANGED'], 'true')
-                ),
-                eq(variables['System.PullRequest.IsFork'], 'false')
-              )
           - download: current
             artifact: coverage-griffin
-            condition: |
-              and(
-                and(
-                  eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
-                  eq(variables['SOURCE_CODE_CHANGED'], 'true')
-                ),
-                eq(variables['System.PullRequest.IsFork'], 'false')
-              )
-          - download: current
-            artifact: coverage-other
-            condition: |
-              and(
-                and(
-                  eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
-                  eq(variables['SOURCE_CODE_CHANGED'], 'true')
-                ),
-                eq(variables['System.PullRequest.IsFork'], 'false')
-              )
           - task: Maven@3
             displayName: "Merge coverage reports"
             inputs:
               mavenPomFile: "ci/jacoco-merge.xml"
               goals: "verify"
               options:
-                "-Dhttp.keepAlive=false -DincludeRoot=$(Pipeline.Workspace) -DoutputDirectory=$(Pipeline.Workspace)/jacoco-aggregate"
-            condition: |
-              and(
-                and(
-                  eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
-                  eq(variables['SOURCE_CODE_CHANGED'], 'true')
-                ),
-                eq(variables['System.PullRequest.IsFork'], 'false')
-              )
+                "-DincludeRoot=$(Pipeline.Workspace) -DoutputDirectory=$(Pipeline.Workspace)/jacoco-aggregate"
           - bash:
               $JAVA_HOME_11_X64/bin/java -jar
               $(Build.SourcesDirectory)/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar
@@ -173,11 +154,3 @@ stages:
               --pr $(System.PullRequest.PullRequestNumber)
               -t  $(DIFF_COVER_THRESHOLD_PCT) -type jacoco;
             displayName: "Diff coverage PR report"
-            condition: |
-              and(
-                and(
-                  eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
-                  eq(variables['SOURCE_CODE_CHANGED'], 'true')
-                ),
-                eq(variables['System.PullRequest.IsFork'], 'false')
-              )
