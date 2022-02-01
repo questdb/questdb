@@ -86,7 +86,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final LowerCaseCharSequenceIntHashMap orderHash = new LowerCaseCharSequenceIntHashMap(4, 0.5, -1);
     private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
-    private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<ExpressionNode> sampleByFill = new ObjList<>();
     private ExpressionNode sampleByTimezoneName = null;
     private ExpressionNode sampleByOffset = null;
@@ -120,6 +119,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int modelPosition = 0;
     private int orderByAdviceMnemonic;
     private int tableId;
+    private boolean isUpdateModel;
+    private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauseModel = new LowerCaseCharSequenceObjHashMap<>();
+    private int modelType;
+    private final ObjList<ExpressionNode> updateSetColumns = new ObjList<>();
+    private final IntList updateTableColumnTypes = new IntList();
+    private final ObjList<CharSequence> updateTableColumnNames = new ObjList<>();
+    private QueryModel updateTableModel;
+    private String updateTableName;
 
     private QueryModel() {
         joinModels.add(this);
@@ -151,6 +158,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         columnNameToAliasMap.put(ast.token, alias);
         bottomUpColumnNames.add(alias);
         aliasToColumnMap.put(alias, column);
+    }
+
+    public void addUpdateTableColumnMetadata(int columnType, String columnName) {
+        updateTableColumnTypes.add(columnType);
+        updateTableColumnNames.add(columnName);
     }
 
     public void addGroupBy(ExpressionNode node) {
@@ -189,14 +201,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    public void addWithClause(CharSequence name, WithClauseModel model) {
-        withClauses.put(name, model);
-    }
-
-    public void addWithClauses(LowerCaseCharSequenceObjHashMap<WithClauseModel> parentWithClauses) {
-        withClauses.putAll(parentWithClauses);
-    }
-
     public void clear() {
         bottomUpColumns.clear();
         aliasToColumnNameMap.clear();
@@ -230,7 +234,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         timestamp = null;
         sqlNodeStack.clear();
         joinColumns.clear();
-        withClauses.clear();
+        withClauseModel.clear();
         selectModelType = SELECT_MODEL_NONE;
         columnNameToAliasMap.clear();
         tableNameFunction = null;
@@ -246,6 +250,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         topDownColumns.clear();
         topDownNameSet.clear();
         aliasToColumnMap.clear();
+        isUpdateModel = false;
+        modelType = ExecutionModel.QUERY;
+        updateSetColumns.clear();
+        updateTableColumnTypes.clear();
+        updateTableColumnNames.clear();
+        updateTableModel = null;
+        updateTableName = null;
     }
 
     public void clearColumnMapStructs() {
@@ -304,6 +315,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.orderByDirectionAdvice.addAll(orderByDirection);
     }
 
+    public void copyUpdateTableMetadata(QueryModel updateTableModel) {
+        this.updateTableModel = updateTableModel;
+        this.tableId = updateTableModel.tableId;
+        this.tableVersion = updateTableModel.tableVersion;
+    }
+
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
         for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
             QueryColumn qc = bottomUpColumns.getQuick(i);
@@ -316,6 +333,30 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ExpressionNode getAlias() {
         return alias;
+    }
+
+    public IntList getUpdateTableColumnTypes() {
+        return this.updateTableModel != null ? this.updateTableModel.getUpdateTableColumnTypes() : updateTableColumnTypes;
+    }
+
+    public ObjList<CharSequence> getUpdateTableColumnNames() {
+        return this.updateTableModel != null ? this.updateTableModel.getUpdateTableColumnNames() : updateTableColumnNames;
+    }
+
+    public ObjList<ExpressionNode> getUpdateExpressions() {
+        return updateSetColumns;
+    }
+
+    public String getUpdateTableName() {
+        return updateTableName;
+    }
+
+    public LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses() {
+        return withClauseModel;
+    }
+
+    public boolean isUpdate() {
+        return isUpdateModel;
     }
 
     public ExpressionNode getSampleByUnit() {
@@ -410,6 +451,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return joinCriteria;
     }
 
+    public void setIsUpdate(boolean isUpdate) {
+        this.isUpdateModel = isUpdate;
+    }
+
     public void setJoinCriteria(ExpressionNode joinCriteria) {
         this.joinCriteria = joinCriteria;
     }
@@ -464,7 +509,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     @Override
     public int getModelType() {
-        return ExecutionModel.QUERY;
+        return modelType;
     }
 
     public CharSequence getName() {
@@ -481,6 +526,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public QueryModel getNestedModel() {
         return nestedModel;
+    }
+
+    public void setModelType(int modelType) {
+        this.modelType = modelType;
     }
 
     public void setNestedModel(QueryModel nestedModel) {
@@ -637,16 +686,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return whereClause;
     }
 
+    public void setUpdateTableName(String tableName) {
+        this.updateTableName = tableName;
+    }
+
     public void setWhereClause(ExpressionNode whereClause) {
         this.whereClause = whereClause;
-    }
-
-    public WithClauseModel getWithClause(CharSequence name) {
-        return withClauses.get(name);
-    }
-
-    public LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses() {
-        return withClauses;
     }
 
     public boolean isDistinct() {
@@ -750,7 +795,38 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     @Override
     public void toSink(CharSink sink) {
-        toSink0(sink, false);
+        if (modelType == ExecutionModel.QUERY) {
+            toSink0(sink, false);
+        } else if (modelType == ExecutionModel.UPDATE) {
+            updateToSink(sink);
+        }
+    }
+
+    private void updateToSink(CharSink sink) {
+        sink.put("update ");
+        tableName.toSink(sink);
+        if (alias != null) {
+            sink.put(" as");
+            aliasToSink(alias.token, sink);
+        }
+        sink.put(" set ");
+        for (int i = 0, n = getUpdateExpressions().size(); i < n; i++) {
+
+            if (i > 0) {
+                sink.put(',');
+            }
+            CharSequence columnExpr = getUpdateExpressions().get(i).token;
+            sink.put(columnExpr);
+            sink.put(" = ");
+            QueryColumn setColumn = getNestedModel().getColumns().getQuick(i);
+            setColumn.getAst().toSink(sink);
+        }
+
+        if (getNestedModel() != null) {
+            sink.put(" from (");
+            getNestedModel().toSink(sink);
+            sink.put(")");
+        }
     }
 
     @Override

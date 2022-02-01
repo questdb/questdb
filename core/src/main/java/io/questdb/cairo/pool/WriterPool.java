@@ -110,6 +110,7 @@ public class WriterPool extends AbstractPool {
      * to call {@link #releaseAll(long)} before retrying for TableWriter.
      *
      * @param tableName name of the table
+     * @param lockReason description of where or why lock is held
      * @return cached TableWriter instance.
      */
     public TableWriter get(CharSequence tableName, CharSequence lockReason) {
@@ -196,6 +197,7 @@ public class WriterPool extends AbstractPool {
      * </p>
      *
      * @param tableName table name
+     * @param lockReason description of where or why lock is held
      * @return true if lock was successful, false otherwise
      */
     public CharSequence lock(CharSequence tableName, CharSequence lockReason) {

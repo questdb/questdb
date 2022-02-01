@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -371,7 +372,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             if (sizeExpected) {
                 Assert.assertTrue("Concrete cursor size expected but was -1", cursorSize != -1);
             } else {
-                Assert.assertTrue("Invalid/undetermined cursor size expecte but was " + cursorSize, cursorSize <= 0);
+                Assert.assertTrue("Invalid/undetermined cursor size expected but was " + cursorSize, cursorSize <= 0);
             }
         }
         if (cursorSize != -1) {
@@ -432,12 +433,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 TestUtils.assertEquals(expected, sink);
             }
         } else {
-            try {
-                record.getRowId();
-                Assert.fail();
-            } catch (UnsupportedOperationException ignore) {
-            }
-
             try {
                 cursor.getRecordB();
                 Assert.fail();
@@ -930,8 +925,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                     compile(query, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals(Chars.toString(query), expectedPosition, e.getPosition());
                     TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+                    Assert.assertEquals(Chars.toString(query), expectedPosition, e.getPosition());
                 }
                 Assert.assertEquals(0, engine.getBusyReaderCount());
                 Assert.assertEquals(0, engine.getBusyWriterCount());

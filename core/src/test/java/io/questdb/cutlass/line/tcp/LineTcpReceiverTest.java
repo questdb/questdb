@@ -366,12 +366,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testUnauthenticatedAggressive() throws Exception {
-        aggressiveReadRetryCount = 1;
-        test(null, null, 200, 1_000, false);
-    }
-
-    @Test
     public void testWindowsAccessDenied() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel m = new TableModel(configuration, "table_a", PartitionBy.DAY)) {

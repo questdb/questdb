@@ -63,7 +63,7 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public IODispatcherConfiguration getNetDispatcherConfiguration() {
+    public IODispatcherConfiguration getDispatcherConfiguration() {
         return ioDispatcherConfiguration;
     }
 
@@ -130,11 +130,6 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     @Override
     public long getWriterIdleTimeout() {
         return 30_000;
-    }
-
-    @Override
-    public int getAggressiveReadRetryCount() {
-        return 0;
     }
 
     @Override

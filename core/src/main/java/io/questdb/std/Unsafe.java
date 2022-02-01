@@ -238,6 +238,7 @@ public final class Unsafe {
      *
      * @param hostClass context for linkage, access control, protection domain, and class loader
      * @param data      bytes of a class file
+     * @return Java Class for the given bytecode
      */
     @Nullable
     public static Class<?> defineAnonymousClass(Class<?> hostClass, byte[] data) {

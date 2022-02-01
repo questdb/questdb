@@ -91,11 +91,11 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         this.disconnectPubSeq.then(this.disconnectSubSeq).then(this.disconnectPubSeq);
 
         this.clock = configuration.getClock();
-        this.activeConnectionLimit = configuration.getActiveConnectionLimit();
+        this.activeConnectionLimit = configuration.getLimit();
         this.ioContextFactory = ioContextFactory;
         this.initialBias = configuration.getInitialBias();
-        this.idleConnectionTimeout = configuration.getIdleConnectionTimeout() > 0 ? configuration.getIdleConnectionTimeout() : Long.MIN_VALUE;
-        this.queuedConnectionTimeoutMs = configuration.getQueuedConnectionTimeout() > 0 ? configuration.getQueuedConnectionTimeout() : 0;
+        this.idleConnectionTimeout = configuration.getTimeout() > 0 ? configuration.getTimeout() : Long.MIN_VALUE;
+        this.queuedConnectionTimeoutMs = configuration.getQueueTimeout() > 0 ? configuration.getQueueTimeout() : 0;
         this.sndBufSize = configuration.getSndBufSize();
         this.rcvBufSize = configuration.getRcvBufSize();
         this.peerNoLinger = configuration.getPeerNoLinger();
@@ -292,7 +292,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected void processDisconnects(long epochMs) {
         disconnectSubSeq.consumeAll(disconnectQueue, this.disconnectContextRef);
         if (!listening && serverFd >= 0 && epochMs >= closeListenFdEpochMs) {
-            LOG.info().$("been unable to accept connections for ").$(queuedConnectionTimeoutMs).$("ms, closing listener [serverFd=").$(serverFd).I$();
+            LOG.error().$("been unable to accept connections for ").$(queuedConnectionTimeoutMs).$("ms, closing listener [serverFd=").$(serverFd).I$();
             nf.close(serverFd);
             serverFd = -1;
         }

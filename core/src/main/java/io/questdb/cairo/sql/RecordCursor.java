@@ -85,11 +85,15 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
     long size();
 
     /**
-     * Skips to record no rowCount .
+     * Skips to record given row count to skip. Rows are counted top of table.
+     *
      * Some implementations that support random access (e.g. tables ordered by designated timestamp)
-     * have special/faster implementations .
+     * have special/faster implementations.
+     *
+     * @param rowCount row count to skip down the cursor
      */
     default void skipTo(long rowCount) {
+        toTop();
         //noinspection StatementWithEmptyBody
         while (rowCount-- > 0 && hasNext()) ;
     }
