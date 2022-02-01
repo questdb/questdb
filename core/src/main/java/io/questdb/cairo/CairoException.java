@@ -68,7 +68,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     @Override
     public StackTraceElement[] getStackTrace() {
-        return EMPTY_STACK_TRACE;
+        StackTraceElement[] result = EMPTY_STACK_TRACE;
+        // This is to have correct stack trace reported in CI 
+        assert (result = super.getStackTrace()) != null;
+        return result;
     }
 
     public boolean isCacheable() {
