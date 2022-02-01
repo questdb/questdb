@@ -4961,7 +4961,7 @@ public class TableWriter implements Closeable {
         @Override
         public void putDate(int columnIndex, long value) {
             putLong(columnIndex, value);
-            setRowValueNotNull(columnIndex);
+            // putLong calls setRowValueNotNull
         }
 
         @Override
