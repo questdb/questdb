@@ -77,11 +77,12 @@ import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
 import static io.questdb.std.Numbers.hexDigits;
+import static io.questdb.test.tools.TestUtils.assertContains;
 import static io.questdb.test.tools.TestUtils.drainEngineCmdQueue;
 import static org.junit.Assert.*;
 
 @SuppressWarnings("SqlNoDataSourceInspection")
-public class PGJobContextTest extends AbstractGriffinTest {
+public class PGJobContextTest extends BasePGTest {
 
     private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
     private static final long DAY_MICROS = Timestamps.HOUR_MICROS * 24L;
@@ -3809,6 +3810,47 @@ create table tab as (
     }
 
     @Test
+    public void testDropTable() throws Exception {
+        String [][] sqlExpectedErrMsg = {
+                {"drop table doesnt", "ERROR: table 'doesnt' does not exist"},
+                {"drop table", "ERROR: expected [if exists] table-name"},
+                {"drop doesnt", "ERROR: 'table' expected"},
+                {"drop", "ERROR: 'table' expected"},
+                {"drop table if doesnt", "ERROR: expected exists"},
+                {"drop table exists doesnt", "ERROR: unexpected token [doesnt]"},
+                {"drop table if exists", "ERROR: table name expected"},
+                {"drop table if exists;", "ERROR: table name expected"},
+        };
+        TestUtils.assertMemoryLeak(() -> {
+            try (final PGWireServer ignored = createPGServer(1);
+                 final Connection connection = getConnection(false, false)) {
+                for (int i=0 , n=sqlExpectedErrMsg.length; i < n; i++) {
+                    String []testData = sqlExpectedErrMsg[i];
+                    try (PreparedStatement statement = connection.prepareStatement(testData[0])) {
+                        statement.execute();
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        assertContains(e.getMessage(), testData[1]);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDropTableIfExistsDoesNotFailWhenTableDoesNotExist() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final PGWireServer ignored = createPGServer(1)) {
+                try (final Connection connection = getConnection(false, false)) {
+                    try (PreparedStatement statement = connection.prepareStatement("drop table if exists doesnt")) {
+                        statement.execute();
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSingleInClauseNonDedicatedTimestamp() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final PGWireServer ignored = createPGServer(1)) {
@@ -4382,126 +4424,6 @@ create table tab as (
         };
     }
 
-    private PGWireServer createPGServer(PGWireConfiguration configuration) {
-        return PGWireServer.create(
-                configuration,
-                null,
-                LOG,
-                engine,
-                compiler.getFunctionFactoryCache(),
-                metrics
-        );
-    }
-
-    private PGWireServer createPGServer(int workerCount) {
-        return createPGServer(workerCount, Long.MAX_VALUE);
-    }
-
-    private PGWireServer createPGServer(int workerCount, long maxQueryTime) {
-
-        final int[] affinity = new int[workerCount];
-        Arrays.fill(affinity, -1);
-
-        final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
-            @Override
-            public long getMaxTime() {
-                return maxQueryTime;
-            }
-        };
-
-        final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
-            @Override
-            public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
-                return circuitBreakerConfiguration;
-            }
-
-            @Override
-            public int[] getWorkerAffinity() {
-                return affinity;
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return workerCount;
-            }
-
-            @Override
-            public Rnd getRandom() {
-                return new Rnd();
-            }
-        };
-
-        return createPGServer(conf);
-    }
-
-    private void execSelectWithParam(PreparedStatement select, int value) throws SQLException {
-        sink.clear();
-        select.setInt(1, value);
-        try (ResultSet resultSet = select.executeQuery()) {
-            sink.clear();
-            while (resultSet.next()) {
-                sink.put(resultSet.getInt(1));
-                sink.put('\n');
-            }
-        }
-    }
-
-    private Connection getConnection(boolean simple, boolean binary) throws SQLException {
-        Properties properties = new Properties();
-        properties.setProperty("user", "admin");
-        properties.setProperty("password", "quest");
-        properties.setProperty("sslmode", "disable");
-        properties.setProperty("binaryTransfer", Boolean.toString(binary));
-        if (simple) {
-            properties.setProperty("preferQueryMode", "simple");
-        }
-
-        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-        return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:8812/qdb", properties);
-    }
-
-    @NotNull
-    private NetworkFacade getFragmentedSendFacade() {
-        return new NetworkFacadeImpl() {
-            @Override
-            public int send(long fd, long buffer, int bufferLen) {
-                int total = 0;
-                for (int i = 0; i < bufferLen; i++) {
-                    int n = super.send(fd, buffer + i, 1);
-                    if (n < 0) {
-                        return n;
-                    }
-                    total += n;
-                }
-                return total;
-            }
-        };
-    }
-
-    @NotNull
-    private DefaultPGWireConfiguration getHexPgWireConfig() {
-        return new DefaultPGWireConfiguration() {
-            @Override
-            public String getDefaultPassword() {
-                return "oh";
-            }
-
-            @Override
-            public String getDefaultUsername() {
-                return "xyz";
-            }
-
-            @Override
-            public IODispatcherConfiguration getDispatcherConfiguration() {
-                return new DefaultIODispatcherConfiguration() {
-                    @Override
-                    public int getBindPort() {
-                        return 8812;
-                    }
-                };
-            }
-        };
-    }
 
     private void insertAllGeoHashTypes(boolean binary) throws Exception {
         assertMemoryLeak(() -> {

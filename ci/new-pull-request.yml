@@ -88,8 +88,10 @@ stages:
             condition: failed()
             inputs:
               workingDirectory: $(CRASH_LOG_LOCATION)
-              targetType: 'inline'
-              script: find . -type f -name 'hs_*.log' -exec sh -c 'x="{}"; mv "$x" "$ARCHIVED_GRASH_LOG"' \;
+              targetType: "inline"
+              script:
+                find . -type f -name 'hs_*.log' -exec sh -c 'x="{}"; mv "$x"
+                "$ARCHIVED_GRASH_LOG"' \;
             env:
               ARCHIVED_GRASH_LOG: $(ARCHIVED_GRASH_LOG)
           - task: PublishBuildArtifacts@1
