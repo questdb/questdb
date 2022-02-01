@@ -25,9 +25,7 @@ steps:
     inputs:
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
-      options:
-        "compile -DskipTests -P build-web-console
-        -Dhttp.keepAlive=false"
+      options: "compile -DskipTests -P build-web-console -Dhttp.keepAlive=false"
       jdkVersionOption: $(jdk)
     condition: eq(variables['SOURCE_CODE_CHANGED'], 'false')
   - task: Maven@3
@@ -83,7 +81,8 @@ steps:
       goals: "clean test"
       options:
         "--batch-mode --quiet -P build-web-console
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false -Dtest.exclude=**/griffin/** -DfailIfNoTests=false"
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false
+        -Dtest.exclude=**/griffin/** -DfailIfNoTests=false"
       jdkVersionOption: $(jdk)
     timeoutInMinutes: 55
     condition: |
@@ -99,7 +98,8 @@ steps:
       goals: "clean test"
       options:
         "--batch-mode --quiet -P build-web-console
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false -Dtest=griffin.** -DfailIfNoTests=false"
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false
+        -Dtest=griffin.** -DfailIfNoTests=false"
       jdkVersionOption: $(jdk)
     timeoutInMinutes: 55
     condition: |
