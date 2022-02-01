@@ -31,6 +31,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
@@ -38,6 +39,7 @@ import java.util.concurrent.CyclicBarrier;
 public class MemoryPDARImplTest extends AbstractCairoTest {
 
     @Test
+    @Ignore
     public void testMulti1() {
 
         int n = 2;
