@@ -344,7 +344,6 @@ class LineTcpMeasurementScheduler implements Closeable {
             tab.incrementEventsProcessedSinceReshuffle();
             return false;
         }
-        tab.missCount++;
         return true;
     }
 

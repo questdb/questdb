@@ -59,10 +59,6 @@ public class TableUpdateDetails implements Closeable {
     private long lastMeasurementMillis = Long.MAX_VALUE;
     private long lastCommitMillis;
     private int networkIOOwnerCount = 0;
-    public long missCount = 0;
-    public long sampleTime;
-    public long recordCountA;
-    public long recordCountB;
 
     TableUpdateDetails(
             LineTcpReceiverConfiguration configuration,

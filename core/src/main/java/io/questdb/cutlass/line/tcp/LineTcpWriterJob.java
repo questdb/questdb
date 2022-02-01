@@ -31,12 +31,12 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
+import java.util.concurrent.locks.LockSupport;
 
 class LineTcpWriterJob implements Job, Closeable {
     private final static Log LOG = LogFactory.getLog(LineTcpWriterJob.class);
@@ -123,10 +123,10 @@ class LineTcpWriterJob implements Job, Closeable {
         while (true) {
             long cursor;
             while ((cursor = sequence.next()) < 0) {
+                LockSupport.parkNanos(1);
                 if (cursor == -1) {
                     return busy;
                 }
-                Os.pause();
             }
             busy = true;
             final LineTcpMeasurementEvent event = queue.get(cursor);
@@ -147,18 +147,7 @@ class LineTcpWriterJob implements Job, Closeable {
                                     .$(", threadId=").$(workerId)
                                     .I$();
                         }
-                        tab.recordCountB++;
-
-                        long t = System.nanoTime();
                         event.append(floatingCharSink);
-                        tab.sampleTime += (System.nanoTime() - t);
-
-                        if (tab.recordCountB > tab.recordCountA + 100_000) {
-                            System.out.println("total: " + (tab.sampleTime));
-                            tab.sampleTime = 0;
-                            tab.recordCountA = tab.recordCountB;
-                        }
-
                         eventProcessed = true;
                     } catch (Throwable ex) {
                         LOG.error()

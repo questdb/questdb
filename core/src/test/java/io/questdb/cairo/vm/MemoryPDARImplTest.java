@@ -40,7 +40,7 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
     @Test
     public void testMulti1() {
 
-        int n = 6;
+        int n = 2;
 
         CyclicBarrier barrier = new CyclicBarrier(n);
         SOCountDownLatch latch = new SOCountDownLatch(n);
@@ -63,9 +63,9 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                 MemoryPDARImpl mem = new MemoryPDARImpl(
                         FilesFacadeImpl.INSTANCE,
                         path.of(root).concat("x.d"+c).$(),
-                        FilesFacadeImpl._16M * 2,
+                        FilesFacadeImpl._16M,
                         MemoryTag.MMAP_DEFAULT
-                );
+                )
         ) {
             Rnd rnd = new Rnd();
             long t = System.nanoTime();
@@ -80,13 +80,12 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
         // write simple long
         try (
                 Path path = new Path();
-                MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                MemoryPMARImpl mem = new MemoryPMARImpl(
                         FilesFacadeImpl.INSTANCE,
                         path.of(root).concat("x.d"+c).$(),
                         FilesFacadeImpl._16M,
-                        FilesFacadeImpl._16M,
                         MemoryTag.MMAP_DEFAULT
-                );
+                )
         ) {
             Rnd rnd = new Rnd();
             long t = System.nanoTime();

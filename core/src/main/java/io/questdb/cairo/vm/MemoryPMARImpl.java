@@ -103,9 +103,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
 
     @Override
     protected void release(long address) {
-        long t = System.nanoTime();
         ff.munmap(address, getPageSize(), memoryTag);
-        System.out.println(System.nanoTime() - t);
     }
 
     @Override
