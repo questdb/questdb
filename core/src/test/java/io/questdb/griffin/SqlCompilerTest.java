@@ -1656,6 +1656,36 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> Assert.assertEquals(SET, compiler.compile(query, sqlExecutionContext).getType()));
     }
 
+    //close command is a no-op in qdb
+    @Test
+    public void testCompileCloseDoesNothing() throws Exception {
+        String query = "CLOSE ALL;";
+        assertMemoryLeak(() -> Assert.assertEquals(SET, compiler.compile(query, sqlExecutionContext).getType()));
+    }
+
+    //reset command is a no-op in qdb
+    @Test
+    public void testCompileResetDoesNothing() throws Exception {
+        String query = "RESET ALL;";
+        assertMemoryLeak(() -> Assert.assertEquals(SET, compiler.compile(query, sqlExecutionContext).getType()));
+    }
+
+    //unlisten command is a no-op in qdb (it's a pg-specific notification mechanism)
+    @Test
+    public void testCompileUnlistenDoesNothing() throws Exception {
+        String query = "UNLISTEN *;";
+        assertMemoryLeak(() -> Assert.assertEquals(SET, compiler.compile(query, sqlExecutionContext).getType()));
+    }
+    
+    @Test
+    public void testCompileStatementsBatch() throws Exception {
+        String query = "SELECT pg_advisory_unlock_all(); CLOSE ALL;";
+
+        assertMemoryLeak(()-> {
+            compiler.compileBatch(query, sqlExecutionContext, null);
+        });
+    }
+
     @Test
     public void testCreateAsSelect() throws SqlException {
         String expectedData = "a1\ta\tb\tc\td\te\tf\tf1\tg\th\ti\tj\tj1\tk\tl\tm\n" +
