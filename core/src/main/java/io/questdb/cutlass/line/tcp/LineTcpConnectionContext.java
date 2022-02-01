@@ -180,6 +180,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                             }
                         } else {
                             int position = (int) (parser.getBufferAddress() - recvBufStartOfMeasurement);
+                            assert position >= 0;
                             LOG.error().$('[').$(fd).$("] could not parse measurement, code ").$(parser.getErrorCode()).$(" at ").$(position)
                                     .$(" line (may be mangled due to partial parsing) is ")
                                     .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress())).$();
@@ -232,6 +233,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         if (recvBufStartOfMeasurement == recvBufPos) {
             recvBufPos = recvBufStart;
             parser.of(recvBufStart);
+            recvBufStartOfMeasurement = recvBufStart;
         }
     }
 
