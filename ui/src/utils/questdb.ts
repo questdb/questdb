@@ -41,6 +41,8 @@ export type Timings = {
   fetch: number
 }
 
+export type Explain = { jitCompiled: boolean }
+
 type DatasetType = Array<boolean | string | number>
 
 type RawDqlResult = {
@@ -51,6 +53,7 @@ type RawDqlResult = {
   error: undefined
   query: string
   timings: Timings
+  explain?: Explain
 }
 
 type RawDdlResult = {
@@ -87,6 +90,7 @@ export type QueryResult<T extends Record<string, any>> =
       data: T[]
       timings: Timings
       type: Type.DQL
+      explain?: Explain
     }
   | ErrorResult
   | DdlResult
@@ -105,6 +109,7 @@ export type Column = {
 
 export type Options = {
   limit?: string
+  explain?: boolean
 }
 
 export class Client {
@@ -162,6 +167,7 @@ export class Client {
         data: parsed,
         timings,
         type: Type.DQL,
+        ...(result.explain ? { explain: result.explain } : {}),
       }
     }
 
