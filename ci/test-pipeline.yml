@@ -129,7 +129,7 @@ stages:
               mavenOptions: "$(MAVEN_OPTS)"
               goals: "test"
               options:
-                "--batch-mode --quiet -Dtest=$(includeTests) -Dtest.exclude=$(excludeTests)
+                "--batch-mode --quiet -Dtest= -Dtest.exclude=**/griffin/**,**/cairo/**
                 -Dout=$(Build.SourcesDirectory)/ci/qlog.conf"
               jdkVersionOption: "1.11"
               codeCoverageToolOption: "JaCoCo"
@@ -145,7 +145,7 @@ stages:
               mavenPomFile: "ci/jacoco-merge.xml"
               goals: "verify"
               options:
-                "-DincludeRoot=$(Pipeline.Workspace) -DoutputDirectory=$(Pipeline.Workspace)/jacoco-aggregate"
+                "-DincludeRoot=$(Pipeline.Workspace) -DoutputDirectory=$(Pipeline.Workspace)/jacoco-aggregate -X"
           - bash:
               $JAVA_HOME_11_X64/bin/java -jar
               $(Build.SourcesDirectory)/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar
