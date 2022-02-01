@@ -77,14 +77,9 @@
                         <configuration>
                             <fileSets>
                                 <fileSet>
-                                    <directory>${includeRoot}</directory>
+                                    <directory>../..</directory>
                                     <includes>
                                         <include>**/*.exec</include>
-                                    </includes>
-                                </fileSet>
-                                <fileSet>
-                                    <includes>
-                                        <include>../core/CCReport43F6D5EF/jacoco.exec</include>
                                     </includes>
                                 </fileSet>
                             </fileSets>
