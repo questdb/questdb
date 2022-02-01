@@ -31,12 +31,12 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
-import java.util.concurrent.locks.LockSupport;
 
 class LineTcpWriterJob implements Job, Closeable {
     private final static Log LOG = LogFactory.getLog(LineTcpWriterJob.class);
@@ -123,7 +123,7 @@ class LineTcpWriterJob implements Job, Closeable {
         while (true) {
             long cursor;
             while ((cursor = sequence.next()) < 0) {
-                LockSupport.parkNanos(1);
+                Os.pause();
                 if (cursor == -1) {
                     return busy;
                 }

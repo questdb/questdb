@@ -240,7 +240,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         assert isOpen();
         long seq;
         while ((seq = pubSeq[writerWorkerId].next()) == -2) {
-            LockSupport.parkNanos(1);
+            Os.pause();
         }
         return seq;
     }
@@ -329,17 +329,18 @@ class LineTcpMeasurementScheduler implements Closeable {
             return false;
         }
 
-        long seq = getNextPublisherEventSequence(tab.getWriterThreadId());
+        final int writerThreadId = tab.getWriterThreadId();
+        long seq = getNextPublisherEventSequence(writerThreadId);
         if (seq > -1) {
             try {
-                queue[tab.getWriterThreadId()].get(seq).createMeasurementEvent(
+                queue[writerThreadId].get(seq).createMeasurementEvent(
                         tab,
                         parser,
                         floatingDirectCharSink,
                         netIoJob.getWorkerId()
                 );
             } finally {
-                pubSeq[tab.getWriterThreadId()].done(seq);
+                pubSeq[writerThreadId].done(seq);
             }
             tab.incrementEventsProcessedSinceReshuffle();
             return false;

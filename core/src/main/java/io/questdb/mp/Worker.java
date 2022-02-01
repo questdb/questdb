@@ -42,9 +42,9 @@ public class Worker extends Thread {
     private final boolean haltOnError;
     private final int workerId;
     private final long sleepMs;
-    private volatile int running = 0;
     private final long yieldThreshold;
     private final long sleepThreshold;
+    private volatile int running = 0;
 
     public Worker(
             final ObjHashSet<? extends Job> jobs,
