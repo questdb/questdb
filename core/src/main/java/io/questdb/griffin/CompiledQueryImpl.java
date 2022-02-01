@@ -56,6 +56,8 @@ public class CompiledQueryImpl implements CompiledQuery {
     private AlterStatement alterStatement;
     private short type;
     private SqlExecutionContext sqlExecutionContext;
+    //count of rows affected by this statement ; currently works only for insert as select/create table as insert
+    private long insertCount;
 
     public CompiledQueryImpl(CairoEngine engine) {
         this.engine = engine;
@@ -128,6 +130,11 @@ public class CompiledQueryImpl implements CompiledQuery {
         return QueryFuture.DONE;
     }
 
+    @Override
+    public long getInsertCount() {
+        return this.insertCount;
+    }
+
     public CompiledQuery of(short type) {
         return of(type, null);
     }
@@ -161,6 +168,7 @@ public class CompiledQueryImpl implements CompiledQuery {
     private CompiledQuery of(short type, RecordCursorFactory factory) {
         this.type = type;
         this.recordCursorFactory = factory;
+        this.insertCount = -1;
         return this;
     }
 
@@ -187,6 +195,12 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(CREATE_TABLE);
     }
 
+    CompiledQuery ofCreateTableAsSelect(long insertCount) {
+        of(CREATE_TABLE_AS_SELECT);
+        this.insertCount = insertCount;
+        return this;
+    }
+
     CompiledQuery ofDrop() {
         return of(DROP);
     }
@@ -196,8 +210,10 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(INSERT);
     }
 
-    CompiledQuery ofInsertAsSelect() {
-        return of(INSERT_AS_SELECT);
+    CompiledQuery ofInsertAsSelect(long insertCount) {
+        of(INSERT_AS_SELECT);
+        this.insertCount = insertCount;
+        return this;
     }
 
     CompiledQuery ofRenameTable() {
@@ -210,6 +226,18 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     CompiledQuery ofSet() {
         return of(SET);
+    }
+
+    CompiledQuery ofBegin() {
+        return of(BEGIN);
+    }
+
+    CompiledQuery ofCommit() {
+        return of(COMMIT);
+    }
+
+    CompiledQuery ofRollback() {
+        return of(ROLLBACK);
     }
 
     CompiledQuery ofTruncate() {

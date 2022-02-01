@@ -107,7 +107,7 @@ public class InsertStatementImpl implements InsertStatement {
                 InsertRowImpl row = insertRows.get(i);
                 row.append(writer);
             }
-            return 1;
+            return insertRows.size();
         }
 
         @Override
