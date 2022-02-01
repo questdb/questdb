@@ -53,6 +53,18 @@ steps:
         eq(variables['testset'], 'coverage'),
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
+  - bash: |
+      find . -type f -name 'hs_*.log' -exec sh -c 'x="{}"; mv "$x" "$(ARCHIVED_GRASH_LOG)"' \;
+    displayName: "Tests failed -- rename crash dump"
+    condition: failed()
+    inputs:
+      workingDirectory: $(Build.SourcesDirectory)/core/
+  - task: PublishBuildArtifacts@1
+    displayName: "Tests failed -- Upload crash logs"
+    condition: failed()
+    inputs:
+      pathToPublish: $(ARCHIVED_GRASH_LOG)
+      artifactName: CrashDump
   - task: ArchiveFiles@2
     displayName: "Tests failed -- Compress logs"
     condition: not(succeeded())
