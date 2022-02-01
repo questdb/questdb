@@ -108,10 +108,10 @@ stages:
             lfs: false
             submodules: false
           - task: Cache@2
-              inputs:
-                key: '"questdb_main" | "maven"'
-                restoreKeys: |
-                path: $(MAVEN_CACHE_FOLDER)
+            inputs:
+              key: '"questdb_main" | "maven"'
+              restoreKeys: |
+              path: $(MAVEN_CACHE_FOLDER)
           - task: Maven@3
             displayName: "Compile with Maven"
             inputs:
