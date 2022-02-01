@@ -26,10 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.LongList;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Numbers;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
@@ -53,8 +50,88 @@ public class ColumnVersionWriter implements Closeable {
     // it can be zero when there are no columns deviating from the main
     // data branch
     public ColumnVersionWriter(FilesFacade ff, LPSZ fileName, long size) {
-        this.mem = Vm.getCMARWInstance(ff, fileName, ff.getPageSize(), size, MemoryTag.MMAP_TABLE_READER);
-        this.size = size;
+        this.mem = Vm.getCMARWInstance(ff, fileName, ff.getPageSize(), 0, MemoryTag.MMAP_TABLE_READER);
+        this.size = this.mem.size();
+    }
+
+    @Override
+    public void close() {
+        mem.close(false);
+    }
+
+    public void commit() {
+        // + 8 is the A/B switch at top of the file, it is 8 bytes to keep data aligned
+        // + 8 is the offset of A area
+        // + 8 is the length of A area
+        // + 8 is the offset of B area
+        // + 8 is the length of B area
+        final long headerSize = 8 + 8 + 8 + 8 + 8;
+        // calculate the area size required to store the versions
+        // we're assuming that 'columnVersions' contains 4 longs per entry
+        final int entryCount = cachedList.size() / BLOCK_SIZE;
+        // We're storing 4 longs per entry in the file
+        final long areaSize = entryCount * 4 * 8L;
+
+//        if (size == 0) {
+//            // This is initial write, include header size into the resize
+//            bumpFileSize(headerSize + areaSize);
+//            // writing A group
+//            store(entryCount, headerSize);
+//            // We update transient offset and size here
+//            // the important values are for area 'A'.
+//            // This is the reason 'B' is updated first so that
+//            // 'A' overwrites transient values
+//            updateB(headerSize + areaSize, 0);
+//            updateA(headerSize, areaSize);
+//            switchToA();
+//            this.size = areaSize + headerSize;
+//        } else {
+        long aOffset = Math.max(headerSize, getOffsetA());
+        final long aSize = getSizeA();
+        long bOffset = Math.max(headerSize, getOffsetB());
+        final long bSize = getSizeB();
+
+        if (isB()) {
+            // we have to write 'A' area, which may not be big enough
+
+            // is area 'A' above 'B' ?
+            if (aOffset < bOffset) {
+                if (aSize <= bOffset - headerSize) {
+                    aOffset = headerSize;
+                } else {
+                    aOffset = bOffset + bSize;
+                    bumpFileSize(aOffset + areaSize);
+                }
+            }
+            store(entryCount, aOffset);
+            // update offsets of 'A'
+            updateA(aOffset, areaSize);
+            // switch to 'A'
+            switchToA();
+        } else {
+            // current is 'A'
+            // check if 'A' wound up below 'B'
+            if (aOffset > bOffset) {
+                // check if 'B' bits between top and 'A'
+                if (areaSize <= aOffset - headerSize) {
+                    bOffset = headerSize;
+                } else {
+                    // 'B' does not fit between top and 'A'
+                    bOffset = aOffset + aSize;
+                    bumpFileSize(bOffset + areaSize);
+                }
+            } else {
+                // check if file is big enough
+                if (bSize < areaSize) {
+                    bumpFileSize(bOffset + areaSize);
+                }
+            }
+            // if 'B' is last we just overwrite it
+            store(entryCount, bOffset);
+            updateB(bOffset, areaSize);
+            switchToB();
+        }
+//        }
     }
 
     /**
@@ -62,11 +139,11 @@ public class ColumnVersionWriter implements Closeable {
      * commit() call. In cache and on disk entries are maintained in ascending chronological order of partition
      * timestamps and ascending column index order within each timestamp.
      *
-     * @param timestamp     partition timestamp
-     * @param columnIndex   column index
-     * @param columnVersion column version.
+     * @param timestamp   partition timestamp
+     * @param columnIndex column index
+     * @param txn         column version.
      */
-    public void upsert(long timestamp, int columnIndex, long columnVersion) {
+    public void upsert(long timestamp, int columnIndex, long txn) {
         final int sz = cachedList.size();
         int index = cachedList.binarySearchBlock(BLOCK_SIZE_MSB, timestamp, BinarySearch.SCAN_UP);
         boolean insert = true;
@@ -76,7 +153,7 @@ public class ColumnVersionWriter implements Closeable {
                 final long thisIndex = cachedList.getQuick(index + 1);
 
                 if (thisIndex == columnIndex) {
-                    cachedList.setQuick(index + 2, columnVersion);
+                    cachedList.setQuick(index + 2, txn);
                     insert = false;
                     break;
                 }
@@ -100,87 +177,7 @@ public class ColumnVersionWriter implements Closeable {
             }
             cachedList.setQuick(index, timestamp);
             cachedList.setQuick(index + 1, columnIndex);
-            cachedList.setQuick(index + 2, columnVersion);
-        }
-    }
-
-    @Override
-    public void close() {
-        mem.close();
-    }
-
-    public void commit() {
-        // + 8 is the A/B switch at top of the file, it is 8 bytes to keep data aligned
-        // + 8 is the offset of A area
-        // + 8 is the length of A area
-        // + 8 is the offset of B area
-        // + 8 is the length of B area
-        final long headerSize = 8 + 8 + 8 + 8 + 8;
-        // calculate the area size required to store the versions
-        // we're assuming that 'columnVersions' contains 4 longs per entry
-        final int entryCount = cachedList.size() / BLOCK_SIZE;
-        // We're storing 4 longs per entry in the file
-        final long areaSize = entryCount * 4 * 8L;
-
-        if (size == 0) {
-            // This is initial write, include header size into the resize
-            bumpFileSize(headerSize + areaSize);
-            // writing A group
-            store(entryCount, headerSize);
-            // We update transient offset and size here
-            // the important values are for area 'A'.
-            // This is the reason 'B' is updated first so that
-            // 'A' overwrites transient values
-            updateB(headerSize + areaSize, 0);
-            updateA(headerSize, areaSize);
-            switchToA();
-            this.size = areaSize + headerSize;
-        } else {
-            long aOffset = getOffsetA();
-            final long aSize = getSizeA();
-            long bOffset = getOffsetB();
-            final long bSize = getSizeB();
-
-            if (isB()) {
-                // we have to write 'A' area, which may not be big enough
-
-                // is area 'A' above 'B' ?
-                if (aOffset < bOffset) {
-                    if (aSize <= bOffset - headerSize) {
-                        aOffset = headerSize;
-                    } else {
-                        aOffset = bOffset + bSize;
-                        bumpFileSize(aOffset + areaSize);
-                    }
-                }
-                store(entryCount, aOffset);
-                // update offsets of 'A'
-                updateA(aOffset, areaSize);
-                // switch to 'A'
-                switchToA();
-            } else {
-                // current is 'A'
-                // check if 'A' wound up below 'B'
-                if (aOffset > bOffset) {
-                    // check if 'B' bits between top and 'A'
-                    if (areaSize <= aOffset - headerSize) {
-                        bOffset = headerSize;
-                    } else {
-                        // 'B' does not fit between top and 'A'
-                        bOffset = aOffset + aSize;
-                        bumpFileSize(bOffset + areaSize);
-                    }
-                } else {
-                    // check if file is big enough
-                    if (bSize < areaSize) {
-                        bumpFileSize(bOffset + areaSize);
-                    }
-                }
-                // if 'B' is last we just overwrite it
-                store(entryCount, bOffset);
-                updateB(bOffset, areaSize);
-                switchToB();
-            }
+            cachedList.setQuick(index + 2, txn);
         }
     }
 
@@ -241,6 +238,7 @@ public class ColumnVersionWriter implements Closeable {
     }
 
     private void updateA(long aOffset, long aSize) {
+        Unsafe.getUnsafe().storeFence();
         mem.putLong(OFFSET_OFFSET_A, aOffset);
         mem.putLong(OFFSET_SIZE_A, aSize);
         this.transientOffset = aOffset;

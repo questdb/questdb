@@ -31,6 +31,10 @@ import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicLong;
+
 public class ColumnVersionWriterTest extends AbstractCairoTest {
     public static void assertEqual(LongList expected, LongList actual) {
         Assert.assertEquals(expected.size(), actual.size());
@@ -89,5 +93,97 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    @Test
+    public void testFuzzConcurrent() throws InterruptedException {
+        final int N = 100_000;
+        try (
+                Path path = new Path();
+                ColumnVersionWriter w = new ColumnVersionWriter(FilesFacadeImpl.INSTANCE, path.of(root).concat("_cv").$(), 0);
+                ColumnVersionReader r = new ColumnVersionReader(FilesFacadeImpl.INSTANCE, path, 0)
+        ) {
+            CyclicBarrier barrier = new CyclicBarrier(2);
+            ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
+            AtomicLong done = new AtomicLong();
+
+            Thread writer = new Thread(() -> {
+                Rnd rnd = new Rnd();
+                try {
+                    barrier.await();
+                    for (int txn = 0; txn < N; txn++) {
+                        rnd.reset(txn, 0xdee4c0ed);
+                        int increment = rnd.nextInt(32);
+                        for (int j = 0; j < increment; j++) {
+                            w.upsert(rnd.nextLong(20), rnd.nextInt(10), txn);
+                        }
+                        LongList list = w.getCachedList();
+                        for (int j = 0, n = list.size(); j < n; j += ColumnVersionWriter.BLOCK_SIZE) {
+                            long timestamp = list.getQuick(j);
+                            int index = (int) list.getQuick(j + 1);
+                            w.upsert(timestamp, index, txn);
+                        }
+                        w.commit();
+                    }
+                } catch (Throwable th) {
+                    exceptions.add(th);
+                } finally {
+                    done.incrementAndGet();
+                }
+            });
+
+            Thread reader = new Thread(() -> {
+                try {
+                    barrier.await();
+                    while (done.get() == 0) {
+                        final long offset = w.getOffset();
+                        final long size = w.getSize();
+                        r.readUnsafe(offset, size);
+                        long txn = -1;
+                        LongList list = r.getCachedList();
+                        long prevTimestamp = -1;
+                        long prevColumnIndex = -1;
+
+                        for (int i = 0, n = list.size(); i < n; i += ColumnVersionWriter.BLOCK_SIZE) {
+                            long timestamp = list.getQuick(i);
+                            long columnIndex = list.getQuick(i + 1);
+                            long txn2 = list.getQuick(i + 2);
+                            if (txn == -1) {
+                                txn = txn2;
+                            } else if (txn != txn2) {
+                                Assert.assertEquals(txn, txn2);
+                            }
+
+                            if (prevTimestamp < timestamp) {
+                                prevTimestamp = timestamp;
+                                prevColumnIndex = columnIndex;
+                                continue;
+                            }
+
+                            if (prevTimestamp == timestamp) {
+                                Assert.assertTrue(prevColumnIndex < columnIndex);
+                                prevColumnIndex = columnIndex;
+                                continue;
+                            }
+
+                            Assert.fail();
+                        }
+                    }
+                } catch (Throwable th) {
+                    exceptions.add(th);
+                }
+            });
+
+            writer.start();
+            reader.start();
+
+            writer.join();
+            reader.join();
+
+            if (exceptions.size() != 0) {
+                Assert.fail(exceptions.poll().toString());
+            }
+        }
+
     }
 }
