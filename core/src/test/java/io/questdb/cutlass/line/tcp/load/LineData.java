@@ -117,6 +117,15 @@ public class LineData {
         return original.toString().substring(1, original.length() - 1);
     }
 
+    boolean isValid() {
+        for (int i = 0, n = values.size(); i < n; i++) {
+            if (tagFlags.get(i) && values.get(i).toString().contains(" ")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     @Override
     public String toString() {
         return toString(new StringBuilder()).toString();
