@@ -151,7 +151,7 @@ class LineTcpWriterJob implements Job, Closeable {
                         eventProcessed = true;
                     } catch (Throwable ex) {
                         LOG.error()
-                                .$("closing writer for because of error [table=").$(tab.getTableNameUtf16())
+                                .$("closing writer because of error [table=").$(tab.getTableNameUtf16())
                                 .$(",ex=").$(ex)
                                 .I$();
                         event.createWriterReleaseEvent(tab, false);
