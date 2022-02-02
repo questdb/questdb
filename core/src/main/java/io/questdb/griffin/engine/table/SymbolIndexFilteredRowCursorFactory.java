@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 
-public class SymbolIndexFilteredRowCursorFactory implements FunctionBasedRowCursorFactory {
+public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCursorFactory {
     private final SymbolIndexFilteredRowCursor cursor;
     private final Function symbolFunction;
 
@@ -53,6 +53,11 @@ public class SymbolIndexFilteredRowCursorFactory implements FunctionBasedRowCurs
                 columnIndexes
         );
         this.symbolFunction = symbolFunction;
+    }
+
+    @Override
+    public void of(int symbolKey) {
+        cursor.of(symbolKey);
     }
 
     @Override
