@@ -59,13 +59,11 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 int increment = rnd.nextInt(32);
 
                 for (int j = 0; j < increment; j++) {
-                    w.upsert(rnd.nextLong(20), rnd.nextInt(10), rnd.nextLong());
+                    w.upsert(rnd.nextLong(20), rnd.nextInt(10), i);
                 }
 
                 w.commit();
-                final long offset = w.getOffset();
-                final long size = w.getSize();
-                r.readUnsafe(offset, size);
+                r.readSafe(configuration.getMicrosecondClock(), 1000);
                 Assert.assertTrue(w.getCachedList().size() > 0);
                 assertEqual(w.getCachedList(), r.getCachedList());
                 // assert list is ordered by (timestamp,column_index)
@@ -97,7 +95,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
 
     @Test
     public void testFuzzConcurrent() throws InterruptedException {
-        final int N = 100_000;
+        final int N = 10_000;
         try (
                 Path path = new Path();
                 ColumnVersionWriter w = new ColumnVersionWriter(FilesFacadeImpl.INSTANCE, path.of(root).concat("_cv").$(), 0);
@@ -112,7 +110,6 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 try {
                     barrier.await();
                     for (int txn = 0; txn < N; txn++) {
-                        rnd.reset(txn, 0xdee4c0ed);
                         int increment = rnd.nextInt(32);
                         for (int j = 0; j < increment; j++) {
                             w.upsert(rnd.nextLong(20), rnd.nextInt(10), txn);
@@ -136,9 +133,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 try {
                     barrier.await();
                     while (done.get() == 0) {
-                        final long offset = w.getOffset();
-                        final long size = w.getSize();
-                        r.readUnsafe(offset, size);
+                        r.readSafe(configuration.getMicrosecondClock(), 5_000_000);
                         long txn = -1;
                         LongList list = r.getCachedList();
                         long prevTimestamp = -1;
@@ -147,26 +142,27 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                         for (int i = 0, n = list.size(); i < n; i += ColumnVersionWriter.BLOCK_SIZE) {
                             long timestamp = list.getQuick(i);
                             long columnIndex = list.getQuick(i + 1);
-                            long txn2 = list.getQuick(i + 2);
-                            if (txn == -1) {
-                                txn = txn2;
-                            } else if (txn != txn2) {
-                                Assert.assertEquals(txn, txn2);
-                            }
 
                             if (prevTimestamp < timestamp) {
                                 prevTimestamp = timestamp;
                                 prevColumnIndex = columnIndex;
                                 continue;
+                            } else {
+                                if (prevTimestamp == timestamp) {
+                                    Assert.assertTrue(prevColumnIndex < columnIndex);
+                                    prevColumnIndex = columnIndex;
+                                } else {
+                                    Assert.fail();
+                                }
                             }
 
-                            if (prevTimestamp == timestamp) {
-                                Assert.assertTrue(prevColumnIndex < columnIndex);
-                                prevColumnIndex = columnIndex;
-                                continue;
+                            long txn2 = list.getQuick(i + 2);
+                            if (txn == -1) {
+                                txn = txn2;
+                            } else if (txn != txn2) {
+                                // All txn must be same.
+                                Assert.assertEquals("index " + i / ColumnVersionWriter.BLOCK_SIZE + ", version " + r.getVersion(), txn, txn2);
                             }
-
-                            Assert.fail();
                         }
                     }
                 } catch (Throwable th) {

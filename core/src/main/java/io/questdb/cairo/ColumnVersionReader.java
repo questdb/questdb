@@ -26,22 +26,27 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.LongList;
-import io.questdb.std.MemoryTag;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
 
+import static io.questdb.cairo.ColumnVersionWriter.*;
+
 public class ColumnVersionReader implements Closeable {
+    private final static Log LOG = LogFactory.getLog(ColumnVersionReader.class);
     private final MemoryCMR mem;
     private final LongList cachedList = new LongList();
+    private long version;
 
     // size should be read from the transaction file
     // it can be zero when there are no columns deviating from the main
     // data branch
     public ColumnVersionReader(FilesFacade ff, LPSZ fileName, long size) {
-        this.mem = Vm.getCMRInstance(ff, fileName, size, MemoryTag.MMAP_TABLE_READER);
+        this.mem = Vm.getCMRInstance(ff, fileName, Math.max(size, HEADER_SIZE), MemoryTag.MMAP_TABLE_READER);
     }
 
     @Override
@@ -53,7 +58,43 @@ public class ColumnVersionReader implements Closeable {
         return cachedList;
     }
 
-    public void readUnsafe(long offset, long areaSize) {
+    public long getVersion() {
+        return version;
+    }
+
+    public void readSafe(MicrosecondClock microsecondClock, long spinLockTimeoutUs) {
+        long deadline = microsecondClock.getTicks() + spinLockTimeoutUs;
+        while (true) {
+            long version = unsafeGetVersionCheck();
+            Unsafe.getUnsafe().loadFence();
+
+            boolean areaA = unsafeIsA();
+            long offset = areaA ? mem.getLong(OFFSET_OFFSET_A) : mem.getLong(OFFSET_OFFSET_B);
+            long size = areaA ? mem.getLong(OFFSET_SIZE_A) : mem.getLong(OFFSET_SIZE_B);
+
+            Unsafe.getUnsafe().loadFence();
+            if (version == unsafeGetVersion()) {
+                resize(offset + size);
+                readUnsafe(offset, size);
+
+                Unsafe.getUnsafe().loadFence();
+                if (version == unsafeGetVersion()) {
+                    this.version = version;
+                    LOG.debug().$("read clean version ").$(version).$(", offset ").$(offset).$(", size ").$(size).$();
+                    return;
+                }
+            }
+
+            if (microsecondClock.getTicks() > deadline) {
+                LOG.error().$("Column Version read timeout [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
+                throw CairoException.instance(0).put("Column Version read timeout");
+            }
+            Os.pause();
+            LOG.debug().$("read dirty version ").$(version).$(", retrying").$();
+        }
+    }
+
+    private void readUnsafe(long offset, long areaSize) {
         resize(offset + areaSize);
 
         int i = 0;
@@ -62,16 +103,27 @@ public class ColumnVersionReader implements Closeable {
 
         assert areaSize % ColumnVersionWriter.BLOCK_SIZE_BYTES == 0;
 
-        cachedList.setPos((int) ((areaSize / (ColumnVersionWriter.BLOCK_SIZE_BYTES)) * 4));
+        cachedList.setPos((int) ((areaSize / (ColumnVersionWriter.BLOCK_SIZE_BYTES)) * BLOCK_SIZE));
 
         while (p < lim) {
             cachedList.setQuick(i, mem.getLong(p));
             cachedList.setQuick(i + 1, mem.getLong(p + 8));
             cachedList.setQuick(i + 2, mem.getLong(p + 16));
-            cachedList.setQuick(i + 3, mem.getLong(p + 24));
             i += ColumnVersionWriter.BLOCK_SIZE;
             p += ColumnVersionWriter.BLOCK_SIZE_BYTES;
         }
+    }
+
+    private long unsafeGetVersion() {
+        return mem.getLong(OFFSET_VERSION);
+    }
+
+    private long unsafeGetVersionCheck() {
+        return mem.getLong(OFFSET_VERSION_CHECK);
+    }
+
+    private boolean unsafeIsA() {
+        return mem.getLong(OFFSET_AREA) == 'A';
     }
 
     public void resize(long size) {

@@ -33,15 +33,19 @@ import java.io.Closeable;
 
 public class ColumnVersionWriter implements Closeable {
     public static final int OFFSET_AREA = 0;
-    public static final int OFFSET_OFFSET_A = 8;
-    public static final int OFFSET_SIZE_A = 16;
-    public static final int OFFSET_OFFSET_B = 24;
-    public static final int OFFSET_SIZE_B = 32;
-    public static final int BLOCK_SIZE = 4;
+    public static final int OFFSET_VERSION = 8;
+    public static final int OFFSET_VERSION_CHECK = 16;
+    public static final int OFFSET_OFFSET_A = 24;
+    public static final int OFFSET_SIZE_A = 32;
+    public static final int OFFSET_OFFSET_B = 40;
+    public static final int OFFSET_SIZE_B = 48;
+    public static final int HEADER_SIZE = OFFSET_SIZE_B + 8;
+    public static final int BLOCK_SIZE = 8;
     public static final int BLOCK_SIZE_BYTES = BLOCK_SIZE * Long.BYTES;
     public static final int BLOCK_SIZE_MSB = Numbers.msb(BLOCK_SIZE);
     private final MemoryMARW mem;
     private final LongList cachedList = new LongList();
+    private long version;
     private long size;
     private long transientOffset;
     private long transientSize;
@@ -52,6 +56,7 @@ public class ColumnVersionWriter implements Closeable {
     public ColumnVersionWriter(FilesFacade ff, LPSZ fileName, long size) {
         this.mem = Vm.getCMARWInstance(ff, fileName, ff.getPageSize(), 0, MemoryTag.MMAP_TABLE_READER);
         this.size = this.mem.size();
+        this.version = this.size < OFFSET_VERSION + 8 ? 0 : mem.getLong(OFFSET_VERSION);
     }
 
     @Override
@@ -60,37 +65,19 @@ public class ColumnVersionWriter implements Closeable {
     }
 
     public void commit() {
-        // + 8 is the A/B switch at top of the file, it is 8 bytes to keep data aligned
-        // + 8 is the offset of A area
-        // + 8 is the length of A area
-        // + 8 is the offset of B area
-        // + 8 is the length of B area
-        final long headerSize = 8 + 8 + 8 + 8 + 8;
+        final long headerSize = HEADER_SIZE;
         // calculate the area size required to store the versions
         // we're assuming that 'columnVersions' contains 4 longs per entry
         final int entryCount = cachedList.size() / BLOCK_SIZE;
         // We're storing 4 longs per entry in the file
-        final long areaSize = entryCount * 4 * 8L;
+        final long areaSize = (long) entryCount * BLOCK_SIZE_BYTES;
 
-//        if (size == 0) {
-//            // This is initial write, include header size into the resize
-//            bumpFileSize(headerSize + areaSize);
-//            // writing A group
-//            store(entryCount, headerSize);
-//            // We update transient offset and size here
-//            // the important values are for area 'A'.
-//            // This is the reason 'B' is updated first so that
-//            // 'A' overwrites transient values
-//            updateB(headerSize + areaSize, 0);
-//            updateA(headerSize, areaSize);
-//            switchToA();
-//            this.size = areaSize + headerSize;
-//        } else {
         long aOffset = Math.max(headerSize, getOffsetA());
         final long aSize = getSizeA();
         long bOffset = Math.max(headerSize, getOffsetB());
         final long bSize = getSizeB();
 
+        storeNewVersion();
         if (isB()) {
             // we have to write 'A' area, which may not be big enough
 
@@ -102,6 +89,11 @@ public class ColumnVersionWriter implements Closeable {
                     aOffset = bOffset + bSize;
                     bumpFileSize(aOffset + areaSize);
                 }
+            } else {
+                // check if file is big enough
+                if (aSize < areaSize) {
+                    bumpFileSize(aOffset + areaSize);
+                }
             }
             store(entryCount, aOffset);
             // update offsets of 'A'
@@ -109,11 +101,11 @@ public class ColumnVersionWriter implements Closeable {
             // switch to 'A'
             switchToA();
         } else {
-            // current is 'A'
+            // current is 'A', writing to 'B'
             // check if 'A' wound up below 'B'
             if (aOffset > bOffset) {
                 // check if 'B' bits between top and 'A'
-                if (areaSize <= aOffset - headerSize) {
+                if (areaSize + headerSize <= aOffset) {
                     bOffset = headerSize;
                 } else {
                     // 'B' does not fit between top and 'A'
@@ -131,7 +123,16 @@ public class ColumnVersionWriter implements Closeable {
             updateB(bOffset, areaSize);
             switchToB();
         }
-//        }
+        storeVersionCheck();
+    }
+
+    public boolean isB() {
+        return (char) mem.getByte(OFFSET_AREA) != 'A';
+    }
+
+    private void storeNewVersion() {
+        mem.putLong(OFFSET_VERSION, ++this.version);
+        Unsafe.getUnsafe().storeFence();
     }
 
     /**
@@ -205,8 +206,9 @@ public class ColumnVersionWriter implements Closeable {
         return mem.getLong(OFFSET_SIZE_B);
     }
 
-    public boolean isB() {
-        return (char) mem.getByte(OFFSET_AREA) == 'B';
+    private void storeVersionCheck() {
+        Unsafe.getUnsafe().storeFence();
+        mem.putLong(OFFSET_VERSION_CHECK, this.version);
     }
 
     private void bumpFileSize(long size) {
@@ -238,7 +240,6 @@ public class ColumnVersionWriter implements Closeable {
     }
 
     private void updateA(long aOffset, long aSize) {
-        Unsafe.getUnsafe().storeFence();
         mem.putLong(OFFSET_OFFSET_A, aOffset);
         mem.putLong(OFFSET_SIZE_A, aSize);
         this.transientOffset = aOffset;
