@@ -56,9 +56,8 @@ steps:
   - bash: |
       find . -type f -name 'hs_*.log' -exec sh -c 'x="{}"; mv "$x" "$(ARCHIVED_GRASH_LOG)"' \;
     displayName: "Tests failed -- rename crash dump"
+    workingDirectory: $(Build.SourcesDirectory)/core/
     condition: failed()
-    inputs:
-      workingDirectory: $(Build.SourcesDirectory)/core/
   - task: PublishBuildArtifacts@1
     displayName: "Tests failed -- Upload crash logs"
     condition: failed()
