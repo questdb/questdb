@@ -3,48 +3,73 @@ jobs:
     displayName: "on"
     strategy:
       matrix:
-        linux:
-          imageName: "ubuntu-latest"
-          poolName: "Azure Pipelines"
-          os: Linux
-          jdk: "1.11"
-        mac:
+        mac-griffin:
           imageName: "macos-latest"
           poolName: "Azure Pipelines"
           os: macOS
           jdk: "1.11"
-        windows-non-griffin:
-          imageName: "windows-latest"
+          testset: "all"
+          includeTests: "griffin.**"
+        mac-cairo:
+          imageName: "macos-latest"
           poolName: "Azure Pipelines"
-          os: Windows
+          os: macOS
           jdk: "1.11"
-          testSet: "non-griffin"
+          testset: "all"
+          includeTests: "cairo.**"
+        mac-other:
+          imageName: "macos-latest"
+          poolName: "Azure Pipelines"
+          os: macOS
+          jdk: "1.11"
+          testset: "all"
+          excludeTests: "**/griffin/**,**/cairo/**"
         windows-griffin:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
           jdk: "1.11"
-          testset: "griffin"
+          testset: "all"
+          includeTests: "griffin.**"
+        windows-cairo:
+          imageName: "windows-latest"
+          poolName: "Azure Pipelines"
+          os: Windows
+          jdk: "1.11"
+          testset: "all"
+          includeTests: "cairo.**"
+        windows-other:
+          imageName: "windows-latest"
+          poolName: "Azure Pipelines"
+          os: Windows
+          jdk: "1.11"
+          testset: "all"
+          excludeTests: "**/griffin/**,**/cairo/**"
         linux-jdk8:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
           jdk: "1.8"
+          testset: "none"
         linux-jdk17:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
           jdk: "1.17"
+          testset: "none"
     pool:
       vmImage: $(imageName)
       name: $(poolName)
     timeoutInMinutes: 60
     variables:
       SOURCE_CODE_CHANGED:
-        $[
-        stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']
-        ]
+        $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
+      COVERAGE_DIFF:
+        $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
+      CODE_COVERAGE_TOOL_OPTION:
+        $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
       MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
       MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m"
+      ARCHIVED_GRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
     steps:
       - template: steps.yml
