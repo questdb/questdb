@@ -731,7 +731,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                             lexer.withParser(parser);
                             lexer.parse(mem, mem + len);
                             lexer.parseLast();
-                            parser.commitAll(CommitMode.NOSYNC);
+                            parser.commitAll();
                         }
                     } finally {
                         Unsafe.free(mem, len, MemoryTag.NATIVE_DEFAULT);

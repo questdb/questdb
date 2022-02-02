@@ -62,6 +62,7 @@ public class AbstractCairoTest {
     protected static String inputRoot = null;
     protected static FilesFacade ff;
     protected static long configOverrideCommitLag = -1;
+    protected static int configOverrideCommitMode = -1;
     protected static int configOverrideMaxUncommittedRows = -1;
     protected static Metrics metrics = Metrics.enabled();
     protected static int capacity = -1;
@@ -116,6 +117,12 @@ public class AbstractCairoTest {
             public long getCommitLag() {
                 if (configOverrideCommitLag >= 0) return configOverrideCommitLag;
                 return super.getCommitLag();
+            }
+
+            @Override
+            public int getCommitMode() {
+                if (configOverrideCommitMode >= 0) return configOverrideCommitMode;
+                return super.getCommitMode();
             }
 
             @Override
@@ -211,6 +218,7 @@ public class AbstractCairoTest {
         TestUtils.removeTestPath(root);
         configOverrideMaxUncommittedRows = -1;
         configOverrideCommitLag = -1;
+        configOverrideCommitMode = -1;
         currentMicros = -1;
         sampleByIndexSearchPageSize = -1;
         defaultMapType = null;

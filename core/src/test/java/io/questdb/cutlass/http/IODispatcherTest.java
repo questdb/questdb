@@ -6420,6 +6420,11 @@ public class IODispatcherTest {
                     }
                 };
             }
+
+            @Override
+            public int getCommitMode() {
+                return durable ? CommitMode.SYNC : CommitMode.NOSYNC;
+            }
         };
 
         String tableName = "test_table";
@@ -6431,7 +6436,6 @@ public class IODispatcherTest {
 
         String command = "POST /upload?fmt=json&" +
                 String.format("overwrite=%b&", overwrite) +
-                String.format("durable=%b&", durable) +
                 "forceHeader=true&" +
                 "timestamp=ts&" +
                 String.format("partitionBy=%s&", PartitionBy.toString(partitionBy)) +

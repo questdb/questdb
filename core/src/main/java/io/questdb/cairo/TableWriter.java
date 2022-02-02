@@ -26,7 +26,8 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
@@ -109,7 +110,7 @@ public class TableWriter implements Closeable {
     private final boolean parallelIndexerEnabled;
     private final PartitionBy.PartitionFloorMethod partitionFloorMethod;
     private final PartitionBy.PartitionCeilMethod partitionCeilMethod;
-    private final int defaultCommitMode;
+    private final int commitMode;
     private final int o3ColumnMemorySize;
     private final ObjList<Runnable> nullSetters;
     private final ObjList<Runnable> o3NullSetters;
@@ -213,7 +214,7 @@ public class TableWriter implements Closeable {
         } else {
             this.messageBus = messageBus;
         }
-        this.defaultCommitMode = configuration.getCommitMode();
+        this.commitMode = configuration.getCommitMode();
         this.lifecycleManager = lifecycleManager;
         this.parallelIndexerEnabled = configuration.isParallelIndexingEnabled();
         this.ff = configuration.getFilesFacade();
@@ -262,7 +263,7 @@ public class TableWriter implements Closeable {
             openMetaFile(ff, path, rootLen, metaMem);
             this.metadata = new TableWriterMetadata(metaMem);
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
-            this.txWriter = new TxWriter(ff).ofRW(path, partitionBy);
+            this.txWriter = new TxWriter(ff, commitMode).ofRW(path, partitionBy);
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
             path.trimTo(rootLen);
             // we have to do truncate repair at this stage of constructor
@@ -617,7 +618,7 @@ public class TableWriter implements Closeable {
                     txWriter.beginPartitionSizeUpdate();
                     txWriter.updatePartitionSizeByTimestamp(timestamp, partitionSize);
                     txWriter.finishPartitionSizeUpdate(nextMinTimestamp, nextMaxTimestamp);
-                    txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
+                    txWriter.commit( denseSymbolMapWriters);
                     if (appendPartitionAttached) {
                         freeColumns(true);
                         configureAppendPosition();
@@ -673,23 +674,15 @@ public class TableWriter implements Closeable {
     }
 
     public void commit() {
-        commit(defaultCommitMode);
-    }
-
-    public void commit(int commitMode) {
-        commit(commitMode, 0);
+        commit(0);
     }
 
     public void commitWithLag() {
-        commit(defaultCommitMode, metadata.getCommitLag());
+        commit(metadata.getCommitLag());
     }
 
     public void commitWithLag(long lagMicros) {
-        commit(defaultCommitMode, lagMicros);
-    }
-
-    public void commitWithLag(int commitMode) {
-        commit(commitMode, metadata.getCommitLag());
+        commit(lagMicros);
     }
 
     public int getColumnIndex(CharSequence name) {
@@ -984,7 +977,7 @@ public class TableWriter implements Closeable {
             txWriter.removeAttachedPartitions(timestamp);
             txWriter.setMinTimestamp(nextMinTimestamp);
             txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
-            txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
+            txWriter.commit(denseSymbolMapWriters);
 
             // Call O3 methods to remove check TxnScoreboard and remove partition directly
             o3PartitionRemoveCandidates.clear();
@@ -1779,10 +1772,9 @@ public class TableWriter implements Closeable {
      * <b>Pending rows</b>
      * <p>This method will cancel pending rows by calling {@link #rowCancel()}. Data in partially appended row will be lost.</p>
      *
-     * @param commitMode commit durability mode.
      * @param commitLag  if > 0 then do a partial commit, leaving the rows within the lag in a new uncommitted transaction
      */
-    private void commit(int commitMode, long commitLag) {
+    private void commit(long commitLag) {
 
         checkDistressed();
 
@@ -1804,11 +1796,11 @@ public class TableWriter implements Closeable {
             }
 
             if (commitMode != CommitMode.NOSYNC) {
-                syncColumns(commitMode);
+                syncColumns();
             }
 
             updateIndexes();
-            txWriter.commit(commitMode, this.denseSymbolMapWriters);
+            txWriter.commit(this.denseSymbolMapWriters);
 
             // Bookmark masterRef to track how many rows is in uncommitted state
             this.committedMasterRef = masterRef;
@@ -1845,7 +1837,6 @@ public class TableWriter implements Closeable {
         final MemoryCARW oooSecondary;
         final MemoryCARW oooPrimary2 = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
         final MemoryCARW oooSecondary2;
-
 
         final MemoryMAR logPrimary = Vm.getMARInstance();
         final MemoryMAR logSecondary;
@@ -3572,8 +3563,10 @@ public class TableWriter implements Closeable {
 
         try {
             mem1.of(ff, dFile(path.trimTo(pathTrimToLen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
+            mem1.setCommitMode(commitMode);
             if (mem2 != null) {
                 mem2.of(ff, iFile(path.trimTo(pathTrimToLen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
+                mem2.setCommitMode(commitMode);
             }
         } finally {
             path.trimTo(pathTrimToLen);
@@ -4617,13 +4610,13 @@ public class TableWriter implements Closeable {
         setAppendPosition(0, false);
     }
 
-    private void syncColumns(int commitMode) {
-        final boolean async = commitMode == CommitMode.ASYNC;
+    private void syncColumns() {
         for (int i = 0; i < columnCount; i++) {
-            columns.getQuick(i * 2).sync(async);
+            final MemoryMAR m1 = columns.getQuick(i * 2);
+            m1.sync();
             final MemoryMAR m2 = columns.getQuick(i * 2 + 1);
             if (m2 != null) {
-                m2.sync(false);
+                m2.sync();
             }
         }
     }

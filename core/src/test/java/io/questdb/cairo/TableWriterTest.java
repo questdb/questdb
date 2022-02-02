@@ -2726,6 +2726,8 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testTwoByteUtf8() {
+        configOverrideCommitMode = CommitMode.ASYNC;
+
         String name = "соотечественник";
         try (TableModel model = new TableModel(configuration, name, PartitionBy.NONE)
                 .col("секьюрити", ColumnType.STRING)
@@ -2740,7 +2742,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 r.putStr(0, rnd.nextChars(5));
                 r.append();
             }
-            writer.commit(CommitMode.ASYNC);
+            writer.commit();
             writer.addColumn("митинг", ColumnType.INT);
             Assert.assertEquals(0, writer.getColumnIndex("секьюрити"));
             Assert.assertEquals(2, writer.getColumnIndex("митинг"));
@@ -2930,10 +2932,11 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     private void appendAndAssert10K(long ts, Rnd rnd) {
+        configOverrideCommitMode = CommitMode.SYNC;
         try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
             Assert.assertEquals(20, writer.columns.size());
             populateProducts(writer, rnd, ts, 10000, 60000L * 1000L);
-            writer.commit(CommitMode.SYNC);
+            writer.commit();
             Assert.assertEquals(30000, writer.size());
         }
     }
@@ -3035,7 +3038,7 @@ public class TableWriterTest extends AbstractCairoTest {
         long interval = 60000L * 1000L;
         try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
             ts = populateProducts(writer, rnd, ts, n, interval);
-            writer.commit(CommitMode.NOSYNC);
+            writer.commit();
 
             Assert.assertEquals(n, writer.size());
 

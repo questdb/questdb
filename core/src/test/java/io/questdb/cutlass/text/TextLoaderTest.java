@@ -3093,7 +3093,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
     private void configureLoaderDefaults(TextLoader textLoader, byte columnSeparator, int atomicity, boolean overwrite) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", overwrite, false, atomicity, PartitionBy.NONE, null);
+        textLoader.configureDestination("test", overwrite, atomicity, PartitionBy.NONE, null);
         if (columnSeparator > 0) {
             textLoader.configureColumnDelimiter(columnSeparator);
         }
@@ -3101,13 +3101,13 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
     private void configureLoaderDefaults(TextLoader textLoader, int atomicity, boolean overwrite, int partitionBy) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", overwrite, false, atomicity, partitionBy, "ts");
+        textLoader.configureDestination("test", overwrite, atomicity, partitionBy, "ts");
         textLoader.configureColumnDelimiter((byte) 44);
     }
 
-    private void configureLoaderDefaults(TextLoader textLoader, boolean durable) {
+    private void configureLoaderDefaults0(TextLoader textLoader) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", false, durable, Atomicity.SKIP_COL, PartitionBy.DAY, "ts");
+        textLoader.configureDestination("test", false, Atomicity.SKIP_COL, PartitionBy.DAY, "ts");
         textLoader.configureColumnDelimiter((byte) 44);
     }
 
@@ -3213,15 +3213,17 @@ public class TextLoaderTest extends AbstractGriffinTest {
             public long getCommitLag() {
                 return commitLag;
             }
+
+            @Override
+            public int getCommitMode() {
+                return durable ? CommitMode.SYNC : CommitMode.NOSYNC;
+            }
         };
         try (CairoEngine engine = new CairoEngine(configuration)) {
             assertNoLeak(
                     engine,
                     textLoader -> {
-                        configureLoaderDefaults(
-                                textLoader,
-                                durable
-                        );
+                        configureLoaderDefaults(textLoader);
                         textLoader.setForceHeaders(true);
                         textLoader.setCommitLag(commitLag);
                         textLoader.setMaxUncommittedRows(maxUncommittedRows);

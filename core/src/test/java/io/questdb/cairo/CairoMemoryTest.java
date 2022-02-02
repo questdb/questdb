@@ -298,7 +298,6 @@ public class CairoMemoryTest {
                     } finally {
                         FF.munmap(addr, fileSize, MemoryTag.MMAP_DEFAULT);
                     }
-
                 }
             }
         });

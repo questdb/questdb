@@ -111,8 +111,8 @@ public class TextLoader implements Closeable, Mutable {
         assert this.columnDelimiter > 0;
     }
 
-    public void configureDestination(CharSequence tableName, boolean overwrite, boolean durable, int atomicity, int partitionBy, CharSequence timestampIndexCol) {
-        textWriter.of(tableName, overwrite, durable, atomicity, partitionBy, timestampIndexCol);
+    public void configureDestination(CharSequence tableName, boolean overwrite, int atomicity, int partitionBy, CharSequence timestampIndexCol) {
+        textWriter.of(tableName, overwrite, atomicity, partitionBy, timestampIndexCol);
         textDelimiterScanner.setTableName(tableName);
         textMetadataParser.setTableName(tableName);
         textLexer.setTableName(tableName);
@@ -120,7 +120,6 @@ public class TextLoader implements Closeable, Mutable {
         LOG.info()
                 .$("configured [table=`").$(tableName)
                 .$("`, overwrite=").$(overwrite)
-                .$(", durable=").$(durable)
                 .$(", atomicity=").$(atomicity)
                 .$(", partitionBy=").$(PartitionBy.toString(partitionBy))
                 .$(", timestamp=").$(timestampIndexCol)

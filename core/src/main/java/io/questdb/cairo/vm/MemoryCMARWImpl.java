@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.vm;
 
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -42,6 +43,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     private long minMappedMemorySize;
     private long extendSegmentMsb;
     private int memoryTag = MemoryTag.MMAP_DEFAULT;
+    private int commitMode = CommitMode.NOSYNC;
 
     public MemoryCMARWImpl(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
         of(ff, name, extendSegmentSize, size, memoryTag);
@@ -245,11 +247,19 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         jumpTo(size);
     }
 
-    public void sync(boolean async) {
-        if (pageAddress != 0 && ff.msync(pageAddress, size, async) == 0) {
-            return;
+    @Override
+    public void sync() {
+        if (pageAddress != 0 && commitMode != CommitMode.NOSYNC) {
+            if (ff.msync(pageAddress, size, commitMode == CommitMode.ASYNC) == 0) {
+                return;
+            }
+            LOG.error().$("could not msync [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
         }
-        LOG.error().$("could not msync [fd=").$(fd).$(']').$();
+    }
+
+    @Override
+    public void setCommitMode(int commitMode) {
+        this.commitMode = commitMode;
     }
 
     private void checkAndExtend(long address) {

@@ -41,9 +41,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     private long prevMaxTimestamp;
     private long prevMinTimestamp;
     private MemoryCMARW txMem;
+    private final int commitMode;
 
-    public TxWriter(FilesFacade ff) {
+    public TxWriter(FilesFacade ff, int commitMode) {
         super(ff);
+        this.commitMode = commitMode;
     }
 
     public void append() {
@@ -136,7 +138,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         int pathLen = path.length();
         try {
             if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
-                return txMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT);
+                txMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT);
+                txMem.setCommitMode(commitMode);
+                return txMem;
             }
             throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
         } finally {
@@ -166,7 +170,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         writeTransientSymbolCount(symbolIndexInTxWriter, count);
     }
 
-    public void commit(int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
+    public void commit(ObjList<? extends SymbolCountProvider> symbolCountProviders) {
         txMem.putLong(TX_OFFSET_TXN, ++txn);
         Unsafe.getUnsafe().storeFence();
 
@@ -186,7 +190,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         Unsafe.getUnsafe().storeFence();
         txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
         if (commitMode != CommitMode.NOSYNC) {
-            txMem.sync(commitMode == CommitMode.ASYNC);
+            txMem.sync();
         }
         prevTransientRowCount = transientRowCount;
     }

@@ -110,12 +110,12 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
     }
 
-    public void commitAll(int commitMode) {
+    public void commitAll() {
         if (writer != null) {
-            writer.commit(commitMode);
+            writer.commit();
         }
         for (int i = 0, n = commitList.size(); i < n; i++) {
-            commitList.valueQuick(i).commit(commitMode);
+            commitList.valueQuick(i).commit();
         }
         commitList.clear();
     }

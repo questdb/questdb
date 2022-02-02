@@ -137,7 +137,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             transientState.textLoader.configureDestination(
                     name,
                     Chars.equalsNc("true", rh.getUrlParam("overwrite")),
-                    Chars.equalsNc("true", rh.getUrlParam("durable")),
                     getAtomicity(rh.getUrlParam("atomicity")),
                     partitionBy,
                     timestampIndexCol

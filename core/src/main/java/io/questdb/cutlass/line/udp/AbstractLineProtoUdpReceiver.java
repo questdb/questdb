@@ -50,7 +50,6 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
     protected long fd;
     protected int commitRate;
     protected long totalCount = 0;
-    protected final int commitMode;
 
     public AbstractLineProtoUdpReceiver(
             LineUdpReceiverConfiguration configuration,
@@ -58,7 +57,6 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
             WorkerPool workerPool
     ) {
         this.configuration = configuration;
-        this.commitMode = configuration.getCommitMode();
         nf = configuration.getNetworkFacade();
         fd = nf.socketUdp();
         if (fd < 0) {
@@ -104,7 +102,7 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
                 LOG.info().$("closed [fd=").$(fd).$(']').$();
             }
             if (parser != null) {
-                parser.commitAll(commitMode);
+                parser.commitAll();
                 parser.close();
             }
             Misc.free(lexer);

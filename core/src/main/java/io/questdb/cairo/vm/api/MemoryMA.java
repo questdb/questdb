@@ -35,7 +35,9 @@ public interface MemoryMA extends MemoryM, MemoryA {
 
     long getAppendAddressSize();
 
-    void sync(boolean async);
+    void sync();
+
+    void setCommitMode(int commitMode);
 
     void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag);
 

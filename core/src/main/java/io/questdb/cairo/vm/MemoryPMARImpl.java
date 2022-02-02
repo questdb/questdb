@@ -25,6 +25,7 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.log.Log;
@@ -38,6 +39,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     private long fd = -1;
     private long pageAddress = 0;
     private int mappedPage;
+    private int commitMode = CommitMode.NOSYNC;
 
     public MemoryPMARImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag) {
         of(ff, name, pageSize, memoryTag);
@@ -60,13 +62,19 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         }
     }
 
-    public void sync(boolean async) {
-        if (pageAddress != 0) {
-            if (ff.msync(pageAddress, getExtendSegmentSize(), async) == 0) {
+    @Override
+    public void sync() {
+        if (pageAddress != 0 && commitMode != CommitMode.NOSYNC) {
+            if (ff.msync(pageAddress, getExtendSegmentSize(), commitMode == CommitMode.ASYNC) == 0) {
                 return;
             }
             LOG.error().$("could not msync [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
         }
+    }
+
+    @Override
+    public void setCommitMode(int commitMode) {
+        this.commitMode = commitMode;
     }
 
     @Override
@@ -103,6 +111,9 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
 
     @Override
     protected void release(long address) {
+        if (ff.msync(address, getPageSize(), false) != 0) {
+            throw CairoException.instance(ff.errno()).put("Cannot msync released page fd=").put(fd);
+        }
         ff.munmap(address, getPageSize(), memoryTag);
     }
 

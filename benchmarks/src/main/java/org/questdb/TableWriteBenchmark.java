@@ -48,12 +48,47 @@ public class TableWriteBenchmark {
     private static TableWriter writer;
     private static TableWriter writer2;
     private static TableWriter writer3;
-    private static final CairoConfiguration configuration = new DefaultCairoConfiguration(".");
     private long ts;
+    @Param({"NOSYNC", "SYNC", "ASYNC"})
+    public WriterCommitMode writerCommitMode;
 
     private final Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {
+        Options opt = new OptionsBuilder()
+                .include(TableWriteBenchmark.class.getSimpleName())
+                .warmupIterations(5)
+                .measurementIterations(5)
+                .forks(1)
+                .build();
+
+        new Runner(opt).run();
+    }
+
+    @Setup(Level.Iteration)
+    public void setup() throws Exception {
+        final int commitMode;
+        switch (writerCommitMode) {
+            case NOSYNC:
+                commitMode = CommitMode.NOSYNC;
+                break;
+            case SYNC:
+                commitMode = CommitMode.SYNC;
+                break;
+            case ASYNC:
+                commitMode = CommitMode.ASYNC;
+                break;
+            default:
+                throw new IllegalStateException("Unexpected commit mode: " + writerCommitMode);
+        }
+
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(".") {
+            @Override
+            public int getCommitMode() {
+                return commitMode;
+            }
+        };
+
         try (CairoEngine engine = new CairoEngine(configuration)) {
             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                     .with(
@@ -71,16 +106,13 @@ public class TableWriteBenchmark {
                 e.printStackTrace();
             }
         }
-        Options opt = new OptionsBuilder()
-                .include(TableWriteBenchmark.class.getSimpleName())
-                .warmupIterations(5)
-                .measurementIterations(5)
-                .forks(1)
-                .build();
-
-        new Runner(opt).run();
 
         LogFactory.INSTANCE.haltThread();
+
+        writer = new TableWriter(configuration, "test1");
+        writer2 = new TableWriter(configuration, "test2");
+        writer3 = new TableWriter(configuration, "test3");
+        rnd.reset();
     }
 
     @TearDown(Level.Iteration)
@@ -101,25 +133,17 @@ public class TableWriteBenchmark {
         ts = 0;
     }
 
-    @Setup(Level.Iteration)
-    public void reset() {
-        writer = new TableWriter(configuration, "test1");
-        writer2 = new TableWriter(configuration, "test2");
-        writer3 = new TableWriter(configuration, "test3");
-        rnd.reset();
-    }
-
     @Benchmark
     public void testRnd() {
         rnd.nextLong();
     }
 
     @Benchmark
-    public void testWriteAsync() {
+    public void testWrite() {
         TableWriter.Row r = writer.newRow();
         r.putLong(0, rnd.nextLong());
         r.append();
-        writer.commit(CommitMode.ASYNC);
+        writer.commit();
     }
 
     @Benchmark
@@ -130,10 +154,10 @@ public class TableWriteBenchmark {
     }
 
     @Benchmark
-    public void testWriteTimestampAsync() {
+    public void testWriteTimestamp() {
         TableWriter.Row r = writer2.newRow(ts++ << 8);
         r.append();
-        writer2.commit(CommitMode.ASYNC);
+        writer2.commit();
     }
 
     @Benchmark
@@ -149,25 +173,13 @@ public class TableWriteBenchmark {
     }
 
     @Benchmark
-    public void testWritePartitionedTimestampAsync() {
+    public void testWritePartitionedTimestamp() {
         TableWriter.Row r = writer3.newRow(ts++ << 8);
         r.append();
-        writer3.commit(CommitMode.ASYNC);
+        writer3.commit();
     }
 
-    @Benchmark
-    public void testWriteNoSync() {
-        TableWriter.Row r = writer.newRow();
-        r.putLong(0, rnd.nextLong());
-        r.append();
-        writer.commit(CommitMode.NOSYNC);
-    }
-
-    @Benchmark
-    public void testWriteSync() {
-        TableWriter.Row r = writer.newRow();
-        r.putLong(0, rnd.nextLong());
-        r.append();
-        writer.commit(CommitMode.SYNC);
+    public enum WriterCommitMode {
+        NOSYNC, SYNC, ASYNC
     }
 }

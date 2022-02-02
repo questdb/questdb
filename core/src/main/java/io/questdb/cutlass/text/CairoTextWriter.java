@@ -54,7 +54,6 @@ public class CairoTextWriter implements Closeable, Mutable {
     private TableWriter writer;
     private long _size;
     private boolean overwrite;
-    private boolean durable;
     private int atomicity;
     private int partitionBy;
     private long commitLag = -1;
@@ -107,7 +106,7 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     public void commit() {
         if (writer != null) {
-            writer.commit(durable ? CommitMode.SYNC : CommitMode.NOSYNC);
+            writer.commit();
         }
     }
 
@@ -151,10 +150,9 @@ public class CairoTextWriter implements Closeable, Mutable {
         return writer == null ? 0 : writer.size() - _size;
     }
 
-    public void of(CharSequence name, boolean overwrite, boolean durable, int atomicity, int partitionBy, CharSequence timestampIndexCol) {
+    public void of(CharSequence name, boolean overwrite, int atomicity, int partitionBy, CharSequence timestampIndexCol) {
         this.tableName = name;
         this.overwrite = overwrite;
-        this.durable = durable;
         this.atomicity = atomicity;
         this.partitionBy = partitionBy;
         this.importedTimestampColumnName = timestampIndexCol;
@@ -193,7 +191,7 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     private void checkMaxAndCommitLag() {
         if (writer != null && maxUncommittedRows > 0 && writer.getO3RowCount() >= maxUncommittedRows) {
-            writer.commitWithLag(durable ? CommitMode.SYNC : CommitMode.NOSYNC);
+            writer.commitWithLag();
         }
     }
 

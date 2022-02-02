@@ -78,18 +78,18 @@ public class TxnTest extends AbstractCairoTest {
                 try (Path path = new Path()) {
                     path.of(configuration.getRoot()).concat(tableName);
                     int testPartitionCount = 3000;
-                    try (TxWriter txWriter = new TxWriter(cleanFf).ofRW(path, PartitionBy.DAY)) {
+                    try (TxWriter txWriter = new TxWriter(cleanFf, CommitMode.SYNC).ofRW(path, PartitionBy.DAY)) {
                         // Add lots of partitions
                         for (int i = 0; i < testPartitionCount; i++) {
                             txWriter.updatePartitionSizeByTimestamp(i * Timestamps.DAY_MICROS, i + 1);
                         }
                         txWriter.updateMaxTimestamp(testPartitionCount * Timestamps.DAY_MICROS + 1);
                         txWriter.finishPartitionSizeUpdate();
-                        txWriter.commit(CommitMode.SYNC, new ObjList<>());
+                        txWriter.commit(new ObjList<>());
                     }
 
                     // Reopen without OS errors
-                    try (TxWriter txWriter = new TxWriter(cleanFf).ofRW(path, PartitionBy.DAY)) {
+                    try (TxWriter txWriter = new TxWriter(cleanFf, CommitMode.SYNC).ofRW(path, PartitionBy.DAY)) {
                         // Read lots of partitions
                         Assert.assertEquals(testPartitionCount, txWriter.getPartitionCount());
                         for (int i = 0; i < testPartitionCount - 1; i++) {
@@ -98,14 +98,14 @@ public class TxnTest extends AbstractCairoTest {
                     }
 
                     // Open with OS error to file extend
-                    try (TxWriter ignored = new TxWriter(errorFf).ofRW(path, PartitionBy.DAY)) {
+                    try (TxWriter ignored = new TxWriter(errorFf, CommitMode.SYNC).ofRW(path, PartitionBy.DAY)) {
                         Assert.fail("Should not be able to extend on opening");
                     } catch (CairoException ex) {
                         // expected
                     }
 
                     // Reopen without OS errors
-                    try (TxWriter txWriter = new TxWriter(cleanFf).ofRW(path, PartitionBy.DAY)) {
+                    try (TxWriter txWriter = new TxWriter(cleanFf, CommitMode.SYNC).ofRW(path, PartitionBy.DAY)) {
                         // Read lots of partitions
                         Assert.assertEquals(testPartitionCount, txWriter.getPartitionCount());
                         for (int i = 0; i < testPartitionCount - 1; i++) {
@@ -377,7 +377,7 @@ public class TxnTest extends AbstractCairoTest {
         return new Thread(() -> {
             try (
                     Path path = new Path();
-                    TxWriter txWriter = new TxWriter(ff)
+                    TxWriter txWriter = new TxWriter(ff, CommitMode.NOSYNC)
             ) {
                 path.of(engine.getConfiguration().getRoot()).concat(tableName);
                 txWriter.ofRW(path, PartitionBy.HOUR);
@@ -390,7 +390,7 @@ public class TxnTest extends AbstractCairoTest {
                         // Create last partition back.
                         txWriter.maxTimestamp = (maxPartitionCount + 1) * Timestamps.HOUR_MICROS;
                         txWriter.updatePartitionSizeByTimestamp(txWriter.maxTimestamp * Timestamps.HOUR_MICROS, 1);
-                        txWriter.commit(CommitMode.NOSYNC, symbolCounts);
+                        txWriter.commit(symbolCounts);
                         partitionCountCheck.set(0);
                     } else {
                         // Set txn file with random number of symbols and random number of partitions
@@ -421,7 +421,7 @@ public class TxnTest extends AbstractCairoTest {
                         assert txWriter.getPartitionCount() - 1 == partitionCount;
 
                         txWriter.maxTimestamp = partitionCount * Timestamps.HOUR_MICROS;
-                        txWriter.commit(CommitMode.NOSYNC, symbolCounts);
+                        txWriter.commit(symbolCounts);
                         partitionCountCheck.set(partitionCount);
                     }
 
