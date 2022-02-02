@@ -4205,6 +4205,134 @@ create table tab as (
         );
     }
 
+    @Test
+    public void testIndexedSymbolBindVariableNotEqualsSingleValueMultipleExecutions() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                connection.prepareStatement("create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,3) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(4)" +
+                        "), index(b) timestamp(k) partition by DAY").execute();
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("select * from x where b != ?")) {
+                    ps.setString(1, "VTJW");
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "a[DOUBLE],b[VARCHAR],k[TIMESTAMP]\n" +
+                                        "11.427984775756228,null,1970-01-01 00:00:00.0\n" +
+                                        "23.90529010846525,RXGZ,1970-01-03 07:33:20.0\n" +
+                                        "70.94360487171201,PEHN,1970-01-04 11:20:00.0\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                // Verify that the underlying factory correctly re-calculates
+                // the excluded set when the bind variable value changes.
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("select * from x where b != ?")) {
+                    ps.setString(1, "RXGZ");
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "a[DOUBLE],b[VARCHAR],k[TIMESTAMP]\n" +
+                                        "11.427984775756228,null,1970-01-01 00:00:00.0\n" +
+                                        "42.17768841969397,VTJW,1970-01-02 03:46:40.0\n" +
+                                        "70.94360487171201,PEHN,1970-01-04 11:20:00.0\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                // The factory should correctly recognize NULL as the excluded value.
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("select * from x where b != ?")) {
+                    ps.setString(1, null);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "a[DOUBLE],b[VARCHAR],k[TIMESTAMP]\n" +
+                                        "42.17768841969397,VTJW,1970-01-02 03:46:40.0\n" +
+                                        "23.90529010846525,RXGZ,1970-01-03 07:33:20.0\n" +
+                                        "70.94360487171201,PEHN,1970-01-04 11:20:00.0\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testIndexedSymbolBindVariableNotMultipleValuesMultipleExecutions() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                connection.prepareStatement("create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,0) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(1)" +
+                        "), index(b) timestamp(k) partition by DAY").execute();
+
+                // First we try to filter out not yet existing keys.
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("select * from x where b != ? and b != ?")) {
+                    ps.setString(1, "EHBH");
+                    ps.setString(2, "BBTG");
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "a[DOUBLE],b[VARCHAR],k[TIMESTAMP]\n" +
+                                        "11.427984775756228,HYRX,1970-01-01 00:00:00.0\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                // Insert new rows including the keys of interest.
+                connection.prepareStatement("insert into x " +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,0) b," +
+                        " timestamp_sequence(100000000000, 100000000000) k" +
+                        " from" +
+                        " long_sequence(3)").execute();
+
+                // The query should filter the keys out.
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("select * from x where b != ? and b != ?")) {
+                    ps.setString(1, "EHBH");
+                    ps.setString(2, "BBTG");
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "a[DOUBLE],b[VARCHAR],k[TIMESTAMP]\n" +
+                                        "11.427984775756228,HYRX,1970-01-01 00:00:00.0\n" +
+                                        "40.22810626779558,EYYQ,1970-01-04 11:20:00.0\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+            }
+        });
+    }
+
     private static void toSink(InputStream is, CharSink sink) throws IOException {
         // limit what we print
         byte[] bb = new byte[1];
