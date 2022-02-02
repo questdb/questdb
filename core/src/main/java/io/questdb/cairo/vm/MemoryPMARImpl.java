@@ -69,17 +69,24 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         }
     }
 
-    @Override
-    public void close() {
-        close(true);
+    public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag) {
+        close();
+        this.memoryTag = memoryTag;
+        this.ff = ff;
+        mappedPage = -1;
+        setExtendSegmentSize(extendSegmentSize);
+        fd = TableUtils.openFileRWOrFail(ff, name);
+        LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", extendSegmentSize=").$(extendSegmentSize).$(']').$();
     }
 
     @Override
-    public long getPageAddress(int page) {
-        if (page == mappedPage) {
-            return pageAddress;
-        }
-        return 0L;
+    public void flush() {
+        // there is nothing to flush, it is a mamory mapped file
+    }
+
+    @Override
+    public void close() {
+        close(true);
     }
 
     public void truncate() {
@@ -93,6 +100,14 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         }
         updateLimits(0, pageAddress = mapPage(0));
         LOG.debug().$("truncated [fd=").$(fd).$(']').$();
+    }
+
+    @Override
+    public long getPageAddress(int page) {
+        if (page == mappedPage) {
+            return pageAddress;
+        }
+        return 0L;
     }
 
     @Override
@@ -130,16 +145,6 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         final long address = TableUtils.mapRW(ff, fd, getExtendSegmentSize(), pageOffset(page), memoryTag);
         mappedPage = page;
         return address;
-    }
-
-    public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag) {
-        close();
-        this.memoryTag = memoryTag;
-        this.ff = ff;
-        mappedPage = -1;
-        setExtendSegmentSize(extendSegmentSize);
-        fd = TableUtils.openFileRWOrFail(ff, name);
-        LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", extendSegmentSize=").$(extendSegmentSize).$(']').$();
     }
 
     void releaseCurrentPage() {

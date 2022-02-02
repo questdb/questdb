@@ -35,10 +35,10 @@ import io.questdb.std.str.LPSZ;
 
 public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryPDARImpl.class);
+    private final long pageAddress;
     private FilesFacade ff;
     private long fd = -1;
-    private final long pageAddress;
-    private int mappedPage;
+    private int currentPageIndex;
 
     public MemoryPDARImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag) {
         this.pageAddress = Unsafe.malloc(pageSize, memoryTag);
@@ -68,17 +68,24 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
         }
     }
 
-    @Override
-    public void close() {
-        close(true);
+    public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag) {
+        this.memoryTag = memoryTag;
+        this.ff = ff;
+        close();
+        currentPageIndex = -1;
+        setExtendSegmentSize(extendSegmentSize);
+        fd = TableUtils.openFileRWOrFail(ff, name);
+        LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", extendSegmentSize=").$(extendSegmentSize).$(']').$();
     }
 
     @Override
-    public long getPageAddress(int page) {
-        if (page == mappedPage) {
-            return pageAddress;
-        }
-        return 0L;
+    public void flush() {
+        flushPage();
+    }
+
+    @Override
+    public void close() {
+        close(true);
     }
 
     public void truncate() {
@@ -95,9 +102,17 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
+    public long getPageAddress(int page) {
+        if (page == currentPageIndex) {
+            return pageAddress;
+        }
+        return 0L;
+    }
+
+    @Override
     protected long mapWritePage(int page) {
         flushPage();
-        mappedPage = page;
+        currentPageIndex = page;
         return pageAddress;
     }
 
@@ -125,21 +140,11 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
         of(ff, name, ff.getMapPageSize(), memoryTag);
     }
 
-    public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag) {
-        this.memoryTag = memoryTag;
-        this.ff = ff;
-        close();
-        mappedPage = -1;
-        setExtendSegmentSize(extendSegmentSize);
-        fd = TableUtils.openFileRWOrFail(ff, name);
-        LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", extendSegmentSize=").$(extendSegmentSize).$(']').$();
-    }
-
     void flushPage() {
-        if (mappedPage != -1) {
-            final long offset = pageOffset(mappedPage);
+        if (currentPageIndex != -1) {
+            final long offset = pageOffset(currentPageIndex);
             ff.write(fd, pageAddress, getAppendOffset() - offset, offset);
-            mappedPage = -1;
+            currentPageIndex = -1;
         }
     }
 }

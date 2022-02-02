@@ -38,6 +38,26 @@ import java.util.concurrent.CyclicBarrier;
 
 public class MemoryPDARImplTest extends AbstractCairoTest {
 
+    public void testMemMap(int c, long n) {
+        // write simple long
+        try (
+                Path path = new Path();
+                MemoryPMARImpl mem = new MemoryPMARImpl(
+                        FilesFacadeImpl.INSTANCE,
+                        path.of(root).concat("x.d" + c).$(),
+                        FilesFacadeImpl._16M,
+                        MemoryTag.MMAP_DEFAULT
+                )
+        ) {
+            Rnd rnd = new Rnd();
+            long t = System.nanoTime();
+            for (long i = 0; i < n; i++) {
+                mem.putLong(rnd.nextLong());
+            }
+            System.out.println(System.nanoTime() - t);
+        }
+    }
+
     @Test
     @Ignore
     public void testMulti1() {
@@ -50,7 +70,7 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
             int c = i;
             new Thread(() -> {
                 TestUtils.await(barrier);
-                testMemMap(c);
+                testMemMap(c, 1_000_000_000);
                 latch.countDown();
             }).start();
         }
@@ -58,44 +78,28 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
         latch.await();
     }
 
-    public void testSimple(int c) {
+    public void testSimple(int c, long n) {
         // write simple long
         try (
                 Path path = new Path();
                 MemoryPDARImpl mem = new MemoryPDARImpl(
                         FilesFacadeImpl.INSTANCE,
-                        path.of(root).concat("x.d"+c).$(),
+                        path.of(root).concat("x.d" + c).$(),
                         FilesFacadeImpl._16M,
                         MemoryTag.MMAP_DEFAULT
                 )
         ) {
             Rnd rnd = new Rnd();
             long t = System.nanoTime();
-            for (long i = 0; i < 1_000_000_000; i++) {
+            for (long i = 0; i < n; i++) {
                 mem.putLong(rnd.nextLong());
             }
             System.out.println(System.nanoTime() - t);
         }
     }
 
-    public void testMemMap(int c) {
-        // write simple long
-        try (
-                Path path = new Path();
-                MemoryPMARImpl mem = new MemoryPMARImpl(
-                        FilesFacadeImpl.INSTANCE,
-                        path.of(root).concat("x.d"+c).$(),
-                        FilesFacadeImpl._16M,
-                        MemoryTag.MMAP_DEFAULT
-                )
-        ) {
-            Rnd rnd = new Rnd();
-            long t = System.nanoTime();
-            for (long i = 0; i < 1_000_000_000; i++) {
-                mem.putLong(rnd.nextLong());
-            }
-            System.out.println(System.nanoTime() - t);
-        }
-    }
+    @Test
+    public void testReadCorrectness() {
 
+    }
 }

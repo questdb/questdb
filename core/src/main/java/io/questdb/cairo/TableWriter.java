@@ -1757,8 +1757,8 @@ public class TableWriter implements Closeable {
         for (int i = 0; i < columnCount; i++) {
             // stop calculating oversize as soon as we find first over-sized column
             setColumnSize(i, size, false);
-            Misc.free((MemoryMA) getPrimaryColumn(i));
-            Misc.free((MemoryMA) getSecondaryColumn(i));
+            Misc.free(getPrimaryColumn(i));
+            Misc.free(getSecondaryColumn(i));
         }
         Misc.freeObjList(denseIndexers);
         denseIndexers.clear();
@@ -1798,6 +1798,8 @@ public class TableWriter implements Closeable {
         }
 
         if (inTransaction()) {
+
+            flushColumns();
 
             if (hasO3() && o3Commit(commitLag)) {
                 // Bookmark masterRef to track how many rows is in uncommitted state
@@ -4626,6 +4628,16 @@ public class TableWriter implements Closeable {
             final MemoryMA m2 = columns.getQuick(i * 2 + 1);
             if (m2 != null) {
                 m2.sync(false);
+            }
+        }
+    }
+
+    private void flushColumns() {
+        for (int i = 0; i < columnCount; i++) {
+            columns.getQuick(i * 2).flush();
+            final MemoryMA m2 = columns.getQuick(i * 2 + 1);
+            if (m2 != null) {
+                m2.flush();
             }
         }
     }
