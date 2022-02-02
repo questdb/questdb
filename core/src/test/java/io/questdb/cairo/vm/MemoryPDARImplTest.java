@@ -25,18 +25,131 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
 
 public class MemoryPDARImplTest extends AbstractCairoTest {
+
+    @Test
+    public void testAppendAndRead() {
+        try (
+                Path path = new Path().of(root).concat("x.d").$();
+                MemoryPDARImpl mem = new MemoryPDARImpl(
+                        FilesFacadeImpl.INSTANCE,
+                        path,
+                        FilesFacadeImpl._16M,
+                        MemoryTag.MMAP_DEFAULT
+                );
+
+                MemoryCMR rmem = Vm.getCMARWInstance(
+                        FilesFacadeImpl.INSTANCE,
+                        path,
+                        FilesFacadeImpl._16M,
+                        0,
+                        MemoryTag.MMAP_DEFAULT
+                )
+        ) {
+            int n = 10_000_000;
+            Rnd rnd = new Rnd();
+            long t = System.nanoTime();
+            for (long i = 0; i < n; i++) {
+                mem.putLong(rnd.nextLong());
+            }
+            mem.flush();
+
+
+            rmem.resize(n * 8);
+            rnd.reset();
+            for (long i = 0; i < n; i++) {
+                Assert.assertEquals(rnd.nextLong(), rmem.getLong(i * 8));
+            }
+        }
+    }
+
+    @Test
+    public void testDefaultConstructor() {
+        try (Path path = new Path().of(root).concat("x.d").$()) {
+            try (MemoryPDARImpl mem = new MemoryPDARImpl()) {
+
+                // ensure flush() is no op on closed memory
+                mem.flush();
+
+                mem.of(FilesFacadeImpl.INSTANCE, path, 2048, MemoryTag.MMAP_DEFAULT);
+
+                try (MemoryCMR rmem = Vm.getCMARWInstance(
+                        FilesFacadeImpl.INSTANCE,
+                        path,
+                        FilesFacadeImpl._16M,
+                        0,
+                        MemoryTag.MMAP_DEFAULT
+                )
+                ) {
+                    int n = 100;
+                    Rnd rnd = new Rnd();
+                    long t = System.nanoTime();
+                    for (long i = 0; i < n; i++) {
+                        mem.putLong(rnd.nextLong());
+                    }
+                    mem.flush();
+
+                    rmem.resize(n * 8);
+                    rnd.reset();
+                    for (long i = 0; i < n; i++) {
+                        Assert.assertEquals(rnd.nextLong(), rmem.getLong(i * 8));
+                    }
+                }
+            }
+            Assert.assertEquals(Files.PAGE_SIZE, Files.length(path));
+        }
+    }
+
+    @Test
+    public void testOpenExistingFileForAppend() {
+        try (Path path = new Path().of(root).concat("x.d").$()) {
+            try (MemoryPDARImpl mem = new MemoryPDARImpl()) {
+
+                // ensure flush() is no op on closed memory
+                mem.flush();
+
+                mem.of(FilesFacadeImpl.INSTANCE, path, 2048, MemoryTag.MMAP_DEFAULT);
+
+                try (MemoryCMR rmem = Vm.getCMARWInstance(
+                        FilesFacadeImpl.INSTANCE,
+                        path,
+                        FilesFacadeImpl._16M,
+                        0,
+                        MemoryTag.MMAP_DEFAULT
+                )
+                ) {
+                    int n = 100;
+                    Rnd rnd = new Rnd();
+                    long t = System.nanoTime();
+                    for (long i = 0; i < n; i++) {
+                        mem.putLong(rnd.nextLong());
+                    }
+                    mem.flush();
+
+                    rmem.resize(n * 8);
+                    rnd.reset();
+                    for (long i = 0; i < n; i++) {
+                        Assert.assertEquals(rnd.nextLong(), rmem.getLong(i * 8));
+                    }
+                }
+            }
+            Assert.assertEquals(Files.PAGE_SIZE, Files.length(path));
+        }
+    }
 
     public void testMemMap(int c, long n) {
         // write simple long
@@ -99,7 +212,39 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReadCorrectness() {
+    public void testTruncateToPageSize() {
+        try (Path path = new Path().of(root).concat("x.d").$()) {
+            try (
+                    MemoryPDARImpl mem = new MemoryPDARImpl(
+                            FilesFacadeImpl.INSTANCE,
+                            path,
+                            FilesFacadeImpl._16M,
+                            MemoryTag.MMAP_DEFAULT
+                    );
 
+                    MemoryCMR rmem = Vm.getCMARWInstance(
+                            FilesFacadeImpl.INSTANCE,
+                            path,
+                            FilesFacadeImpl._16M,
+                            0,
+                            MemoryTag.MMAP_DEFAULT
+                    )
+            ) {
+                int n = 100;
+                Rnd rnd = new Rnd();
+                for (long i = 0; i < n; i++) {
+                    mem.putLong(rnd.nextLong());
+                }
+                mem.flush();
+
+                rmem.resize(n * 8);
+                rnd.reset();
+                for (long i = 0; i < n; i++) {
+                    Assert.assertEquals(rnd.nextLong(), rmem.getLong(i * 8));
+                }
+            }
+            Assert.assertEquals(Files.PAGE_SIZE, Files.length(path));
+        }
     }
+
 }

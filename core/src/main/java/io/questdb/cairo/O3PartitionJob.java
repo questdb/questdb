@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryMA;
-import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -540,7 +539,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long cursor,
             Sequence subSeq
     ) {
-        // find "current" partition boundary in the out of order data
+        // find "current" partition boundary in the out-of-order data
         // once we know the boundary we can move on to calculating another one
         // srcOooHi is index inclusive of value
         final Path pathToTable = task.getPathToTable();

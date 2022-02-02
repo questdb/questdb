@@ -914,7 +914,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
         BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, direction);
 
-        // because out Symbol column 0 is indexed, frame has to have index.
+        // because out Symbol column 0 is indexed, frame has to have an index.
         Assert.assertNotNull(indexReader);
 
         final long hi = frame.getRowHi();

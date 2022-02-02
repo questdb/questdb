@@ -35,20 +35,32 @@ import io.questdb.std.str.LPSZ;
 
 public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryPDARImpl.class);
-    private final long pageAddress;
+    private long pageAddress;
+    private long offsetInPage;
     private FilesFacade ff;
     private long fd = -1;
-    private int currentPageIndex;
+    private int pageIndex;
 
     public MemoryPDARImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag) {
         this.pageAddress = Unsafe.malloc(pageSize, memoryTag);
+        this.pageIndex = -1;
+        this.offsetInPage = 0;
         of(ff, name, pageSize, memoryTag);
+    }
+
+    public MemoryPDARImpl() {
+        this.pageAddress = 0;
+        setExtendSegmentSize(0);
     }
 
     @Override
     public final void close(boolean truncate) {
         long sz = getAppendOffset();
-        flushPage();
+        if (pageAddress != 0) {
+            flushPage();
+            Unsafe.free(pageAddress, getExtendSegmentSize(), memoryTag);
+            pageAddress = 0;
+        }
         super.close();
         if (fd != -1) {
             try {
@@ -60,19 +72,30 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     public void sync(boolean async) {
-        if (pageAddress != 0) {
-            if (ff.msync(pageAddress, getExtendSegmentSize(), async) == 0) {
-                return;
-            }
-            LOG.error().$("could not msync [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
+        if (ff.fsync(fd) == 0) {
+            return;
         }
+        LOG.error().$("could not fsync [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
     }
 
     public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag) {
+        if (this.ff != null) {
+            // this is not the first invocation
+            flushPage();
+            realloc(extendSegmentSize, memoryTag);
+            final long sz = getAppendOffset();
+            super.close();
+            if (fd != -1) {
+                try {
+                    Vm.bestEffortClose(ff, LOG, fd, true, sz);
+                } finally {
+                    fd = -1;
+                }
+            }
+        }
         this.memoryTag = memoryTag;
         this.ff = ff;
-        close();
-        currentPageIndex = -1;
+        pageIndex = -1;
         setExtendSegmentSize(extendSegmentSize);
         fd = TableUtils.openFileRWOrFail(ff, name);
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", extendSegmentSize=").$(extendSegmentSize).$(']').$();
@@ -86,6 +109,13 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
     @Override
     public void close() {
         close(true);
+    }
+
+    @Override
+    public void jumpTo(long offset) {
+        this.offsetInPage = offsetInPage(offset);
+        // calling super jump will map write page and update the currentPageIndex
+        super.jumpTo(offset);
     }
 
     public void truncate() {
@@ -103,7 +133,7 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
 
     @Override
     public long getPageAddress(int page) {
-        if (page == currentPageIndex) {
+        if (page == pageIndex) {
             return pageAddress;
         }
         return 0L;
@@ -112,13 +142,13 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
     @Override
     protected long mapWritePage(int page) {
         flushPage();
-        currentPageIndex = page;
+        realloc(getExtendSegmentSize(), memoryTag);
+        pageIndex = page;
         return pageAddress;
     }
 
     @Override
     protected void release(long address) {
-        ff.munmap(address, getPageSize(), memoryTag);
     }
 
     @Override
@@ -132,6 +162,7 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
 
     @Override
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
+        realloc(extendSegmentSize, memoryTag);
         of(ff, name, extendSegmentSize, memoryTag);
     }
 
@@ -141,10 +172,20 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     void flushPage() {
-        if (currentPageIndex != -1) {
-            final long offset = pageOffset(currentPageIndex);
-            ff.write(fd, pageAddress, getAppendOffset() - offset, offset);
-            currentPageIndex = -1;
+        if (pageIndex > -1 && ff != null) {
+            final long offset = pageOffset(pageIndex);
+            ff.write(fd, pageAddress + offsetInPage, getAppendOffset() - offset - offsetInPage, offset);
+        }
+    }
+
+    private void realloc(long extendSegmentSize, int memoryTag) {
+        if (pageAddress == 0 || extendSegmentSize > getExtendSegmentSize()) {
+            if (pageAddress != 0) {
+                Unsafe.free(pageAddress, getExtendSegmentSize(), this.memoryTag);
+            }
+            this.pageAddress = Unsafe.malloc(extendSegmentSize, memoryTag);
+            this.pageIndex = -1;
+            this.offsetInPage = 0;
         }
     }
 }

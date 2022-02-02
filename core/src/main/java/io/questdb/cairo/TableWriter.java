@@ -26,7 +26,8 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
@@ -73,7 +74,6 @@ public class TableWriter implements Closeable {
     private final static RemoveFileLambda REMOVE_OR_LOG = TableWriter::removeFileAndOrLog;
     private final static RemoveFileLambda REMOVE_OR_EXCEPTION = TableWriter::removeOrException;
     final ObjList<MemoryMA> columns;
-    private final ObjList<MemoryMA> logColumns;
     private final ObjList<SymbolMapWriter> symbolMapWriters;
     private final ObjList<SymbolMapWriter> denseSymbolMapWriters;
     private final ObjList<ColumnIndexer> indexers;
@@ -284,7 +284,6 @@ public class TableWriter implements Closeable {
             }
             this.rowValueIsNotNull.extendAndSet(columnCount, 0);
             this.columns = new ObjList<>(columnCount * 2);
-            this.logColumns = new ObjList<>(columnCount * 2);
             this.o3Columns = new ObjList<>(columnCount * 2);
             this.o3Columns2 = new ObjList<>(columnCount * 2);
             this.activeColumns = columns;
@@ -1843,16 +1842,13 @@ public class TableWriter implements Closeable {
     }
 
     private void configureColumn(int type, boolean indexFlag) {
-        final MemoryMAR primary = Vm.getMARInstance();
-        final MemoryMAR secondary;
+        final MemoryMA primary =  Vm.getMARInstance();
+        final MemoryMA secondary;
         final MemoryCARW oooPrimary = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
         final MemoryCARW oooSecondary;
         final MemoryCARW oooPrimary2 = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
         final MemoryCARW oooSecondary2;
 
-
-        final MemoryMAR logPrimary = Vm.getMARInstance();
-        final MemoryMAR logSecondary;
 
         switch (ColumnType.tagOf(type)) {
             case ColumnType.BINARY:
@@ -1860,13 +1856,11 @@ public class TableWriter implements Closeable {
                 secondary = Vm.getMARInstance();
                 oooSecondary = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
                 oooSecondary2 = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
-                logSecondary = Vm.getMARInstance();
                 break;
             default:
                 secondary = null;
                 oooSecondary = null;
                 oooSecondary2 = null;
-                logSecondary = null;
                 break;
         }
         columns.add(primary);
@@ -1877,8 +1871,6 @@ public class TableWriter implements Closeable {
         o3Columns2.add(oooSecondary2);
         configureNullSetters(nullSetters, type, primary, secondary);
         configureNullSetters(o3NullSetters, type, oooPrimary, oooSecondary);
-        logColumns.add(logPrimary);
-        logColumns.add(logSecondary);
 
         if (indexFlag) {
             indexers.extendAndSet((columns.size() - 1) / 2, new SymbolColumnIndexer());
@@ -2133,7 +2125,6 @@ public class TableWriter implements Closeable {
         }
         Misc.freeObjListAndKeepObjects(o3Columns);
         Misc.freeObjListAndKeepObjects(o3Columns2);
-        Misc.freeObjListAndKeepObjects(logColumns);
     }
 
     private void freeIndexers() {
@@ -2810,7 +2801,7 @@ public class TableWriter implements Closeable {
         final RingQueue<O3CopyTask> copyQueue = messageBus.getO3CopyQueue();
 
         do {
-            long cursor = o3PartitionUpdateSubSeq.next();
+             long cursor = o3PartitionUpdateSubSeq.next();
             if (cursor > -1) {
                 final O3PartitionUpdateTask task = o3PartitionUpdateQueue.get(cursor);
                 final long partitionTimestamp = task.getPartitionTimestamp();
@@ -4652,6 +4643,7 @@ public class TableWriter implements Closeable {
             avoidIndexOnCommit = false;
             return;
         }
+        flushColumns();
         updateIndexesSlow();
     }
 
