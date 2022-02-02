@@ -52,6 +52,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongConsumer;
 
+import static io.questdb.PropServerConfiguration.*;
 import static io.questdb.cairo.StatusCode.*;
 import static io.questdb.cairo.TableUtils.*;
 
@@ -177,6 +178,10 @@ public class TableWriter implements Closeable {
     private int rowActon = ROW_ACTION_OPEN_PARTITION;
     private long committedMasterRef;
 
+    // ILP related
+    private double commitIntervalFraction;
+    private long commitIntervalDefault;
+    private long commitInterval;
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot());
@@ -302,6 +307,7 @@ public class TableWriter implements Closeable {
             } else {
                 partitionDirFmt = null;
             }
+            this.commitInterval = calculateCommitInterval();
 
             configureColumnMemory();
             configureTimestampSetter();
@@ -690,6 +696,26 @@ public class TableWriter implements Closeable {
 
     public void commitWithLag(int commitMode) {
         commit(commitMode, metadata.getCommitLag());
+    }
+
+    public void setCommitIntervalFraction(double commitIntervalFraction) {
+        this.commitIntervalFraction = commitIntervalFraction;
+    }
+
+    public void setCommitIntervalDefault(long commitIntervalDefault) {
+        this.commitIntervalDefault = commitIntervalDefault;
+    }
+
+    public long getCommitInterval() {
+        return commitInterval;
+    }
+
+    public long calculateCommitInterval() {
+        long commitIntervalTmp = (long) (metadata.getCommitLag() * commitIntervalFraction);
+        if (commitIntervalTmp > 0) {
+            return commitIntervalTmp;
+        }
+        return commitIntervalDefault > 0 ? commitIntervalDefault : COMMIT_INTERVAL_DEFAULT;
     }
 
     public int getColumnIndex(CharSequence name) {
@@ -1277,6 +1303,7 @@ public class TableWriter implements Closeable {
 
             finishMetaSwapUpdate();
             metadata.setCommitLag(commitLag);
+            commitInterval = calculateCommitInterval();
             clearTodoLog();
         } finally {
             ddlMem.close();

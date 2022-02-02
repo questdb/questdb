@@ -62,6 +62,7 @@ import java.util.Properties;
 public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
+    public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     private final IODispatcherConfiguration httpIODispatcherConfiguration = new PropHttpIODispatcherConfiguration();
     private final WaitProcessorConfiguration httpWaitProcessorConfiguration = new PropWaitProcessorConfiguration();
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
@@ -340,7 +341,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long lineTcpIOWorkerYieldThreshold;
     private long lineTcpIOWorkerSleepThreshold;
     private long lineTcpMaintenanceInterval;
-    private long lineTcpCommitTimeout;
+    private double lineTcpCommitIntervalFraction;
+    private long lineTcpCommitIntervalDefault;
     private String lineTcpAuthDbPath;
     private int lineTcpDefaultPartitionBy;
     private long minIdleMsBeforeWriterRelease;
@@ -804,8 +806,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpIOWorkerPoolHaltOnError = getBoolean(properties, env, "line.tcp.io.halt.on.error", false);
                 this.lineTcpIOWorkerYieldThreshold = getLong(properties, env, "line.tcp.io.worker.yield.threshold", 10);
                 this.lineTcpIOWorkerSleepThreshold = getLong(properties, env, "line.tcp.io.worker.sleep.threshold", 10000);
-                this.lineTcpMaintenanceInterval = getInt(properties, env, "line.tcp.maintenance.job.interval", 30_000);
-                this.lineTcpCommitTimeout = getInt(properties, env, "line.tcp.commit.timeout", 1000);
+                this.lineTcpMaintenanceInterval = getLong(properties, env, "line.tcp.maintenance.job.interval", 30_000);
+                this.lineTcpCommitIntervalFraction = getDouble(properties, env, "line.tcp.commit.interval.fraction", 0.5);
+                this.lineTcpCommitIntervalDefault = getLong(properties, env, "line.tcp.commit.interval.default", COMMIT_INTERVAL_DEFAULT);
                 this.lineTcpAuthDbPath = getString(properties, env, "line.tcp.auth.db.path", null);
                 String defaultTcpPartitionByProperty = getString(properties, env, "line.default.partition.by", "line.tcp.default.partition.by", "DAY");
                 this.lineTcpDefaultPartitionBy = PartitionBy.fromString(defaultTcpPartitionByProperty);
@@ -2412,8 +2415,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getCommitTimeout() {
-            return lineTcpCommitTimeout;
+        public double getCommitIntervalFraction() {
+            return lineTcpCommitIntervalFraction;
+        }
+
+        @Override
+        public long getCommitIntervalDefault() {
+            return lineTcpCommitIntervalDefault;
         }
 
         @Override
