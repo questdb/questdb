@@ -29,9 +29,9 @@ import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RowCursor;
 
-public class SymbolIndexRowCursorFactory implements FunctionBasedRowCursorFactory {
+public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFactory {
     private final int columnIndex;
-    private final int symbolKey;
+    private int symbolKey;
     private final boolean cachedIndexReaderCursor;
     private final int indexDirection;
     private final Function symbolFunction;
@@ -48,6 +48,11 @@ public class SymbolIndexRowCursorFactory implements FunctionBasedRowCursorFactor
         this.cachedIndexReaderCursor = cachedIndexReaderCursor;
         this.indexDirection = indexDirection;
         this.symbolFunction = symbolFunction;
+    }
+
+    @Override
+    public void of(int symbolKey) {
+        this.symbolKey = TableUtils.toIndexKey(symbolKey);
     }
 
     @Override
