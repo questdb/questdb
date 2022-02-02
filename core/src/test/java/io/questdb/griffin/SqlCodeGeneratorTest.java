@@ -1594,9 +1594,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     " long_sequence(20)" +
                     ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
 
-            try (
-                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
-            ) {
+            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor(
                         "a\tb\tk\n" +
                                 "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
@@ -1644,21 +1642,20 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     "(" +
                     "select" +
                     " rnd_double(0)*100 a," +
-                    " rnd_symbol(5,4,4,0) b," +
+                    " rnd_symbol(5,4,4,1) b," +
                     " timestamp_sequence(0, 100000000000) k" +
                     " from" +
                     " long_sequence(5)" +
                     ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
 
-            try (
-                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
-            ) {
+            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor(
                         "a\tb\tk\n" +
-                                "55.99161804800813\tRXGZ\t1970-01-02T03:46:40.000000Z\n" +
-                                "62.76954028373309\tPEHN\t1970-01-03T07:33:20.000000Z\n" +
-                                "31.00545983862456\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
-                                "0.35983672154330515\tCPSW\t1970-01-05T15:06:40.000000Z\n",
+                                "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                                "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
+                                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                                "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                                "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n",
                         factory,
                         true,
                         true,
