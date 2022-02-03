@@ -2716,32 +2716,21 @@ public class TableWriterTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             create(FF, PartitionBy.NONE, 4);
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
-                Assert.assertEquals(COMMIT_INTERVAL_DEFAULT, writer.getCommitInterval());
-
-                writer.setCommitIntervalFraction(0.0);
-                writer.setCommitIntervalDefault(1000);
-                writer.setMetaCommitLag(5000);
+                writer.updateCommitInterval(0.0, 1000);
+                writer.setMetaCommitLag(5_000_000);
                 Assert.assertEquals(1000, writer.getCommitInterval());
 
-                writer.setCommitIntervalFraction(0.5);
-                writer.setCommitIntervalDefault(1000);
-                writer.setMetaCommitLag(5000);
+                writer.updateCommitInterval(0.5, 1000);
+                writer.setMetaCommitLag(5_000_000);
                 Assert.assertEquals(2500, writer.getCommitInterval());
 
-                writer.setCommitIntervalFraction(0.5);
-                writer.setCommitIntervalDefault(1000);
-                writer.setMetaCommitLag(15000);
+                writer.updateCommitInterval(0.5, 1000);
+                writer.setMetaCommitLag(15_000_000);
                 Assert.assertEquals(7500, writer.getCommitInterval());
 
-                writer.setCommitIntervalFraction(0.5);
-                writer.setCommitIntervalDefault(3000);
+                writer.updateCommitInterval(0.5, 3000);
                 writer.setMetaCommitLag(0);
                 Assert.assertEquals(3000, writer.getCommitInterval());
-
-                writer.setCommitIntervalFraction(0.0);
-                writer.setCommitIntervalDefault(0);
-                writer.setMetaCommitLag(5000);
-                Assert.assertEquals(COMMIT_INTERVAL_DEFAULT, writer.getCommitInterval());
             }
         });
     }

@@ -698,24 +698,19 @@ public class TableWriter implements Closeable {
         commit(commitMode, metadata.getCommitLag());
     }
 
-    public void setCommitIntervalFraction(double commitIntervalFraction) {
-        this.commitIntervalFraction = commitIntervalFraction;
-    }
-
-    public void setCommitIntervalDefault(long commitIntervalDefault) {
-        this.commitIntervalDefault = commitIntervalDefault;
-    }
-
     public long getCommitInterval() {
         return commitInterval;
     }
 
-    public long calculateCommitInterval() {
-        long commitIntervalTmp = (long) (metadata.getCommitLag() * commitIntervalFraction);
-        if (commitIntervalTmp > 0) {
-            return commitIntervalTmp;
-        }
-        return commitIntervalDefault > 0 ? commitIntervalDefault : COMMIT_INTERVAL_DEFAULT;
+    public void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault) {
+        this.commitIntervalFraction = commitIntervalFraction;
+        this.commitIntervalDefault = commitIntervalDefault;
+        this.commitInterval = calculateCommitInterval();
+    }
+
+    private long calculateCommitInterval() {
+        long commitIntervalMicros = (long) (metadata.getCommitLag() * commitIntervalFraction);
+        return commitIntervalMicros > 0 ? commitIntervalMicros/1000 : commitIntervalDefault;
     }
 
     public int getColumnIndex(CharSequence name) {

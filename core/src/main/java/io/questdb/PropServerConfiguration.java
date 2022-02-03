@@ -809,6 +809,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpMaintenanceInterval = getLong(properties, env, "line.tcp.maintenance.job.interval", 30_000);
                 this.lineTcpCommitIntervalFraction = getDouble(properties, env, "line.tcp.commit.interval.fraction", 0.5);
                 this.lineTcpCommitIntervalDefault = getLong(properties, env, "line.tcp.commit.interval.default", COMMIT_INTERVAL_DEFAULT);
+                if (this.lineTcpCommitIntervalDefault < 1L) {
+                    log.info().$("invalid default commit interval ").$(lineTcpCommitIntervalDefault).$("), will use ").$(COMMIT_INTERVAL_DEFAULT).$();
+                    this.lineTcpCommitIntervalDefault = COMMIT_INTERVAL_DEFAULT;
+                }
                 this.lineTcpAuthDbPath = getString(properties, env, "line.tcp.auth.db.path", null);
                 String defaultTcpPartitionByProperty = getString(properties, env, "line.default.partition.by", "line.tcp.default.partition.by", "DAY");
                 this.lineTcpDefaultPartitionBy = PartitionBy.fromString(defaultTcpPartitionByProperty);

@@ -80,9 +80,8 @@ public class TableUpdateDetails implements Closeable {
         this.writer = writer;
         this.timestampIndex = metadata.getTimestampIndex();
         this.tableNameUtf16 = writer.getTableName();
-        writer.setCommitIntervalFraction(configuration.getCommitIntervalFraction());
-        writer.setCommitIntervalDefault(configuration.getCommitIntervalDefault());
-        this.nextCommitTime = millisecondClock.getTicks() + writer.calculateCommitInterval();
+        writer.updateCommitInterval(configuration.getCommitIntervalFraction(), configuration.getCommitIntervalDefault());
+        this.nextCommitTime = millisecondClock.getTicks() + writer.getCommitInterval();
     }
 
     public void addReference(int workerId) {

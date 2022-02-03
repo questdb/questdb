@@ -101,19 +101,16 @@ class LineTcpWriterJob implements Job, Closeable {
     private void checkIfTablesNeedCommit() {
         final long millis = millisecondClock.getTicks();
         if (millis > nextCommitTime) {
-            final int sz = assignedTables.size();
-            if (sz > 0) {
-                for (int n = 0; n < sz; n++) {
-                    long tableNextCommitTime = assignedTables.getQuick(n).checkIfTableNeedsCommit(millis);
-                    if (tableNextCommitTime < nextCommitTime) {
-                        // taking the earliest commit time
-                        nextCommitTime = tableNextCommitTime;
-                    }
+            long minTableNextCommitTime = Long.MAX_VALUE;
+            for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
+                long tableNextCommitTime = assignedTables.getQuick(n).checkIfTableNeedsCommit(millis);
+                if (tableNextCommitTime < minTableNextCommitTime) {
+                    // taking the earliest commit time
+                    minTableNextCommitTime = tableNextCommitTime;
                 }
-            } else {
-                // no tables, just use the default commit interval
-                nextCommitTime = millis + commitIntervalDefault;
             }
+            // if no tables, just use the default commit interval
+            nextCommitTime = minTableNextCommitTime != Long.MAX_VALUE ? minTableNextCommitTime : millis + commitIntervalDefault;
         }
     }
 

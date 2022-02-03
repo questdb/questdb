@@ -41,11 +41,11 @@ public class LineTcpCommitTest extends AbstractLineTcpReceiverFuzzTest {
         minIdleMsBeforeWriterRelease = 30_000_000;
 
         // time based commit every 0.5 seconds (50% of 1 sec commit lag) -> should commit rows and make test pass
-        configOverrideCommitLag = 1000;
+        configOverrideCommitLagMicros = 1_000_000;
         commitIntervalFraction = 0.5;
         commitIntervalDefault = 30_000_000;
 
-        initLoadParameters(20, 5, 2, 2, 50, true);
+        initLoadParameters(2000, 5, 5, 5, 50, true);
 
         runTest();
     }
@@ -60,7 +60,7 @@ public class LineTcpCommitTest extends AbstractLineTcpReceiverFuzzTest {
         minIdleMsBeforeWriterRelease = 30_000_000;
 
         // time based commit every 0.5 seconds (default interval) -> should commit last 12 rows per table and make test pass
-        configOverrideCommitLag = 0;
+        configOverrideCommitLagMicros = 0;
         commitIntervalFraction = 0.2;
         commitIntervalDefault = 500;
 
@@ -79,7 +79,7 @@ public class LineTcpCommitTest extends AbstractLineTcpReceiverFuzzTest {
         minIdleMsBeforeWriterRelease = 30_000_000;
 
         // time based commit every 0.5 seconds (default interval) -> should commit last 12 rows per table and make test pass
-        configOverrideCommitLag = 1000;
+        configOverrideCommitLagMicros = 1_000_000;
         commitIntervalFraction = 0.0;
         commitIntervalDefault = 500;
 
@@ -98,7 +98,7 @@ public class LineTcpCommitTest extends AbstractLineTcpReceiverFuzzTest {
         minIdleMsBeforeWriterRelease = 30_000_000;
 
         // time based commit every 30 seconds (default interval) -> test would timeout
-        configOverrideCommitLag = 0;
+        configOverrideCommitLagMicros = 0;
         commitIntervalFraction = 0.2;
         commitIntervalDefault = 30_000_000;
 
@@ -117,7 +117,7 @@ public class LineTcpCommitTest extends AbstractLineTcpReceiverFuzzTest {
         minIdleMsBeforeWriterRelease = 500;
 
         // time based commit every 30 seconds (default interval) -> test would timeout
-        configOverrideCommitLag = 0;
+        configOverrideCommitLagMicros = 0;
         commitIntervalFraction = 0.2;
         commitIntervalDefault = 30_000_000;
 
