@@ -54,10 +54,6 @@ public final class TableUtils {
     public static final int NULL_LEN = -1;
     public static final int ANY_TABLE_ID = -1;
     public static final int ANY_TABLE_VERSION = -1;
-    public static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
-    public static final long TX_OFFSET_FIXED_ROW_COUNT = 16;
-    public static final long TX_OFFSET_STRUCT_VERSION = 40;
-    public static final long TX_OFFSET_TXN_CHECK = 64;
     public static final long META_OFFSET_COUNT = 0;
     public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
     public static final long META_OFFSET_VERSION = 12;
@@ -71,17 +67,31 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final String DEFAULT_PARTITION_NAME = "default";
     public static final long META_OFFSET_COLUMN_TYPES = 128;
-    public static final long TX_OFFSET_MIN_TIMESTAMP = 24;
-    public static final long TX_OFFSET_MAX_TIMESTAMP = 32;
     public static final long META_COLUMN_DATA_SIZE = 32;
-    public static final long TX_OFFSET_MAP_WRITER_COUNT = 128;
     static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
+
     // transaction file structure
-    static final long TX_OFFSET_TXN = 0;
-    static final long TX_OFFSET_DATA_VERSION = 48;
-    static final long TX_OFFSET_PARTITION_TABLE_VERSION = 56;
+    public static final long TX_BASE_OFFSET_VERSION = 0;
+    public static final long TX_BASE_OFFSET_A = 8;
+    public static final long TX_BASE_OFFSET_SIZE_A = 16;
+    public static final long TX_BASE_OFFSET_B = 24;
+    public static final long TX_BASE_OFFSET_SIZE_B = 32;
+    public static final long TX_BASE_HEADER_SIZE = 64;
+
+
+    public static final long TX_OFFSET_TXN = 0;
+    public static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
+    public static final long TX_OFFSET_FIXED_ROW_COUNT = 16;
+    public static final long TX_OFFSET_MIN_TIMESTAMP = 24;
+    public static final long TX_OFFSET_MAX_TIMESTAMP = 32;
+    public static final long TX_OFFSET_STRUCT_VERSION = 40;
+    public static final long TX_OFFSET_DATA_VERSION = 48;
+    public static final long TX_OFFSET_PARTITION_TABLE_VERSION = 56;
+    public static final long TX_OFFSET_MAP_WRITER_COUNT = 128;
+    public static final long TX_RECORD_HEADER_SIZE = TX_OFFSET_MAP_WRITER_COUNT + Integer.BYTES;
+
     /**
      * TXN file structure
      * struct {
@@ -207,7 +217,7 @@ public final class TableUtils {
                 }
             }
             mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-            TableUtils.resetTxn(mem, symbolMapCount, 0L, INITIAL_TXN, 0L, 0L);
+            createTxn(mem, symbolMapCount, 0L, INITIAL_TXN, 0L, 0L);
             resetTodoLog(ff, path, rootLen, mem);
             // allocate txn scoreboard
             path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();
@@ -222,6 +232,13 @@ public final class TableUtils {
                 ff.close(dirFd);
             }
         }
+    }
+
+    public static void createTxn(MemoryMW txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion, long structureVersion) {
+        txMem.putLong(TX_BASE_OFFSET_A, TX_BASE_HEADER_SIZE);
+        txMem.putLong(TX_BASE_OFFSET_SIZE_A, getPartitionTableIndexOffset(symbolMapCount, 0));
+        resetTxn(txMem, TX_BASE_HEADER_SIZE, symbolMapCount, txn, dataVersion, partitionTableVersion, structureVersion);
+        txMem.setTruncateSize(TX_BASE_HEADER_SIZE + TX_RECORD_HEADER_SIZE);
     }
 
     public static long createTransitionIndex(
@@ -632,44 +649,35 @@ public final class TableUtils {
         mem.jumpTo(40);
     }
 
-    public static void resetTxn(MemoryMW txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion, long structureVersion) {
+    public static void resetTxn(MemoryMW txMem, long baseOffset, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion, long structureVersion) {
         // txn to let readers know table is being reset
-        txMem.putLong(TX_OFFSET_TXN, txn);
-        Unsafe.getUnsafe().storeFence();
+        txMem.putLong(baseOffset + TX_OFFSET_TXN, txn);
 
         // transient row count
-        txMem.putLong(TX_OFFSET_TRANSIENT_ROW_COUNT, 0);
+        txMem.putLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT, 0);
         // fixed row count
-        txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT, 0);
+        txMem.putLong(baseOffset + TX_OFFSET_FIXED_ROW_COUNT, 0);
         // min timestamp value in table
-        txMem.putLong(TX_OFFSET_MIN_TIMESTAMP, Long.MAX_VALUE);
+        txMem.putLong(baseOffset + TX_OFFSET_MIN_TIMESTAMP, Long.MAX_VALUE);
         // max timestamp value in table
-        txMem.putLong(TX_OFFSET_MAX_TIMESTAMP, Long.MIN_VALUE);
+        txMem.putLong(baseOffset + TX_OFFSET_MAX_TIMESTAMP, Long.MIN_VALUE);
         // structure version
-        txMem.putLong(TX_OFFSET_STRUCT_VERSION, structureVersion);
+        txMem.putLong(baseOffset + TX_OFFSET_STRUCT_VERSION, structureVersion);
         // data version
-        txMem.putLong(TX_OFFSET_DATA_VERSION, dataVersion);
+        txMem.putLong(baseOffset + TX_OFFSET_DATA_VERSION, dataVersion);
         // partition table version
-        txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, partitionTableVersion);
+        txMem.putLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION, partitionTableVersion);
 
-        txMem.putInt(TX_OFFSET_MAP_WRITER_COUNT, symbolMapCount);
+        txMem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT, symbolMapCount);
         for (int i = 0; i < symbolMapCount; i++) {
             long offset = getSymbolWriterIndexOffset(i);
-            txMem.putInt(offset, 0);
+            txMem.putInt(baseOffset + offset, 0);
             offset += Integer.BYTES;
-            txMem.putInt(offset, 0);
+            txMem.putInt(baseOffset + offset, 0);
         }
 
         // partition update count
-        txMem.putInt(getPartitionTableSizeOffset(symbolMapCount), 0);
-
-        Unsafe.getUnsafe().storeFence();
-        // txn check
-        txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
-
-        // make sure we put append pointer behind our data so that
-        // files does not get truncated when closing
-        txMem.setTruncateSize(getPartitionTableIndexOffset(symbolMapCount, 0));
+        txMem.putInt(baseOffset + getPartitionTableSizeOffset(symbolMapCount), 0);
     }
 
     public static boolean schedulePurgeO3Partitions(MessageBus messageBus, String tableName, int partitionBy) {
@@ -715,25 +723,20 @@ public final class TableUtils {
     }
 
     public static void safeReadTxn(TxReader txReader, MicrosecondClock microsecondClock, long spinLockTimeoutUs) {
-        long txn;
-        int loadCount = 0;
         long deadline = microsecondClock.getTicks() + spinLockTimeoutUs;
+        if (txReader.unsafeReadVersion() == txReader.getVersion()) {
+            LOG.debug().$("checked clean txn, version ").$(txReader.getVersion()).$(", txn=").$(txReader.getTxn()).$();
+            return;
+        }
+
         while (true) {
-            txn = txReader.unsafeReadTxnCheck();
-            Unsafe.getUnsafe().loadFence();
-
-            int symbolColumnCount = txReader.unsafeReadSymbolColumnCount();
-            int partitionSegmentSize = txReader.unsafeReadPartitionSegmentSize(symbolColumnCount);
-            Unsafe.getUnsafe().loadFence();
-
-            if (txn == txReader.unsafeReadTxn()) {
-                txReader.unsafeLoadAll(symbolColumnCount, partitionSegmentSize, loadCount++ > 0);
-                Unsafe.getUnsafe().loadFence();
-
-                if (txn == txReader.unsafeReadTxn()) {
-                    // All good, snapshot read
-                    return;
-                }
+            if (txReader.unsafeLoadAll()) {
+                LOG.debug().$("loaded clean txn, version ").$(txReader.getVersion())
+                        .$(", offset=").$(txReader.getBaseOffset())
+                        .$(", size=").$(txReader.getRecordSize())
+                        .$(", txn=").$(txReader.getTxn()).$();
+                // All good, snapshot read
+                return;
             }
             // This is unlucky, sequences have changed while we were reading transaction data
             // We must discard and try again
@@ -741,14 +744,10 @@ public final class TableUtils {
                 LOG.error().$("tx read timeout [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
                 throw CairoException.instance(0).put("Transaction read timeout");
             }
+
+            LOG.debug().$("loaded __dirty__ txn, version ").$(txReader.getVersion()).$();
             Os.pause();
         }
-    }
-
-    public static void unsafeReadTxFile(TxReader txReader) {
-        int symbolColumnCount = txReader.unsafeReadSymbolColumnCount();
-        int partitionSegmentSize = txReader.unsafeReadPartitionSegmentSize(symbolColumnCount);
-        txReader.unsafeLoadAll(symbolColumnCount, partitionSegmentSize, true);
     }
 
     public static void validate(

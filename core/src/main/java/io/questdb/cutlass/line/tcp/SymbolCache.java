@@ -24,16 +24,9 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.SymbolMapReaderImpl;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMR;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.ObjIntHashMap;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 
@@ -45,12 +38,12 @@ class SymbolCache implements Closeable {
             0.5,
             SymbolTable.VALUE_NOT_FOUND
     );
-    private final MemoryMR txMem = Vm.getMRInstance();
+    private TxReader txReader;
     private final SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl();
     private final MicrosecondClock clock;
-    private long transientSymCountOffset;
-    private long lastSymbolReaderReloadTimestamp;
     private final long waitUsBeforeReload;
+    private long lastSymbolReaderReloadTimestamp;
+    private int symbolIndexInTxFile;
 
     SymbolCache(LineTcpReceiverConfiguration configuration) {
         this.clock = configuration.getMicrosecondClock();
@@ -61,7 +54,7 @@ class SymbolCache implements Closeable {
     public void close() {
         symbolMapReader.close();
         symbolValueToKeyMap.clear();
-        txMem.close();
+        txReader.close();
     }
 
     int getCacheValueCount() {
@@ -74,12 +67,12 @@ class SymbolCache implements Closeable {
             return symbolValueToKeyMap.valueAt(index);
         }
 
-        final int symbolValueCount = txMem.getInt(transientSymCountOffset);
-        final long ticks;
+        final long ticks = clock.getTicks();
+        int symbolValueCount;
 
         if (
-                symbolValueCount > symbolMapReader.getSymbolCount()
-                        && (ticks = clock.getTicks()) - lastSymbolReaderReloadTimestamp > waitUsBeforeReload
+                ticks - lastSymbolReaderReloadTimestamp > waitUsBeforeReload &&
+                        (symbolValueCount = safeReadUnsafeSymbolCount(symbolIndexInTxFile, true)) > symbolMapReader.getSymbolCount()
         ) {
             symbolMapReader.updateSymbolCount(symbolValueCount);
             lastSymbolReaderReloadTimestamp = ticks;
@@ -95,21 +88,31 @@ class SymbolCache implements Closeable {
     }
 
     void of(CairoConfiguration configuration, Path path, CharSequence columnName, int symbolIndexInTxFile) {
-        FilesFacade ff = configuration.getFilesFacade();
-        transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symbolIndexInTxFile);
+        this.symbolIndexInTxFile = symbolIndexInTxFile;
         final int plen = path.length();
-        txMem.of(
-                ff,
-                path.concat(TableUtils.TXN_FILE_NAME).$(),
-                transientSymCountOffset,
-                // we will be reading INT value at `transientSymCountOffset`
-                // must ensure there is mapped memory
-                transientSymCountOffset + 4,
-                MemoryTag.MMAP_INDEX_READER
-        );
-        int symCount = txMem.getInt(transientSymCountOffset);
+        if (txReader == null) {
+            txReader = new TxReader(configuration.getFilesFacade());
+        }
+        txReader.ofRO(path, PartitionBy.NONE); // Partition is not important, TxReader needed to read symbol count
+        int symCount = safeReadUnsafeSymbolCount(symbolIndexInTxFile, false);
         path.trimTo(plen);
         symbolMapReader.of(configuration, path, columnName, symCount);
         symbolValueToKeyMap.clear(symCount);
+    }
+
+    private int safeReadUnsafeSymbolCount(int symbolIndexInTxFile, boolean initialStateOk) {
+        // TODO: avoid reading dirty distinct counts from _txn file, add new file instead
+        boolean offsetReloadOk = initialStateOk;
+        while (true) {
+            if (offsetReloadOk) {
+                int count = txReader.unsafeReadSymbolCount(symbolIndexInTxFile);
+                Unsafe.getUnsafe().loadFence();
+
+                if (txReader.unsafeReadVersion() == txReader.getVersion()) {
+                    return count;
+                }
+            }
+            offsetReloadOk = txReader.unsafeLoadBaseOffset();
+        }
     }
 }

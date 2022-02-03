@@ -516,7 +516,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         // otherwise writer can delete partition version files
         // between reading txn file and acquiring txn in the Scoreboard.
         Unsafe.getUnsafe().loadFence();
-        return txn == txFile.unsafeReadTxn();
+        return txFile.getVersion() == txFile.unsafeReadVersion();
     }
 
     private void checkSchedulePurgeO3Partitions() {
@@ -922,50 +922,26 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void readTxnSlow(long deadline) {
-        int count = 0, loadCount = 0;
+        int count = 0;
 
         while (true) {
+            if (txFile.unsafeLoadAll()) {
+                // good, very stable, congrats
+                long txn = txFile.getTxn();
+                releaseTxn();
+                this.txn = txn;
 
-            // Note that txn numbers should be read in the reverse order to how they are written
-            // writer writes `txn` followed by `txn_check` when all is written out.
-            // Reader must begin with `txn_check` followed by verifying that `txn` remains the same.
-            long txn = txFile.unsafeReadTxnCheck();
-
-            int symbolColumnCount = txFile.unsafeReadSymbolColumnCount();
-            int partitionSegmentSize = txFile.unsafeReadPartitionSegmentSize(symbolColumnCount);
-
-            // make sure this isn't re-ordered
-            Unsafe.getUnsafe().loadFence();
-
-            // do start and end sequences match? if so we have a chance at stable read
-            if (txn == txFile.unsafeReadTxn()) {
-                // great, we seem to have got stable read, lets do some reading
-                // and check later if it was worth it
-
-                // When unsafeLoadAll is used and partition information found to be
-                // half re-written by Writer at the txn check should force
-                // full partition table reload next run
-                txFile.unsafeLoadAll(symbolColumnCount, partitionSegmentSize, loadCount++ > 0);
-
-                Unsafe.getUnsafe().loadFence();
-                // ok, we have snapshot, check if our snapshot is stable
-                if (txn == txFile.unsafeReadTxn()) {
-                    // good, very stable, congrats
-                    releaseTxn();
-                    this.txn = txn;
-
-                    if (acquireTxn()) {
-                        this.rowCount = txFile.getFixedRowCount() + txFile.getTransientRowCount();
-                        LOG.debug()
-                                .$("new transaction [txn=").$(txn)
-                                .$(", transientRowCount=").$(txFile.getTransientRowCount())
-                                .$(", fixedRowCount=").$(txFile.getFixedRowCount())
-                                .$(", maxTimestamp=").$ts(txFile.getMaxTimestamp())
-                                .$(", attempts=").$(count)
-                                .$(", thread=").$(Thread.currentThread().getName())
-                                .$(']').$();
-                        break;
-                    }
+                if (acquireTxn()) {
+                    this.rowCount = txFile.getFixedRowCount() + txFile.getTransientRowCount();
+                    LOG.debug()
+                            .$("new transaction [txn=").$(txn)
+                            .$(", transientRowCount=").$(txFile.getTransientRowCount())
+                            .$(", fixedRowCount=").$(txFile.getFixedRowCount())
+                            .$(", maxTimestamp=").$ts(txFile.getMaxTimestamp())
+                            .$(", attempts=").$(count)
+                            .$(", thread=").$(Thread.currentThread().getName())
+                            .$(']').$();
+                    break;
                 }
             }
             // This is unlucky, sequences have changed while we were reading transaction data

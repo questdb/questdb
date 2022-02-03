@@ -255,7 +255,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                     int len = path.length();
                     int partitionBy = PartitionBy.DAY;
                     txReader.ofRO(path, partitionBy);
-                    TableUtils.unsafeReadTxFile(txReader);
+                    txReader.unsafeLoadAll();
 
                     Assert.assertEquals(2, txReader.getPartitionCount());
                     for (int p = 0; p < 2; p++) {

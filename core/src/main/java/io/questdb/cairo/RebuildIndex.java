@@ -109,7 +109,7 @@ public class RebuildIndex implements Closeable, Mutable {
             DateFormat partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
 
             try (TxReader txReader = new TxReader(ff).ofRO(path, partitionBy)) {
-                TableUtils.unsafeReadTxFile(txReader);
+                txReader.unsafeLoadAll();
                 path.trimTo(rootLen);
 
                 if (PartitionBy.isPartitioned(partitionBy)) {
