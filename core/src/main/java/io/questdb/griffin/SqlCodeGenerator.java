@@ -27,8 +27,8 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
@@ -2639,6 +2639,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             } catch (SqlException e) {
                 Misc.free(reader);
                 throw e;
+            }
+
+            // Latest by on a table requires provided timestamp column to be the designated timestamp.
+            if (latestBy.size() > 0 && readerTimestampIndex != readerMeta.getTimestampIndex()) {
+                throw SqlException.$(model.getTimestamp().position, "latest by over a table requires designated TIMESTAMP");
             }
 
             boolean requiresTimestamp = joinsRequiringTimestamp[model.getJoinType()];
