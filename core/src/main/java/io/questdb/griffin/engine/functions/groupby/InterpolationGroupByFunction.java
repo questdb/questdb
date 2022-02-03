@@ -110,7 +110,11 @@ public class InterpolationGroupByFunction implements GroupByFunction {
 
     @Override
     public byte getByte(Record rec) {
-        return wrappedFunction.getByte(rec);
+        byte value = wrappedFunction.getByte(rec);
+        if (interpolating) {
+            return (byte) InterpolationUtil.interpolate(startTime + current++ * interval, startTime, value, endTime, wrappedFunction.getByte(target));
+        }
+        return value;
     }
 
     @Override
@@ -120,15 +124,17 @@ public class InterpolationGroupByFunction implements GroupByFunction {
 
     @Override
     public long getDate(Record rec) {
-        return wrappedFunction.getDate(rec);
+        long value = wrappedFunction.getDate(rec);
+        if (interpolating) {
+            return (long) InterpolationUtil.interpolate(startTime + current++ * interval, startTime, value, endTime, wrappedFunction.getDate(target));
+        }
+        return value;
     }
 
     @Override
     public double getDouble(Record rec) {
-        // need to do this for float/int/long (or anything else groupby functions use)
         final double value = wrappedFunction.getDouble(rec);
         if (interpolating) {
-            // could be done inside this class with an increment
             return InterpolationUtil.interpolate(startTime + current++ * interval, startTime, value, endTime, wrappedFunction.getDouble(target));
         }
         return value;
@@ -136,17 +142,29 @@ public class InterpolationGroupByFunction implements GroupByFunction {
 
     @Override
     public float getFloat(Record rec) {
-        return wrappedFunction.getFloat(rec);
+        float value = wrappedFunction.getFloat(rec);
+        if (interpolating) {
+            return (float) InterpolationUtil.interpolate(startTime + current++ * interval, startTime, value, endTime, wrappedFunction.getFloat(target));
+        }
+        return value;
     }
 
     @Override
     public int getInt(Record rec) {
-        return wrappedFunction.getInt(rec);
+        int value = wrappedFunction.getInt(rec);
+        if (interpolating) {
+            return (int) InterpolationUtil.interpolate(startTime + current++ * interval, startTime, value, endTime, wrappedFunction.getInt(target));
+        }
+        return value;
     }
 
     @Override
     public long getLong(Record rec) {
-        return wrappedFunction.getLong(rec);
+        long value = wrappedFunction.getLong(rec);
+        if (interpolating) {
+            return (long) InterpolationUtil.interpolate(startTime + current++ * interval, startTime, value, endTime, wrappedFunction.getLong(target));
+        }
+        return value;
     }
 
     @Override
@@ -176,7 +194,11 @@ public class InterpolationGroupByFunction implements GroupByFunction {
 
     @Override
     public short getShort(Record rec) {
-        return wrappedFunction.getShort(rec);
+        short value = wrappedFunction.getShort(rec);
+        if (interpolating) {
+            return (short) InterpolationUtil.interpolate(startTime + current++ * interval, startTime, value, endTime, wrappedFunction.getShort(target));
+        }
+        return value;
     }
 
     @Override

@@ -79,7 +79,8 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                     groupByFunctions,
                     recordFunctions,
                     recordFunctionPositions,
-                    fillValues
+                    fillValues,
+                    false
             );
             this.cursor = new SampleByFillValueRecordCursor(
                     map,
@@ -106,7 +107,8 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             @Transient IntList recordFunctionPositions,
-            @NotNull @Transient ObjList<ExpressionNode> fillValues
+            @NotNull @Transient ObjList<ExpressionNode> fillValues,
+            boolean linearSupported
     ) throws SqlException {
 
         final ObjList<Function> placeholderFunctions = new ObjList<>();
@@ -124,6 +126,9 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                 } else if (isPrevKeyword(fillNode.token)) {
                     placeholderFunctions.add(function);
                 } else if (isLinearKeyword(fillNode.token)) {
+                    if (!linearSupported) {
+                        throw SqlException.position(0).put("linear interpolation is not supported when using fill values for keyed sample by expression");
+                    }
                     GroupByFunction interpolation = InterpolationGroupByFunction.newInstance((GroupByFunction) function);
                     placeholderFunctions.add(interpolation);
                     groupByFunctions.set(fillIndex - 1, interpolation);

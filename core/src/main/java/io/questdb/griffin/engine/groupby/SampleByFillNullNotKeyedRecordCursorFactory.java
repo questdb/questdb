@@ -56,7 +56,7 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
         super(base, groupByMetadata, recordFunctions);
         try {
             final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
-            final Peeker peeker = new Peeker(simpleMapValue, new SimpleMapValue(valueCount));
+            final SimpleMapValuePeeker peeker = new SimpleMapValuePeeker(simpleMapValue, new SimpleMapValue(valueCount));
             cursor = new SampleByFillValueNotKeyedRecordCursor(
                     groupByFunctions,
                     recordFunctions,

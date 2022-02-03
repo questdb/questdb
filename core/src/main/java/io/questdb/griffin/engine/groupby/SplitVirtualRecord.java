@@ -186,6 +186,10 @@ public class SplitVirtualRecord implements Record {
         }
     }
 
+    public void setActiveB() {
+        current = functionsB;
+    }
+
     public void setActiveB(long startTime, long currentTime, long endTime) {
         current = functionsB;
         for (int i = 0, n = interpolations.size(); i < n; i++) {

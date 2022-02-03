@@ -183,10 +183,7 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
         if (mapRecord.getTimestamp(0) == sampleLocalEpoch) {
             record.setActiveA();
         } else {
-            // add support for keyed or check for linear and throw unsupported exception
-            long expectedLocalEpoch = timestampSampler.nextTimestamp(nextSampleLocalEpoch);
-            record.setActiveB(sampleLocalEpoch, expectedLocalEpoch, localEpoch);
-            record.setTarget(mapRecord);
+            record.setActiveB();
         }
         return true;
     }

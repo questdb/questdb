@@ -31,14 +31,14 @@ import io.questdb.std.ObjList;
 
 public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualRecordSampleByCursor {
     private final SimpleMapValue simpleMapValue;
-    private final Peeker peeker;
+    private final SimpleMapValuePeeker peeker;
     private boolean gapFill = false;
 
     public SampleByFillValueNotKeyedRecordCursor(
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             ObjList<Function> placeholderFunctions,
-            Peeker peeker,
+            SimpleMapValuePeeker peeker,
             int timestampIndex, // index of timestamp column in base cursor
             TimestampSampler timestampSampler,
             SimpleMapValue simpleMapValue,

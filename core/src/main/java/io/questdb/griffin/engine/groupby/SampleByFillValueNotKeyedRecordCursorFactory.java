@@ -60,10 +60,11 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
                     groupByFunctions,
                     recordFunctions,
                     recordFunctionPositions,
-                    fillValues
+                    fillValues,
+                    true
             );
             final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
-            final Peeker peeker = new Peeker(simpleMapValue, new SimpleMapValue(valueCount));
+            final SimpleMapValuePeeker peeker = new SimpleMapValuePeeker(simpleMapValue, new SimpleMapValue(valueCount));
             cursor = new SampleByFillValueNotKeyedRecordCursor(
                     groupByFunctions,
                     recordFunctions,
