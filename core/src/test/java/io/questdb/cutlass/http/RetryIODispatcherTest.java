@@ -673,16 +673,20 @@ public class RetryIODispatcherTest {
                     nonInsertQueries++;
 
                     final int maxWaitTimeMillis = 3000;
-                    final int sleepMillis = 50;
+                    final int sleepMillis = 10;
 
                     // wait for all insert queries to be initially handled
+                    long startedInserts;
                     for (int i = 0; i < maxWaitTimeMillis / sleepMillis; i++) {
-                        final long startedInserts = metrics.jsonQuery().startedQueriesCount() - nonInsertQueries;
+                        startedInserts = metrics.jsonQuery().startedQueriesCount() - nonInsertQueries;
                         if (startedInserts >= parallelCount) {
                             break;
                         }
                         Os.sleep(sleepMillis);
                     }
+                    startedInserts = metrics.jsonQuery().startedQueriesCount() - nonInsertQueries;
+                    Assert.assertTrue("expected at least " + parallelCount + "insert attempts, but got: " + startedInserts,
+                            startedInserts >= parallelCount);
 
                     // close the client sockets
                     for (long fd : fds) {
@@ -693,13 +697,16 @@ public class RetryIODispatcherTest {
                     writer.close();
 
                     // wait for all insert queries to be executed
+                    long completeInserts;
                     for (int i = 0; i < maxWaitTimeMillis / sleepMillis; i++) {
-                        final long completeInserts = metrics.jsonQuery().completedQueriesCount() - nonInsertQueries;
+                        completeInserts = metrics.jsonQuery().completedQueriesCount() - nonInsertQueries;
                         if (completeInserts == parallelCount) {
                             break;
                         }
                         Os.sleep(sleepMillis);
                     }
+                    completeInserts = metrics.jsonQuery().completedQueriesCount() - nonInsertQueries;
+                    Assert.assertEquals("expected all inserts to succeed", parallelCount, completeInserts);
 
                     // check that we have all the records inserted
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(

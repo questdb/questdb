@@ -38,6 +38,7 @@ export type NotificationShape = Readonly<{
   sideContent?: ReactNode
   line2?: ReactNode
   type: NotificationType
+  jitCompiled?: boolean
 }>
 
 export type RunningShape = Readonly<{

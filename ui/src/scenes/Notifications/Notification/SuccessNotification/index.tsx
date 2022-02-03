@@ -27,20 +27,34 @@ import styled from "styled-components"
 import { Wrapper, SideContent, Content } from "../styles"
 import { NotificationShape } from "types"
 import { CheckmarkOutline } from "@styled-icons/evaicons-outline/CheckmarkOutline"
+import { Zap } from "@styled-icons/boxicons-solid/Zap"
 import { color } from "utils"
 import { Timestamp } from "../Timestamp"
+import { IconWithTooltip } from "components"
 
 const CheckmarkOutlineIcon = styled(CheckmarkOutline)`
   color: ${color("draculaGreen")};
   flex-shrink: 0;
 `
 
+const ZapIcon = styled(Zap)`
+  color: ${color("draculaYellow")};
+`
+
 export const SuccessNotification = (props: NotificationShape) => {
-  const { createdAt, content, sideContent } = props
+  const { createdAt, content, sideContent, jitCompiled } = props
   return (
     <Wrapper>
       <Timestamp createdAt={createdAt} />
-      <CheckmarkOutlineIcon size="18px" />
+      {jitCompiled ? (
+        <IconWithTooltip
+          icon={<ZapIcon size="16px" />}
+          placement="top"
+          tooltip="JIT Compiled"
+        />
+      ) : (
+        <CheckmarkOutlineIcon size="18px" />
+      )}
       <Content>{content}</Content>
       <SideContent>{sideContent}</SideContent>
     </Wrapper>

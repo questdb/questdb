@@ -163,6 +163,8 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                     outIntervals.extendAndSet(divider + 1, hi);
                     outIntervals.setQuick(divider, lo);
                     if (divider == 0 && negated) {
+                        // Divider == 0 means it's the first interval applied
+                        // Invert the interval, since it will not be applied negated to anything
                         IntervalUtils.invert(outIntervals, divider);
                     }
                 } else {

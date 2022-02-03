@@ -436,7 +436,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " rnd_symbol('XY','ZP', null, 'UU') c" +
                         " from" +
                         " long_sequence(20)" +
-                        ")",
+                        ") timestamp(ts)",
                 null,
                 "insert into x select * from (" +
                         "select" +
