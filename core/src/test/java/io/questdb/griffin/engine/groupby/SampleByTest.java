@@ -8401,6 +8401,54 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleFillValueListWithNullAndPrevAndLinearAllTypesNotKeyed() throws Exception {
+        assertQuery("sum\tcount\tmin\tmax\tsum1\tmax1\tcount1\tsum2\tsum3\tsum4\tk\n" +
+                        "1569490116\t1\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\t1\t-8671107786057422727\t26\t0.15786635599554755\t1970-01-03T00:00:00.000000Z\n" +
+                        "123\tNaN\tNaN\tNaN\tNaN\t2015-05-16T20:27:48.158Z\t1\t556\t28\t0.15786635599554755\t1970-01-03T00:15:00.000000Z\n" +
+                        "123\tNaN\tNaN\tNaN\tNaN\t2015-05-16T20:27:48.158Z\t1\t556\t30\t0.15786635599554755\t1970-01-03T00:30:00.000000Z\n" +
+                        "123\tNaN\tNaN\tNaN\tNaN\t2015-05-16T20:27:48.158Z\t1\t556\t32\t0.15786635599554755\t1970-01-03T00:45:00.000000Z\n" +
+                        "-2132716300\t1\t0.38179758047769774\tNaN\t813\t2015-07-01T22:08:50.655Z\t1\t-6186964045554120476\t34\t0.04142812470232493\t1970-01-03T01:00:00.000000Z\n" +
+                        "123\tNaN\t0.38179758047769774\tNaN\tNaN\t2015-07-01T22:08:50.655Z\t1\t556\t33\t0.04142812470232493\t1970-01-03T01:15:00.000000Z\n" +
+                        "123\tNaN\t0.38179758047769774\tNaN\tNaN\t2015-07-01T22:08:50.655Z\t1\t556\t32\t0.04142812470232493\t1970-01-03T01:30:00.000000Z\n" +
+                        "123\tNaN\t0.38179758047769774\tNaN\tNaN\t2015-07-01T22:08:50.655Z\t1\t556\t31\t0.04142812470232493\t1970-01-03T01:45:00.000000Z\n" +
+                        "-360860352\t1\t0.456344569609078\tNaN\t1013\t2015-01-15T20:11:07.487Z\t1\t5271904137583983788\t30\t0.6752509547112409\t1970-01-03T02:00:00.000000Z\n" +
+                        "123\tNaN\t0.456344569609078\tNaN\tNaN\t2015-01-15T20:11:07.487Z\t1\t556\t25\t0.6752509547112409\t1970-01-03T02:15:00.000000Z\n" +
+                        "123\tNaN\t0.456344569609078\tNaN\tNaN\t2015-01-15T20:11:07.487Z\t1\t556\t20\t0.6752509547112409\t1970-01-03T02:30:00.000000Z\n" +
+                        "123\tNaN\t0.456344569609078\tNaN\tNaN\t2015-01-15T20:11:07.487Z\t1\t556\t15\t0.6752509547112409\t1970-01-03T02:45:00.000000Z\n" +
+                        "2060263242\t1\tNaN\t0.3495\t869\t2015-05-15T18:43:06.827Z\t1\t-5439556746612026472\t11\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                        "123\tNaN\tNaN\t0.2865\tNaN\t2015-05-15T18:43:06.827Z\t1\t556\t16\tNaN\t1970-01-03T03:15:00.000000Z\n" +
+                        "123\tNaN\tNaN\t0.2236\tNaN\t2015-05-15T18:43:06.827Z\t1\t556\t21\tNaN\t1970-01-03T03:30:00.000000Z\n" +
+                        "123\tNaN\tNaN\t0.1606\tNaN\t2015-05-15T18:43:06.827Z\t1\t556\t26\tNaN\t1970-01-03T03:45:00.000000Z\n" +
+                        "502711083\t1\t0.0171850098561398\t0.0977\t605\t2015-07-12T07:33:54.007Z\t1\t-6187389706549636253\t32\t0.22631523434159562\t1970-01-03T04:00:00.000000Z\n",
+                "select sum(a),count(),min(d),max(e),sum(f),max(g),count(),sum(j),sum(l),sum(o), k " +
+                        "from x sample by 15m fill(123,null,prev,linear,null,prev,prev,556,linear,prev)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_boolean() b," +
+                        " rnd_str(1,1,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) i," +
+                        " rnd_long() j," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_double(2) o," +
+                        " timestamp_sequence(0, 3600000000) p," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false
+        );
+    }
+
+    @Test
     public void testSampleFillValueNotKeyedAlignToCalendar() throws Exception {
         assertQuery("sum\tk\n" +
                         "11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
