@@ -103,6 +103,9 @@ class LineTcpWriterJob implements Job, Closeable {
         if (millis > nextCommitTime) {
             long minTableNextCommitTime = Long.MAX_VALUE;
             for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
+                // the heap based solution mentioned above will eliminate the minimum search
+                // we could just process the min element of the heap until we hit the first commit
+                // time greater than millis and that will be our nextCommitTime
                 long tableNextCommitTime = assignedTables.getQuick(n).checkIfTableNeedsCommit(millis);
                 if (tableNextCommitTime < minTableNextCommitTime) {
                     // taking the earliest commit time

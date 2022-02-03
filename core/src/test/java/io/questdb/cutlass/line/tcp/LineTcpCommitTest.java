@@ -36,14 +36,14 @@ public class LineTcpCommitTest extends AbstractLineTcpReceiverFuzzTest {
         // rows based commit every 110 rows -> will never happen, we ingest only 100 rows per table -> test would timeout
         configOverrideMaxUncommittedRows = 110;
 
-        // idle table commit after 30 seconds inactivity -> test would timeout
-        maintenanceInterval = 30_000_000;
-        minIdleMsBeforeWriterRelease = 30_000_000;
+        // idle table commit after 5 mins inactivity -> test would timeout
+        maintenanceInterval = 300_000_000;
+        minIdleMsBeforeWriterRelease = 300_000_000;
 
-        // time based commit every 0.5 seconds (50% of 1 sec commit lag) -> should commit rows and make test pass
+        // time based commit every 0.5 seconds (50% of 1 sec commit lag) -> should commit rows -> make test pass
         configOverrideCommitLagMicros = 1_000_000;
         commitIntervalFraction = 0.5;
-        commitIntervalDefault = 30_000_000;
+        commitIntervalDefault = 30_000;
 
         initLoadParameters(20, 5, 2, 2, 50, true);
 
@@ -52,14 +52,14 @@ public class LineTcpCommitTest extends AbstractLineTcpReceiverFuzzTest {
 
     @Test
     public void testCommitIntervalBasedDefaultLagZero() throws Exception {
-        // rows based commit every 22 rows -> will commit 88 rows per table only, test would timeout
+        // rows based commit every 22 rows -> will commit 88 rows per table only -> test would timeout
         configOverrideMaxUncommittedRows = 22;
 
-        // idle table commit after 30 seconds inactivity -> test would timeout
-        maintenanceInterval = 30_000_000;
-        minIdleMsBeforeWriterRelease = 30_000_000;
+        // idle table commit after 5 mins inactivity -> test would timeout
+        maintenanceInterval = 300_000_000;
+        minIdleMsBeforeWriterRelease = 300_000_000;
 
-        // time based commit every 0.5 seconds (default interval) -> should commit last 12 rows per table and make test pass
+        // time based commit every 0.5 seconds (default interval) -> should commit last 12 rows per table -> make test pass
         configOverrideCommitLagMicros = 0;
         commitIntervalFraction = 0.2;
         commitIntervalDefault = 500;
@@ -71,14 +71,14 @@ public class LineTcpCommitTest extends AbstractLineTcpReceiverFuzzTest {
 
     @Test
     public void testCommitIntervalBasedDefaultFractionZero() throws Exception {
-        // rows based commit every 22 rows -> will commit 88 rows per table only, test would timeout
+        // rows based commit every 22 rows -> will commit 88 rows per table only -> test would timeout
         configOverrideMaxUncommittedRows = 22;
 
-        // idle table commit after 30 seconds inactivity -> test would timeout
-        maintenanceInterval = 30_000_000;
-        minIdleMsBeforeWriterRelease = 30_000_000;
+        // idle table commit after 5 mins inactivity -> test would timeout
+        maintenanceInterval = 300_000_000;
+        minIdleMsBeforeWriterRelease = 300_000_000;
 
-        // time based commit every 0.5 seconds (default interval) -> should commit last 12 rows per table and make test pass
+        // time based commit every 0.5 seconds (default interval) -> should commit last 12 rows per table -> make test pass
         configOverrideCommitLagMicros = 1_000_000;
         commitIntervalFraction = 0.0;
         commitIntervalDefault = 500;
@@ -90,17 +90,17 @@ public class LineTcpCommitTest extends AbstractLineTcpReceiverFuzzTest {
 
     @Test
     public void testCommitNumOfRowsBased() throws Exception {
-        // rows based commit every 10 rows -> will commit 10 times 10 rows per table -> should make test pass
+        // rows based commit every 10 rows -> will commit 10 times 10 rows per table -> make test pass
         configOverrideMaxUncommittedRows = 10;
 
-        // idle table commit after 30 seconds inactivity -> test would timeout
-        maintenanceInterval = 30_000_000;
-        minIdleMsBeforeWriterRelease = 30_000_000;
+        // idle table commit after 5 mins inactivity -> test would timeout
+        maintenanceInterval = 300_000_000;
+        minIdleMsBeforeWriterRelease = 300_000_000;
 
-        // time based commit every 30 seconds (default interval) -> test would timeout
+        // time based commit every 5 mins (default interval) -> test would timeout
         configOverrideCommitLagMicros = 0;
         commitIntervalFraction = 0.2;
-        commitIntervalDefault = 30_000_000;
+        commitIntervalDefault = 300_000;
 
         initLoadParameters(20, 5, 2, 2, 50, true);
 
@@ -109,17 +109,17 @@ public class LineTcpCommitTest extends AbstractLineTcpReceiverFuzzTest {
 
     @Test
     public void testCommitTableReleased() throws Exception {
-        // rows based commit every 22 rows -> will commit 88 rows per table only, test would timeout
+        // rows based commit every 22 rows -> will commit 88 rows per table only -> test would timeout
         configOverrideMaxUncommittedRows = 22;
 
-        // idle table commit after 0.5 seconds inactivity -> should commit last 12 rows per table and make test pass
+        // idle table commit after 0.5 seconds inactivity -> should commit last 12 rows per table -> make test pass
         maintenanceInterval = 200;
         minIdleMsBeforeWriterRelease = 500;
 
-        // time based commit every 30 seconds (default interval) -> test would timeout
+        // time based commit every 5 mins (default interval) -> test would timeout
         configOverrideCommitLagMicros = 0;
         commitIntervalFraction = 0.2;
-        commitIntervalDefault = 30_000_000;
+        commitIntervalDefault = 300_000;
 
         initLoadParameters(20, 5, 2, 2, 50, true);
 
