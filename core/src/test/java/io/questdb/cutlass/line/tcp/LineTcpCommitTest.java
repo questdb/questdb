@@ -45,7 +45,7 @@ public class LineTcpCommitTest extends AbstractLineTcpReceiverFuzzTest {
         commitIntervalFraction = 0.5;
         commitIntervalDefault = 30_000_000;
 
-        initLoadParameters(2000, 5, 5, 5, 50, true);
+        initLoadParameters(20, 5, 2, 2, 50, true);
 
         runTest();
     }
