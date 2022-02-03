@@ -3003,7 +3003,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 boolean isOrderByTimestampDesc = isOrderDescendingByDesignatedTimestampOnly(model);
                 RowCursorFactory rowFactory;
 
-                if (isOrderByTimestampDesc) {
+                if (isOrderByTimestampDesc && !intrinsicModel.hasIntervalFilters()) {
                     dfcFactory = new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion());
                     rowFactory = new BwdDataFrameRowCursorFactory();
                 } else {
