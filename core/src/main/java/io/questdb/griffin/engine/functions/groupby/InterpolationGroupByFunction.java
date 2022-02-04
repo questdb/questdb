@@ -119,16 +119,16 @@ public class InterpolationGroupByFunction implements GroupByFunction {
 
     @Override
     public char getChar(Record rec) {
-        return wrappedFunction.getChar(rec);
+        char value = wrappedFunction.getChar(rec);
+        if (interpolating) {
+            return (char) InterpolationUtil.interpolate(startTime + current++ * interval, startTime, value, endTime, wrappedFunction.getChar(target));
+        }
+        return value;
     }
 
     @Override
     public long getDate(Record rec) {
-        long value = wrappedFunction.getDate(rec);
-        if (interpolating) {
-            return (long) InterpolationUtil.interpolate(startTime + current++ * interval, startTime, value, endTime, wrappedFunction.getDate(target));
-        }
-        return value;
+        return wrappedFunction.getDate(rec);
     }
 
     @Override
