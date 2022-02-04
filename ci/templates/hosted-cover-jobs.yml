@@ -9,7 +9,7 @@ jobs:
           os: Linux
           jdk: "1.11"
           testset: "coverage"
-          includeTests: "griffin.**"
+          includeTests: "griffin.**.*?"
           testsetName: coverage-griffin
         linux-cairo:
           imageName: "ubuntu-latest"
@@ -17,7 +17,7 @@ jobs:
           os: Linux
           jdk: "1.11"
           testset: "coverage"
-          includeTests: "cairo.**"
+          includeTests: "cairo.**.*?"
           testsetName: coverage-cairo
         linux-other:
           imageName: "ubuntu-latest"
@@ -32,12 +32,9 @@ jobs:
       name: $(poolName)
     timeoutInMinutes: 60
     variables:
-      SOURCE_CODE_CHANGED:
-        $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
-      COVERAGE_DIFF:
-        $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
-      CODE_COVERAGE_TOOL_OPTION:
-        $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
+      SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
+      COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
+      CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
       MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
       MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m"
       ARCHIVED_GRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
