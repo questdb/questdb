@@ -22,8 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin;
 
+import io.questdb.cairo.FullFwdDataFrameCursorFactory;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.AbstractGriffinTest;

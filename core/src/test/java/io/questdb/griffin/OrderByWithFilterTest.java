@@ -21,9 +21,9 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-package io.questdb.cairo;
+package io.questdb.griffin;
 
-import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.cairo.SqlJitMode;
 import org.junit.Test;
 
 /**
