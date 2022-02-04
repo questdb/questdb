@@ -887,8 +887,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableCastIndexCapacityHigh() throws Exception {
         assertSyntaxError(
-                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache index capacity 100000000)",
-                96,
+                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache), index(c capacity 100000000)",
+                100,
                 "max index block capacity is",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -901,8 +901,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableCastIndexCapacityLow() throws Exception {
         assertSyntaxError(
-                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache index capacity 1)",
-                96,
+                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache), index(c capacity 1)",
+                100,
                 "min index block capacity is",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -915,8 +915,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableCastIndexDef() throws SqlException {
         assertCreateTable(
-                "create table x as (select-choose a, b, c from (select [a, b, c] from tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 32 nocache index capacity 512)",
-                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache index capacity 300)",
+                "create table x as (select-choose a, b, c from (select [a, b, c] from tab)), index(c capacity 512), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 32 nocache)",
+                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache), index(c capacity 300)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.LONG)
@@ -928,8 +928,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableCastIndexInvalidCapacity() throws Exception {
         assertSyntaxError(
-                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache index capacity -)",
-                97,
+                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache), index(c capacity -)",
+                101,
                 "bad integer",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -942,8 +942,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableCastIndexNegativeCapacity() throws Exception {
         assertSyntaxError(
-                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache index capacity -3)",
-                96,
+                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache), index(c capacity -3)",
+                100,
                 "min index block capacity is",
                 modelOf("tab")
                         .col("a", ColumnType.INT)

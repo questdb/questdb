@@ -585,14 +585,14 @@ public final class SqlParser {
         columnCastModel.setType(type, columnName.position, columnType.position);
 
         if (ColumnType.isSymbol(type)) {
-            CharSequence tok = tok(lexer, "'capacity', 'nocache', 'cache', 'index' or ')'");
+            CharSequence tok = tok(lexer, "'capacity', 'nocache', 'cache' or ')'");
 
             int symbolCapacity;
             int capacityPosition;
             if (isCapacityKeyword(tok)) {
                 capacityPosition = lexer.getPosition();
                 columnCastModel.setSymbolCapacity(symbolCapacity = parseSymbolCapacity(lexer));
-                tok = tok(lexer, "'nocache', 'cache', 'index' or ')'");
+                tok = tok(lexer, "'nocache', 'cache' or ')'");
             } else {
                 columnCastModel.setSymbolCapacity(configuration.getDefaultSymbolCapacity());
                 symbolCapacity = -1;
@@ -616,27 +616,7 @@ public final class SqlParser {
                 TableUtils.validateSymbolCapacityCached(true, symbolCapacity, capacityPosition);
             }
 
-            // parse index clause
-
-            tok = tok(lexer, "')', or 'index'");
-
-            if (isIndexKeyword(tok)) {
-                columnCastModel.setIndexed(true);
-                tok = tok(lexer, "')', or 'capacity'");
-
-                if (isCapacityKeyword(tok)) {
-                    int errorPosition = lexer.getPosition();
-                    int indexValueBlockSize = expectInt(lexer);
-                    TableUtils.validateIndexValueBlockSize(errorPosition, indexValueBlockSize);
-                    columnCastModel.setIndexValueBlockSize(Numbers.ceilPow2(indexValueBlockSize));
-                } else {
-                    columnCastModel.setIndexValueBlockSize(configuration.getIndexValueBlockSize());
-                    lexer.unparse();
-                }
-            } else {
-                columnCastModel.setIndexed(false);
-                lexer.unparse();
-            }
+            columnCastModel.setIndexed(false);
         }
 
         expectTok(lexer, ')');
