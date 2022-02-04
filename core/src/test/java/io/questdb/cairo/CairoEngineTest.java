@@ -468,8 +468,8 @@ public class CairoEngineTest extends AbstractCairoTest {
                     }
 
                     @Override
-                    public long openRW(LPSZ name) {
-                        long fd = super.openRW(name);
+                    public long openRW(LPSZ name, long opts) {
+                        long fd = super.openRW(name, opts);
                         if (Chars.endsWith(name, TableUtils.TAB_INDEX_FILE_NAME)) {
                             theFD = fd;
                         }

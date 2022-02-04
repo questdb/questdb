@@ -32,13 +32,14 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.NetUtils;
-import io.questdb.griffin.*;
+import io.questdb.griffin.QueryFuture;
+import io.questdb.griffin.QueryFutureUpdateListener;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
@@ -48,7 +49,6 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Ignore;
@@ -3161,12 +3161,12 @@ nodejs code:
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name) {
+                public long openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "_meta.swp")) {
                         queryStartedCountDown.await();
                         Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() / 1000);
                     }
-                    return super.openRW(name);
+                    return super.openRW(name, opts);
                 }
             };
             testAddColumnBusyWriter(true, new SOCountDownLatch());
@@ -3180,12 +3180,12 @@ nodejs code:
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name) {
+                public long openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "_meta.swp")) {
                         queryStartedCountDown.await();
                         Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() / 1000);
                     }
-                    return super.openRW(name);
+                    return super.openRW(name, opts);
                 }
             };
             testAddColumnBusyWriter(false, queryStartedCountDown);
@@ -3198,11 +3198,11 @@ nodejs code:
             writerAsyncCommandBusyWaitTimeout = 1;
             ff = new FilesFacadeImpl() {
                 @Override
-                public long openRW(LPSZ name) {
+                public long openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "_meta.swp")) {
                         Os.sleep(50);
                     }
-                    return super.openRW(name);
+                    return super.openRW(name, opts);
                 }
             };
             testAddColumnBusyWriter(false, new SOCountDownLatch());
@@ -3960,7 +3960,7 @@ create table tab as (
             ) {
                 String sql = "SELECT * FROM long_sequence(100) x";
 
-                nf.startDelaying(delayedAttempts);
+                nf.startDelaying();
 
                 boolean hasResultSet = statement.execute(sql);
                 // Temporary log showing a value of hasResultSet, as it is currently impossible to stop the server and complete the test.
@@ -4012,7 +4012,7 @@ create table tab as (
                         "    FROM sensors)\n" +
                         "ON readings.sensorId = sensId";
 
-                nf.startDelaying(delayedAttempts);
+                nf.startDelaying();
 
                 boolean hasResultSet = statement.execute(sql);
                 // Temporary log showing a value of hasResultSet, as it is currently impossible to stop the server and complete the test.
@@ -5684,8 +5684,8 @@ create table tab as (
             return 0;
         }
 
-        void startDelaying(int delayedAttempts) {
-            delayedAttemptsCounter.set(delayedAttempts);
+        void startDelaying() {
+            delayedAttemptsCounter.set(1000);
             delaying.set(true);
         }
     }

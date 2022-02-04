@@ -25,6 +25,7 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
@@ -49,7 +50,8 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                         FilesFacadeImpl.INSTANCE,
                         path,
                         FilesFacadeImpl._16M,
-                        MemoryTag.MMAP_DEFAULT
+                        MemoryTag.MMAP_DEFAULT,
+                        CairoConfiguration.O_ASYNC | CairoConfiguration.O_DIRECT
                 );
 
                 MemoryCMR rmem = Vm.getCMARWInstance(
@@ -57,12 +59,12 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                         path,
                         FilesFacadeImpl._16M,
                         0,
-                        MemoryTag.MMAP_DEFAULT
+                        MemoryTag.MMAP_DEFAULT,
+                        configuration.getWriterFileOpenOpts()
                 )
         ) {
             int n = 10_000_000;
             Rnd rnd = new Rnd();
-            long t = System.nanoTime();
             for (long i = 0; i < n; i++) {
                 mem.putLong(rnd.nextLong());
             }
@@ -85,56 +87,25 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                 // ensure flush() is no op on closed memory
                 mem.flush();
 
-                mem.of(FilesFacadeImpl.INSTANCE, path, 2048, MemoryTag.MMAP_DEFAULT);
+                mem.of(
+                        FilesFacadeImpl.INSTANCE,
+                        path,
+                        2048,
+                        MemoryTag.MMAP_DEFAULT,
+                        CairoConfiguration.O_ASYNC
+                );
 
                 try (MemoryCMR rmem = Vm.getCMARWInstance(
                         FilesFacadeImpl.INSTANCE,
                         path,
                         FilesFacadeImpl._16M,
                         0,
-                        MemoryTag.MMAP_DEFAULT
+                        MemoryTag.MMAP_DEFAULT,
+                        configuration.getWriterFileOpenOpts()
                 )
                 ) {
                     int n = 100;
                     Rnd rnd = new Rnd();
-                    long t = System.nanoTime();
-                    for (long i = 0; i < n; i++) {
-                        mem.putLong(rnd.nextLong());
-                    }
-                    mem.flush();
-
-                    rmem.resize(n * 8);
-                    rnd.reset();
-                    for (long i = 0; i < n; i++) {
-                        Assert.assertEquals(rnd.nextLong(), rmem.getLong(i * 8));
-                    }
-                }
-            }
-            Assert.assertEquals(Files.PAGE_SIZE, Files.length(path));
-        }
-    }
-
-    @Test
-    public void testOpenExistingFileForAppend() {
-        try (Path path = new Path().of(root).concat("x.d").$()) {
-            try (MemoryPDARImpl mem = new MemoryPDARImpl()) {
-
-                // ensure flush() is no op on closed memory
-                mem.flush();
-
-                mem.of(FilesFacadeImpl.INSTANCE, path, 2048, MemoryTag.MMAP_DEFAULT);
-
-                try (MemoryCMR rmem = Vm.getCMARWInstance(
-                        FilesFacadeImpl.INSTANCE,
-                        path,
-                        FilesFacadeImpl._16M,
-                        0,
-                        MemoryTag.MMAP_DEFAULT
-                )
-                ) {
-                    int n = 100;
-                    Rnd rnd = new Rnd();
-                    long t = System.nanoTime();
                     for (long i = 0; i < n; i++) {
                         mem.putLong(rnd.nextLong());
                     }
@@ -159,7 +130,8 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                         FilesFacadeImpl.INSTANCE,
                         path.of(root).concat("x.d" + c).$(),
                         FilesFacadeImpl._16M,
-                        MemoryTag.MMAP_DEFAULT
+                        MemoryTag.MMAP_DEFAULT,
+                        CairoConfiguration.O_NONE
                 )
         ) {
             Rnd rnd = new Rnd();
@@ -191,6 +163,49 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
         latch.await();
     }
 
+    @Test
+    public void testOpenExistingFileForAppend() {
+        try (Path path = new Path().of(root).concat("x.d").$()) {
+            try (MemoryPDARImpl mem = new MemoryPDARImpl()) {
+
+                // ensure flush() is no op on closed memory
+                mem.flush();
+
+                mem.of(
+                        FilesFacadeImpl.INSTANCE,
+                        path,
+                        2048,
+                        MemoryTag.MMAP_DEFAULT,
+                        CairoConfiguration.O_NONE
+                );
+
+                try (MemoryCMR rmem = Vm.getCMARWInstance(
+                        FilesFacadeImpl.INSTANCE,
+                        path,
+                        FilesFacadeImpl._16M,
+                        0,
+                        MemoryTag.MMAP_DEFAULT,
+                        configuration.getWriterFileOpenOpts()
+                )
+                ) {
+                    int n = 100;
+                    Rnd rnd = new Rnd();
+                    for (long i = 0; i < n; i++) {
+                        mem.putLong(rnd.nextLong());
+                    }
+                    mem.flush();
+
+                    rmem.resize(n * 8);
+                    rnd.reset();
+                    for (long i = 0; i < n; i++) {
+                        Assert.assertEquals(rnd.nextLong(), rmem.getLong(i * 8));
+                    }
+                }
+            }
+            Assert.assertEquals(Files.PAGE_SIZE, Files.length(path));
+        }
+    }
+
     public void testSimple(int c, long n) {
         // write simple long
         try (
@@ -199,7 +214,8 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                         FilesFacadeImpl.INSTANCE,
                         path.of(root).concat("x.d" + c).$(),
                         FilesFacadeImpl._16M,
-                        MemoryTag.MMAP_DEFAULT
+                        MemoryTag.MMAP_DEFAULT,
+                        CairoConfiguration.O_DIRECT
                 )
         ) {
             Rnd rnd = new Rnd();
@@ -219,7 +235,8 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                             FilesFacadeImpl.INSTANCE,
                             path,
                             FilesFacadeImpl._16M,
-                            MemoryTag.MMAP_DEFAULT
+                            MemoryTag.MMAP_DEFAULT,
+                            CairoConfiguration.O_DIRECT
                     );
 
                     MemoryCMR rmem = Vm.getCMARWInstance(
@@ -227,7 +244,8 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                             path,
                             FilesFacadeImpl._16M,
                             0,
-                            MemoryTag.MMAP_DEFAULT
+                            MemoryTag.MMAP_DEFAULT,
+                            configuration.getWriterFileOpenOpts()
                     )
             ) {
                 int n = 100;

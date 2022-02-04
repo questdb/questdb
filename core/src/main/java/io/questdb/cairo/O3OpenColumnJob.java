@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.vm.api.MemoryMA;
-import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -492,10 +491,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 try {
                     // index files are opened as normal
                     iFile(pathToPartition.trimTo(plen), columnName);
-                    dstFixFd = openRW(ff, pathToPartition, LOG);
+                    dstFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                     // open data file now
                     dFile(pathToPartition.trimTo(plen), columnName);
-                    dstVarFd = openRW(ff, pathToPartition, LOG);
+                    dstVarFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 } catch (Throwable e) {
                     LOG.error().$("append mid partition error 2 [table=").$(tableWriter.getTableName())
                             .$(", e=").$(e)
@@ -558,7 +557,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             default:
                 try {
                     dFile(pathToPartition.trimTo(plen), columnName);
-                    dstFixFd = openRW(ff, pathToPartition, LOG);
+                    dstFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 } catch (Throwable e) {
                     LOG.error().$("append mid partition error 3 [table=").$(tableWriter.getTableName())
                             .$(", e=").$(e)
@@ -628,6 +627,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         long dstVFd = 0;
         long dstFixAddr;
         long dstFixOffset;
+        long dstFixFileOffset;
         long dstIndexOffset;
         long dstIndexAdjust;
         long dstFixSize;
@@ -641,18 +641,20 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstFixAddr = mapRW(ff, Math.abs(dstFixFd), dstFixSize, MemoryTag.MMAP_O3);
                 dstIndexOffset = dstFixOffset;
                 dstIndexAdjust = 0;
+                dstFixFileOffset = dstFixOffset;
             } else {
                 dstFixAddr = dstFixMem.getAppendAddress();
                 dstFixOffset = 0;
                 dstFixSize = -dstFixSize;
                 dstIndexOffset = 0;
                 dstIndexAdjust = srcDataMax - srcDataTop;
+                dstFixFileOffset = dstFixMem.getAppendOffset();
             }
             if (indexBlockCapacity > -1 && !indexWriter.isOpen()) {
                 BitmapIndexUtils.keyFileName(pathToPartition.trimTo(plen), columnName);
-                dstKFd = openRW(ff, pathToPartition, LOG);
+                dstKFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 BitmapIndexUtils.valueFileName(pathToPartition.trimTo(plen), columnName);
-                dstVFd = openRW(ff, pathToPartition, LOG);
+                dstVFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             }
         } catch (Throwable e) {
             LOG.error().$("append fix error [table=").$(tableWriter.getTableName())
@@ -696,6 +698,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstFixFd,
                 dstFixAddr,
                 dstFixOffset,
+                dstFixFileOffset,
                 dstFixSize,
                 0,
                 0,
@@ -740,17 +743,20 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         long dstFixFd = 0;
         long dstFixAddr;
         long dstFixOffset;
+        long dstFixFileOffset;
         long dstFixSize;
         final FilesFacade ff = tableWriter.getFilesFacade();
         try {
             dstFixSize = dstLen * Long.BYTES;
             if (dstFixMem == null || dstFixMem.getAppendAddressSize() < dstFixSize) {
                 dstFixOffset = srcDataMax * Long.BYTES;
+                dstFixFileOffset = dstFixOffset;
                 dstFixFd = -Math.abs(srcTimestampFd);
                 dstFixAddr = mapRW(ff, -dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
             } else {
                 dstFixAddr = dstFixMem.getAppendAddress();
                 dstFixOffset = 0;
+                dstFixFileOffset = dstFixMem.getAppendOffset();
                 dstFixSize = -dstFixSize;
             }
         } catch (Throwable e) {
@@ -793,6 +799,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstFixFd,
                 dstFixAddr,
                 dstFixOffset,
+                dstFixFileOffset,
                 dstFixSize,
                 0,
                 0,
@@ -840,6 +847,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
     ) {
         long dstFixAddr = 0;
         long dstFixOffset;
+        long dstFixFileOffset;
         long dstVarAddr = 0;
         long dstVarOffset;
         long dstVarAdjust;
@@ -853,6 +861,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 assert dstFixMem == null || dstFixMem.getAppendOffset() - Long.BYTES == (srcDataMax - srcDataTop) * Long.BYTES;
 
                 dstFixOffset = (srcDataMax - srcDataTop) * Long.BYTES;
+                dstFixFileOffset = dstFixOffset;
                 dstFixAddr = mapRW(ff, Math.abs(activeFixFd), dstFixSize, MemoryTag.MMAP_O3);
 
                 if (dstFixOffset > 0) {
@@ -871,6 +880,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstFixAddr = dstFixMem.getAppendAddress() - Long.BYTES;
                 dstVarAddr = dstVarMem.getAppendAddress();
                 dstFixOffset = 0;
+                dstFixFileOffset = dstFixMem.getAppendOffset() - Long.BYTES;
                 dstFixSize = -dstFixSize;
                 dstVarOffset = 0;
                 dstVarSize = -l;
@@ -916,6 +926,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 activeFixFd,
                 dstFixAddr,
                 dstFixOffset,
+                dstFixFileOffset,
                 dstFixSize,
                 activeVarFd,
                 dstVarAddr,
@@ -968,6 +979,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long dstFixFd,
             long dstFixAddr,
             long dstFixOffset,
+            long dstFixFileOffset,
             long dstFixSize,
             long dstVarFd,
             long dstVarAddr,
@@ -1020,6 +1032,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstFixFd,
                     dstFixAddr,
                     dstFixOffset,
+                    dstFixFileOffset,
                     dstFixSize,
                     dstVarFd,
                     dstVarAddr,
@@ -1073,6 +1086,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstFixFd,
                     dstFixAddr,
                     dstFixOffset,
+                    dstFixFileOffset,
                     dstFixSize,
                     dstVarFd,
                     dstVarAddr,
@@ -1127,6 +1141,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long dstFixFd,
             long dstFixAddr,
             long dstFixOffset,
+            long dstFixFileOffset,
             long dstFixSize,
             long dstVarFd,
             long dstVarAddr,
@@ -1182,6 +1197,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstFixFd,
                     dstFixAddr,
                     dstFixOffset,
+                    dstFixFileOffset,
                     dstFixSize,
                     dstVarFd,
                     dstVarAddr,
@@ -1233,6 +1249,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     dstFixFd,
                     dstFixAddr,
                     dstFixOffset,
+                    dstFixFileOffset,
                     dstFixSize,
                     dstVarFd,
                     dstVarAddr,
@@ -1287,6 +1304,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long dstFixFd,
             long dstFixAddr,
             long dstFixOffset,
+            long dstFixFileOffset,
             long dstFixSize,
             long dstVarFd,
             long dstVarAddr,
@@ -1339,6 +1357,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstFixFd,
                 dstFixAddr,
                 dstFixOffset,
+                dstFixFileOffset,
                 dstFixSize,
                 dstVarFd,
                 dstVarAddr,
@@ -1553,9 +1572,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             case ColumnType.STRING:
                 try {
                     iFile(pathToPartition.trimTo(plen), columnName);
-                    srcDataFixFd = openRW(ff, pathToPartition, LOG);
+                    srcDataFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                     dFile(pathToPartition.trimTo(plen), columnName);
-                    srcDataVarFd = openRW(ff, pathToPartition, LOG);
+                    srcDataVarFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 } catch (Throwable e) {
                     LOG.error().$("merge mid partition error 2 [table=").$(tableWriter.getTableName())
                             .$(", e=").$(e)
@@ -1614,7 +1633,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcDataFixFd = -srcTimestampFd;
                     } else {
                         dFile(pathToPartition.trimTo(plen), columnName);
-                        srcDataFixFd = openRW(ff, pathToPartition, LOG);
+                        srcDataFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                     }
                 } catch (Throwable e) {
                     LOG.error().$("merge mid partition error 3 [table=").$(tableWriter.getTableName())
@@ -1799,7 +1818,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             srcDataTopOffset = srcDataTop << shl;
 
             pathToPartition.trimTo(pDirNameLen).concat(columnName).put(FILE_SUFFIX_D).$();
-            dstFixFd = openRW(ff, pathToPartition, LOG);
+            dstFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             dstFixSize = ((srcOooHi - srcOooLo + 1) + srcDataMax - srcDataTop) << shl;
             dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
 
@@ -1824,9 +1843,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
             if (indexBlockCapacity > -1) {
                 BitmapIndexUtils.keyFileName(pathToPartition.trimTo(pDirNameLen), columnName);
-                dstKFd = openRW(ff, pathToPartition, LOG);
+                dstKFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 BitmapIndexUtils.valueFileName(pathToPartition.trimTo(pDirNameLen), columnName);
-                dstVFd = openRW(ff, pathToPartition, LOG);
+                dstVFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             }
 
             if (prefixType != O3_BLOCK_NONE) {
@@ -2102,13 +2121,13 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             pathToPartition.trimTo(pDirNameLen).concat(columnName);
             int pColNameLen = pathToPartition.length();
             pathToPartition.put(FILE_SUFFIX_I).$();
-            dstFixFd = openRW(ff, pathToPartition, LOG);
+            dstFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             dstFixSize = (srcOooHi - srcOooLo + 1 + srcDataMax - srcDataTop + 1) * Long.BYTES;
             dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
 
             pathToPartition.trimTo(pColNameLen);
             pathToPartition.put(FILE_SUFFIX_D).$();
-            dstVarFd = openRW(ff, pathToPartition, LOG);
+            dstVarFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             dstVarSize = srcDataVarSize - srcDataVarOffset
                     + O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr);
             dstVarAddr = mapRW(ff, dstVarFd, dstVarSize, MemoryTag.MMAP_O3);
@@ -2324,24 +2343,24 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         try {
             if (ColumnType.isVariableLength(columnType)) {
                 setPath(pathToPartition.trimTo(plen), columnName, FILE_SUFFIX_I);
-                dstFixFd = openRW(ff, pathToPartition, LOG);
+                dstFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 dstFixSize = (srcOooHi - srcOooLo + 1 + 1) * Long.BYTES;
                 dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
 
                 setPath(pathToPartition.trimTo(plen), columnName, FILE_SUFFIX_D);
-                dstVarFd = openRW(ff, pathToPartition, LOG);
+                dstVarFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 dstVarSize = O3Utils.getVarColumnLength(srcOooLo, srcOooHi, srcOooFixAddr);
                 dstVarAddr = mapRW(ff, dstVarFd, dstVarSize, MemoryTag.MMAP_O3);
             } else {
                 setPath(pathToPartition.trimTo(plen), columnName, FILE_SUFFIX_D);
-                dstFixFd = openRW(ff, pathToPartition, LOG);
+                dstFixFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 dstFixSize = (srcOooHi - srcOooLo + 1) << ColumnType.pow2SizeOf(Math.abs(columnType));
                 dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
                 if (indexBlockCapacity > -1) {
                     BitmapIndexUtils.keyFileName(pathToPartition.trimTo(plen), columnName);
-                    dstKFd = openRW(ff, pathToPartition, LOG);
+                    dstKFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                     BitmapIndexUtils.valueFileName(pathToPartition.trimTo(plen), columnName);
-                    dstVFd = openRW(ff, pathToPartition, LOG);
+                    dstVFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 }
             }
         } catch (Throwable e) {
@@ -2392,6 +2411,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 partitionTimestamp,
                 dstFixFd,
                 dstFixAddr,
+                0,
                 0,
                 dstFixSize,
                 dstVarFd,
@@ -2505,6 +2525,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstFixFd,
                         dstFixAddr,
                         0,
+                        0,
                         dstFixSize,
                         dstVarFd,
                         dstVarAddr,
@@ -2556,6 +2577,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         partitionTimestamp,
                         dstFixFd,
                         dstFixAddr,
+                        0,
                         0,
                         dstFixSize,
                         dstVarFd,
@@ -2612,6 +2634,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstFixFd,
                         dstFixAddr,
                         dstFixAppendOffset1,
+                        dstFixAppendOffset1,
                         dstFixSize,
                         dstVarFd,
                         dstVarAddr,
@@ -2664,6 +2687,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstFixFd,
                         dstFixAddr,
                         dstFixAppendOffset1,
+                        dstFixAppendOffset1,
                         dstFixSize,
                         dstVarFd,
                         dstVarAddr,
@@ -2715,6 +2739,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         partitionTimestamp,
                         dstFixFd,
                         dstFixAddr,
+                        dstFixAppendOffset1,
                         dstFixAppendOffset1,
                         dstFixSize,
                         dstVarFd,
@@ -2773,6 +2798,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstFixFd,
                         dstFixAddr,
                         dstFixAppendOffset2,
+                        dstFixAppendOffset2,
                         dstFixSize,
                         dstVarFd,
                         dstVarAddr,
@@ -2824,6 +2850,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         partitionTimestamp,
                         dstFixFd,
                         dstFixAddr,
+                        dstFixAppendOffset2,
                         dstFixAppendOffset2,
                         dstFixSize,
                         dstVarFd,

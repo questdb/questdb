@@ -61,6 +61,7 @@ public class O3CopyTask extends AbstractLockable {
     private long dstFixFd;
     private long dstFixAddr;
     private long dstFixOffset;
+    private long dstFixFileOffset;
     private long dstFixSize;
     private long dstVarFd;
     private long dstVarAddr;
@@ -102,6 +103,10 @@ public class O3CopyTask extends AbstractLockable {
 
     public long getDstFixOffset() {
         return dstFixOffset;
+    }
+
+    public long getDstFixFileOffset() {
+        return dstFixFileOffset;
     }
 
     public long getDstFixSize() {
@@ -303,6 +308,7 @@ public class O3CopyTask extends AbstractLockable {
             long dstFixFd,
             long dstFixAddr,
             long dstFixOffset,
+            long dstFixFileOffset,
             long dstFixSize,
             long dstVarFd,
             long dstVarAddr,
@@ -352,6 +358,7 @@ public class O3CopyTask extends AbstractLockable {
         this.dstFixFd = dstFixFd;
         this.dstFixAddr = dstFixAddr;
         this.dstFixOffset = dstFixOffset;
+        this.dstFixFileOffset = dstFixFileOffset;
         this.dstFixSize = dstFixSize;
         this.dstVarFd = dstVarFd;
         this.dstVarAddr = dstVarAddr;

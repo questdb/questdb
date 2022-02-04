@@ -42,7 +42,6 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.LockSupport;
 
 public class WriterPoolTest extends AbstractCairoTest {
 
@@ -156,11 +155,11 @@ public class WriterPoolTest extends AbstractCairoTest {
             int count = 1;
 
             @Override
-            public long openRW(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "z.lock") && count-- > 0) {
                     return -1;
                 }
-                return super.openRW(name);
+                return super.openRW(name, opts);
             }
 
             @Override
@@ -860,11 +859,11 @@ public class WriterPoolTest extends AbstractCairoTest {
             int count = 1;
 
             @Override
-            public long openRW(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "z.lock") && count-- > 0) {
                     return -1;
                 }
-                return super.openRW(name);
+                return super.openRW(name, opts);
             }
 
             @Override

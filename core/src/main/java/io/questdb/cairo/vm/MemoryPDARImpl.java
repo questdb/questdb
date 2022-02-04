@@ -24,8 +24,8 @@
 
 package io.questdb.cairo.vm;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -41,11 +41,11 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
     private long fd = -1;
     private int pageIndex;
 
-    public MemoryPDARImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag) {
+    public MemoryPDARImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag, long opts) {
         this.pageAddress = Unsafe.malloc(pageSize, memoryTag);
         this.pageIndex = -1;
         this.offsetInPage = 0;
-        of(ff, name, pageSize, memoryTag);
+        of(ff, name, pageSize, memoryTag, opts);
     }
 
     public MemoryPDARImpl() {
@@ -78,7 +78,7 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
         LOG.error().$("could not fsync [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
     }
 
-    public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag) {
+    public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
         if (this.ff != null) {
             // this is not the first invocation
             flushPage();
@@ -97,7 +97,15 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
         this.ff = ff;
         pageIndex = -1;
         setExtendSegmentSize(extendSegmentSize);
-        fd = TableUtils.openFileRWOrFail(ff, name);
+        long result;
+        final long fd1 = ff.openRW(name, opts);
+        if (fd1 > -1) {
+            LOG.debug().$("open [file=").$(name).$(", fd=").$(fd1).$(']').$();
+            result = fd1;
+        } else {
+            throw CairoException.instance(ff.errno()).put("could not open read-write [file=").put(name).put(']');
+        }
+        fd = result;
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", extendSegmentSize=").$(extendSegmentSize).$(']').$();
     }
 
@@ -161,14 +169,14 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
         realloc(extendSegmentSize, memoryTag);
-        of(ff, name, extendSegmentSize, memoryTag);
+        of(ff, name, extendSegmentSize, memoryTag, opts);
     }
 
     @Override
     public void wholeFile(FilesFacade ff, LPSZ name, int memoryTag) {
-        of(ff, name, ff.getMapPageSize(), memoryTag);
+        of(ff, name, ff.getMapPageSize(), memoryTag, CairoConfiguration.O_NONE);
     }
 
     void flushPage() {

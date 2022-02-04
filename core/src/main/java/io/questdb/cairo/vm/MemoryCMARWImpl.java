@@ -43,8 +43,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     private long extendSegmentMsb;
     private int memoryTag = MemoryTag.MMAP_DEFAULT;
 
-    public MemoryCMARWImpl(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
-        of(ff, name, extendSegmentSize, size, memoryTag);
+    public MemoryCMARWImpl(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+        of(ff, name, extendSegmentSize, size, memoryTag, opts);
     }
 
     public MemoryCMARWImpl() {
@@ -160,8 +160,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag) {
-        of(ff, name, extendSegmentSize, -1, memoryTag);
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
+        of(ff, name, extendSegmentSize, -1, memoryTag, opts);
     }
 
     @Override
@@ -214,10 +214,10 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
         this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
         this.minMappedMemorySize = extendSegmentSize;
-        openFile(ff, name);
+        openFile(ff, name, opts);
         map(ff, name, size, memoryTag);
     }
 
@@ -322,9 +322,9 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         }
     }
 
-    private void openFile(FilesFacade ff, LPSZ name) {
+    private void openFile(FilesFacade ff, LPSZ name, long opts) {
         close();
         this.ff = ff;
-        fd = TableUtils.openFileRWOrFail(ff, name);
+        fd = TableUtils.openFileRWOrFail(ff, name, opts);
     }
 }

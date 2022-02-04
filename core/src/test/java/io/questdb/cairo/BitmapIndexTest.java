@@ -52,7 +52,14 @@ public class BitmapIndexTest extends AbstractCairoTest {
         int plen = path.length();
         try {
             final FilesFacade ff = configuration.getFilesFacade();
-            try (MemoryMA mem = Vm.getSmallMAInstance(ff, BitmapIndexUtils.keyFileName(path, name), MemoryTag.MMAP_DEFAULT)) {
+            try (
+                    MemoryMA mem = Vm.getSmallMAInstance(
+                            ff,
+                            BitmapIndexUtils.keyFileName(path, name),
+                            MemoryTag.MMAP_DEFAULT,
+                            configuration.getWriterFileOpenOpts()
+                    )
+            ) {
                 BitmapIndexWriter.initKeyMemory(mem, Numbers.ceilPow2(valueBlockCapacity));
             }
             ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), name));
@@ -255,7 +262,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         };
         TestUtils.assertMemoryLeak(() -> {
             openKey().close();
-            assertBackwardReaderConstructorFail(configuration,"Index file too short");
+            assertBackwardReaderConstructorFail(configuration, "Index file too short");
             assertForwardReaderConstructorFail(configuration, "Index file too short");
         });
     }
@@ -342,7 +349,9 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     MemoryCMARW mem = Vm.getSmallCMARWInstance(
                             configuration.getFilesFacade(),
                             path.of(root).concat("x").put(".k").$(),
-                            MemoryTag.MMAP_DEFAULT)
+                            MemoryTag.MMAP_DEFAULT,
+                            configuration.getWriterFileOpenOpts()
+                    )
             ) {
                 // change sequence but not sequence check
                 long seq = mem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
@@ -867,7 +876,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testForwardReaderKeyUpdateFail() {
 
-        final  CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
             public long getSpinLockTimeoutUs() {
                 return 3000;
@@ -893,7 +902,9 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     MemoryCMARW mem = Vm.getSmallCMARWInstance(
                             configuration.getFilesFacade(),
                             path.of(root).concat("x").put(".k").$(),
-                            MemoryTag.MMAP_DEFAULT)
+                            MemoryTag.MMAP_DEFAULT,
+                            configuration.getWriterFileOpenOpts()
+                    )
             ) {
                 // change sequence but not sequence check
                 long seq = mem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
@@ -1251,7 +1262,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             final FilesFacade ff = FilesFacadeImpl.INSTANCE;
             try (Path path = new Path()) {
                 path.of(configuration.getRoot()).concat("x").put(".k").$();
-                long fd = TableUtils.openFileRWOrFail(ff, path);
+                long fd = TableUtils.openFileRWOrFail(ff, path, configuration.getWriterFileOpenOpts());
                 try {
                     ff.truncate(fd, 64);
                 } finally {
@@ -1349,7 +1360,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
             MemoryMA mem = Vm.getSmallCMARWInstance(
                     configuration.getFilesFacade(),
                     path.of(configuration.getRoot()).concat("x").put(".k").$(),
-                    MemoryTag.MMAP_DEFAULT
+                    MemoryTag.MMAP_DEFAULT,
+                    configuration.getWriterFileOpenOpts()
             );
             mem.toTop();
             return mem;

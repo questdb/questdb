@@ -83,7 +83,13 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
 
             // open "offset" memory and make sure we start appending from where
             // we left off. Where we left off is stored externally to symbol map
-            this.offsetMem = Vm.getWholeMARWInstance(ff, path, mapPageSize, MemoryTag.MMAP_INDEX_WRITER);
+            this.offsetMem = Vm.getWholeMARWInstance(
+                    ff,
+                    path,
+                    mapPageSize,
+                    MemoryTag.MMAP_INDEX_WRITER,
+                    configuration.getWriterFileOpenOpts()
+            );
             // formula for calculating symbol capacity needs to be in agreement with symbol reader
             final int symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
             assert symbolCapacity > 0;
@@ -101,7 +107,13 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
             );
 
             // this is the place where symbol values are stored
-            this.charMem = Vm.getWholeMARWInstance(ff, charFileName(path.trimTo(plen), name), mapPageSize, MemoryTag.MMAP_INDEX_WRITER);
+            this.charMem = Vm.getWholeMARWInstance(
+                    ff,
+                    charFileName(path.trimTo(plen), name),
+                    mapPageSize,
+                    MemoryTag.MMAP_INDEX_WRITER,
+                    configuration.getWriterFileOpenOpts()
+            );
 
             // move append pointer for symbol values in the correct place
             jumpCharMemToSymbolCount(symbolCount);
@@ -169,16 +181,6 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
 
     public static Path offsetFileName(Path path, CharSequence columnName) {
         return path.concat(columnName).put(".o").$();
-    }
-
-    public void appendSymbolCharsBlock(long blockSize, long sourceAddress) {
-        long appendOffset = charMem.getAppendOffset();
-        try {
-            charMem.jumpTo(appendOffset);
-            charMem.putBlockOfBytes(sourceAddress, blockSize);
-        } finally {
-            charMem.jumpTo(appendOffset);
-        }
     }
 
     @Override

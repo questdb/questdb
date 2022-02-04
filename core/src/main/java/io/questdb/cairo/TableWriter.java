@@ -3566,9 +3566,22 @@ public class TableWriter implements Closeable {
         MemoryMA mem2 = getSecondaryColumn(columnIndex);
 
         try {
-            mem1.of(ff, dFile(path.trimTo(pathTrimToLen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
+            mem1.of(ff, dFile(
+                    path.trimTo(pathTrimToLen), name),
+                    configuration.getDataAppendPageSize(),
+                    -1,
+                    MemoryTag.MMAP_TABLE_WRITER,
+                    configuration.getWriterFileOpenOpts()
+            );
             if (mem2 != null) {
-                mem2.of(ff, iFile(path.trimTo(pathTrimToLen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
+                mem2.of(
+                        ff,
+                        iFile(path.trimTo(pathTrimToLen), name),
+                        configuration.getDataAppendPageSize(),
+                        -1,
+                        MemoryTag.MMAP_TABLE_WRITER,
+                        configuration.getWriterFileOpenOpts()
+                );
             }
         } finally {
             path.trimTo(pathTrimToLen);

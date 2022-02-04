@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SqlJitMode;
@@ -193,6 +194,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(16, configuration.getCairoConfiguration().getColumnCastModelPoolCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getCreateTableModelPoolCapacity());
         Assert.assertEquals(1, configuration.getCairoConfiguration().getPartitionPurgeListCapacity());
+        Assert.assertEquals(CairoConfiguration.O_NONE, configuration.getCairoConfiguration().getWriterFileOpenOpts());
 
         Assert.assertEquals(0, configuration.getLineUdpReceiverConfiguration().getBindIPv4Address());
         Assert.assertEquals(9009, configuration.getLineUdpReceiverConfiguration().getPort());
@@ -605,6 +607,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(333000, configuration.getCairoConfiguration().getWriterAsyncCommandBusyWaitTimeout());
             Assert.assertEquals(7770001, configuration.getCairoConfiguration().getWriterAsyncCommandMaxTimeout());
             Assert.assertEquals(15, configuration.getCairoConfiguration().getWriterTickRowsCountMod());
+            Assert.assertEquals(CairoConfiguration.O_DIRECT | CairoConfiguration.O_SYNC, configuration.getCairoConfiguration().getWriterFileOpenOpts());
 
             Assert.assertEquals(2_000_000, configuration.getCairoConfiguration().getCommitLag());
             Assert.assertEquals(100000, configuration.getCairoConfiguration().getMaxUncommittedRows());

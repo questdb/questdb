@@ -44,7 +44,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
 
-import java.io.Closeable;
 import java.lang.ThreadLocal;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -171,7 +170,7 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             final Path path = new Path(4096);
             try (LineTcpReceiver receiver = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine)) {
                 sharedWorkerPool.assignCleaner(Path.CLEANER);
-                try (Closeable ignored = O3Utils.setupWorkerPool(sharedWorkerPool, engine.getMessageBus())) {
+                O3Utils.setupWorkerPool(sharedWorkerPool, engine.getMessageBus());
                     if (needMaintenanceJob) {
                         sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
                     }
@@ -186,7 +185,6 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                         O3Utils.freeBuf();
                         Path.clearThreadLocals();
                     }
-                }
             } catch (Throwable err) {
                 LOG.error().$("Stopping ILP receiver because of an error").$();
                 throw err;

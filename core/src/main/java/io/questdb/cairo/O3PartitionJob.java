@@ -185,7 +185,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     dFile(path.trimTo(plen), metadata.getColumnName(timestampIndex));
 
                     // also track the fd that we need to eventually close
-                    srcTimestampFd = openRW(ff, path, LOG);
+                    srcTimestampFd = openRW(ff, path, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                     srcTimestampAddr = mapRW(ff, srcTimestampFd, srcTimestampSize, MemoryTag.MMAP_O3);
                     dataTimestampHi = Unsafe.getUnsafe().getLong(srcTimestampAddr + srcTimestampSize - Long.BYTES);
                 }

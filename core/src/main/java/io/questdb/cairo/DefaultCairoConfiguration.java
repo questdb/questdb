@@ -401,6 +401,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getWriterFileOpenOpts() {
+        return Os.type != Os.WINDOWS ? O_ASYNC | O_DIRECT : O_NONE;
+    }
+
+    @Override
     public int getSqlCharacterStoreSequencePoolCapacity() {
         return 64;
     }
