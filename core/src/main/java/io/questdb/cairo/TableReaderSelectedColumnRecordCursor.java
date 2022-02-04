@@ -129,13 +129,6 @@ public class TableReaderSelectedColumnRecordCursor implements RecordCursor {
     }
 
     private boolean switchPartition() {
-        if (partitionIndex < partitionLimit) {
-            return switchPartition0();
-        }
-        return false;
-    }
-
-    private boolean switchPartition0() {
         while (partitionIndex < partitionLimit) {
             final long partitionSize = reader.openPartition(partitionIndex);
             if (partitionSize > 0) {

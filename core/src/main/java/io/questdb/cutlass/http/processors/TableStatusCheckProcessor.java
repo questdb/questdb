@@ -70,7 +70,7 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor, Closeabl
         if (tableName == null) {
             context.simpleResponse().sendStatus(200, "table name missing");
         } else {
-            int check = cairoEngine.getStatus(context.getCairoSecurityContext(), path, tableName);
+            int check = cairoEngine.getStatus(path, tableName);
             if (Chars.equalsNc("json", context.getRequestHeader().getUrlParam("f"))) {
                 HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
                 r.status(200, "application/json");

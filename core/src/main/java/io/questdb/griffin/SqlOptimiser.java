@@ -1853,7 +1853,7 @@ class SqlOptimiser {
             throw SqlException.$(tableNamePosition, "come on, where is table name?");
         }
 
-        int status = engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName, lo, hi);
+        int status = engine.getStatus(path, tableName, lo, hi);
 
         if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
             try {

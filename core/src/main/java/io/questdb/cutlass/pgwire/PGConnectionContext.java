@@ -2234,14 +2234,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void sendCopyInResponse(CairoEngine engine, TextLoader textLoader) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (
-                TableUtils.TABLE_EXISTS == engine.getStatus(
-                        sqlExecutionContext.getCairoSecurityContext(),
-                        path,
-                        textLoader.getTableName()
-                )) {
+        if (TableUtils.TABLE_EXISTS == engine.getStatus(path, textLoader.getTableName())) {
             responseAsciiSink.put(MESSAGE_TYPE_COPY_IN_RESPONSE);
-            long addr = responseAsciiSink.skip();
+            long address = responseAsciiSink.skip();
             responseAsciiSink.put((byte) 0); // TEXT (1=BINARY, which we do not support yet)
             try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), textLoader.getTableName(), WRITER_LOCK_REASON)) {
                 RecordMetadata metadata = writer.getMetadata();
@@ -2250,7 +2245,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     responseAsciiSink.putNetworkShort((short) PGOids.getTypeOid(metadata.getColumnType(i)));
                 }
             }
-            responseAsciiSink.putLen(addr);
+            responseAsciiSink.putLen(address);
         } else {
             final SqlException e = SqlException.$(0, "table '").put(textLoader.getTableName()).put("' does not exist");
             prepareError(e.getPosition(), e.getFlyweightMessage(), 0);

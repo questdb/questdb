@@ -280,7 +280,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private void initCacheEntry(CachedCharSequence token, CacheEntry entry) {
         switch (entry.state) {
             case 0:
-                int exists = engine.getStatus(cairoSecurityContext, path, token);
+                int exists = engine.getStatus(path, token);
                 switch (exists) {
                     case TABLE_EXISTS:
                         entry.state = 1;

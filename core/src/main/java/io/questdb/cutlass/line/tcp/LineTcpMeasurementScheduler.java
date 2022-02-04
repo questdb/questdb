@@ -270,7 +270,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             if (tudKeyIndex < 0) {
                 tab = tableUpdateDetailsUtf16.valueAt(tudKeyIndex);
             } else {
-                int status = engine.getStatus(securityContext, path, tableNameUtf16, 0, tableNameUtf16.length());
+                int status = engine.getStatus(path, tableNameUtf16, 0, tableNameUtf16.length());
                 if (status != TableUtils.TABLE_EXISTS) {
                     // validate that parser entities do not contain NULLs
                     TableStructureAdapter tsa = tableStructureAdapter.of(tableNameUtf16, parser);

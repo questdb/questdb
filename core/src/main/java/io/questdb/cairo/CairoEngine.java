@@ -133,7 +133,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 );
                 newTable = true;
             } finally {
-                unlock(securityContext, struct.getTableName(), null, newTable);
+                unlock(struct.getTableName(), null, newTable);
             }
         } else {
             throw EntryUnavailableException.instance(lockedReason);
@@ -239,7 +239,6 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public int getStatus(
-            CairoSecurityContext securityContext,
             Path path,
             CharSequence tableName,
             int lo,
@@ -252,11 +251,10 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public int getStatus(
-            CairoSecurityContext securityContext,
             Path path,
             CharSequence tableName
     ) {
-        return getStatus(securityContext, path, tableName, 0, tableName.length());
+        return getStatus(path, tableName, 0, tableName.length());
     }
 
     public Sequence getTelemetryPubSequence() {
@@ -383,7 +381,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
                 return;
             } finally {
-                unlock(securityContext, tableName, null, false);
+                unlock(tableName, null, false);
             }
         }
         throw CairoException.instance(configuration.getFilesFacade().errno()).put("Could not lock '").put(tableName).put("' [reason='").put(lockedReason).put("']");
@@ -408,7 +406,7 @@ public class CairoEngine implements Closeable, WriterSource {
             try {
                 rename0(path, tableName, otherPath, newName);
             } finally {
-                unlock(securityContext, tableName, null, false);
+                unlock(tableName, null, false);
             }
         } else {
             LOG.error().$("cannot lock and rename [from='").$(tableName).$("', to='").$(newName).$("', reason='").$(lockedReason).$("']").$();
@@ -464,7 +462,6 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void unlock(
-            CairoSecurityContext securityContext,
             CharSequence tableName,
             @Nullable TableWriter writer,
             boolean newTable

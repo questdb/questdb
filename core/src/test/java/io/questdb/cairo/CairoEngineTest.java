@@ -209,7 +209,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 assertReader(engine, "x");
                 assertWriter(engine, "x");
                 engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "x");
-                Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, "x"));
+                Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getStatus(path, "x"));
 
                 try {
                     engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION);
@@ -233,7 +233,7 @@ public class CairoEngineTest extends AbstractCairoTest {
 
         try (CairoEngine engine = new CairoEngine(configuration)) {
             engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "x");
-            Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, "x"));
+            Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getStatus(path, "x"));
         }
     }
 
