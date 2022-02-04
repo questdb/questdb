@@ -42,7 +42,6 @@ import io.questdb.std.ObjList;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class SampleByTest extends AbstractGriffinTest {
