@@ -2338,8 +2338,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         "t TIMESTAMP, " +
                         "x SYMBOL capacity 16 cache, " +
                         "z STRING, " +
-                        "y BOOLEAN) " +
-                        "partition by MONTH",
+                        "y BOOLEAN) ",
                 sqlExecutionContext
         );
 
@@ -2350,7 +2349,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     "{\"columnCount\":12,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"b\",\"type\":\"BYTE\"},{\"index\":2,\"name\":\"c\",\"type\":\"SHORT\"},{\"index\":3,\"name\":\"d\",\"type\":\"LONG\"},{\"index\":4,\"name\":\"e\",\"type\":\"FLOAT\"},{\"index\":5,\"name\":\"f\",\"type\":\"DOUBLE\"},{\"index\":6,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"h\",\"type\":\"BINARY\"},{\"index\":8,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":9,\"name\":\"x\",\"type\":\"SYMBOL\"},{\"index\":10,\"name\":\"z\",\"type\":\"STRING\"},{\"index\":11,\"name\":\"y\",\"type\":\"BOOLEAN\"}],\"timestampIndex\":-1}",
                     sink);
 
-            Assert.assertEquals(PartitionBy.MONTH, reader.getPartitionedBy());
+            Assert.assertEquals(PartitionBy.NONE, reader.getPartitionedBy());
             Assert.assertEquals(0L, reader.size());
 
             SymbolMapReader symbolMapReader = reader.getSymbolMapReader(reader.getMetadata().getColumnIndexQuiet("x"));
