@@ -291,7 +291,6 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
         testOrderByWithFilter("short", ORDER_DESC);
     }
 
-
     @Test
     public void testOrderByAscWithIntFilter() throws Exception {
         testOrderByWithFilter("int", ORDER_ASC);
@@ -368,9 +367,13 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
             assertQuery(expectedResult,
                     ("select x from test where x in ('1', '2', '3') and y = NaN order by ts " + (order == ORDER_ASC ? "asc" : "desc")).replace("#TYPE#", type),
                     null, null, true, false, false);
+        } else if ("char".equals(type)) {
+            assertQuery(expectedResult,
+                    ("select x from test where x in (cast(1 as char), cast(2 as char), cast(3 as char)) and y = NaN order by ts " + (order == ORDER_ASC ? "asc" : "desc")).replace("#TYPE#", type),
+                    null, null, true, false, false);
         } else {
             assertQuery(expectedResult,
-                    ("select x from test where x <= cast(3 as #TYPE#) and y = NaN order by ts " + (order == ORDER_ASC ? "asc" : "desc")).replace("#TYPE#", type),
+                    ("select x from test where x <= 3 and y = NaN order by ts " + (order == ORDER_ASC ? "asc" : "desc")).replace("#TYPE#", type),
                     null, null, true, false, false);
         }
     }
