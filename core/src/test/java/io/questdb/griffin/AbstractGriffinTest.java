@@ -1175,6 +1175,10 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
+    protected static void assertCompile(CharSequence query) throws Exception {
+        assertMemoryLeak(() -> compile(query));
+    }
+
     @NotNull
     protected static CompiledQuery compile(CharSequence query) throws SqlException {
         return compile(query, sqlExecutionContext);

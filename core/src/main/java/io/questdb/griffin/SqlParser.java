@@ -631,6 +631,7 @@ public final class SqlParser {
                     columnCastModel.setIndexValueBlockSize(Numbers.ceilPow2(indexValueBlockSize));
                 } else {
                     columnCastModel.setIndexValueBlockSize(configuration.getIndexValueBlockSize());
+                    lexer.unparse();
                 }
             } else {
                 columnCastModel.setIndexed(false);
