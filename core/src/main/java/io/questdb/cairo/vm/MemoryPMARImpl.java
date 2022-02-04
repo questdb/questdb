@@ -112,7 +112,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     @Override
     protected void release(long address) {
         if (commitMode != CommitMode.NOSYNC) {
-            if (ff.msync(address, getPageSize(), false) != 0) {
+            if (ff.msync(address, getPageSize(), commitMode == CommitMode.ASYNC) != 0) {
                 LOG.error().$("could not msync released page [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
             }
         }

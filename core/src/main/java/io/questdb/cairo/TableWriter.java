@@ -618,7 +618,7 @@ public class TableWriter implements Closeable {
                     txWriter.beginPartitionSizeUpdate();
                     txWriter.updatePartitionSizeByTimestamp(timestamp, partitionSize);
                     txWriter.finishPartitionSizeUpdate(nextMinTimestamp, nextMaxTimestamp);
-                    txWriter.commit( denseSymbolMapWriters);
+                    txWriter.commit(denseSymbolMapWriters);
                     if (appendPartitionAttached) {
                         freeColumns(true);
                         configureAppendPosition();
