@@ -130,12 +130,12 @@ stages:
               options:
                 "compile -DskipTests"
               jdkVersionOption: "1.11"
-#          - download: current
-#            artifact: coverage-cairo
+          - download: current
+            artifact: coverage-cairo
           - download: current
             artifact: coverage-griffin
-#          - download: current
-#            artifact: coverage-other
+          - download: current
+            artifact: coverage-other
           - task: Maven@3
             displayName: "Merge coverage reports"
             inputs:
