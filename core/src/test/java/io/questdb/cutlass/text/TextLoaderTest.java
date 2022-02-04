@@ -3105,7 +3105,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
         textLoader.configureColumnDelimiter((byte) 44);
     }
 
-    private void configureLoaderDefaults0(TextLoader textLoader) {
+    private void configureLoaderDefaultsForImport(TextLoader textLoader) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
         textLoader.configureDestination("test", false, Atomicity.SKIP_COL, PartitionBy.DAY, "ts");
         textLoader.configureColumnDelimiter((byte) 44);
@@ -3223,7 +3223,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             assertNoLeak(
                     engine,
                     textLoader -> {
-                        configureLoaderDefaults(textLoader);
+                        configureLoaderDefaultsForImport(textLoader);
                         textLoader.setForceHeaders(true);
                         textLoader.setCommitLag(commitLag);
                         textLoader.setMaxUncommittedRows(maxUncommittedRows);

@@ -4612,8 +4612,7 @@ public class TableWriter implements Closeable {
 
     private void syncColumns() {
         for (int i = 0; i < columnCount; i++) {
-            final MemoryMAR m1 = columns.getQuick(i * 2);
-            m1.sync();
+            columns.getQuick(i * 2).sync();
             final MemoryMAR m2 = columns.getQuick(i * 2 + 1);
             if (m2 != null) {
                 m2.sync();
