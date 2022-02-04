@@ -23,7 +23,7 @@
  ******************************************************************************/
 
 module.exports = {
-  monacoPatterns: [
+  assetCopyPatterns: [
     {
       from: "node_modules/monaco-editor/min/vs/loader.js",
       to: "assets/vs/loader.js",
@@ -43,7 +43,7 @@ module.exports = {
     { from: "node_modules/monaco-editor/min/vs/base", to: "assets/vs/base" },
   ],
 
-  monacoMapPatterns: [
+  sourceMapCopyPatterns: [
     { from: "node_modules/monaco-editor/min-maps/vs/", to: "min-maps/vs" },
   ],
 }

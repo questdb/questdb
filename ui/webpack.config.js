@@ -31,7 +31,7 @@ const MiniCssExtractPlugin = require("mini-css-extract-plugin")
 const Webpack = require("webpack")
 const AnalyzerPlugin = require("webpack-bundle-analyzer").BundleAnalyzerPlugin
 
-const { monacoPatterns, monacoMapPatterns } = require("./monaco.config")
+const monacoConfig = require("./monaco.config")
 require("dotenv").config()
 
 const PORT = 9999
@@ -79,15 +79,18 @@ const devPlugins = [
   new CopyWebpackPlugin({
     patterns: [
       { from: "./assets/", to: "assets/" },
-      ...monacoPatterns,
-      ...monacoMapPatterns,
+      ...monacoConfig.assetCopyPatterns,
+      ...monacoConfig.sourceMapCopyPatterns,
     ],
   }),
 ]
 
 const prodPlugins = [
   new CopyWebpackPlugin({
-    patterns: [{ from: "./assets/", to: "assets/" }, ...monacoPatterns],
+    patterns: [
+      { from: "./assets/", to: "assets/" },
+      ...monacoConfig.assetCopyPatterns,
+    ],
   }),
 ]
 
