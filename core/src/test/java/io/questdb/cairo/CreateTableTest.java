@@ -91,6 +91,13 @@ public class CreateTableTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCreateTableAsSelectWithCastAndIndexCapacityOnTheSameColumn() throws Exception {
+        assertCompile("create table old(s string,l long, ts timestamp)");
+        assertQuery("s\tl\tts\n", "select * from new",
+                "create table new as (select * from old), cast(s as symbol index capacity 10)", null);
+    }
+
+    @Test
     public void testCreateTableAsSelectWithMultipleCastWithIndexes() throws Exception {
         assertCompile("create table old(s string, sym symbol, ts timestamp)");
         assertQuery("s\tsym\tts\n", "select * from new",
@@ -118,14 +125,14 @@ public class CreateTableTest extends AbstractGriffinTest {
                 "create table new as (select * from old), cast(s as symbol), index(s), cast(ts as date), index(sym), cast(sym as symbol)", null);
     }
 
-    @Test//this should be fixed!!!
+    @Test
     public void testCreateTableAsSelectWithMultipleInterleavedCastAndIndexesV2() throws Exception {
         assertCompile("create table old(s string,sym symbol, ts timestamp)");
         assertQuery("s\tsym\tts\n", "select * from new",
                 "create table new as (select * from old), cast(s as symbol), index(s), cast(ts as date), index(sym), cast(sym as symbol index)", null);
     }
 
-    @Test//this should be fixed!!!
+    @Test
     public void testCreateTableAsSelectWithMultipleInterleavedCastAndIndexesV3() throws Exception {
         assertCompile("create table old(s string,sym symbol, ts timestamp)");
         assertQuery("s\tsym\tts\n", "select * from new",
