@@ -42,8 +42,11 @@ import java.util.concurrent.TimeUnit;
 
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
-@OutputTimeUnit(TimeUnit.MICROSECONDS)
+@OutputTimeUnit(TimeUnit.MILLISECONDS)
 public class TableWriteBenchmark {
+
+    // Should be set close enough to the cairo.max.uncommitted.rows default value.
+    private static final int ROWS_PER_ITERATION = 500_000;
 
     private static TableWriter writer;
     private static TableWriter writer2;
@@ -57,8 +60,8 @@ public class TableWriteBenchmark {
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
                 .include(TableWriteBenchmark.class.getSimpleName())
-                .warmupIterations(5)
-                .measurementIterations(5)
+                .warmupIterations(1)
+                .measurementIterations(3)
                 .forks(1)
                 .build();
 
@@ -67,6 +70,112 @@ public class TableWriteBenchmark {
 
     @Setup(Level.Iteration)
     public void setup() throws Exception {
+        final CairoConfiguration configuration = getConfiguration();
+
+        executeDdl("create table if not exists test1(f long)", configuration);
+        executeDdl("create table if not exists test2(f timestamp) timestamp (f)", configuration);
+        executeDdl("create table if not exists test3(f timestamp) timestamp (f) PARTITION BY DAY", configuration);
+
+        LogFactory.INSTANCE.haltThread();
+
+        writer = new TableWriter(configuration, "test1");
+        writer2 = new TableWriter(configuration, "test2");
+        writer3 = new TableWriter(configuration, "test3");
+        rnd.reset();
+    }
+
+    @TearDown(Level.Iteration)
+    public void tearDown() {
+        writer.commit();
+        writer.truncate();
+        writer.close();
+        writer2.commit();
+        writer2.truncate();
+        writer2.close();
+        writer3.commit();
+        writer3.truncate();
+        writer3.close();
+
+        ts = 0;
+
+        final CairoConfiguration configuration = getConfiguration();
+        executeDdl("drop table test1", configuration);
+        executeDdl("drop table test2", configuration);
+        executeDdl("drop table test3", configuration);
+    }
+
+    @Benchmark
+    public void testWrite() {
+        for (int i = 0; i < ROWS_PER_ITERATION; i++) {
+            TableWriter.Row r = writer.newRow();
+            r.putLong(0, rnd.nextLong());
+            r.append();
+        }
+        writer.commit();
+    }
+
+    @Benchmark
+    public void testWriteNoCommit() {
+        for (int i = 0; i < ROWS_PER_ITERATION; i++) {
+            TableWriter.Row r = writer.newRow();
+            r.putLong(0, rnd.nextLong());
+            r.append();
+        }
+    }
+
+    @Benchmark
+    public void testWriteTimestamp() {
+        for (int i = 0; i < ROWS_PER_ITERATION; i++) {
+            TableWriter.Row r = writer2.newRow(ts++ << 8);
+            r.append();
+        }
+        writer2.commit();
+    }
+
+    @Benchmark
+    public void testWriteTimestampNoCommit() {
+        for (int i = 0; i < ROWS_PER_ITERATION; i++) {
+            TableWriter.Row r = writer2.newRow(ts++ << 8);
+            r.append();
+        }
+    }
+
+    @Benchmark
+    public void testWritePartitionedTimestampNoCommit() {
+        for (int i = 0; i < ROWS_PER_ITERATION; i++) {
+            TableWriter.Row r = writer3.newRow(ts++ << 8);
+            r.append();
+        }
+    }
+
+    @Benchmark
+    public void testWritePartitionedTimestamp() {
+        for (int i = 0; i < ROWS_PER_ITERATION; i++) {
+            TableWriter.Row r = writer3.newRow(ts++ << 8);
+            r.append();
+        }
+        writer3.commit();
+    }
+
+    private void executeDdl(String ddl, CairoConfiguration configuration) {
+        try (CairoEngine engine = new CairoEngine(configuration)) {
+            SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                    .with(
+                            AllowAllCairoSecurityContext.INSTANCE,
+                            null,
+                            null,
+                            -1,
+                            null
+                    );
+            try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                compiler.compile(ddl, sqlExecutionContext);
+            } catch (SqlException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private CairoConfiguration getConfiguration() {
         final int commitMode;
         switch (writerCommitMode) {
             case NOSYNC:
@@ -82,101 +191,12 @@ public class TableWriteBenchmark {
                 throw new IllegalStateException("Unexpected commit mode: " + writerCommitMode);
         }
 
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(".") {
+        return new DefaultCairoConfiguration(".") {
             @Override
             public int getCommitMode() {
                 return commitMode;
             }
         };
-
-        try (CairoEngine engine = new CairoEngine(configuration)) {
-            SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                    .with(
-                            AllowAllCairoSecurityContext.INSTANCE,
-                            null,
-                            null,
-                            -1,
-                            null
-                    );
-            try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                compiler.compile("create table if not exists test1(f long) ", sqlExecutionContext);
-                compiler.compile("create table if not exists test2(f timestamp) timestamp (f)", sqlExecutionContext);
-                compiler.compile("create table if not exists test3(f timestamp) timestamp (f) PARTITION BY DAY", sqlExecutionContext);
-            } catch (SqlException e) {
-                e.printStackTrace();
-            }
-        }
-
-        LogFactory.INSTANCE.haltThread();
-
-        writer = new TableWriter(configuration, "test1");
-        writer2 = new TableWriter(configuration, "test2");
-        writer3 = new TableWriter(configuration, "test3");
-        rnd.reset();
-    }
-
-    @TearDown(Level.Iteration)
-    public void tearDown() {
-        System.out.println("writer size = " + Math.max(writer.size(), writer2.size()));
-        writer.commit();
-        writer.truncate();
-        writer.close();
-
-        writer2.commit();
-        writer2.truncate();
-        writer2.close();
-
-        writer3.commit();
-        writer3.truncate();
-        writer3.close();
-
-        ts = 0;
-    }
-
-    @Benchmark
-    public void testRnd() {
-        rnd.nextLong();
-    }
-
-    @Benchmark
-    public void testWrite() {
-        TableWriter.Row r = writer.newRow();
-        r.putLong(0, rnd.nextLong());
-        r.append();
-        writer.commit();
-    }
-
-    @Benchmark
-    public void testWriteNoCommit() {
-        TableWriter.Row r = writer.newRow();
-        r.putLong(0, rnd.nextLong());
-        r.append();
-    }
-
-    @Benchmark
-    public void testWriteTimestamp() {
-        TableWriter.Row r = writer2.newRow(ts++ << 8);
-        r.append();
-        writer2.commit();
-    }
-
-    @Benchmark
-    public void testWriteTimestampNoCommit() {
-        TableWriter.Row r = writer2.newRow(ts++ << 8);
-        r.append();
-    }
-
-    @Benchmark
-    public void testWritePartitionedTimestampNoCommit() {
-        TableWriter.Row r = writer3.newRow(ts++ << 8);
-        r.append();
-    }
-
-    @Benchmark
-    public void testWritePartitionedTimestamp() {
-        TableWriter.Row r = writer3.newRow(ts++ << 8);
-        r.append();
-        writer3.commit();
     }
 
     public enum WriterCommitMode {
