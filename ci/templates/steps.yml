@@ -92,11 +92,13 @@ steps:
         eq(variables['testset'], 'coverage'),
         eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
       ), succeeded())
-  - publish: "$(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco-$(system.JobId).exec"
+  - task: PublishBuildArtifacts@1
     displayName: "Publish jacoco report"
-    artifact: jacoco-coverage
     condition: |
       and(and(
         eq(variables['testset'], 'coverage'),
         eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
       ), succeeded())
+    inputs:
+      pathToPublish: "$(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco-$(system.JobId).exec"
+      artifactName: jacoco-coverage
