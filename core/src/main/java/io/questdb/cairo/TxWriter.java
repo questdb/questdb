@@ -34,6 +34,7 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableUtils.TX_BASE_OFFSET_PARTITIONS_SIZE_A_32;
 
 public final class TxWriter extends TxReader implements Closeable, Mutable, SymbolValueCountCollector {
     private final static Log LOG = LogFactory.getLog(TxWriter.class);
@@ -45,9 +46,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     private long prevMinTimestamp;
     private final OffsetWriterMemory txMem = new OffsetWriterMemory();
     private MemoryCMARW txMemBase;
-    private long readBaseOffset;
-    private long writeBaseOffset;
-    private long writeAreaSize;
+    private int readBaseOffset;
+    private int writeBaseOffset;
+    private int writeAreaSize;
     private long baseVersion;
     private long readRecordSize;
 
@@ -142,20 +143,31 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         throw new IllegalStateException();
     }
 
-    public void truncate() {
-        maxTimestamp = Long.MIN_VALUE;
-        minTimestamp = Long.MAX_VALUE;
-        prevTransientRowCount = 0;
-        transientRowCount = 0;
-        fixedRowCount = 0;
-        txPartitionCount = 1;
-        attachedPositionDirtyIndex = 0;
-        attachedPartitions.clear();
+    public void commit(int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
+        symbolColumnCount = symbolCountProviders.size();
 
         writeAreaSize = calculateWriteSize();
-        writeBaseOffset = calculateWriteOffset(writeAreaSize);
-        resetTxn(txMemBase, writeBaseOffset, getSymbolColumnCount(), ++txn, ++dataVersion, ++partitionTableVersion, structureVersion);
-        finishABHeader(writeBaseOffset, writeAreaSize, CommitMode.NOSYNC);
+        writeBaseOffset = calculateWriteOffset();
+        txMem.putLong(TX_OFFSET_TXN, ++txn);
+        txMem.putLong(TX_OFFSET_TRANSIENT_ROW_COUNT, transientRowCount);
+        txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT, fixedRowCount);
+        txMem.putLong(TX_OFFSET_MIN_TIMESTAMP, minTimestamp);
+        txMem.putLong(TX_OFFSET_MAX_TIMESTAMP, maxTimestamp);
+        txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, this.partitionTableVersion);
+        txMem.putLong(TX_OFFSET_STRUCT_VERSION, structureVersion);
+        txMem.putLong(TX_OFFSET_DATA_VERSION, dataVersion);
+        txMem.putInt(TX_OFFSET_MAP_WRITER_COUNT, symbolColumnCount);
+
+        // store symbol counts
+        storeSymbolCounts(symbolCountProviders);
+
+        // store attached partitions
+        txPartitionCount = 1;
+        attachedPositionDirtyIndex = 0;
+        saveAttachedPartitionsToTx(symbolColumnCount);
+        finishABHeader(writeBaseOffset, symbolColumnCount * 8, attachedPartitions.size() * 8, commitMode);
+
+        prevTransientRowCount = transientRowCount;
     }
 
     public void removeAttachedPartitions(long timestamp) {
@@ -180,30 +192,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         writeTransientSymbolCount(symbolIndexInTxWriter, count);
     }
 
-    public void commit(int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
-        symbolColumnCount = symbolCountProviders.size();
-
-        writeAreaSize = calculateWriteSize();
-        writeBaseOffset = calculateWriteOffset(writeAreaSize);
-        txMem.putLong(TX_OFFSET_TXN, ++txn);
-        txMem.putLong(TX_OFFSET_TRANSIENT_ROW_COUNT, transientRowCount);
-        txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT, fixedRowCount);
-        txMem.putLong(TX_OFFSET_MIN_TIMESTAMP, minTimestamp);
-        txMem.putLong(TX_OFFSET_MAX_TIMESTAMP, maxTimestamp);
-        txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, this.partitionTableVersion);
-        txMem.putLong(TX_OFFSET_STRUCT_VERSION, structureVersion);
-        txMem.putInt(TX_OFFSET_MAP_WRITER_COUNT, symbolColumnCount);
-
-        // store symbol counts
-        storeSymbolCounts(symbolCountProviders);
-
-        // store attached partitions
-        txPartitionCount = 1;
-        attachedPositionDirtyIndex = 0;
-        saveAttachedPartitionsToTx(symbolColumnCount);
-        finishABHeader(writeBaseOffset, writeAreaSize, commitMode);
-
-        prevTransientRowCount = transientRowCount;
+    public void reset(long fixedRowCount, long transientRowCount, long maxTimestamp, int commitMode, ObjList<SymbolMapWriter> symbolCountProviders) {
+        this.fixedRowCount = fixedRowCount;
+        this.maxTimestamp = maxTimestamp;
+        this.transientRowCount = transientRowCount;
+        commit(commitMode, symbolCountProviders);
     }
 
     public void finishPartitionSizeUpdate(long minTimestamp, long maxTimestamp) {
@@ -261,26 +254,20 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         updateAttachedPartitionSizeByTimestamp(timestamp, 0);
     }
 
-    public void reset(long fixedRowCount, long transientRowCount, long maxTimestamp) {
-        throw new IllegalStateException();
-//        long txn = txMem.getLong(TX_OFFSET_TXN) + 1;
-//        txMem.putLong(TX_OFFSET_TXN, txn);
-//        Unsafe.getUnsafe().storeFence();
-//
-//        txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT, fixedRowCount);
-//        if (this.maxTimestamp != maxTimestamp) {
-//            txMem.putLong(TX_OFFSET_MAX_TIMESTAMP, maxTimestamp);
-//            txMem.putLong(TX_OFFSET_TRANSIENT_ROW_COUNT, transientRowCount);
-//        }
-//        Unsafe.getUnsafe().storeFence();
-//
-//        // txn check
-//        txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
-//
-//        this.fixedRowCount = fixedRowCount;
-//        this.maxTimestamp = maxTimestamp;
-//        this.transientRowCount = transientRowCount;
-//        this.txn = txn;
+    public void truncate() {
+        maxTimestamp = Long.MIN_VALUE;
+        minTimestamp = Long.MAX_VALUE;
+        prevTransientRowCount = 0;
+        transientRowCount = 0;
+        fixedRowCount = 0;
+        txPartitionCount = 1;
+        attachedPositionDirtyIndex = 0;
+        attachedPartitions.clear();
+
+        writeAreaSize = calculateWriteSize();
+        writeBaseOffset = calculateWriteOffset();
+        resetTxn(txMemBase, writeBaseOffset, getSymbolColumnCount(), ++txn, ++dataVersion, ++partitionTableVersion, structureVersion);
+        finishABHeader(writeBaseOffset, symbolColumnCount * 8, 0, CommitMode.NOSYNC);
     }
 
     public boolean unsafeLoadAll() {
@@ -297,34 +284,46 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return false;
     }
 
-    private long calculateWriteOffset(long areaSize) {
+    private int calculateWriteOffset() {
+        int areaSize = calculateTxRecordSize(symbolColumnCount * 8, attachedPartitions.size() * 8);
         boolean currentIsA = baseVersion % 2 == 0;
-        long currentOffset = currentIsA ? txMemBase.getLong(TX_BASE_OFFSET_A) : txMemBase.getLong(TX_BASE_OFFSET_B);
-        if (TX_BASE_HEADER_SIZE + areaSize < currentOffset) {
+        int currentOffset = currentIsA ? txMemBase.getInt(TX_BASE_OFFSET_A_32) : txMemBase.getInt(TX_BASE_OFFSET_B_32);
+        if (TX_BASE_HEADER_SIZE + areaSize <= currentOffset) {
             return TX_BASE_HEADER_SIZE;
         }
-        long currentSize = currentIsA ? txMemBase.getLong(TX_BASE_OFFSET_SIZE_A) : txMemBase.getLong(TX_BASE_OFFSET_SIZE_B);
-        return currentSize + currentOffset;
+        int currentSizeSymbols = currentIsA ? txMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32) : txMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
+        int currentSizePartitions = currentIsA ? txMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32) : txMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32);
+        int currentSize = calculateTxRecordSize(currentSizeSymbols, currentSizePartitions);
+        return currentOffset + currentSize;
     }
 
-    private long calculateWriteSize() {
-        return getPartitionTableIndexOffset(symbolColumnCount, attachedPartitions.size());
+    private int calculateWriteSize() {
+        // If by any action data is reset, clear attachedPartitions
+        if (maxTimestamp == Long.MIN_VALUE) {
+            attachedPartitions.clear();
+        }
+        return (int) getPartitionTableIndexOffset(symbolColumnCount, attachedPartitions.size());
     }
 
-    private void finishABHeader(long areaOffset, long areaSize, int commitMode) {
+    private void finishABHeader(int areaOffset, int bytesSymbols, int bytesPartitions, int commitMode) {
         boolean currentIsA = baseVersion % 2 == 0;
-        long offsetOffset = currentIsA ? TX_BASE_OFFSET_B : TX_BASE_OFFSET_A; // When current is A, write to B
-        long sizeOffset = currentIsA ? TX_BASE_OFFSET_SIZE_B : TX_BASE_OFFSET_SIZE_A; // When current is A, write to B
 
-        txMemBase.putLong(offsetOffset, areaOffset);
-        txMemBase.putLong(sizeOffset, areaSize);
+        // When current is A, write to B
+        long offsetOffset = currentIsA ? TX_BASE_OFFSET_B_32 : TX_BASE_OFFSET_A_32;
+        long symbolSizeOffset = currentIsA ? TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 : TX_BASE_OFFSET_SYMBOLS_SIZE_A_32;
+        long partitionsSizeOffset = currentIsA ? TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 : TX_BASE_OFFSET_PARTITIONS_SIZE_A_32;
+
+        txMemBase.putInt(offsetOffset, areaOffset);
+        txMemBase.putInt(symbolSizeOffset, bytesSymbols);
+        txMemBase.putInt(partitionsSizeOffset, bytesPartitions);
 
         Unsafe.getUnsafe().storeFence();
-        txMemBase.putLong(TX_BASE_OFFSET_VERSION, ++baseVersion);
+        txMemBase.putLong(TX_BASE_OFFSET_VERSION_64, ++baseVersion);
 
-        LOG.debug().$("wrote txn record ").$(currentIsA ? "B:" : "A:").$(baseVersion).$(", offset=").$(areaOffset).$(", size=").$(areaSize).$(", txn=").$(txn).$();
+        this.readRecordSize = calculateTxRecordSize(bytesSymbols, bytesPartitions);
+//        LOG.infoW().$("wrote txn record ").$(currentIsA ? "B:" : "A:").$(baseVersion).$(", offset=").$(areaOffset).$(", size=").$(readRecordSize)
+//                .$(", txn=").$(txn).$(", records=").$(fixedRowCount + transientRowCount).$(", dataVersion=").$(dataVersion).$();
         this.readBaseOffset = areaOffset;
-        this.readRecordSize = areaSize;
 
         if (commitMode != CommitMode.NOSYNC) {
             txMemBase.sync(commitMode == CommitMode.ASYNC);

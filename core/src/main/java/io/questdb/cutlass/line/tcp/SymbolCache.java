@@ -105,7 +105,7 @@ class SymbolCache implements Closeable {
         boolean offsetReloadOk = initialStateOk;
         while (true) {
             if (offsetReloadOk) {
-                int count = txReader.unsafeReadSymbolCount(symbolIndexInTxFile);
+                int count = txReader.unsafeReadSymbolTransientCount(symbolIndexInTxFile);
                 Unsafe.getUnsafe().loadFence();
 
                 if (txReader.unsafeReadVersion() == txReader.getVersion()) {

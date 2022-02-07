@@ -73,13 +73,18 @@ public final class TableUtils {
     static final byte TODO_TRUNCATE = 1;
 
     // transaction file structure
-    public static final long TX_BASE_OFFSET_VERSION = 0;
-    public static final long TX_BASE_OFFSET_A = 8;
-    public static final long TX_BASE_OFFSET_SIZE_A = 16;
-    public static final long TX_BASE_OFFSET_B = 24;
-    public static final long TX_BASE_OFFSET_SIZE_B = 32;
-    public static final long TX_BASE_HEADER_SIZE = 64;
+    public static final int TX_BASE_HEADER_SECTION_PADDING = 12; // Add some free space into header for future use
+    public static final long TX_BASE_OFFSET_VERSION_64 = 0;
 
+    public static final long TX_BASE_OFFSET_A_32 = TX_BASE_OFFSET_VERSION_64 + 8;
+    public static final long TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 = TX_BASE_OFFSET_A_32 + 4;
+    public static final long TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 = TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 + 4;
+
+    public static final long TX_BASE_OFFSET_B_32 = TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 + 4 + TX_BASE_HEADER_SECTION_PADDING;
+    public static final long TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 = TX_BASE_OFFSET_B_32 + 4;
+    public static final long TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 = TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 + 4;
+
+    public static final int TX_BASE_HEADER_SIZE = (int) Math.max(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 + 4 + TX_BASE_HEADER_SECTION_PADDING, 64);
 
     public static final long TX_OFFSET_TXN = 0;
     public static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
@@ -90,7 +95,7 @@ public final class TableUtils {
     public static final long TX_OFFSET_DATA_VERSION = 48;
     public static final long TX_OFFSET_PARTITION_TABLE_VERSION = 56;
     public static final long TX_OFFSET_MAP_WRITER_COUNT = 128;
-    public static final long TX_RECORD_HEADER_SIZE = TX_OFFSET_MAP_WRITER_COUNT + Integer.BYTES;
+    public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT + Integer.BYTES;
 
     /**
      * TXN file structure
@@ -235,8 +240,9 @@ public final class TableUtils {
     }
 
     public static void createTxn(MemoryMW txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion, long structureVersion) {
-        txMem.putLong(TX_BASE_OFFSET_A, TX_BASE_HEADER_SIZE);
-        txMem.putLong(TX_BASE_OFFSET_SIZE_A, getPartitionTableIndexOffset(symbolMapCount, 0));
+        txMem.putInt(TX_BASE_OFFSET_A_32, TX_BASE_HEADER_SIZE);
+        txMem.putInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32, symbolMapCount * 8);
+        txMem.putInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32, 0);
         resetTxn(txMem, TX_BASE_HEADER_SIZE, symbolMapCount, txn, dataVersion, partitionTableVersion, structureVersion);
         txMem.setTruncateSize(TX_BASE_HEADER_SIZE + TX_RECORD_HEADER_SIZE);
     }
@@ -349,10 +355,6 @@ public final class TableUtils {
 
     public static long getSymbolWriterTransientIndexOffset(int index) {
         return getSymbolWriterIndexOffset(index) + Integer.BYTES;
-    }
-
-    public static long getTxMemSize(int symbolWriterCount, int attachedPartitionsSize) {
-        return getPartitionTableIndexOffset(symbolWriterCount, attachedPartitionsSize);
     }
 
     public static long getTxMemorySize(long txMem) {

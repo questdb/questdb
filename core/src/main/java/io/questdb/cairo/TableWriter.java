@@ -1894,7 +1894,7 @@ public class TableWriter implements Closeable {
                         configuration,
                         path.trimTo(rootLen),
                         metadata.getColumnName(i),
-                        txWriter.unsafeReadSymbolCount(symbolIndex),
+                        txWriter.unsafeReadSymbolTransientCount(symbolIndex),
                         symbolIndex,
                         txWriter
                 );
@@ -4231,7 +4231,7 @@ public class TableWriter implements Closeable {
                         .$(", actualFixedSize=").$(fixedRowCount)
                         .$(']').$();
 
-                txWriter.reset(fixedRowCount, transientRowCount, maxTimestamp);
+                txWriter.reset(fixedRowCount, transientRowCount, maxTimestamp, defaultCommitMode, denseSymbolMapWriters);
                 return maxTimestamp;
             }
         }
