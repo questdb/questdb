@@ -9,14 +9,14 @@ jobs:
           os: macOS
           jdk: "1.11"
           testset: "all"
-          includeTests: "griffin.**"
+          includeTests: "griffin.**.*?"
         mac-cairo:
           imageName: "macos-latest"
           poolName: "Azure Pipelines"
           os: macOS
           jdk: "1.11"
           testset: "all"
-          includeTests: "cairo.**"
+          includeTests: "cairo.**.*?"
         mac-other:
           imageName: "macos-latest"
           poolName: "Azure Pipelines"
@@ -30,14 +30,14 @@ jobs:
           os: Windows
           jdk: "1.11"
           testset: "all"
-          includeTests: "griffin.**"
+          includeTests: "griffin.**.*?"
         windows-cairo:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
           jdk: "1.11"
           testset: "all"
-          includeTests: "cairo.**"
+          includeTests: "cairo.**.*?"
         windows-other:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
@@ -62,12 +62,9 @@ jobs:
       name: $(poolName)
     timeoutInMinutes: 60
     variables:
-      SOURCE_CODE_CHANGED:
-        $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
-      COVERAGE_DIFF:
-        $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
-      CODE_COVERAGE_TOOL_OPTION:
-        $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
+      SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
+      COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
+      CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
       MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
       MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m"
       ARCHIVED_GRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
