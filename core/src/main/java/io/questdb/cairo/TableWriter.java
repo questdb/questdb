@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.MemoryFCRImpl;
+import io.questdb.cairo.vm.MemoryFMCRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.AlterStatement;
@@ -98,6 +99,7 @@ public class TableWriter implements Closeable {
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
     private final LongList indexSequences = new LongList();
+    private final TxReader slaveTxReader;
     // This is the same message bus. When TableWriter instance created via CairoEngine, message bus is shared
     // and is owned by the engine. Since TableWriter would not have ownership of the bus it must not free it up.
     // On other hand when TableWrite is created outside CairoEngine, primarily in tests, the ownership of the
@@ -139,6 +141,7 @@ public class TableWriter implements Closeable {
     private final MemoryFR slaveMetaMem = new MemoryFCRImpl();
     private final SCSequence commandSubSeq;
     private final LongIntHashMap replPartitionHash = new LongIntHashMap();
+    private final MemoryFMCRImpl slaveTxMemory = new MemoryFMCRImpl();
     // Latest command sequence per command source.
     // Publisher source is identified by a long value
     private final LongLongHashMap cmdSequences = new LongLongHashMap();
@@ -309,6 +312,8 @@ public class TableWriter implements Closeable {
             configureAppendPosition();
             purgeUnusedPartitions();
             clearTodoLog();
+
+            this.slaveTxReader = new TxReader(ff);
         } catch (Throwable e) {
             doClose(false);
             throw e;
@@ -746,6 +751,11 @@ public class TableWriter implements Closeable {
         return txWriter.unsafeGetRawMemory();
     }
 
+    // todo: hide raw memory access from public interface when slave is able to send data over the network
+    public long getRawTxnMemorySize() {
+        return txWriter.unsafeGetRawMemorySize();
+    }
+
     public long getStructureVersion() {
         return txWriter.getStructureVersion();
     }
@@ -1047,27 +1057,28 @@ public class TableWriter implements Closeable {
         LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$(path).$();
     }
 
-    public TableSyncModel replCreateTableSyncModel(long slaveTxData, long slaveMetaData, long slaveMetaDataSize) {
+    public TableSyncModel replCreateTableSyncModel(long slaveTxAddress, long slaveTxDataSize, long slaveMetaData, long slaveMetaDataSize) {
         replPartitionHash.clear();
 
         final TableSyncModel model = new TableSyncModel();
 
         model.setMaxTimestamp(getMaxTimestamp());
 
-        final int symbolsCount = Unsafe.getUnsafe().getInt(slaveTxData + TX_OFFSET_MAP_WRITER_COUNT);
+        slaveTxMemory.of(slaveTxAddress, slaveTxDataSize);
+        slaveTxReader.initRO(slaveTxMemory, partitionBy);
+        slaveTxReader.unsafeLoadAll();
+
         final int theirLast;
-        if (Unsafe.getUnsafe().getLong(slaveTxData + TX_OFFSET_DATA_VERSION) != txWriter.getDataVersion()) {
+        if (slaveTxReader.getDataVersion() != txWriter.getDataVersion()) {
             // truncate
             model.setTableAction(TableSyncModel.TABLE_ACTION_TRUNCATE);
             theirLast = -1;
         } else {
             // hash partitions on slave side
-            int partitionCount = Unsafe.getUnsafe().getInt(slaveTxData + getPartitionTableSizeOffset(symbolsCount)) / 8;
-            theirLast = partitionCount / 4 - 1;
-            for (int i = 0; i < partitionCount; i += 4) {
-                long p = slaveTxData + getPartitionTableIndexOffset(symbolsCount, i);
-                long ts = Unsafe.getUnsafe().getLong(p);
-                replPartitionHash.put(ts, i);
+            int partitionCount = slaveTxReader.getPartitionCount();
+            theirLast = partitionCount - 1;
+            for (int i = 0; i < partitionCount; i++) {
+                replPartitionHash.put(slaveTxReader.getPartitionTimestamp(i), i);
             }
         }
         model.setDataVersion(txWriter.getDataVersion());
@@ -1085,13 +1096,13 @@ public class TableWriter implements Closeable {
                 final long theirSize;
                 if (keyIndex < 0) {
                     int slavePartitionIndex = replPartitionHash.valueAt(keyIndex);
-                    long p = slaveTxData + getPartitionTableIndexOffset(symbolsCount, slavePartitionIndex);
+//                        long p = slaveTxData + getPartitionTableIndexOffset(symbolsCount, slavePartitionIndex);
                     // check if partition name ourDataTxn is the same
-                    if (Unsafe.getUnsafe().getLong(p + 16) == txWriter.getPartitionNameTxn(i)) {
+                    if (slaveTxReader.getPartitionNameTxn(slavePartitionIndex) == txWriter.getPartitionNameTxn(i)) {
                         // this is the same partition roughly
-                        theirSize = slavePartitionIndex / 4 < theirLast ?
-                                Unsafe.getUnsafe().getLong(p + 8) :
-                                Unsafe.getUnsafe().getLong(slaveTxData + TX_OFFSET_TRANSIENT_ROW_COUNT);
+                        theirSize = slavePartitionIndex < theirLast ?
+                                slaveTxReader.getPartitionSize(slavePartitionIndex) :
+                                slaveTxReader.getTransientRowCount();
 
                         if (theirSize > ourSize) {
                             LOG.error()
@@ -4322,6 +4333,7 @@ public class TableWriter implements Closeable {
         final long txMemSize = Unsafe.getUnsafe().getLong(cmd.getData());
         return replCreateTableSyncModel(
                 cmd.getData() + 8,
+                txMemSize,
                 cmd.getData() + txMemSize + 16,
                 Unsafe.getUnsafe().getLong(cmd.getData() + txMemSize + 8)
         );

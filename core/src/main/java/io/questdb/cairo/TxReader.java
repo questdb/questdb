@@ -339,7 +339,11 @@ public class TxReader implements Closeable, Mutable {
     }
 
     protected long unsafeGetRawMemory() {
-        return roTxMem.getPageAddress(0);
+        return roTxMemBase.getPageAddress(0);
+    }
+
+    protected long unsafeGetRawMemorySize() {
+        return this.size + this.baseOffset;
     }
 
     private void unsafeLoadPartitions(long prevPartitionTableVersion, int partitionTableSize, boolean forceClean) {
@@ -423,8 +427,8 @@ public class TxReader implements Closeable, Mutable {
             return roTxMemBase.getLong(baseOffset + readOffset);
         }
 
-        public long getPageAddress(int atOffset) {
-            return roTxMemBase.getPageAddress((int) (baseOffset / roTxMemBase.getPageSize() + atOffset));
+        public long getPageAddress(int pageIndex) {
+            return roTxMemBase.getPageAddress(pageIndex + (int) (baseOffset / roTxMemBase.getPageSize()));
         }
     }
 }

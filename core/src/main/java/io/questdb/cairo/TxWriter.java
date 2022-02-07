@@ -75,25 +75,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     public void bumpStructureVersion(ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
         ++structureVersion;
         commit(CommitMode.NOSYNC, denseSymbolMapWriters);
-//        symbolColumnCount = denseSymbolMapWriters.size();
-//        writeAreaSize = calculateWriteSize();
-//        writeBaseOffset = calculateWriteOffset(writeAreaSize);
-//
-//        txMem.putLong(TX_OFFSET_TXN, ++txn);
-//        txMem.putLong(TX_OFFSET_STRUCT_VERSION, ++structureVersion);
-//        final int oldCount = txMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
-//        txMem.putInt(TX_OFFSET_MAP_WRITER_COUNT, symbolColumnCount);
-//        storeSymbolCounts(denseSymbolMapWriters);
-//
-//        // when symbol column is removed partition table has to be moved up
-//        // to do that we just write partition table behind symbol writer table
-////        if (oldCount != symbolColumnCount) {
-//            // Save full attached partition list
-//            attachedPositionDirtyIndex = 0;
-//            saveAttachedPartitionsToTx(symbolColumnCount);
-////        }
-//
-//        finishABHeader(writeBaseOffset, writeAreaSize, CommitMode.NOSYNC);
     }
 
     public void cancelRow() {
@@ -302,7 +283,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         if (maxTimestamp == Long.MIN_VALUE) {
             attachedPartitions.clear();
         }
-        return (int) getPartitionTableIndexOffset(symbolColumnCount, attachedPartitions.size());
+        return calculateTxRecordSize(symbolColumnCount * 8, attachedPartitions.size() * 8);
+    }
+
+    protected long unsafeGetRawMemorySize() {
+        return Math.max(super.unsafeGetRawMemorySize(), writeAreaSize + writeBaseOffset);
     }
 
     private void finishABHeader(int areaOffset, int bytesSymbols, int bytesPartitions, int commitMode) {

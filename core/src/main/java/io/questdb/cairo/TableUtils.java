@@ -357,12 +357,6 @@ public final class TableUtils {
         return getSymbolWriterIndexOffset(index) + Integer.BYTES;
     }
 
-    public static long getTxMemorySize(long txMem) {
-        final int symbolsCount = Unsafe.getUnsafe().getInt(txMem + TX_OFFSET_MAP_WRITER_COUNT);
-        final int partitionCount = Unsafe.getUnsafe().getInt(txMem + getPartitionTableSizeOffset(symbolsCount)) / 8;
-        return getPartitionTableIndexOffset(symbolsCount, partitionCount);
-    }
-
     public static LPSZ iFile(Path path, CharSequence columnName) {
         return path.concat(columnName).put(FILE_SUFFIX_I).$();
     }
