@@ -85,8 +85,8 @@ steps:
       artifactName: MavenFailedTestsLogs
   - bash: |
       mv $(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco.exec $(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco-$(System.JobId).exec
-      displayName: "Tests failed -- rename crash dump"
-      workingDirectory: $(Build.SourcesDirectory)/core/
+    displayName: "Rename jacoco cover report"
+    workingDirectory: $(Build.SourcesDirectory)/core/
     condition: |
       and(and(
         eq(variables['testset'], 'coverage'),
