@@ -18,7 +18,9 @@ steps:
       mavenOptions: "$(MAVEN_OPTS)"
       options: "compile -DskipTests -P build-web-console -Dhttp.keepAlive=false"
       jdkVersionOption: $(jdk)
-    condition: or(eq(variables['SOURCE_CODE_CHANGED'], 'false'), eq(variables['testset'], 'none'))
+    condition:
+      or(eq(variables['SOURCE_CODE_CHANGED'], 'false'), eq(variables['testset'],
+      'none'))
   - task: Maven@3
     displayName: "Run tests"
     inputs:
@@ -26,8 +28,10 @@ steps:
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "clean test"
       options:
-        "--batch-mode --quiet -Dtest=$(includeTests) -Dtest.exclude=$(excludeTests)
-      -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false -DfailIfNoTests=false"
+        "--batch-mode --quiet -Dtest=$(includeTests)
+        -Dtest.exclude=$(excludeTests)
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false
+        -DfailIfNoTests=false"
       jdkVersionOption: $(jdk)
     timeoutInMinutes: 55
     condition: |
@@ -42,7 +46,8 @@ steps:
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "test"
       options:
-        "--batch-mode --quiet -Dtest=$(includeTests) -Dtest.exclude=$(excludeTests)
+        "--batch-mode --quiet -Dtest=$(includeTests)
+        -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
       jdkVersionOption: $(jdk)
       codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
@@ -78,11 +83,22 @@ steps:
     inputs:
       pathToPublish: $(ARCHIVED_LOGS)
       artifactName: MavenFailedTestsLogs
-  - publish: '$(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco.exec'
-    displayName: 'Publish jacoco report'
-    artifact: $(testsetName)
+  - bash: |
+      mv $(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco.exec $(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco-$(System.JobId).exec
+    displayName: "Rename jacoco cover report"
+    workingDirectory: $(Build.SourcesDirectory)/core/
     condition: |
-      and(
+      and(and(
         eq(variables['testset'], 'coverage'),
         eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
-      )
+      ), succeeded())
+  - task: PublishBuildArtifacts@1
+    displayName: "Publish jacoco report"
+    condition: |
+      and(and(
+        eq(variables['testset'], 'coverage'),
+        eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
+      ), succeeded())
+    inputs:
+      pathToPublish: "$(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco-$(system.JobId).exec"
+      artifactName: jacoco-coverage
