@@ -28,6 +28,10 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
 
+/*
+ * Part of implicit rule optimizer.
+ * Extracts important timestamp and indexed symbol parts from the query filter.
+ */
 public class IntrinsicModel implements Mutable {
     public static final ObjectFactory<IntrinsicModel> FACTORY = IntrinsicModel::new;
     public static final int TRUE = 1;
@@ -36,6 +40,8 @@ public class IntrinsicModel implements Mutable {
     private static final LongList INFINITE_INTERVAL;
     public final ObjList<Function> keyValueFuncs = new ObjList<>();
     public final ObjList<Function> keyExcludedValueFuncs = new ObjList<>();
+
+    /* Indexed symbol column used as the initial "efficient" filter for the query */
     public CharSequence keyColumn;
     public ExpressionNode filter;
     public int intrinsicValue = UNDEFINED;
