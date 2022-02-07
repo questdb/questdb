@@ -31,60 +31,57 @@ import org.junit.Test;
  */
 public class OrderByWithFilterTest extends AbstractGriffinTest {
 
+    static final int ORDER_ASC = 0;
+    static final int ORDER_DESC = 1;
+
     @Test
-    public void testOrderByTimestampWithNonJittedFilter() throws Exception {
-        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-
-        runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
-                "insert into trips " +
-                        "  select x," +
-                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
-                        "  from long_sequence(10);");
-
-        assertQuery("l\tts\n" +
-                        "5\t2022-01-07T15:06:40.000000Z\n" +
-                        "4\t2022-01-06T11:20:00.000000Z\n" +
-                        "3\t2022-01-05T07:33:20.000000Z\n" +
-                        "2\t2022-01-04T03:46:40.000000Z\n" +
-                        "1\t2022-01-03T00:00:00.000000Z\n",
-                "select l, ts from trips where l <=5 order by ts desc limit 5",
-                null, "ts###DESC", true, false, true);
+    public void testOrderByAscWithByteFilter() throws Exception {
+        testOrderByWithFilter("byte", ORDER_ASC);
     }
 
     @Test
-    public void testOrderByTimestampWithJittedFilter() throws Exception {
-
-        runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
-                "insert into trips " +
-                        "  select x," +
-                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
-                        "  from long_sequence(10);");
-
-        assertQuery("l\tts\n" +
-                        "5\t2022-01-07T15:06:40.000000Z\n" +
-                        "4\t2022-01-06T11:20:00.000000Z\n" +
-                        "3\t2022-01-05T07:33:20.000000Z\n" +
-                        "2\t2022-01-04T03:46:40.000000Z\n" +
-                        "1\t2022-01-03T00:00:00.000000Z\n",
-                "select l, ts from trips where l <=5 order by ts desc limit 5",
-                null, "ts###DESC", true, false, true);
+    public void testOrderByAscWithCharFilter() throws Exception {
+        testOrderByWithFilter("char", ORDER_ASC);
     }
 
     @Test
-    public void testOrderByTimestampWithComplexJittedFilter() throws Exception {
+    public void testOrderByAscWithDoubleFilter() throws Exception {
+        testOrderByWithFilter("double", ORDER_ASC);
+    }
 
-        runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by month;",
-                "insert into trips " +
-                        "  select x," +
-                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
-                        "  from long_sequence(1000);");
+    @Test
+    public void testOrderByAscWithFloatFilter() throws Exception {
+        testOrderByWithFilter("float", ORDER_ASC);
+    }
 
-        assertQuery("l\tts\n" +
-                        "5\t2022-01-07T15:06:40.000000Z\n",
-                "select l, ts from trips " +
-                        "where l <=5 and ts < to_timestamp('2022-01-08T00:00:00', 'yyyy-MM-ddTHH:mm:ss') " +
-                        "order by ts desc limit 1",
-                null, null, true, false, true);
+    @Test
+    public void testOrderByAscWithIntFilter() throws Exception {
+        testOrderByWithFilter("int", ORDER_ASC);
+    }
+
+    @Test
+    public void testOrderByAscWithLongFilter() throws Exception {
+        testOrderByWithFilter("long", ORDER_ASC);
+    }
+
+    @Test
+    public void testOrderByAscWithShortFilter() throws Exception {
+        testOrderByWithFilter("short", ORDER_ASC);
+    }
+
+    @Test
+    public void testOrderByAscWithStringFilter() throws Exception {
+        testOrderByWithFilter("string", ORDER_ASC);
+    }
+
+    @Test
+    public void testOrderByAscWithSymbolFilter() throws Exception {
+        testOrderByWithFilter("symbol", ORDER_ASC);
+    }
+
+    @Test
+    public void testOrderByAscWithTimestampFilter() throws Exception {
+        testOrderByWithFilter("timestamp", ORDER_ASC);
     }
 
     @Test//triggers DeferredSingleSymbolFilterDataFrameRecordCursorFactory
@@ -99,6 +96,55 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "7\tDEF\t2022-01-09T22:40:00.000000Z\n" +
                         "6\tDEF\t2022-01-08T18:53:20.000000Z\n",
                 "select l, s, ts from trips where s = 'DEF' order by ts desc",
+                null, null, true, false, false);
+    }
+
+    @Test
+    public void testOrderByDescWithByteFilter() throws Exception {
+        testOrderByWithFilter("byte", ORDER_DESC);
+    }
+
+    @Test
+    public void testOrderByDescWithCharFilter() throws Exception {
+        testOrderByWithFilter("char", ORDER_DESC);
+    }
+
+    @Test
+    public void testOrderByDescWithDataFrameRecordCursorFactory() throws Exception {
+        runQueries("CREATE TABLE trips(l long,s symbol index capacity 5, ts TIMESTAMP) timestamp(ts) partition by month;",
+                "insert into trips " +
+                        "  select x, 'A' || ( x%3 )," +
+                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
+                        "  from long_sequence(10);");
+        //A0, A1, A2, A0, A1, A2, A0, A1, A2, A0
+        assertQuery("l\ts\tts\n" +
+                        "8\tA2\t2022-01-11T02:26:40.000000Z\n" +
+                        "5\tA2\t2022-01-07T15:06:40.000000Z\n" +
+                        "2\tA2\t2022-01-04T03:46:40.000000Z\n",
+                "select l, s, ts from trips where s = 'A2' and test_match() order by ts desc",
+                null, null, true, false, false);
+    }
+
+    @Test
+    public void testOrderByDescWithDoubleFilter() throws Exception {
+        testOrderByWithFilter("double", ORDER_DESC);
+    }
+
+    @Test
+    public void testOrderByDescWithFilterOnExcludedValuesRecordCursorFactory() throws Exception {
+        runQueries("CREATE TABLE trips(l long,s symbol index capacity 5, ts TIMESTAMP) timestamp(ts) partition by month;",
+                "insert into trips " +
+                        "  select x, 'A' || ( x%3 )," +
+                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
+                        "  from long_sequence(10);");
+        assertQuery("l\ts\tts\n" +
+                        "9\tA0\t2022-01-12T06:13:20.000000Z\n" +
+                        "8\tA2\t2022-01-11T02:26:40.000000Z\n" +
+                        "6\tA0\t2022-01-08T18:53:20.000000Z\n" +
+                        "5\tA2\t2022-01-07T15:06:40.000000Z\n" +
+                        "3\tA0\t2022-01-05T07:33:20.000000Z\n" +
+                        "2\tA2\t2022-01-04T03:46:40.000000Z\n",
+                "select l, s, ts from trips where s != 'A1' and test_match() order by ts desc",
                 null, null, true, false, false);
     }
 
@@ -128,7 +174,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "  select x, 'A' || ( x%3 )," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
                         "  from long_sequence(10);");
-        //A0, A1, A2, A0, A1, A2, A0, A1, A2, A0 
+        //A0, A1, A2, A0, A1, A2, A0, A1, A2, A0
         assertQuery("l\ts\tts\n" +
                         "9\tA0\t2022-01-12T06:13:20.000000Z\n" +
                         "8\tA2\t2022-01-11T02:26:40.000000Z\n" +
@@ -141,37 +187,18 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByDescWithDataFrameRecordCursorFactory() throws Exception {
-        runQueries("CREATE TABLE trips(l long,s symbol index capacity 5, ts TIMESTAMP) timestamp(ts) partition by month;",
-                "insert into trips " +
-                        "  select x, 'A' || ( x%3 )," +
-                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
-                        "  from long_sequence(10);");
-        //A0, A1, A2, A0, A1, A2, A0, A1, A2, A0 
-        assertQuery("l\ts\tts\n" +
-                        "8\tA2\t2022-01-11T02:26:40.000000Z\n" +
-                        "5\tA2\t2022-01-07T15:06:40.000000Z\n" +
-                        "2\tA2\t2022-01-04T03:46:40.000000Z\n",
-                "select l, s, ts from trips where s = 'A2' and test_match() order by ts desc",
-                null, null, true, false, false);
+    public void testOrderByDescWithFloatFilter() throws Exception {
+        testOrderByWithFilter("float", ORDER_DESC);
     }
 
     @Test
-    public void testOrderByDescWithFilterOnExcludedValuesRecordCursorFactory() throws Exception {
-        runQueries("CREATE TABLE trips(l long,s symbol index capacity 5, ts TIMESTAMP) timestamp(ts) partition by month;",
-                "insert into trips " +
-                        "  select x, 'A' || ( x%3 )," +
-                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
-                        "  from long_sequence(10);");
-        assertQuery("l\ts\tts\n" +
-                        "9\tA0\t2022-01-12T06:13:20.000000Z\n" +
-                        "8\tA2\t2022-01-11T02:26:40.000000Z\n" +
-                        "6\tA0\t2022-01-08T18:53:20.000000Z\n" +
-                        "5\tA2\t2022-01-07T15:06:40.000000Z\n" +
-                        "3\tA0\t2022-01-05T07:33:20.000000Z\n" +
-                        "2\tA2\t2022-01-04T03:46:40.000000Z\n",
-                "select l, s, ts from trips where s != 'A1' and test_match() order by ts desc",
-                null, null, true, false, false);
+    public void testOrderByDescWithIntFilter() throws Exception {
+        testOrderByWithFilter("int", ORDER_DESC);
+    }
+
+    @Test
+    public void testOrderByDescWithLongFilter() throws Exception {
+        testOrderByWithFilter("long", ORDER_DESC);
     }
 
     @Test
@@ -187,6 +214,94 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "2\tA2\t2022-01-04T03:46:40.000000Z\n",
                 "select l, s, ts from trips where s != 'A1' and s != 'A0' and test_match() order by ts desc",
                 null, null, true, false, false);
+    }
+
+    @Test
+    public void testOrderByDescWithShortFilter() throws Exception {
+        testOrderByWithFilter("short", ORDER_DESC);
+    }
+
+    @Test
+    public void testOrderByDescWithStringFilter() throws Exception {
+        testOrderByWithFilter("string", ORDER_DESC);
+    }
+
+    @Test
+    public void testOrderByDescWithSymbolFilter() throws Exception {
+        testOrderByWithFilter("symbol", ORDER_DESC);
+    }
+
+    @Test
+    public void testOrderByDescWithTimestampFilter() throws Exception {
+        testOrderByWithFilter("timestamp", ORDER_DESC);
+    }
+
+    @Test
+    public void testOrderByTimestampWithColumnTops() throws Exception {
+
+        runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by day;",
+                "insert into trips " +
+                        "  select x," +
+                        "  timestamp_sequence(to_timestamp('2022-01-01T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 10000000000) " +
+                        "  from long_sequence(10);",
+                "alter table trips add col1 int",
+                "alter table trips add col2 string",
+                "insert into trips " +
+                        "  select x," +
+                        "  timestamp_sequence(to_timestamp('2022-01-02T12:00:00', 'yyyy-MM-ddTHH:mm:ss'), 10000000000), " +
+                        "  x * 10, " +
+                        "  cast(x * 100 as string) " +
+                        "  from long_sequence(10)");
+
+        assertQuery("l\tts\tcol1\tcol2\n" +
+                        "10\t2022-01-03T13:00:00.000000Z\t100\t1000\n" +
+                        "9\t2022-01-03T10:13:20.000000Z\t90\t900\n" +
+                        "8\t2022-01-03T07:26:40.000000Z\t80\t800\n" +
+                        "10\t2022-01-02T01:00:00.000000Z\tNaN\t\n",
+                "select l as l, ts, col1, col2 from trips where l > 7 order by ts desc limit 4",
+                null, "ts####DESC", true, false, true);
+
+        assertQuery("l\tts\tcol1\tcol2\n" +
+                        "1010\t2022-01-03T13:00:00.000000Z\t100\t1000\n" +
+                        "1009\t2022-01-03T10:13:20.000000Z\t90\t900\n" +
+                        "1008\t2022-01-03T07:26:40.000000Z\t80\t800\n" +
+                        "1010\t2022-01-02T01:00:00.000000Z\tNaN\t\n",
+                "select l + 1000 as l, ts, col1, col2 from trips where l > 7 order by ts desc limit 4",
+                null, null, true, false, true);
+
+        assertQuery("l\tts\tcol1\tcol2\n" +
+                        "9\t2022-01-01T22:13:20.000000Z\tNaN\t\n" +
+                        "10\t2022-01-02T01:00:00.000000Z\tNaN\t\n" +
+                        "9\t2022-01-03T10:13:20.000000Z\t90\t900\n" +
+                        "10\t2022-01-03T13:00:00.000000Z\t100\t1000\n",
+                "select l, ts, col1, col2 from trips where l > 8 order by ts",
+                null, "ts", true, false, false);
+
+        assertQuery("l\tts\tcol1\tcol2\n" +
+                        "4\t2022-01-02T20:20:00.000000Z\t40\t400\n" +
+                        "10\t2022-01-02T01:00:00.000000Z\tNaN\t\n" +
+                        "9\t2022-01-01T22:13:20.000000Z\tNaN\t\n" +
+                        "8\t2022-01-01T19:26:40.000000Z\tNaN\t\n" +
+                        "7\t2022-01-01T16:40:00.000000Z\tNaN\t\n",
+                "select l, ts, col1, col2 from trips where ts between '2022-01-01T14' and '2022-01-02T23' and l > 3 order by ts desc limit 5",
+                null, null, true, false, true);
+    }
+
+    @Test
+    public void testOrderByTimestampWithComplexJittedFilter() throws Exception {
+
+        runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by month;",
+                "insert into trips " +
+                        "  select x," +
+                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
+                        "  from long_sequence(1000);");
+
+        assertQuery("l\tts\n" +
+                        "5\t2022-01-07T15:06:40.000000Z\n",
+                "select l, ts from trips " +
+                        "where l <=5 and ts < to_timestamp('2022-01-08T00:00:00', 'yyyy-MM-ddTHH:mm:ss') " +
+                        "order by ts desc limit 1",
+                null, null, true, false, true);
     }
 
     @Test
@@ -208,107 +323,70 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                 null, null, true, false, false);
     }
 
-    static final int ORDER_ASC = 0;
-    static final int ORDER_DESC = 1;
-
     @Test
-    public void testOrderByAscWithSymbolFilter() throws Exception {
-        testOrderByWithFilter("symbol", ORDER_ASC);
+    public void testOrderByTimestampWithJittedFilter() throws Exception {
+
+        runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
+                "insert into trips " +
+                        "  select x," +
+                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
+                        "  from long_sequence(10);");
+
+        assertQuery("l\tts\n" +
+                        "5\t2022-01-07T15:06:40.000000Z\n" +
+                        "4\t2022-01-06T11:20:00.000000Z\n" +
+                        "3\t2022-01-05T07:33:20.000000Z\n" +
+                        "2\t2022-01-04T03:46:40.000000Z\n" +
+                        "1\t2022-01-03T00:00:00.000000Z\n",
+                "select l, ts from trips where l <=5 order by ts desc limit 5",
+                null, "ts###DESC", true, false, true);
     }
 
     @Test
-    public void testOrderByDescWithSymbolFilter() throws Exception {
-        testOrderByWithFilter("symbol", ORDER_DESC);
+    public void testOrderByTimestampWithJittedFilterAsc() throws Exception {
+
+        runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
+                "insert into trips " +
+                        "  select x," +
+                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
+                        "  from long_sequence(10);");
+
+        assertQuery("l\tts\n" +
+                        "1\t2022-01-03T00:00:00.000000Z\n" +
+                        "2\t2022-01-04T03:46:40.000000Z\n" +
+                        "3\t2022-01-05T07:33:20.000000Z\n" +
+                        "4\t2022-01-06T11:20:00.000000Z\n" +
+                        "5\t2022-01-07T15:06:40.000000Z\n",
+                "select l, ts from trips where l <=5 order by ts asc limit 5",
+                null, "ts###ASC", true, false, true);
     }
 
     @Test
-    public void testOrderByAscWithStringFilter() throws Exception {
-        testOrderByWithFilter("string", ORDER_ASC);
+    public void testOrderByTimestampWithNonJittedFilter() throws Exception {
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+
+        runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
+                "insert into trips " +
+                        "  select x," +
+                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
+                        "  from long_sequence(10);");
+
+        assertQuery("l\tts\n" +
+                        "5\t2022-01-07T15:06:40.000000Z\n" +
+                        "4\t2022-01-06T11:20:00.000000Z\n" +
+                        "3\t2022-01-05T07:33:20.000000Z\n" +
+                        "2\t2022-01-04T03:46:40.000000Z\n" +
+                        "1\t2022-01-03T00:00:00.000000Z\n",
+                "select l, ts from trips where l <=5 order by ts desc limit 5",
+                null, "ts###DESC", true, false, true);
     }
 
-    @Test
-    public void testOrderByDescWithStringFilter() throws Exception {
-        testOrderByWithFilter("string", ORDER_DESC);
-    }
-
-    @Test
-    public void testOrderByAscWithCharFilter() throws Exception {
-        testOrderByWithFilter("char", ORDER_ASC);
-    }
-
-    @Test
-    public void testOrderByDescWithCharFilter() throws Exception {
-        testOrderByWithFilter("char", ORDER_DESC);
-    }
-
-    @Test
-    public void testOrderByAscWithByteFilter() throws Exception {
-        testOrderByWithFilter("byte", ORDER_ASC);
-    }
-
-    @Test
-    public void testOrderByDescWithByteFilter() throws Exception {
-        testOrderByWithFilter("byte", ORDER_DESC);
-    }
-
-    @Test
-    public void testOrderByAscWithTimestampFilter() throws Exception {
-        testOrderByWithFilter("timestamp", ORDER_ASC);
-    }
-
-    @Test
-    public void testOrderByDescWithTimestampFilter() throws Exception {
-        testOrderByWithFilter("timestamp", ORDER_DESC);
-    }
-
-    @Test
-    public void testOrderByAscWithDoubleFilter() throws Exception {
-        testOrderByWithFilter("double", ORDER_ASC);
-    }
-
-    @Test
-    public void testOrderByDescWithDoubleFilter() throws Exception {
-        testOrderByWithFilter("double", ORDER_DESC);
-    }
-
-    @Test
-    public void testOrderByAscWithFloatFilter() throws Exception {
-        testOrderByWithFilter("float", ORDER_ASC);
-    }
-
-    @Test
-    public void testOrderByDescWithFloatFilter() throws Exception {
-        testOrderByWithFilter("float", ORDER_DESC);
-    }
-
-    @Test
-    public void testOrderByAscWithShortFilter() throws Exception {
-        testOrderByWithFilter("short", ORDER_ASC);
-    }
-
-    @Test
-    public void testOrderByDescWithShortFilter() throws Exception {
-        testOrderByWithFilter("short", ORDER_DESC);
-    }
-
-    @Test
-    public void testOrderByAscWithIntFilter() throws Exception {
-        testOrderByWithFilter("int", ORDER_ASC);
-    }
-
-    @Test
-    public void testOrderByDescWithIntFilter() throws Exception {
-        testOrderByWithFilter("int", ORDER_DESC);
-    }
-
-    @Test
-    public void testOrderByAscWithLongFilter() throws Exception {
-        testOrderByWithFilter("long", ORDER_ASC);
-    }
-
-    @Test
-    public void testOrderByDescWithLongFilter() throws Exception {
-        testOrderByWithFilter("long", ORDER_DESC);
+    private void runQueries(String... queries) throws Exception {
+        assertMemoryLeak(() -> {
+            for (String query : queries) {
+                compiler.compile(query, sqlExecutionContext).execute(null).await();
+            }
+        });
     }
 
     private void testOrderByWithFilter(String type, int order) throws Exception {
@@ -329,7 +407,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
         }
 
         runQueries("CREATE TABLE test(x #TYPE#, ts TIMESTAMP) timestamp(ts) partition by month;".replace("#TYPE#", type),
-                //should create 3+ partitions with randomly ordered x values 
+                //should create 3+ partitions with randomly ordered x values
                 ("insert into test " +
                         "select #FUNC#,\n" +
                         "    timestamp_sequence(to_timestamp('2022-01-01'), 100000000000)\n" +
@@ -350,17 +428,23 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                 .replace("#TYPE#", type));
 
         String expectedResult;
-        if ("float".equals(type)) {
-            expectedResult = order == ORDER_ASC ? "x\n1.0000\n2.0000\n3.0000\n" : "x\n3.0000\n2.0000\n1.0000\n";
-        } else if ("double".equals(type)) {
-            expectedResult = order == ORDER_ASC ? "x\n1.0\n2.0\n3.0\n" : "x\n3.0\n2.0\n1.0\n";
-        } else if ("timestamp".equals(type)) {
-            expectedResult = order == ORDER_ASC ? "x\n1970-01-01T00:00:00.000001Z\n1970-01-01T00:00:00.000002Z\n1970-01-01T00:00:00.000003Z\n" :
-                    "x\n1970-01-01T00:00:00.000003Z\n1970-01-01T00:00:00.000002Z\n1970-01-01T00:00:00.000001Z\n";
-        } else if ("char".equals(type)) {
-            expectedResult = order == ORDER_ASC ? "x\n\u0001\n\u0002\n\u0003\n" : "x\n\u0003\n\u0002\n\u0001\n";
-        } else {
-            expectedResult = order == ORDER_ASC ? "x\n1\n2\n3\n" : "x\n3\n2\n1\n";
+        switch (type) {
+            case "float":
+                expectedResult = order == ORDER_ASC ? "x\n1.0000\n2.0000\n3.0000\n" : "x\n3.0000\n2.0000\n1.0000\n";
+                break;
+            case "double":
+                expectedResult = order == ORDER_ASC ? "x\n1.0\n2.0\n3.0\n" : "x\n3.0\n2.0\n1.0\n";
+                break;
+            case "timestamp":
+                expectedResult = order == ORDER_ASC ? "x\n1970-01-01T00:00:00.000001Z\n1970-01-01T00:00:00.000002Z\n1970-01-01T00:00:00.000003Z\n" :
+                        "x\n1970-01-01T00:00:00.000003Z\n1970-01-01T00:00:00.000002Z\n1970-01-01T00:00:00.000001Z\n";
+                break;
+            case "char":
+                expectedResult = order == ORDER_ASC ? "x\n\u0001\n\u0002\n\u0003\n" : "x\n\u0003\n\u0002\n\u0001\n";
+                break;
+            default:
+                expectedResult = order == ORDER_ASC ? "x\n1\n2\n3\n" : "x\n3\n2\n1\n";
+                break;
         }
 
         if ("string".equals(type) || "symbol".equals(type)) {
@@ -376,19 +460,5 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                     ("select x from test where x <= 3 and y = NaN order by ts " + (order == ORDER_ASC ? "asc" : "desc")).replace("#TYPE#", type),
                     null, null, true, false, false);
         }
-    }
-
-    private void runQueries(String... queries) throws Exception {
-        assertMemoryLeak(() -> {
-            for (String query : queries) {
-                compiler.compile(query, sqlExecutionContext);
-            }
-        });
-    }
-
-    private void assertQuery(String expected, String query) throws Exception {
-        assertQuery(expected,
-                query,
-                null, null, true, false, true);
     }
 }

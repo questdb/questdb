@@ -30,8 +30,6 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.BwdDataFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.DataFrameRecordCursorFactory;
 import io.questdb.std.IntList;

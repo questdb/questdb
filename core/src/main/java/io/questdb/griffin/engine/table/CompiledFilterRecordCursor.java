@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -74,7 +73,6 @@ class CompiledFilterRecordCursor implements RecordCursor {
     private final BooleanSupplier nextColTopsRow = this::nextColTopsRow;
     private final BooleanSupplier nextRow = this::nextRow;
     private final BooleanSupplier nextReenterPageFrame = this::nextReenterPageFrame;
-
     private final boolean hasDescendingOrder;
 
     public CompiledFilterRecordCursor(CairoConfiguration configuration, boolean hasDescendingOrder) {
