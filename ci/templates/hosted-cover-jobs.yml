@@ -10,7 +10,6 @@ jobs:
           jdk: "1.11"
           testset: "coverage"
           includeTests: "griffin.**.*?"
-          testsetName: coverage-griffin
         linux-cairo:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
@@ -18,7 +17,6 @@ jobs:
           jdk: "1.11"
           testset: "coverage"
           includeTests: "cairo.**.*?"
-          testsetName: coverage-cairo
         linux-other:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
@@ -26,7 +24,6 @@ jobs:
           jdk: "1.11"
           testset: "coverage"
           excludeTests: "**/griffin/**,**/cairo/**"
-          testsetName: coverage-other
     pool:
       vmImage: $(imageName)
       name: $(poolName)

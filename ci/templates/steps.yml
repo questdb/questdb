@@ -83,11 +83,20 @@ steps:
     inputs:
       pathToPublish: $(ARCHIVED_LOGS)
       artifactName: MavenFailedTestsLogs
-  - publish: "$(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco.exec"
-    displayName: "Publish jacoco report"
-    artifact: $(testsetName)
+  - bash: |
+      mv $(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco.exec $(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco-$(System.JobId).exec
+      displayName: "Tests failed -- rename crash dump"
+      workingDirectory: $(Build.SourcesDirectory)/core/
     condition: |
-      and(
+      and(and(
         eq(variables['testset'], 'coverage'),
         eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
-      )
+      ), succeeded())
+  - publish: "$(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco-$(system.JobId).exec"
+    displayName: "Publish jacoco report"
+    artifact: jacoco-coverage
+    condition: |
+      and(and(
+        eq(variables['testset'], 'coverage'),
+        eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
+      ), succeeded())
