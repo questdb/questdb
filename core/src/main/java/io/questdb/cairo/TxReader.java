@@ -272,10 +272,6 @@ public class TxReader implements Closeable, Mutable {
         return true;
     }
 
-    public long unsafeReadPartitionTableVersion() {
-        return roTxMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION);
-    }
-
     public int unsafeReadSymbolColumnCount() {
         return roTxMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
     }
