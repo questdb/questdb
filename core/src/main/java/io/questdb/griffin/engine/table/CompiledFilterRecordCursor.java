@@ -74,8 +74,10 @@ class CompiledFilterRecordCursor implements RecordCursor {
     private final BooleanSupplier nextColTopsRow = this::nextColTopsRow;
     private final BooleanSupplier nextRow = this::nextRow;
     private final BooleanSupplier nextReenterPageFrame = this::nextReenterPageFrame;
+    private final boolean hasDescendingOrder;
 
-    public CompiledFilterRecordCursor(CairoConfiguration configuration) {
+    public CompiledFilterRecordCursor(CairoConfiguration configuration, boolean hasDescendingOrder) {
+        this.hasDescendingOrder = hasDescendingOrder;
         rowsCapacityThreshold = configuration.getSqlJitRowsThreshold() / Long.BYTES;
         pageAddressCache = new PageAddressCache(configuration);
     }
@@ -189,26 +191,13 @@ class CompiledFilterRecordCursor implements RecordCursor {
         return -1;
     }
 
+    private long getCurrentRowIndex() {
+        return hasDescendingOrder ? (hi - current - 1) : current;
+    }
+
     private boolean nextColTopsRow() {
         seekNextColTopsRow();
         if (current < hi) {
-            return true;
-        }
-        return nextPage();
-    }
-
-    private void seekNextColTopsRow() {
-        while (++current < hi) {
-            recordA.setIndex(current);
-            if (colTopsFilter.getBool(recordA)) {
-                return;
-            }
-        }
-    }
-
-    private boolean nextRow() {
-        if (current < hi) {
-            recordA.setIndex(rows.get(current++));
             return true;
         }
         return nextPage();
@@ -263,13 +252,31 @@ class CompiledFilterRecordCursor implements RecordCursor {
             );
 
             if (current < hi) {
-                recordA.setIndex(rows.get(current));
+                recordA.setIndex(rows.get(getCurrentRowIndex()));
                 current += 1;
                 next = nextRow;
                 return true;
             }
         }
         return false;
+    }
+
+    private boolean nextRow() {
+        if (current < hi) {
+            recordA.setIndex(rows.get(getCurrentRowIndex()));
+            current++;
+            return true;
+        }
+        return nextPage();
+    }
+
+    private void seekNextColTopsRow() {
+        while (++current < hi) {
+            recordA.setIndex(getCurrentRowIndex());
+            if (colTopsFilter.getBool(recordA)) {
+                return;
+            }
+        }
     }
 
     private void writeBindVarFunction(Function function, SqlExecutionContext executionContext) throws SqlException {
