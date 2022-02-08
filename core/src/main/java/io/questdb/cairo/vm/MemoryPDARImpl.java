@@ -84,7 +84,7 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
         if (this.ff != null) {
             final long sz = getAppendOffset();
             // this is not the first invocation
-            realloc(extendSegmentSize, memoryTag, 0);
+            realloc(extendSegmentSize, memoryTag);
             super.close();
             if (fd != -1) {
                 try {
@@ -94,7 +94,7 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
                 }
             }
         } else {
-            realloc(extendSegmentSize, memoryTag, 0);
+            realloc(extendSegmentSize, memoryTag);
         }
         this.memoryTag = memoryTag;
         this.ff = ff;
@@ -154,8 +154,20 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
         }
         flushPage();
         this.pageIndex = page;
-        this.offsetInPage = offsetInPage(offset - 1);
+        this.offsetInPage = 0;
         return pageAddress;
+    }
+
+    @Override
+    public void jumpTo(long offset) {
+        boolean out = offset > getAppendOffset();
+        if (out) {
+            flushPage();
+        }
+        super.jumpTo(offset);
+        if (out) {
+            this.offsetInPage = offsetInPage(offset);
+        }
     }
 
     @Override
@@ -184,21 +196,24 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
 
     void flushPage() {
         if (pageIndex > -1 && ff != null) {
-            final long offset = pageOffset(pageIndex);
-            ff.write(fd, pageAddress + offsetInPage, getAppendOffset() - offset - offsetInPage, offset+offsetInPage);
+            final long offset = pageOffset(pageIndex) +  offsetInPage;
+            final long len = getAppendOffset() - offset;
+//            TableUtils.allocateDiskSpace(ff, fd, offset + getExtendSegmentSize());
+            ff.write(fd, pageAddress + offsetInPage, len, offset);
+            ff.truncate(fd, offset + getExtendSegmentSize());
             // prevent double-flush
             pageIndex = -1;
         }
     }
 
-    private void realloc(long extendSegmentSize, int memoryTag, int pageIndex) {
+    private void realloc(long extendSegmentSize, int memoryTag) {
         if (pageAddress == 0 || extendSegmentSize > getExtendSegmentSize()) {
             if (pageAddress != 0) {
                 Unsafe.free(pageAddress, getExtendSegmentSize(), this.memoryTag);
             }
             this.pageAddress = Unsafe.malloc(extendSegmentSize, memoryTag);
         }
-        this.pageIndex = pageIndex;
+        this.pageIndex = 0;
         this.offsetInPage = 0;
     }
 }
