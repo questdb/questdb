@@ -402,6 +402,10 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getWriterFileOpenOpts() {
+        // In some places we rely on the fact that data written via conventional IO
+        // is immediately visible to mapped memory for the same area of file. While this is the
+        // case on Linux it is absolutely not the case on Windows. We must not enable anything other
+        // than MMAP on Windows.
         return Os.type != Os.WINDOWS ? O_ASYNC | O_DIRECT : O_NONE;
     }
 

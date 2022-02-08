@@ -143,6 +143,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 break;
             case O3_BLOCK_O3:
                 copyO3(
+                        tableWriter.getFilesFacade(),
                         columnType,
                         srcOooFixAddr,
                         srcOooVarAddr,
@@ -151,6 +152,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstFixFd,
                         dstFixAddr + dstFixOffset,
                         dstFixFileOffset,
+                        dstVarAddr,
                         dstVarFd,
                         dstVarOffset,
                         dstVarAdjust,
@@ -160,6 +162,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 break;
             case O3_BLOCK_DATA:
                 copyData(
+                        tableWriter.getFilesFacade(),
                         columnType,
                         srcDataFixAddr + srcDataFixOffset,
                         srcDataVarAddr + srcDataVarOffset,
@@ -168,6 +171,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstFixAddr + dstFixOffset,
                         dstFixFd,
                         dstFixFileOffset,
+                        dstVarAddr,
                         dstVarFd,
                         dstVarOffset,
                         dstVarAdjust,
@@ -768,6 +772,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     }
 
     private static void copyData(
+            FilesFacade ff,
             int columnType,
             long srcFixAddr,
             long srcVarAddr,
@@ -776,6 +781,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstFixAddr,
             long dstFixFd,
             long dstFixFileOffset,
+            long dstVarAddr,
             long dstVarFd,
             long dstVarOffset,
             long dstVarAdjust,
@@ -786,6 +792,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             case ColumnType.STRING:
             case ColumnType.BINARY:
                 copyVarSizeCol(
+                        ff,
                         srcFixAddr,
                         srcVarAddr,
                         srcLo,
@@ -793,6 +800,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstFixAddr,
                         dstFixFd,
                         dstFixFileOffset,
+                        dstVarAddr,
                         dstVarFd,
                         dstVarOffset,
                         dstVarAdjust,
@@ -802,6 +810,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 break;
             default:
                 copyFixedSizeCol(
+                        ff,
                         srcFixAddr,
                         srcLo,
                         srcHi,
@@ -816,6 +825,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     }
 
     private static void copyFixedSizeCol(
+            FilesFacade ff,
             long src,
             long srcLo,
             long srcHi,
@@ -825,14 +835,24 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             final int shl,
             boolean directIoFlag
     ) {
+        final long len = (srcHi - srcLo + 1) << shl;
+        final long fromAddress = src + (srcLo << shl);
         if (directIoFlag) {
-            Files.write(Math.abs(dstFd), src + (srcLo << shl), (srcHi - srcLo + 1) << shl, dstFixFileOffset);
+            ff.write(Math.abs(dstFd), fromAddress, len, dstFixFileOffset);
+/*
+            for (int i = 0; i < len; i++) {
+                if (Unsafe.getUnsafe().getByte(dstFixAddr + i) != Unsafe.getUnsafe().getByte(fromAddress + i)) {
+                    System.out.println("oops");
+                }
+            }
+*/
         } else {
-            Vect.memcpy(dstFixAddr, src + (srcLo << shl), (srcHi - srcLo + 1) << shl);
+            Vect.memcpy(dstFixAddr, fromAddress, len);
         }
     }
 
     static void copyO3(
+            FilesFacade ff,
             int columnType,
             long srcOooFixAddr,
             long srcOooVarAddr,
@@ -841,6 +861,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstFixFd,
             long dstFixAddr,
             long dstFixFileOffset,
+            long dstVarAddr,
             long dstVarFd,
             long dstVarOffset,
             long dstVarAdjust,
@@ -854,6 +875,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 // 1. if srcOooHi is at the limit of the page - we need to copy the whole page of strings
                 // 2  if there are more items behind srcOooHi we can get offset of srcOooHi+1
                 copyVarSizeCol(
+                        ff,
                         srcOooFixAddr,
                         srcOooVarAddr,
                         srcOooLo,
@@ -861,6 +883,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         dstFixAddr,
                         dstFixFd,
                         dstFixFileOffset,
+                        dstVarAddr,
                         dstVarFd,
                         dstVarOffset,
                         dstVarAdjust,
@@ -872,6 +895,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             case ColumnType.BYTE:
             case ColumnType.GEOBYTE:
                 copyFixedSizeCol(
+                        ff,
                         srcOooFixAddr,
                         srcOooLo,
                         srcOooHi,
@@ -886,6 +910,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             case ColumnType.SHORT:
             case ColumnType.GEOSHORT:
                 copyFixedSizeCol(
+                        ff,
                         srcOooFixAddr,
                         srcOooLo,
                         srcOooHi,
@@ -901,6 +926,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             case ColumnType.SYMBOL:
             case ColumnType.GEOINT:
                 copyFixedSizeCol(
+                        ff,
                         srcOooFixAddr,
                         srcOooLo,
                         srcOooHi,
@@ -916,6 +942,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             case ColumnType.DOUBLE:
             case ColumnType.GEOLONG:
                 copyFixedSizeCol(
+                        ff,
                         srcOooFixAddr,
                         srcOooLo,
                         srcOooHi,
@@ -932,6 +959,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     O3Utils.copyFromTimestampIndex(srcOooFixAddr, srcOooLo, srcOooHi, dstFixAddr);
                 } else {
                     copyFixedSizeCol(
+                            ff,
                             srcOooFixAddr,
                             srcOooLo,
                             srcOooHi,
@@ -945,6 +973,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 break;
             case ColumnType.LONG256:
                 copyFixedSizeCol(
+                        ff,
                         srcOooFixAddr,
                         srcOooLo,
                         srcOooHi,
@@ -962,6 +991,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     }
 
     private static void copyVarSizeCol(
+            FilesFacade ff,
             long srcFixAddr,
             long srcVarAddr,
             long srcLo,
@@ -969,6 +999,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long dstFixAddr,
             long dstFixFd,
             long dstFixFileOffset,
+            long dstVarAddr,
             long dstVarFd,
             long dstVarOffset,
             long dstVarAdjust,
@@ -983,9 +1014,14 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long len = hi - lo;
         assert len <= Math.abs(dstVarSize) - dstVarOffset;
         final long offset = dstVarOffset + dstVarAdjust;
-        Files.write(Math.abs(dstVarFd), srcVarAddr + lo, len, offset);
+        if (directIoFlag) {
+            ff.write(Math.abs(dstVarFd), srcVarAddr + lo, len, offset);
+        } else {
+            Vect.memcpy(dstVarAddr + dstVarOffset, srcVarAddr + lo, len);
+        }
         if (lo == offset) {
             copyFixedSizeCol(
+                    ff,
                     srcFixAddr,
                     srcLo,
                     srcHi + 1,

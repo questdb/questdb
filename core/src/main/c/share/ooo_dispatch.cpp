@@ -343,7 +343,7 @@ MULTI_VERSION_NAME (merge_shuffle_int64)(const int64_t *src1, const int64_t *src
 //17
 void MULTI_VERSION_NAME (flatten_index)(index_t *index, int64_t count) {
     Vec8q v_i = Vec8q(0, 1, 2, 3, 4, 5, 6, 7);
-    Vec8q v_inc = Vec8q(8);
+    auto v_inc = Vec8q(8);
     int64_t i = 0;
     for (; i < count - 7; i += 8) {
         scatter<1, 3, 5, 7, 9, 11, 13, 15>(v_i, index + i);
@@ -363,14 +363,14 @@ void MULTI_VERSION_NAME (make_timestamp_index)(const int64_t *data, int64_t low,
     static_assert(sizeof(index_t) == 16);
 
     int64_t l = low;
-    Vec8q vec_i((low + 0) | (1ull << 63),
-                (low + 1) | (1ull << 63),
-                (low + 2) | (1ull << 63),
-                (low + 3) | (1ull << 63),
-                (low + 4) | (1ull << 63),
-                (low + 5) | (1ull << 63),
-                (low + 6) | (1ull << 63),
-                (low + 7) | (1ull << 63));
+    Vec8q vec_i((l + 0) | (1ull << 63),
+                (l + 1) | (1ull << 63),
+                (l + 2) | (1ull << 63),
+                (l + 3) | (1ull << 63),
+                (l + 4) | (1ull << 63),
+                (l + 5) | (1ull << 63),
+                (l + 6) | (1ull << 63),
+                (l + 7) | (1ull << 63));
     const Vec8q vec8(8);
     Vec8q vec_ts;
 
@@ -440,7 +440,7 @@ void MULTI_VERSION_NAME (set_var_refs_32_bit)(int64_t *data, int64_t offset, int
 // 26
 void MULTI_VERSION_NAME (copy_index)(const index_t *index, const int64_t count, int64_t *dest) {
     auto l_iteration = [dest, index](int64_t i) {
-        dest[i] = index[i].ts;
+        dest[i] = (int64_t) index[i].ts;
     };
     auto l_bulk = [dest, index](int64_t i) {
         MM_PREFETCH_T0(index + i + 64);
@@ -450,11 +450,11 @@ void MULTI_VERSION_NAME (copy_index)(const index_t *index, const int64_t count, 
 }
 
 // 27
-void MULTI_VERSION_NAME (shift_copy)(int64_t shift, int64_t *src, int64_t src_lo, int64_t src_hi, int64_t *dest) {
+void MULTI_VERSION_NAME (shift_copy)(int64_t shift, const int64_t *src, int64_t src_lo, int64_t src_hi, int64_t *dest) {
     const int64_t count = src_hi - src_lo + 1;
 
     Vec2q vec;
-    Vec2q vec_shift = Vec2q(shift);
+    auto vec_shift = Vec2q(shift);
 
     auto l_iteration = [dest, src, src_lo, shift](int64_t i) {
         dest[i] = src[i + src_lo] - shift;
@@ -473,7 +473,7 @@ void MULTI_VERSION_NAME (shift_copy)(int64_t shift, int64_t *src, int64_t src_lo
 void MULTI_VERSION_NAME (copy_index_timestamp)(index_t *index, int64_t index_lo, int64_t index_hi, int64_t *dest) {
     const int64_t count = index_hi - index_lo + 1;
     auto l_iteration = [dest, index, index_lo](int64_t i) {
-        dest[i] = index[index_lo + i].ts;
+        dest[i] = (int64_t)index[index_lo + i].ts;
     };
     auto l_bulk = [dest, index, index_lo](int64_t i) {
         MM_PREFETCH_T0(index + index_lo + i + 64);

@@ -319,6 +319,17 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openRW
     );
 }
 
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openRWOpts
+(JNIEnv *e, jclass cl, jlong lpszName, jlong opts) {
+    // consider using FILE_FLAG_WRITE_THROUGH
+    return (jlong) openUtf8(
+            lpszName,
+            GENERIC_WRITE | GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            OPEN_ALWAYS
+            );
+}
+
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openAppend
         (JNIEnv *e, jclass cl, jlong lpszName) {
     HANDLE h = openUtf8(
@@ -424,7 +435,8 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
     }
 
     address = MapViewOfFileEx(
-            hMapping, dwDesiredAccess,
+            hMapping,
+            dwDesiredAccess,
             (DWORD) (offset >> 32),
             (DWORD) offset,
             (SIZE_T) len,
