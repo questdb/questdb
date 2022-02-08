@@ -36,12 +36,12 @@ public class TestListener extends RunListener {
 
     @Override
     public void testStarted(Description description) {
-        LOG.info().$(">>>> ").$(description.getClassName()).$('.').$(description.getMethodName()).$();
+        LOG.infoW().$(">>>> ").$(description.getClassName()).$('.').$(description.getMethodName()).$();
     }
 
     @Override
     public void testFinished(Description description) {
-        LOG.info().$("<<<< ").$(description.getClassName()).$('.').$(description.getMethodName()).$();
+        LOG.infoW().$("<<<< ").$(description.getClassName()).$('.').$(description.getMethodName()).$();
     }
 
     @Override

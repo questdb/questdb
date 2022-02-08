@@ -544,7 +544,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 long ts = record.getTimestamp(index);
                 if ((isAscending && timestamp > ts) ||
                         (!isAscending && timestamp < ts)) {
-                    Assert.fail("record # " + c + " should have " + (isAscending ? "bigger" : "smaller") + " (or equal) timestamp than the row before");
+                    Assert.fail("record # " + c + " should have " + (isAscending ? "bigger" : "smaller") +
+                            " (or equal) timestamp than the row before. Values prior=" + timestamp + " current=" + ts);
                 }
                 timestamp = ts;
                 c++;
