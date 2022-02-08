@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -43,6 +44,6 @@ public class DumpThreadStacksTest extends AbstractGriffinTest {
         // this sleep to allow async logger to print out the values,
         // although we don't assert them it is less awkward than calling
         // the dump and see no output in the logs
-        Thread.sleep(500);
+        Os.sleep(500);
     }
 }
