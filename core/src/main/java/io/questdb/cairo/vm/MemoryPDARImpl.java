@@ -43,7 +43,7 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
 
     public MemoryPDARImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag, long opts) {
         this.pageAddress = Unsafe.malloc(pageSize, memoryTag);
-        this.pageIndex = -1;
+        this.pageIndex = 0;
         this.offsetInPage = 0;
         of(ff, name, pageSize, memoryTag, opts);
     }
@@ -60,6 +60,7 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
             flushPage();
             Unsafe.free(pageAddress, getExtendSegmentSize(), memoryTag);
             pageAddress = 0;
+            pageIndex = -1;
         }
         super.close();
         if (fd != -1) {
@@ -79,11 +80,11 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
+        flushPage();
         if (this.ff != null) {
-            // this is not the first invocation
-            flushPage();
-            realloc(extendSegmentSize, memoryTag);
             final long sz = getAppendOffset();
+            // this is not the first invocation
+            realloc(extendSegmentSize, memoryTag, 0);
             super.close();
             if (fd != -1) {
                 try {
@@ -92,10 +93,11 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
                     fd = -1;
                 }
             }
+        } else {
+            realloc(extendSegmentSize, memoryTag, 0);
         }
         this.memoryTag = memoryTag;
         this.ff = ff;
-        pageIndex = -1;
         setExtendSegmentSize(extendSegmentSize);
         long result;
         final long fd1 = ff.openRW(name, opts);
@@ -117,13 +119,6 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
     @Override
     public void close() {
         close(true);
-    }
-
-    @Override
-    public void jumpTo(long offset) {
-        this.offsetInPage = offsetInPage(offset);
-        // calling super jump will map write page and update the currentPageIndex
-        super.jumpTo(offset);
     }
 
     public void truncate() {
@@ -148,20 +143,24 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
-    protected long mapWritePage(int page) {
+    protected long mapWritePage(int page, long offset) {
+        if (pageIndex == page) {
+            if (getAppendOffset() == 0 && offset > 0) {
+                // page has not been appended yet, but jump() must have been called to
+                // set the append position
+                this.offsetInPage = offsetInPage(offset - 1);
+            }
+            return pageAddress;
+        }
         flushPage();
-        realloc(getExtendSegmentSize(), memoryTag);
-        pageIndex = page;
+        this.pageIndex = page;
+        this.offsetInPage = offsetInPage(offset - 1);
         return pageAddress;
     }
 
     @Override
     protected void release(long address) {
-    }
-
-    @Override
-    public FilesFacade getFilesFacade() {
-        return ff;
+        assert false;
     }
 
     public long getFd() {
@@ -169,8 +168,12 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
+    public FilesFacade getFilesFacade() {
+        return ff;
+    }
+
+    @Override
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
-        realloc(extendSegmentSize, memoryTag);
         of(ff, name, extendSegmentSize, memoryTag, opts);
     }
 
@@ -182,18 +185,20 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
     void flushPage() {
         if (pageIndex > -1 && ff != null) {
             final long offset = pageOffset(pageIndex);
-            ff.write(fd, pageAddress + offsetInPage, getAppendOffset() - offset - offsetInPage, offset);
+            ff.write(fd, pageAddress + offsetInPage, getAppendOffset() - offset - offsetInPage, offset+offsetInPage);
+            // prevent double-flush
+            pageIndex = -1;
         }
     }
 
-    private void realloc(long extendSegmentSize, int memoryTag) {
+    private void realloc(long extendSegmentSize, int memoryTag, int pageIndex) {
         if (pageAddress == 0 || extendSegmentSize > getExtendSegmentSize()) {
             if (pageAddress != 0) {
                 Unsafe.free(pageAddress, getExtendSegmentSize(), this.memoryTag);
             }
             this.pageAddress = Unsafe.malloc(extendSegmentSize, memoryTag);
-            this.pageIndex = -1;
-            this.offsetInPage = 0;
         }
+        this.pageIndex = pageIndex;
+        this.offsetInPage = 0;
     }
 }

@@ -70,7 +70,6 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
             }
             mem.flush();
 
-
             rmem.resize(n * 8);
             rnd.reset();
             for (long i = 0; i < n; i++) {
@@ -265,4 +264,45 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testAppendMidPage() {
+        try (Path path = new Path().of(root).concat("x.d").$()) {
+            try (
+                    MemoryPDARImpl mem = new MemoryPDARImpl(
+                            FilesFacadeImpl.INSTANCE,
+                            path,
+                            32*1024,
+                            MemoryTag.MMAP_DEFAULT,
+                            CairoConfiguration.O_DIRECT
+                    );
+
+                    MemoryCMR rmem = Vm.getCMARWInstance(
+                            FilesFacadeImpl.INSTANCE,
+                            path,
+                            FilesFacadeImpl._16M,
+                            0,
+                            MemoryTag.MMAP_DEFAULT,
+                            configuration.getWriterFileOpenOpts()
+                    )
+            ) {
+                int n = 100;
+                Rnd rnd = new Rnd();
+                for (long i = 0; i < n; i++) {
+                    mem.putLong(rnd.nextLong());
+                }
+                mem.flush();
+
+                // re-open mem and set append position where we left off
+
+
+
+                rmem.resize(n * 8);
+                rnd.reset();
+                for (long i = 0; i < n; i++) {
+                    Assert.assertEquals(rnd.nextLong(), rmem.getLong(i * 8));
+                }
+            }
+            Assert.assertEquals(Files.PAGE_SIZE, Files.length(path));
+        }
+    }
 }

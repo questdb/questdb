@@ -1842,7 +1842,7 @@ public class TableWriter implements Closeable {
     }
 
     private void configureColumn(int type, boolean indexFlag) {
-        final MemoryMA primary =  Vm.getMARInstance();
+        final MemoryMA primary =  Vm.getMAInstance();
         final MemoryMA secondary;
         final MemoryCARW oooPrimary = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
         final MemoryCARW oooSecondary;
@@ -1853,7 +1853,7 @@ public class TableWriter implements Closeable {
         switch (ColumnType.tagOf(type)) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
-                secondary = Vm.getMARInstance();
+                secondary = Vm.getMAInstance();
                 oooSecondary = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
                 oooSecondary2 = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
                 break;
