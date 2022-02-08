@@ -166,10 +166,7 @@ public class CreateTableTest extends AbstractGriffinTest {
             try (TableReader r = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                 TableReaderMetadata metadata = r.getMetadata();
                 IntList indexed = new IntList();
-
-                for (int i = 0, cols = metadata.getColumnCount(); i < cols; i++) {
-                    indexed.add(0);
-                }
+                indexed.setPos(metadata.getColumnCount());
 
                 for (String columnName : columnNames) {
                     int i = metadata.getColumnIndex(columnName);
