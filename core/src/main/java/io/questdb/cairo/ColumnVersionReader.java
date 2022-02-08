@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -83,8 +84,8 @@ public class ColumnVersionReader implements Closeable {
 
             Unsafe.getUnsafe().loadFence();
             if (version == unsafeGetVersion()) {
-                resize(offset + size);
-                readUnsafe(offset, size);
+                mem.resize(offset + size);
+                readUnsafe(offset, size, cachedList, mem);
 
                 Unsafe.getUnsafe().loadFence();
                 if (version == unsafeGetVersion()) {
@@ -103,9 +104,18 @@ public class ColumnVersionReader implements Closeable {
         }
     }
 
-    private void readUnsafe(long offset, long areaSize) {
-        resize(offset + areaSize);
+    static void readUnsafe(LongList cachedList, MemoryCMR mem) {
+        long version = mem.getLong(OFFSET_VERSION_64);
 
+        boolean areaA = version % 2 == 0;
+        long offset = areaA ? mem.getLong(OFFSET_OFFSET_A_64) : mem.getLong(OFFSET_OFFSET_B_64);
+        long size = areaA ? mem.getLong(OFFSET_SIZE_A_64) : mem.getLong(OFFSET_SIZE_B_64);
+        mem.resize(offset + size);
+        readUnsafe(offset, size, cachedList, mem);
+    }
+
+    private static void readUnsafe(long offset, long areaSize, LongList cachedList, MemoryR mem) {
+        mem.extend(offset + areaSize);
         int i = 0;
         long p = offset;
         long lim = offset + areaSize;
@@ -125,9 +135,5 @@ public class ColumnVersionReader implements Closeable {
 
     private long unsafeGetVersion() {
         return mem.getLong(OFFSET_VERSION_64);
-    }
-
-    public void resize(long size) {
-        mem.resize(size);
     }
 }

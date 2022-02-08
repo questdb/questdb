@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 
@@ -41,7 +41,7 @@ public class ColumnVersionWriter implements Closeable {
     public static final int BLOCK_SIZE = 8;
     public static final int BLOCK_SIZE_BYTES = BLOCK_SIZE * Long.BYTES;
     public static final int BLOCK_SIZE_MSB = Numbers.msb(BLOCK_SIZE);
-    private final MemoryMARW mem;
+    private final MemoryCMARW mem;
     private final LongList cachedList = new LongList();
     private long version;
     private long size;
@@ -55,6 +55,9 @@ public class ColumnVersionWriter implements Closeable {
         this.mem = Vm.getCMARWInstance(ff, fileName, ff.getPageSize(), size, MemoryTag.MMAP_TABLE_READER);
         this.size = this.mem.size();
         this.version = this.size < OFFSET_VERSION_64 + 8 ? 0 : mem.getLong(OFFSET_VERSION_64);
+        if (size > 0) {
+            ColumnVersionReader.readUnsafe(cachedList, mem);
+        }
     }
 
     @Override
@@ -94,21 +97,8 @@ public class ColumnVersionWriter implements Closeable {
         return transientSize;
     }
 
-    private long calculateSize(int entryCount) {
-        // calculate the area size required to store the versions
-        // we're assuming that 'columnVersions' contains 4 longs per entry
-        // We're storing 4 longs per entry in the file
-        return (long) entryCount * BLOCK_SIZE_BYTES;
-    }
-
-    private long calculateWriteOffset(long areaSize) {
-        boolean currentIsA = isCurrentA();
-        long currentOffset = currentIsA ? getOffsetA() : getOffsetB();
-        if (HEADER_SIZE + areaSize <= currentOffset) {
-            return HEADER_SIZE;
-        }
-        long currentSize = currentIsA ? getSizeA() : getSizeB();
-        return currentOffset + currentSize;
+    public long getVersion() {
+        return version;
     }
 
     /**
@@ -163,6 +153,27 @@ public class ColumnVersionWriter implements Closeable {
         this.size = size;
     }
 
+    private long calculateSize(int entryCount) {
+        // calculate the area size required to store the versions
+        // we're assuming that 'columnVersions' contains 4 longs per entry
+        // We're storing 4 longs per entry in the file
+        return (long) entryCount * BLOCK_SIZE_BYTES;
+    }
+
+    private long calculateWriteOffset(long areaSize) {
+        boolean currentIsA = isCurrentA();
+        long currentOffset = currentIsA ? getOffsetA() : getOffsetB();
+        if (HEADER_SIZE + areaSize <= currentOffset) {
+            return HEADER_SIZE;
+        }
+        long currentSize = currentIsA ? getSizeA() : getSizeB();
+        return currentOffset + currentSize;
+    }
+
+    LongList getCachedList() {
+        return cachedList;
+    }
+
     private long getSizeA() {
         return mem.getLong(OFFSET_SIZE_A_64);
     }
@@ -173,10 +184,6 @@ public class ColumnVersionWriter implements Closeable {
 
     private boolean isCurrentA() {
         return version % 2 == 0;
-    }
-
-    LongList getCachedList() {
-        return cachedList;
     }
 
     private void store(int entryCount, long offset) {
@@ -206,5 +213,9 @@ public class ColumnVersionWriter implements Closeable {
         mem.putLong(OFFSET_SIZE_B_64, bSize);
         this.transientOffset = bOffset;
         this.transientSize = bSize;
+    }
+
+    static {
+        assert HEADER_SIZE == TableUtils.COLUMN_VERSION_FILE_HEADER_SIZE;
     }
 }

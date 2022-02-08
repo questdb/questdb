@@ -179,6 +179,7 @@ public class TableWriter implements Closeable {
     private ObjList<Runnable> activeNullSetters;
     private int rowActon = ROW_ACTION_OPEN_PARTITION;
     private long committedMasterRef;
+    private final ColumnVersionWriter columnVersionWriter;
 
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
@@ -261,6 +262,7 @@ public class TableWriter implements Closeable {
             }
             this.ddlMem = Vm.getMARInstance();
             this.metaMem = Vm.getMRInstance();
+            this.columnVersionWriter = openColumnVersionFile(ff, path, rootLen);
 
             openMetaFile(ff, path, rootLen, metaMem);
             this.metadata = new TableWriterMetadata(metaMem);
@@ -1550,6 +1552,15 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private static ColumnVersionWriter openColumnVersionFile(FilesFacade ff, Path path, int rootLen) {
+        path.concat(COLUMN_VERSION_FILE_NAME).$();
+        try {
+            return new ColumnVersionWriter(ff, path, 0);
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
     private static void attachPartitionCheckFilesMatchMetadata(FilesFacade ff, Path path, RecordMetadata metadata, long partitionSize) throws CairoException {
         // for each column, check that file exists in the partition folder
         int rootLen = path.length();
@@ -1819,6 +1830,7 @@ public class TableWriter implements Closeable {
             }
 
             updateIndexes();
+            txWriter.setColumnVersion(columnVersionWriter.getVersion());
             txWriter.commit(commitMode, this.denseSymbolMapWriters);
 
             // Bookmark masterRef to track how many rows is in uncommitted state
@@ -2080,6 +2092,7 @@ public class TableWriter implements Closeable {
         Misc.free(indexMem);
         Misc.free(other);
         Misc.free(todoMem);
+        Misc.free(columnVersionWriter);
         freeColumns(truncate & !distressed);
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);

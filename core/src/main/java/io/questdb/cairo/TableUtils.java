@@ -72,6 +72,7 @@ public final class TableUtils {
     static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
+    static final int COLUMN_VERSION_FILE_HEADER_SIZE = 40;
 
     // transaction file structure
     public static final int TX_BASE_HEADER_SECTION_PADDING = 12; // Add some free space into header for future use
@@ -147,6 +148,13 @@ public final class TableUtils {
             int tableId
     ) {
         createTable(configuration, memory, path, structure, ColumnType.VERSION, tableId);
+    }
+
+    public static void createColumnVersionFile(MemoryMARW mem) {
+        // Create page of 0s for Column Version file "_cv"
+        mem.extend(COLUMN_VERSION_FILE_HEADER_SIZE);
+        mem.jumpTo(COLUMN_VERSION_FILE_HEADER_SIZE);
+        mem.zero();
     }
 
     public static void createTable(
@@ -226,10 +234,9 @@ public final class TableUtils {
             mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
             createTxn(mem, symbolMapCount, 0L, INITIAL_TXN, 0L, 0L);
 
-            // Create 1 page 0s files for Column Version file "_cv"
+
             mem.smallFile(ff, path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-            mem.extend(Files.PAGE_SIZE);
-            mem.jumpTo(Files.PAGE_SIZE);
+            createColumnVersionFile(mem);
             mem.close();
 
             resetTodoLog(ff, path, rootLen, mem);
