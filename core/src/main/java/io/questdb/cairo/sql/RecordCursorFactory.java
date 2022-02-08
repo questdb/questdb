@@ -58,6 +58,9 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
     default void close() {
     }
 
+    /**
+     * True if record cusor factory followed order by advice and doesn't require sorting .
+     */
     default boolean followedOrderByAdvice() {
         return false;
     }
