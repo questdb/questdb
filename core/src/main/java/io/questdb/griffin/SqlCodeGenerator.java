@@ -2788,7 +2788,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 // below code block generates index-based filter
-
                 final boolean intervalHitsOnlyOnePartition;
                 if (intrinsicModel.hasIntervalFilters()) {
                     RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
@@ -3006,12 +3005,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
+                boolean isOrderByTimestampDesc = isOrderDescendingByDesignatedTimestampOnly(model);
+                RowCursorFactory rowFactory;
+
+                if (isOrderByTimestampDesc && !intrinsicModel.hasIntervalFilters()) {
+                    dfcFactory = new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion());
+                    rowFactory = new BwdDataFrameRowCursorFactory();
+                } else {
+                    rowFactory = new DataFrameRowCursorFactory();
+                }
+
                 model.setWhereClause(intrinsicModel.filter);
                 return new DataFrameRecordCursorFactory(
                         configuration,
                         myMeta,
                         dfcFactory,
-                        new DataFrameRowCursorFactory(),
+                        rowFactory,
                         false,
                         null,
                         framingSupported,
