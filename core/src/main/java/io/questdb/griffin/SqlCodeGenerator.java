@@ -27,8 +27,8 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
@@ -2641,6 +2641,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw e;
             }
 
+            // Latest by on a table requires provided timestamp column to be the designated timestamp.
+            if (latestBy.size() > 0 && readerTimestampIndex != readerMeta.getTimestampIndex()) {
+                throw SqlException.$(model.getTimestamp().position, "latest by over a table requires designated TIMESTAMP");
+            }
+
             boolean requiresTimestamp = joinsRequiringTimestamp[model.getJoinType()];
             final GenericRecordMetadata myMeta = new GenericRecordMetadata();
             boolean framingSupported;
@@ -2783,7 +2788,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 // below code block generates index-based filter
-
                 final boolean intervalHitsOnlyOnePartition;
                 if (intrinsicModel.hasIntervalFilters()) {
                     RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
@@ -3001,12 +3005,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
+                boolean isOrderByTimestampDesc = isOrderDescendingByDesignatedTimestampOnly(model);
+                RowCursorFactory rowFactory;
+
+                if (isOrderByTimestampDesc && !intrinsicModel.hasIntervalFilters()) {
+                    dfcFactory = new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion());
+                    rowFactory = new BwdDataFrameRowCursorFactory();
+                } else {
+                    rowFactory = new DataFrameRowCursorFactory();
+                }
+
                 model.setWhereClause(intrinsicModel.filter);
                 return new DataFrameRecordCursorFactory(
                         configuration,
                         myMeta,
                         dfcFactory,
-                        new DataFrameRowCursorFactory(),
+                        rowFactory,
                         false,
                         null,
                         framingSupported,
