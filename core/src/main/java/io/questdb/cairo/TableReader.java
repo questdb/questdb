@@ -76,6 +76,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private long txn = TableUtils.INITIAL_TXN;
     private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
     private boolean txnAcquired = false;
+    private final ColumnVersionReader columnVersionReader;
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, null);
@@ -94,6 +95,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.columnCount = this.metadata.getColumnCount();
             this.columnCountBits = getColumnBits(columnCount);
             this.partitionBy = this.metadata.getPartitionBy();
+            this.columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
             path.trimTo(rootLen);
             LOG.debug()
@@ -102,7 +104,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     .I$();
             this.txFile = new TxReader(ff).ofRO(path, partitionBy);
             path.trimTo(rootLen);
-            reloadSlow(metadata.getStructureVersion(), false);
+            reloadSlow(metadata.getStructureVersion(), -1, false);
             openSymbolMaps();
             partitionCount = txFile.getPartitionCount();
             partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
@@ -174,6 +176,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             freeTempMem();
             Misc.free(txnScoreboard);
             Misc.free(path);
+            Misc.free(columnVersionReader);
             LOG.debug().$("closed '").utf8(tableName).$('\'').$();
         }
     }
@@ -454,7 +457,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         final long prevPartitionVersion = this.txFile.getPartitionTableVersion();
         try {
-            reloadSlow(this.txFile.getStructureVersion(), true);
+            reloadSlow(this.txFile.getStructureVersion(), this.columnVersionReader.getVersion(), true);
             // partition reload will apply truncate if necessary
             // applyTruncate for non-partitioned tables only
             reconcileOpenPartitions(prevPartitionVersion);
@@ -1341,16 +1344,22 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void reloadSlow(long prevStructureVersion, boolean reshuffle) {
+    private boolean reloadColumnVersion(long columnVersion, long deadline) {
+        columnVersionReader.readSafe(configuration.getMicrosecondClock(), deadline);
+        return columnVersionReader.getVersion() == columnVersion;
+    }
+
+    private void reloadSlow(long prevStructureVersion, long prevColumnVersion, boolean reshuffle) {
         final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
-        boolean versionUpdated;
+        boolean structureVersionUpdated, columnVersionUpdated;
         do {
             // Reload txn
             readTxnSlow(deadline);
-            versionUpdated = prevStructureVersion != txFile.getStructureVersion();
-            // Reload _meta if structure version updated
-        } while (versionUpdated &&
-                !reloadMetadata(txFile.getStructureVersion(), deadline, reshuffle) // Start again if _meta with matching structure version cannot be loaded
+            structureVersionUpdated = prevStructureVersion != txFile.getStructureVersion();
+            columnVersionUpdated = prevColumnVersion != txFile.getColumnVersion();
+            // Reload _meta if structure version updated, reload _cv if column version updated
+        } while ((structureVersionUpdated && !reloadMetadata(txFile.getStructureVersion(), deadline, reshuffle)) // Start again if _meta with matching structure version cannot be loaded
+                || (columnVersionUpdated && !reloadColumnVersion(txFile.getColumnVersion(), deadline))
         );
     }
 

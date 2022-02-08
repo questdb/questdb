@@ -137,6 +137,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION_64, this.partitionTableVersion);
         txMem.putLong(TX_OFFSET_STRUCT_VERSION_64, structureVersion);
         txMem.putLong(TX_OFFSET_DATA_VERSION_64, dataVersion);
+        txMem.putLong(TX_OFFSET_COLUMN_VERSION_64, columnVersion);
         txMem.putInt(TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
 
         // store symbol counts

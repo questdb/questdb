@@ -45,8 +45,14 @@ public class ColumnVersionReader implements Closeable {
     // size should be read from the transaction file
     // it can be zero when there are no columns deviating from the main
     // data branch
-    public ColumnVersionReader(FilesFacade ff, LPSZ fileName, long size) {
-        this.mem = Vm.getCMRInstance(ff, fileName, Math.max(size, HEADER_SIZE), MemoryTag.MMAP_TABLE_READER);
+    public ColumnVersionReader() {
+        this.mem = Vm.getCMRInstance();
+    }
+
+    public ColumnVersionReader ofRO(FilesFacade ff, LPSZ fileName) {
+        version = -1;
+        this.mem.of(ff, fileName, 0, HEADER_SIZE, MemoryTag.MMAP_TABLE_READER);
+        return this;
     }
 
     @Override
@@ -66,6 +72,9 @@ public class ColumnVersionReader implements Closeable {
         long deadline = microsecondClock.getTicks() + spinLockTimeoutUs;
         while (true) {
             long version = unsafeGetVersion();
+            if (version == this.version) {
+                return;
+            }
             Unsafe.getUnsafe().loadFence();
 
             boolean areaA = version % 2 == 0;

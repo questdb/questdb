@@ -50,7 +50,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
         try (
                 Path path = new Path();
                 ColumnVersionWriter w = new ColumnVersionWriter(FilesFacadeImpl.INSTANCE, path.of(root).concat("_cv").$(), 0);
-                ColumnVersionReader r = new ColumnVersionReader(FilesFacadeImpl.INSTANCE, path, 0)
+                ColumnVersionReader r = new ColumnVersionReader().ofRO(FilesFacadeImpl.INSTANCE, path)
         ) {
             w.upsert(1, 2, 3);
 
@@ -99,7 +99,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
         try (
                 Path path = new Path();
                 ColumnVersionWriter w = new ColumnVersionWriter(FilesFacadeImpl.INSTANCE, path.of(root).concat("_cv").$(), 0);
-                ColumnVersionReader r = new ColumnVersionReader(FilesFacadeImpl.INSTANCE, path, 0)
+                ColumnVersionReader r = new ColumnVersionReader().ofRO(FilesFacadeImpl.INSTANCE, path)
         ) {
             CyclicBarrier barrier = new CyclicBarrier(2);
             ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();

@@ -46,6 +46,7 @@ public final class TableUtils {
     public static final int TABLE_RESERVED = 2;
     public static final String META_FILE_NAME = "_meta";
     public static final String TXN_FILE_NAME = "_txn";
+    public static final String COLUMN_VERSION_FILE_NAME = "_cv";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
     public static final String DETACHED_DIR_MARKER = ".detached";
@@ -224,6 +225,13 @@ public final class TableUtils {
             }
             mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
             createTxn(mem, symbolMapCount, 0L, INITIAL_TXN, 0L, 0L);
+
+            // Create 1 page 0s files for Column Version file "_cv"
+            mem.smallFile(ff, path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+            mem.extend(Files.PAGE_SIZE);
+            mem.jumpTo(Files.PAGE_SIZE);
+            mem.close();
+
             resetTodoLog(ff, path, rootLen, mem);
             // allocate txn scoreboard
             path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();
