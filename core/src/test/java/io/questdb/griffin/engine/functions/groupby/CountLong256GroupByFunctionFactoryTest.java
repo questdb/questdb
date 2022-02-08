@@ -69,7 +69,7 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
         assertQuery(
                 expected,
                 "select count_distinct(s) from x",
-                "create table x as (select * from (select rnd_long256(6) s,  timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) PARTITION BY YEAR",
+                "create table x as (select * from (select rnd_long256(6) s,  timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
                 null,
                 false,
                 true,

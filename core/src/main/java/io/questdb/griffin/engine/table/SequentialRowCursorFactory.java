@@ -85,7 +85,7 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
 
         private void init() {
             this.cursorIndex = 0;
-            if (cursorIndex < cursorFactories.size() - 1) {
+            if (cursorIndex < cursorFactories.size()) {
                 currentCursor = cursors.getQuick(cursorIndex);
             }
         }

@@ -28,11 +28,11 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 
 /**
- * Interface used to add steps before and/or after query compilation, e.g. cache checks and query result sending to jdbc client .  
+ * Interface used to add steps before and/or after query compilation, e.g. cache checks and query result sending to jdbc client .
  */
 public interface BatchCallback {
-    void preCompile(SqlCompiler compiler) throws SqlException;
-
     void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence queryText)
             throws PeerIsSlowToReadException, SqlException, PeerDisconnectedException;
+
+    void preCompile(SqlCompiler compiler) throws SqlException;
 }
