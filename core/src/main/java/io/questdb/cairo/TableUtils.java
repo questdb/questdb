@@ -86,16 +86,17 @@ public final class TableUtils {
 
     public static final int TX_BASE_HEADER_SIZE = (int) Math.max(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 + 4 + TX_BASE_HEADER_SECTION_PADDING, 64);
 
-    public static final long TX_OFFSET_TXN = 0;
-    public static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
-    public static final long TX_OFFSET_FIXED_ROW_COUNT = 16;
-    public static final long TX_OFFSET_MIN_TIMESTAMP = 24;
-    public static final long TX_OFFSET_MAX_TIMESTAMP = 32;
-    public static final long TX_OFFSET_STRUCT_VERSION = 40;
-    public static final long TX_OFFSET_DATA_VERSION = 48;
-    public static final long TX_OFFSET_PARTITION_TABLE_VERSION = 56;
-    public static final long TX_OFFSET_MAP_WRITER_COUNT = 128;
-    public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT + Integer.BYTES;
+    public static final long TX_OFFSET_TXN_64 = 0;
+    public static final long TX_OFFSET_TRANSIENT_ROW_COUNT_64 = TX_OFFSET_TXN_64 + 8;
+    public static final long TX_OFFSET_FIXED_ROW_COUNT_64 = TX_OFFSET_TRANSIENT_ROW_COUNT_64 + 8;
+    public static final long TX_OFFSET_MIN_TIMESTAMP_64 = TX_OFFSET_FIXED_ROW_COUNT_64 + 8;
+    public static final long TX_OFFSET_MAX_TIMESTAMP_64 = TX_OFFSET_MIN_TIMESTAMP_64 + 8;
+    public static final long TX_OFFSET_STRUCT_VERSION_64 = TX_OFFSET_MAX_TIMESTAMP_64 + 8;
+    public static final long TX_OFFSET_DATA_VERSION_64 = TX_OFFSET_STRUCT_VERSION_64 + 8;
+    public static final long TX_OFFSET_PARTITION_TABLE_VERSION_64 = TX_OFFSET_DATA_VERSION_64 + 8;
+    public static final long TX_OFFSET_COLUMN_VERSION_64 = TX_OFFSET_PARTITION_TABLE_VERSION_64 + 8;
+    public static final long TX_OFFSET_MAP_WRITER_COUNT_32 = 128;
+    public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
 
     /**
      * TXN file structure
@@ -350,7 +351,7 @@ public final class TableUtils {
     }
 
     public static long getSymbolWriterIndexOffset(int index) {
-        return TX_OFFSET_MAP_WRITER_COUNT + 4 + index * 8L;
+        return TX_OFFSET_MAP_WRITER_COUNT_32 + 4 + index * 8L;
     }
 
     public static long getSymbolWriterTransientIndexOffset(int index) {
@@ -647,24 +648,24 @@ public final class TableUtils {
 
     public static void resetTxn(MemoryMW txMem, long baseOffset, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion, long structureVersion) {
         // txn to let readers know table is being reset
-        txMem.putLong(baseOffset + TX_OFFSET_TXN, txn);
+        txMem.putLong(baseOffset + TX_OFFSET_TXN_64, txn);
 
         // transient row count
-        txMem.putLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT, 0);
+        txMem.putLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT_64, 0);
         // fixed row count
-        txMem.putLong(baseOffset + TX_OFFSET_FIXED_ROW_COUNT, 0);
+        txMem.putLong(baseOffset + TX_OFFSET_FIXED_ROW_COUNT_64, 0);
         // min timestamp value in table
-        txMem.putLong(baseOffset + TX_OFFSET_MIN_TIMESTAMP, Long.MAX_VALUE);
+        txMem.putLong(baseOffset + TX_OFFSET_MIN_TIMESTAMP_64, Long.MAX_VALUE);
         // max timestamp value in table
-        txMem.putLong(baseOffset + TX_OFFSET_MAX_TIMESTAMP, Long.MIN_VALUE);
+        txMem.putLong(baseOffset + TX_OFFSET_MAX_TIMESTAMP_64, Long.MIN_VALUE);
         // structure version
-        txMem.putLong(baseOffset + TX_OFFSET_STRUCT_VERSION, structureVersion);
+        txMem.putLong(baseOffset + TX_OFFSET_STRUCT_VERSION_64, structureVersion);
         // data version
-        txMem.putLong(baseOffset + TX_OFFSET_DATA_VERSION, dataVersion);
+        txMem.putLong(baseOffset + TX_OFFSET_DATA_VERSION_64, dataVersion);
         // partition table version
-        txMem.putLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION, partitionTableVersion);
+        txMem.putLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION_64, partitionTableVersion);
 
-        txMem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT, symbolMapCount);
+        txMem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolMapCount);
         for (int i = 0; i < symbolMapCount; i++) {
             long offset = getSymbolWriterIndexOffset(i);
             txMem.putInt(baseOffset + offset, 0);

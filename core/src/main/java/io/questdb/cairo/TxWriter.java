@@ -84,7 +84,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             fixedRowCount -= prevTransientRowCount;
             transientRowCount = prevTransientRowCount + 1; // When row cancel finishes 1 is subtracted. Add 1 to compensate.
             attachedPartitions.setPos(attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION);
-            prevTransientRowCount = txMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
+            prevTransientRowCount = txMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);
         }
 
         maxTimestamp = prevMaxTimestamp;
@@ -129,15 +129,15 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
         writeAreaSize = calculateWriteSize();
         writeBaseOffset = calculateWriteOffset();
-        txMem.putLong(TX_OFFSET_TXN, ++txn);
-        txMem.putLong(TX_OFFSET_TRANSIENT_ROW_COUNT, transientRowCount);
-        txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT, fixedRowCount);
-        txMem.putLong(TX_OFFSET_MIN_TIMESTAMP, minTimestamp);
-        txMem.putLong(TX_OFFSET_MAX_TIMESTAMP, maxTimestamp);
-        txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, this.partitionTableVersion);
-        txMem.putLong(TX_OFFSET_STRUCT_VERSION, structureVersion);
-        txMem.putLong(TX_OFFSET_DATA_VERSION, dataVersion);
-        txMem.putInt(TX_OFFSET_MAP_WRITER_COUNT, symbolColumnCount);
+        txMem.putLong(TX_OFFSET_TXN_64, ++txn);
+        txMem.putLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64, transientRowCount);
+        txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT_64, fixedRowCount);
+        txMem.putLong(TX_OFFSET_MIN_TIMESTAMP_64, minTimestamp);
+        txMem.putLong(TX_OFFSET_MAX_TIMESTAMP_64, maxTimestamp);
+        txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION_64, this.partitionTableVersion);
+        txMem.putLong(TX_OFFSET_STRUCT_VERSION_64, structureVersion);
+        txMem.putLong(TX_OFFSET_DATA_VERSION_64, dataVersion);
+        txMem.putInt(TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
 
         // store symbol counts
         storeSymbolCounts(symbolCountProviders);
@@ -306,8 +306,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         txMemBase.putLong(TX_BASE_OFFSET_VERSION_64, ++baseVersion);
 
         this.readRecordSize = calculateTxRecordSize(bytesSymbols, bytesPartitions);
-//        LOG.infoW().$("wrote txn record ").$(currentIsA ? "B:" : "A:").$(baseVersion).$(", offset=").$(areaOffset).$(", size=").$(readRecordSize)
-//                .$(", txn=").$(txn).$(", records=").$(fixedRowCount + transientRowCount).$(", dataVersion=").$(dataVersion).$();
         this.readBaseOffset = areaOffset;
 
         if (commitMode != CommitMode.NOSYNC) {
@@ -327,6 +325,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         if (prevMinTimestamp == Long.MAX_VALUE) {
             prevMinTimestamp = minTimestamp;
         }
+    }
+
+    public void setColumnVersion(long newVersion) {
+        this.columnVersion = newVersion;
     }
 
     public void switchPartitions(long timestamp) {
@@ -389,11 +391,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     long getCommittedFixedRowCount() {
-        return txMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
+        return txMem.getLong(TX_OFFSET_FIXED_ROW_COUNT_64);
     }
 
     long getCommittedTransientRowCount() {
-        return txMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
+        return txMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);
     }
 
     private int insertPartitionSizeByTimestamp(int index, long partitionTimestamp, long partitionSize) {
@@ -409,7 +411,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     void resetToLastPartition(long committedTransientRowCount) {
-        resetToLastPartition(committedTransientRowCount, txMem.getLong(TX_OFFSET_MAX_TIMESTAMP));
+        resetToLastPartition(committedTransientRowCount, txMem.getLong(TX_OFFSET_MAX_TIMESTAMP_64));
     }
 
     void resetToLastPartition(long committedTransientRowCount, long newMaxTimestamp) {

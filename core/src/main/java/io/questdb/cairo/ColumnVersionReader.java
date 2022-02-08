@@ -65,12 +65,12 @@ public class ColumnVersionReader implements Closeable {
     public void readSafe(MicrosecondClock microsecondClock, long spinLockTimeoutUs) {
         long deadline = microsecondClock.getTicks() + spinLockTimeoutUs;
         while (true) {
-            long version = unsafeGetVersionCheck();
+            long version = unsafeGetVersion();
             Unsafe.getUnsafe().loadFence();
 
-            boolean areaA = unsafeIsA();
-            long offset = areaA ? mem.getLong(OFFSET_OFFSET_A) : mem.getLong(OFFSET_OFFSET_B);
-            long size = areaA ? mem.getLong(OFFSET_SIZE_A) : mem.getLong(OFFSET_SIZE_B);
+            boolean areaA = version % 2 == 0;
+            long offset = areaA ? mem.getLong(OFFSET_OFFSET_A_64) : mem.getLong(OFFSET_OFFSET_B_64);
+            long size = areaA ? mem.getLong(OFFSET_SIZE_A_64) : mem.getLong(OFFSET_SIZE_B_64);
 
             Unsafe.getUnsafe().loadFence();
             if (version == unsafeGetVersion()) {
@@ -115,15 +115,7 @@ public class ColumnVersionReader implements Closeable {
     }
 
     private long unsafeGetVersion() {
-        return mem.getLong(OFFSET_VERSION);
-    }
-
-    private long unsafeGetVersionCheck() {
-        return mem.getLong(OFFSET_VERSION_CHECK);
-    }
-
-    private boolean unsafeIsA() {
-        return mem.getLong(OFFSET_AREA) == 'A';
+        return mem.getLong(OFFSET_VERSION_64);
     }
 
     public void resize(long size) {

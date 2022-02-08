@@ -123,7 +123,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                 // corrupt the txn file
                 long txn = mem.getLong(TableUtils.TX_BASE_OFFSET_VERSION_64);
                 int recOffset = txn % 2 == 0 ? mem.getInt(TableUtils.TX_BASE_OFFSET_A_32) : mem.getInt(TableUtils.TX_BASE_OFFSET_B_32);
-                mem.jumpTo(recOffset + TableUtils.TX_OFFSET_TXN);
+                mem.jumpTo(recOffset + TableUtils.TX_OFFSET_TXN_64);
                 mem.putLong(txn + 123);
                 mem.putLong(TableUtils.TX_BASE_OFFSET_VERSION_64, txn + 2);
                 mem.jumpTo(offset);
@@ -140,7 +140,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                 // restore txn file to its former glory
 
                 mem.smallFile(configuration.getFilesFacade(), path, MemoryTag.MMAP_DEFAULT);
-                mem.jumpTo(recOffset + TableUtils.TX_OFFSET_TXN);
+                mem.jumpTo(recOffset + TableUtils.TX_OFFSET_TXN_64);
                 mem.putLong(txn + 2);
                 mem.jumpTo(offset);
                 mem.close();

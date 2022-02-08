@@ -63,6 +63,7 @@ public class TxReader implements Closeable, Mutable {
     private long version;
     private int symbolsSize;
     private int partitionSegmentSize;
+    protected long columnVersion;
 
     public TxReader(FilesFacade ff) {
         this.ff = ff;
@@ -162,43 +163,8 @@ public class TxReader implements Closeable, Mutable {
         return attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET);
     }
 
-    public boolean unsafeLoadAll() {
-        if (unsafeLoadBaseOffset()) {
-            this.txn = version;
-            if (txn != roTxMem.getLong(TX_OFFSET_TXN)) {
-                return false;
-            }
-
-            this.transientRowCount = roTxMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
-            this.fixedRowCount = roTxMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
-            this.minTimestamp = roTxMem.getLong(TX_OFFSET_MIN_TIMESTAMP);
-            this.maxTimestamp = roTxMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
-            this.dataVersion = roTxMem.getLong(TX_OFFSET_DATA_VERSION);
-            this.structureVersion = roTxMem.getLong(TX_OFFSET_STRUCT_VERSION);
-            final long prevPartitionTableVersion = this.partitionTableVersion;
-            this.partitionTableVersion = roTxMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION);
-            this.symbolColumnCount = this.symbolsSize / 8;
-            unsafeLoadSymbolCounts(symbolColumnCount);
-
-            unsafeLoadPartitions(
-                    prevPartitionTableVersion,
-                    partitionSegmentSize,
-                    false
-            );
-
-            Unsafe.getUnsafe().loadFence();
-            if (version == unsafeReadVersion()) {
-//                LOG.infoW().$("read txn record ").$(version).$(", offset=").$(baseOffset).$(", size=").$(size)
-//                        .$(", txn=").$(txn).$(", records=").$(fixedRowCount + transientRowCount).$(", dataVersion=").$(dataVersion).$();
-                return true;
-            }
-
-        }
-
-        // dirty read
-//        LOG.infoW().$("read __dirty__ txn record ").$(version).$();
-        clearData();
-        return false;
+    public long getColumnVersion() {
+        return columnVersion;
     }
 
     public long getRowCount() {
@@ -227,6 +193,46 @@ public class TxReader implements Closeable, Mutable {
 
     public long getVersion() {
         return version;
+    }
+
+    public boolean unsafeLoadAll() {
+        if (unsafeLoadBaseOffset()) {
+            this.txn = version;
+            if (txn != roTxMem.getLong(TX_OFFSET_TXN_64)) {
+                return false;
+            }
+
+            this.transientRowCount = roTxMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);
+            this.fixedRowCount = roTxMem.getLong(TX_OFFSET_FIXED_ROW_COUNT_64);
+            this.minTimestamp = roTxMem.getLong(TX_OFFSET_MIN_TIMESTAMP_64);
+            this.maxTimestamp = roTxMem.getLong(TX_OFFSET_MAX_TIMESTAMP_64);
+            this.dataVersion = roTxMem.getLong(TX_OFFSET_DATA_VERSION_64);
+            this.structureVersion = roTxMem.getLong(TX_OFFSET_STRUCT_VERSION_64);
+            final long prevPartitionTableVersion = this.partitionTableVersion;
+            this.partitionTableVersion = roTxMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION_64);
+            this.columnVersion = roTxMem.getLong(TX_OFFSET_COLUMN_VERSION_64);
+            this.symbolColumnCount = this.symbolsSize / 8;
+            unsafeLoadSymbolCounts(symbolColumnCount);
+
+            unsafeLoadPartitions(
+                    prevPartitionTableVersion,
+                    partitionSegmentSize,
+                    false
+            );
+
+            Unsafe.getUnsafe().loadFence();
+            if (version == unsafeReadVersion()) {
+//                LOG.infoW().$("read txn record ").$(version).$(", offset=").$(baseOffset).$(", size=").$(size)
+//                        .$(", txn=").$(txn).$(", records=").$(fixedRowCount + transientRowCount).$(", dataVersion=").$(dataVersion).$();
+                return true;
+            }
+
+        }
+
+        // dirty read
+//        LOG.infoW().$("read __dirty__ txn record ").$(version).$();
+        clearData();
+        return false;
     }
 
     public void initRO(MemoryMR txnFile, int partitionBy) {
@@ -273,7 +279,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public int unsafeReadSymbolColumnCount() {
-        return roTxMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
+        return roTxMem.getInt(TX_OFFSET_MAP_WRITER_COUNT_32);
     }
 
     public int unsafeReadSymbolCount(int symbolIndex) {
@@ -394,7 +400,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     protected long unsafeReadFixedRowCount() {
-        return roTxMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
+        return roTxMem.getLong(TX_OFFSET_FIXED_ROW_COUNT_64);
     }
 
     /**
