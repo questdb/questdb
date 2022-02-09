@@ -199,8 +199,10 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
             final long offset = pageOffset(pageIndex) +  offsetInPage;
             final long len = getAppendOffset() - offset;
 //            TableUtils.allocateDiskSpace(ff, fd, offset + getExtendSegmentSize());
+//            System.out.println("flush: po="+offsetInPage+", len="+len+", fo="+offset);
             ff.write(fd, pageAddress + offsetInPage, len, offset);
-            ff.truncate(fd, offset + getExtendSegmentSize());
+            long sz = pageOffset(pageIndex(getAppendOffset())) + getExtendSegmentSize();
+            ff.allocate(fd, sz);
             // prevent double-flush
             pageIndex = -1;
         }

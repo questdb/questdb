@@ -65,6 +65,8 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
         ) {
             int n = 10_000_000;
             Rnd rnd = new Rnd();
+            // useless jump, making sure we're dealing with it
+            mem.jumpTo(0);
             for (long i = 0; i < n; i++) {
                 mem.putLong(rnd.nextLong());
             }

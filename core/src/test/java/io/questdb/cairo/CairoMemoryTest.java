@@ -321,10 +321,11 @@ public class CairoMemoryTest {
                 try (MemoryMA mem = Vm.getMAInstance()) {
                     mem.of(FF, path.concat("x.dat").$(), FF.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
 
-
                     for (int i = 0; i < N; i++) {
                         mem.putLong(rnd.nextLong());
                     }
+
+                    mem.flush();
 
                     try (MemorySRImpl mem2 = new MemorySRImpl()) {
                         mem2.of(mem, MemoryTag.MMAP_DEFAULT);
@@ -380,6 +381,8 @@ public class CairoMemoryTest {
                     for (int i = 0; i < N; i++) {
                         mem.putLong(rnd.nextLong());
                     }
+
+                    mem.flush();
 
                     try (MemorySRImpl mem2 = new MemorySRImpl()) {
                         mem2.of(mem, MemoryTag.MMAP_DEFAULT);
