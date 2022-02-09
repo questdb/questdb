@@ -133,6 +133,8 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
     @Test
     public void testConversionToFloat() throws Exception {
         testConversionToType("FLOAT", "testCol\ttime\n" +
+                "100.0000\t2016-06-13T17:43:50.100414Z\n" +
+                "-100.0000\t2016-06-13T17:43:50.100415Z\n" +
                 "123.0000\t2016-06-13T17:43:50.100417Z\n" +
                 "-54.0000\t2016-06-13T17:43:50.100418Z\n" +
                 "23.3000\t2016-06-13T17:43:50.100419Z\n" +
@@ -144,6 +146,8 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
     @Test
     public void testConversionToDouble() throws Exception {
         testConversionToType("DOUBLE", "testCol\ttime\n" +
+                "100.0\t2016-06-13T17:43:50.100414Z\n" +
+                "-100.0\t2016-06-13T17:43:50.100415Z\n" +
                 "123.0\t2016-06-13T17:43:50.100417Z\n" +
                 "-54.0\t2016-06-13T17:43:50.100418Z\n" +
                 "23.3\t2016-06-13T17:43:50.100419Z\n" +
