@@ -32,12 +32,19 @@ import java.nio.charset.StandardCharsets;
 
 public class LineTcpConnectionContextBrokenUTF8Test extends BaseLineTcpContextTest {
 
-    NetworkFacade provideLineTcpNetworkFacade() {
-        return new LineTcpNetworkFacadeBrokenUTF8Enconding();
+    @Test
+    public void testBrokenUTF8Encoding() throws Exception {
+        testBrokenUTF8Encoding(false);
     }
 
     @Test
-    public void testBrokenUTF8Encoding() throws Exception {
+    public void testBrokenUTF8EncodingWithDisconnect() throws Exception {
+        testBrokenUTF8Encoding(true);
+    }
+
+    private void testBrokenUTF8Encoding(boolean shouldDisconnectOnError) throws Exception {
+        this.shouldDisconnectOnError = shouldDisconnectOnError;
+
         char nonPrintable = 0x3000;
         char nonPrintable1 = 0x3080;
         char nonPrintable2 = 0x3a55;
@@ -53,9 +60,13 @@ public class LineTcpConnectionContextBrokenUTF8Test extends BaseLineTcpContextTe
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
 
             handleContextIO();
-            Assert.assertTrue(disconnected);
+            Assert.assertEquals(shouldDisconnectOnError, disconnected);
             closeContext();
         });
+    }
+
+    NetworkFacade provideLineTcpNetworkFacade() {
+        return new LineTcpNetworkFacadeBrokenUTF8Enconding();
     }
 
     class LineTcpNetworkFacadeBrokenUTF8Enconding extends LineTcpNetworkFacade {

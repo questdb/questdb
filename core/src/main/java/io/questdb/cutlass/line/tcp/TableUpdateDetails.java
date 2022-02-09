@@ -301,6 +301,9 @@ public class TableUpdateDetails implements Closeable {
 
         private SymbolCache addSymbolCache(int colIndex) {
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16)) {
+                if (!ColumnType.isSymbol(reader.getMetadata().getColumnType(colIndex))) {
+                    throw CairoException.instance(0).put(reader.getMetadata().getColumnName(colIndex)).put(" expected to be Symbol type in table ").put(tableNameUtf16);
+                }
                 path.of(engine.getConfiguration().getRoot()).concat(tableNameUtf16);
                 SymbolCache symCache;
                 final int lastUnusedSymbolCacheIndex = unusedSymbolCaches.size() - 1;
