@@ -112,7 +112,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             "6C\t333\t1970-03-03T00:00:00.000000Z\n";
                     assertTable(expected);
                 },
-                true
+                true, 250
         );
     }
 
@@ -193,7 +193,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n";
                     assertTable(expected);
                 },
-                true
+                true, 250
         );
     }
 
