@@ -49,6 +49,8 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.PropServerConfiguration.COMMIT_INTERVAL_DEFAULT;
+
 public class TableWriterTest extends AbstractCairoTest {
 
     public static final String PRODUCT = "product";
@@ -2705,6 +2707,30 @@ public class TableWriterTest extends AbstractCairoTest {
             create(FF, PartitionBy.NONE, 4);
             try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
                 Assert.assertEquals("TableWriter{name=product}", writer.toString());
+            }
+        });
+    }
+
+    @Test
+    public void testCommitInterval() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(FF, PartitionBy.NONE, 4);
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+                writer.updateCommitInterval(0.0, 1000);
+                writer.setMetaCommitLag(5_000_000);
+                Assert.assertEquals(1000, writer.getCommitInterval());
+
+                writer.updateCommitInterval(0.5, 1000);
+                writer.setMetaCommitLag(5_000_000);
+                Assert.assertEquals(2500, writer.getCommitInterval());
+
+                writer.updateCommitInterval(0.5, 1000);
+                writer.setMetaCommitLag(15_000_000);
+                Assert.assertEquals(7500, writer.getCommitInterval());
+
+                writer.updateCommitInterval(0.5, 3000);
+                writer.setMetaCommitLag(0);
+                Assert.assertEquals(3000, writer.getCommitInterval());
             }
         });
     }

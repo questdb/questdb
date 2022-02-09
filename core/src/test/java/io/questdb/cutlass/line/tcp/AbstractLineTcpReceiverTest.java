@@ -97,7 +97,8 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected int msgBufferSize = 256 * 1024;
     protected long minIdleMsBeforeWriterRelease = 30000;
     protected long maintenanceInterval = 25;
-    protected long commitTimeout = 25;
+    protected double commitIntervalFraction = 0.5;
+    protected long commitIntervalDefault = 2000;
 
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
         @Override
@@ -131,8 +132,13 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
 
         @Override
-        public long getCommitTimeout() {
-            return commitTimeout;
+        public double getCommitIntervalFraction() {
+            return commitIntervalFraction;
+        }
+
+        @Override
+        public long getCommitIntervalDefault() {
+            return commitIntervalDefault;
         }
 
         @Override
@@ -162,11 +168,11 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     }
 
     protected void runInContext(LineTcpServerAwareContext r) throws Exception {
-        runInContext(r, false);
+        runInContext(r, false, 250);
     }
 
-    protected void runInContext(LineTcpServerAwareContext r, boolean needMaintenanceJob) throws Exception {
-        minIdleMsBeforeWriterRelease = 250;
+    protected void runInContext(LineTcpServerAwareContext r, boolean needMaintenanceJob, long minIdleMsBeforeWriterRelease) throws Exception {
+        this.minIdleMsBeforeWriterRelease = minIdleMsBeforeWriterRelease;
         assertMemoryLeak(() -> {
             final Path path = new Path(4096);
             try (LineTcpReceiver receiver = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine)) {

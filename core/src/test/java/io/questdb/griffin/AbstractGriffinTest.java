@@ -544,7 +544,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 long ts = record.getTimestamp(index);
                 if ((isAscending && timestamp > ts) ||
                         (!isAscending && timestamp < ts)) {
-                    Assert.fail("record # " + c + " should have " + (isAscending ? "bigger" : "smaller") + " (or equal) timestamp than the row before");
+                    Assert.fail("record # " + c + " should have " + (isAscending ? "bigger" : "smaller") +
+                            " (or equal) timestamp than the row before. Values prior=" + timestamp + " current=" + ts);
                 }
                 timestamp = ts;
                 c++;
@@ -1173,6 +1174,10 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = cc.getRecordCursorFactory()) {
             Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
         }
+    }
+
+    protected static void assertCompile(CharSequence query) throws Exception {
+        assertMemoryLeak(() -> compile(query));
     }
 
     @NotNull
