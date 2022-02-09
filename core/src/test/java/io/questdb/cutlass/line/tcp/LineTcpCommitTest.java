@@ -43,7 +43,7 @@ public class LineTcpCommitTest extends AbstractLineTcpReceiverFuzzTest {
         // time based commit every 0.5 seconds (50% of 1 sec commit lag) -> should commit rows -> make test pass
         configOverrideCommitLagMicros = 1_000_000;
         commitIntervalFraction = 0.5;
-        commitIntervalDefault = 30_000;
+        commitIntervalDefault = 300_000;
 
         initLoadParameters(20, 5, 2, 2, 50, true);
 
