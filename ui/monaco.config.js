@@ -22,17 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+module.exports = {
+  assetCopyPatterns: [
+    {
+      from: "node_modules/monaco-editor/min/vs/loader.js",
+      to: "assets/vs/loader.js",
+    },
+    {
+      from: "node_modules/monaco-editor/min/vs/editor/editor.main.js",
+      to: "assets/vs/editor/editor.main.js",
+    },
+    {
+      from: "node_modules/monaco-editor/min/vs/editor/editor.main.nls.js",
+      to: "assets/vs/editor/editor.main.nls.js",
+    },
+    {
+      from: "node_modules/monaco-editor/min/vs/editor/editor.main.css",
+      to: "assets/vs/editor/editor.main.css",
+    },
+    { from: "node_modules/monaco-editor/min/vs/base", to: "assets/vs/base" },
+  ],
 
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
-
-/**
- * Interface used to add steps before and/or after query compilation, e.g. cache checks and query result sending to jdbc client .
- */
-public interface BatchCallback {
-    void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence queryText)
-            throws PeerIsSlowToReadException, SqlException, PeerDisconnectedException;
-
-    void preCompile(SqlCompiler compiler) throws SqlException;
+  sourceMapCopyPatterns: [
+    { from: "node_modules/monaco-editor/min-maps/vs/", to: "min-maps/vs" },
+  ],
 }

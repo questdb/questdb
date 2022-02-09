@@ -22,17 +22,18 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin;
 
+import io.questdb.cairo.FullBwdDataFrameCursorFactory;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.BwdDataFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.DataFrameRecordCursorFactory;
 import io.questdb.std.IntList;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 /**
@@ -789,6 +790,7 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
             "8\t2022-01-11T02:26:40.000000Z\n" +
             "7\t2022-01-09T22:40:00.000000Z\n" +
             "6\t2022-01-08T18:53:20.000000Z\n";
+
     static final String EXPECTED = "rectype\tcreaton\n" + DATA;
 
     private void preparePartitionPerRowTableWithLongNames() throws Exception {
