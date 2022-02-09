@@ -31,7 +31,6 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.Path;
@@ -123,7 +122,6 @@ class LineTcpWriterJob implements Job, Closeable {
         while (true) {
             long cursor;
             while ((cursor = sequence.next()) < 0) {
-                Os.pause();
                 if (cursor == -1) {
                     return busy;
                 }
