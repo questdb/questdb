@@ -198,16 +198,17 @@ public class RebuildIndex implements Closeable, Mutable {
 
                 if (ff.exists(path.$())) {
                     LOG.info().$("indexing [path=").utf8(path).I$();
-                    final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, false);
-                    createIndexFiles(columnName, indexValueBlockCapacity, plen, ff);
-
-                    if (partitionSize > columnTop) {
-                        TableUtils.dFile(path.trimTo(plen), columnName);
-                        final long columnSize = (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT);
-                        roMem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_WRITER);
-                        indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnTop);
-                        indexer.index(roMem, columnTop, partitionSize);
-                    }
+                    throw new UnsupportedOperationException();
+//                    final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, false);
+//                    createIndexFiles(columnName, indexValueBlockCapacity, plen, ff);
+//
+//                    if (partitionSize > columnTop) {
+//                        TableUtils.dFile(path.trimTo(plen), columnName);
+//                        final long columnSize = (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT);
+//                        roMem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_WRITER);
+//                        indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnTop);
+//                        indexer.index(roMem, columnTop, partitionSize);
+//                    }
                 }
             }
         }

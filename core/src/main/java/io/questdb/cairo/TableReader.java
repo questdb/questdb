@@ -549,6 +549,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void copyColumnsTo(
+            int partitionIndex,
             ObjList<MemoryMR> columns,
             LongList columnTops,
             ObjList<BitmapIndexReader> indexReaders,
@@ -566,6 +567,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         tempCopyStruct.forwardReader = indexReaders.getAndSetQuick(index + 1, tempCopyStruct.forwardReader);
         if (reload) {
             reloadColumnAt(
+                    partitionIndex,
                     path,
                     columns,
                     columnTops,
@@ -650,10 +652,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                     final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L) - 1;
                     if (copyFrom > -1) {
                         fetchColumnsFrom(oldBase, copyFrom);
-                        copyColumnsTo(columns, columnTops, indexReaders, base, i, partitionRowCount);
+                        copyColumnsTo(partitionIndex, columns, columnTops, indexReaders, base, i, partitionRowCount);
                     } else {
                         // new instance
-                        reloadColumnAt(path, columns, columnTops, indexReaders, base, i, partitionRowCount);
+                        reloadColumnAt(partitionIndex, path, columns, columnTops, indexReaders, base, i, partitionRowCount);
                     }
                 }
 
@@ -863,7 +865,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         .$(']').$();
 
                 if (partitionSize > 0) {
-                    openPartitionColumns(path, getColumnBase(partitionIndex), partitionSize);
+                    openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
                     final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
                     this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
                 }
@@ -894,9 +896,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void openPartitionColumns(Path path, int columnBase, long partitionRowCount) {
+    private void openPartitionColumns(int partitionIndex, Path path, int columnBase, long partitionRowCount) {
         for (int i = 0; i < columnCount; i++) {
             reloadColumnAt(
+                    partitionIndex,
                     path,
                     this.columns,
                     this.columnTops,
@@ -1010,6 +1013,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void reloadColumnAt(
+            int partitionIndex,
             Path path,
             ObjList<MemoryMR> columns,
             LongList columnTops,
@@ -1027,7 +1031,11 @@ public class TableReader implements Closeable, SymbolTableSource {
             MemoryMR mem1 = columns.getQuick(primaryIndex);
             MemoryMR mem2 = columns.getQuick(secondaryIndex);
 
-            final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), name, plen, false);
+            final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
+            final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnIndex);
+            if (columnTop != 0) {
+                int asdf = 0;
+            }
             final long columnRowCount = partitionRowCount - columnTop;
 
             // When column is added mid-table existence the .top file is only
@@ -1128,6 +1136,33 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
+    private boolean reloadColumnVersion(long columnVersion, long deadline) {
+        columnVersionReader.readSafe(configuration.getMicrosecondClock(), deadline);
+        return columnVersionReader.getVersion() == columnVersion;
+    }
+
+    private void reloadSymbolMapCounts() {
+        int symbolMapIndex = 0;
+        for (int i = 0; i < columnCount; i++) {
+            if (!ColumnType.isSymbol(metadata.getColumnType(i))) {
+                continue;
+            }
+            symbolMapReaders.getQuick(i).updateSymbolCount(txFile.getSymbolValueCount(symbolMapIndex++));
+        }
+    }
+
+    private SymbolMapReader reloadSymbolMapReader(int columnIndex, SymbolMapReader reader) {
+        if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
+            if (reader instanceof SymbolMapReaderImpl) {
+                ((SymbolMapReaderImpl) reader).of(configuration, path, metadata.getColumnName(columnIndex), 0);
+                return reader;
+            }
+            return new SymbolMapReaderImpl(configuration, path, metadata.getColumnName(columnIndex), 0);
+        } else {
+            return reader;
+        }
+    }
+
     /**
      * Updates boundaries of all columns in partition.
      *
@@ -1145,6 +1180,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 final MemoryMR mem1 = columns.getQuick(index);
                 if (mem1 instanceof NullColumn) {
                     reloadColumnAt(
+                            partitionIndex,
                             path,
                             columns,
                             columnTops,
@@ -1174,26 +1210,18 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void reloadSymbolMapCounts() {
-        int symbolMapIndex = 0;
-        for (int i = 0; i < columnCount; i++) {
-            if (!ColumnType.isSymbol(metadata.getColumnType(i))) {
-                continue;
-            }
-            symbolMapReaders.getQuick(i).updateSymbolCount(txFile.getSymbolValueCount(symbolMapIndex++));
-        }
-    }
-
-    private SymbolMapReader reloadSymbolMapReader(int columnIndex, SymbolMapReader reader) {
-        if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
-            if (reader instanceof SymbolMapReaderImpl) {
-                ((SymbolMapReaderImpl) reader).of(configuration, path, metadata.getColumnName(columnIndex), 0);
-                return reader;
-            }
-            return new SymbolMapReaderImpl(configuration, path, metadata.getColumnName(columnIndex), 0);
-        } else {
-            return reader;
-        }
+    private void reloadSlow(long prevStructureVersion, long prevColumnVersion, boolean reshuffle) {
+        final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
+        boolean structureVersionUpdated, columnVersionUpdated;
+        do {
+            // Reload txn
+            readTxnSlow(deadline);
+            structureVersionUpdated = prevStructureVersion != txFile.getStructureVersion();
+            columnVersionUpdated = prevColumnVersion != txFile.getColumnVersion();
+            // Reload _meta if structure version updated, reload _cv if column version updated
+        } while ((columnVersionUpdated && !reloadColumnVersion(txFile.getColumnVersion(), deadline)) // Reload column versions, column version used in metadata reload column shuffle
+                || (structureVersionUpdated && !reloadMetadata(txFile.getStructureVersion(), deadline, reshuffle)) // Start again if _meta with matching structure version cannot be loaded
+        );
     }
 
     private void reshuffleColumns(int columnCount, long pTransitionIndex) {
@@ -1225,6 +1253,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                             MemoryMR col = columns.getQuick(getPrimaryColumnIndex(base, i));
                             if ((col instanceof MemoryCMRImpl && col.isDeleted()) || col instanceof NullColumn) {
                                 reloadColumnAt(
+                                        partitionIndex,
                                         path,
                                         columns,
                                         columnTops,
@@ -1239,10 +1268,10 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                         if (copyFrom > -1) {
                             fetchColumnsFrom(base, copyFrom);
-                            copyColumnsTo(this.columns, this.columnTops, this.bitmapIndexes, base, i, partitionRowCount);
+                            copyColumnsTo(partitionIndex, this.columns, this.columnTops, this.bitmapIndexes, base, i, partitionRowCount);
                             int copyTo = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4) - 1;
                             while (copyTo > -1 && TableUtils.isEntryToBeProcessed(pState, copyTo)) {
-                                copyColumnsTo(this.columns, this.columnTops, this.bitmapIndexes, base, copyTo, partitionRowCount);
+                                copyColumnsTo(partitionIndex, this.columns, this.columnTops, this.bitmapIndexes, base, copyTo, partitionRowCount);
                                 copyTo = Unsafe.getUnsafe().getInt(pIndexBase + (copyTo - 1) * 8L + 4);
                             }
                             Misc.free(tempCopyStruct.mem1);
@@ -1252,6 +1281,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         } else {
                             // new instance
                             reloadColumnAt(
+                                    partitionIndex,
                                     path,
                                     columns,
                                     columnTops,
@@ -1342,25 +1372,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
             symbolMapReaders.setPos(columnCount);
         }
-    }
-
-    private boolean reloadColumnVersion(long columnVersion, long deadline) {
-        columnVersionReader.readSafe(configuration.getMicrosecondClock(), deadline);
-        return columnVersionReader.getVersion() == columnVersion;
-    }
-
-    private void reloadSlow(long prevStructureVersion, long prevColumnVersion, boolean reshuffle) {
-        final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
-        boolean structureVersionUpdated, columnVersionUpdated;
-        do {
-            // Reload txn
-            readTxnSlow(deadline);
-            structureVersionUpdated = prevStructureVersion != txFile.getStructureVersion();
-            columnVersionUpdated = prevColumnVersion != txFile.getColumnVersion();
-            // Reload _meta if structure version updated, reload _cv if column version updated
-        } while ((structureVersionUpdated && !reloadMetadata(txFile.getStructureVersion(), deadline, reshuffle)) // Start again if _meta with matching structure version cannot be loaded
-                || (columnVersionUpdated && !reloadColumnVersion(txFile.getColumnVersion(), deadline))
-        );
     }
 
     private static class ColumnCopyStruct {

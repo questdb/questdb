@@ -28,9 +28,13 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 final class Mig607 {
@@ -40,6 +44,7 @@ final class Mig607 {
 
     private static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
     private static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
+    private static final Log LOG = LogFactory.getLog(Mig607.class);
 
     public static void migrate(
             FilesFacade ff,
@@ -63,7 +68,7 @@ final class Mig607 {
                 final CharSequence columnName = metaMem.getStr(currentColumnNameOffset);
                 currentColumnNameOffset += Vm.getStorageLength(columnName);
                 if (columnType == ColumnType.STRING || columnType == ColumnType.BINARY) {
-                    final long columnTop = TableUtils.readColumnTop(
+                    final long columnTop = readColumnTop(
                             ff,
                             path.trimTo(plen2),
                             columnName,
@@ -116,6 +121,50 @@ final class Mig607 {
 
     public static void txnPartition(CharSink path, long txn) {
         path.put('.').put(txn);
+    }
+
+    /**
+     * Reads 8 bytes from "top" file. Moved from TableUtils when refactored column tops into column version file
+     *
+     * @param ff                 files facade, - intermediary to intercept OS file system calls.
+     * @param path               path has to be set to location of "top" file, excluding file name. Zero terminated string.
+     * @param name               name of top file
+     * @param plen               path length to truncate "path" back to, path is reusable.
+     * @param failIfCouldNotRead if true the method will throw exception if top file cannot be read. Otherwise, 0.
+     * @return number of rows column doesn't have when column was added to table that already had data.
+     */
+    public static long readColumnTop(FilesFacade ff, Path path, CharSequence name, int plen, boolean failIfCouldNotRead) {
+        try {
+            if (ff.exists(topFile(path.chop$(), name))) {
+                final long fd = TableUtils.openRO(ff, path, LOG);
+                try {
+                    long n;
+                    if ((n = ff.readULong(fd, 0)) < 0) {
+                        if (failIfCouldNotRead) {
+                            throw CairoException.instance(Os.errno())
+                                    .put("could not read top of column [file=").put(path)
+                                    .put(", read=").put(n).put(']');
+                        } else {
+                            LOG.error().$("could not read top of column [file=").$(path)
+                                    .$(", read=").$(n)
+                                    .$(", errno=").$(ff.errno())
+                                    .I$();
+                            return 0L;
+                        }
+                    }
+                    return n;
+                } finally {
+                    ff.close(fd);
+                }
+            }
+            return 0L;
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
+    static LPSZ topFile(Path path, CharSequence columnName) {
+        return path.concat(columnName).put(".top").$();
     }
 
     private static void trimFile(FilesFacade ff, Path path, long size) {

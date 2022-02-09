@@ -235,6 +235,13 @@ public class TxReader implements Closeable, Mutable {
         return false;
     }
 
+    public long getLastPartitionTimestamp() {
+        if (PartitionBy.isPartitioned(partitionBy)) {
+            return getPartitionTimestampLo(maxTimestamp);
+        }
+        return Long.MIN_VALUE;
+    }
+
     public void initRO(MemoryMR txnFile, int partitionBy) {
         roTxMemBase = txnFile;
         this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);

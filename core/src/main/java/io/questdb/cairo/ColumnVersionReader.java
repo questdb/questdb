@@ -38,27 +38,56 @@ import java.io.Closeable;
 import static io.questdb.cairo.ColumnVersionWriter.*;
 
 public class ColumnVersionReader implements Closeable {
+    public static final int OFFSET_VERSION_64 = 0;
+    public static final int OFFSET_OFFSET_A_64 = OFFSET_VERSION_64 + 8;
+    public static final int OFFSET_SIZE_A_64 = OFFSET_OFFSET_A_64 + 8;
+    public static final int OFFSET_OFFSET_B_64 = OFFSET_SIZE_A_64 + 8;
+    public static final int OFFSET_SIZE_B_64 = OFFSET_OFFSET_B_64 + 8;
+    public static final int HEADER_SIZE = OFFSET_SIZE_B_64 + 8;
+    public static final int BLOCK_SIZE = 4;
+    public static final int BLOCK_SIZE_BYTES = BLOCK_SIZE * Long.BYTES;
+    public static final int BLOCK_SIZE_MSB = Numbers.msb(BLOCK_SIZE);
+
     private final static Log LOG = LogFactory.getLog(ColumnVersionReader.class);
-    private final MemoryCMR mem;
+    private MemoryCMR mem;
+    private boolean ownMem;
     private final LongList cachedList = new LongList();
     private long version;
 
-    // size should be read from the transaction file
-    // it can be zero when there are no columns deviating from the main
-    // data branch
-    public ColumnVersionReader() {
-        this.mem = Vm.getCMRInstance();
+    @Override
+    public void close() {
+        if (ownMem) {
+            mem.close();
+        }
+    }
+
+    public long getColumnTop(long partitionTimestamp, int columnIndex) {
+        int index = cachedList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
+        if (index > -1) {
+            final int sz = cachedList.size();
+            for (; index < sz && cachedList.getQuick(index) == partitionTimestamp; index += BLOCK_SIZE) {
+                final long thisIndex = cachedList.getQuick(index + 1);
+
+                if (thisIndex == columnIndex) {
+                    return cachedList.getQuick(index + 3);
+                }
+
+                if (thisIndex > columnIndex) {
+                    break;
+                }
+            }
+        }
+        return 0L;
     }
 
     public ColumnVersionReader ofRO(FilesFacade ff, LPSZ fileName) {
         version = -1;
+        if (this.mem == null || !ownMem) {
+            this.mem = Vm.getCMRInstance();
+        }
         this.mem.of(ff, fileName, 0, HEADER_SIZE, MemoryTag.MMAP_TABLE_READER);
+        ownMem = true;
         return this;
-    }
-
-    @Override
-    public void close() {
-        mem.close();
     }
 
     public LongList getCachedList() {
@@ -104,16 +133,6 @@ public class ColumnVersionReader implements Closeable {
         }
     }
 
-    static void readUnsafe(LongList cachedList, MemoryCMR mem) {
-        long version = mem.getLong(OFFSET_VERSION_64);
-
-        boolean areaA = version % 2 == 0;
-        long offset = areaA ? mem.getLong(OFFSET_OFFSET_A_64) : mem.getLong(OFFSET_OFFSET_B_64);
-        long size = areaA ? mem.getLong(OFFSET_SIZE_A_64) : mem.getLong(OFFSET_SIZE_B_64);
-        mem.resize(offset + size);
-        readUnsafe(offset, size, cachedList, mem);
-    }
-
     private static void readUnsafe(long offset, long areaSize, LongList cachedList, MemoryR mem) {
         mem.extend(offset + areaSize);
         int i = 0;
@@ -128,9 +147,30 @@ public class ColumnVersionReader implements Closeable {
             cachedList.setQuick(i, mem.getLong(p));
             cachedList.setQuick(i + 1, mem.getLong(p + 8));
             cachedList.setQuick(i + 2, mem.getLong(p + 16));
+            cachedList.setQuick(i + 3, mem.getLong(p + 24));
             i += ColumnVersionWriter.BLOCK_SIZE;
             p += ColumnVersionWriter.BLOCK_SIZE_BYTES;
         }
+    }
+
+    ColumnVersionReader ofRO(MemoryCMR mem) {
+        if (this.mem != null && ownMem) {
+            this.mem.close();
+        }
+        this.mem = mem;
+        ownMem = false;
+        version = -1;
+        return this;
+    }
+
+    void readUnsafe() {
+        long version = mem.getLong(OFFSET_VERSION_64);
+
+        boolean areaA = version % 2 == 0;
+        long offset = areaA ? mem.getLong(OFFSET_OFFSET_A_64) : mem.getLong(OFFSET_OFFSET_B_64);
+        long size = areaA ? mem.getLong(OFFSET_SIZE_A_64) : mem.getLong(OFFSET_SIZE_B_64);
+        mem.resize(offset + size);
+        readUnsafe(offset, size, cachedList, mem);
     }
 
     private long unsafeGetVersion() {

@@ -575,47 +575,6 @@ public final class TableUtils {
         throw CairoException.instance(ff.errno()).put("could not open read-write [file=").put(path).put(']');
     }
 
-    /**
-     * Reads 8 bytes from "top" file.
-     *
-     * @param ff files facade, - intermediary to intercept OS file system calls.
-     * @param path path has to be set to location of "top" file, excluding file name. Zero terminated string.
-     * @param name name of top file
-     * @param plen path length to truncate "path" back to, path is reusable.
-     * @param failIfCouldNotRead if true the method will throw exception if top file cannot be read. Otherwise, 0.
-     *
-     * @return number of rows column doesn't have when column was added to table that already had data.
-     */
-    public static long readColumnTop(FilesFacade ff, Path path, CharSequence name, int plen, boolean failIfCouldNotRead) {
-        try {
-            if (ff.exists(topFile(path.chop$(), name))) {
-                final long fd = TableUtils.openRO(ff, path, LOG);
-                try {
-                    long n;
-                    if ((n = ff.readULong(fd, 0)) < 0) {
-                        if (failIfCouldNotRead) {
-                            throw CairoException.instance(Os.errno())
-                                    .put("could not read top of column [file=").put(path)
-                                    .put(", read=").put(n).put(']');
-                        } else {
-                            LOG.error().$("could not read top of column [file=").$(path)
-                                    .$(", read=").$(n)
-                                    .$(", errno=").$(ff.errno())
-                                    .I$();
-                            return 0L;
-                        }
-                    }
-                    return n;
-                } finally {
-                    ff.close(fd);
-                }
-            }
-            return 0L;
-        } finally {
-            path.trimTo(plen);
-        }
-    }
-
     public static int readIntOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {
         if (ff.read(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
             throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
@@ -880,34 +839,6 @@ public final class TableUtils {
         }
     }
 
-    public static void writeColumnTop(
-            FilesFacade ff,
-            Path path,
-            CharSequence columnName,
-            long columnTop,
-            long tempBuf
-    ) {
-        topFile(path, columnName);
-        long fd = openRW(ff, path, LOG);
-        try {
-            try {
-                allocateDiskSpace(ff, fd, Long.BYTES);
-                writeLongOrFail(ff, fd, 0, columnTop, tempBuf, path);
-            } catch (Throwable e) {
-                ff.close(fd);
-                fd = -1;
-                if (!ff.remove(path)) {
-                    LOG.error().$("could not remove top file, please delete manually [file=").$(path).I$();
-                }
-                throw e;
-            }
-        } finally {
-            if (fd != -1) {
-                Vm.bestEffortClose(ff, LOG, fd, true, Long.BYTES);
-            }
-        }
-    }
-
     public static void writeIntOrFail(FilesFacade ff, long fd, long offset, int value, long tempMem8b, Path path) {
         Unsafe.getUnsafe().putInt(tempMem8b, value);
         if (ff.write(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
@@ -930,10 +861,6 @@ public final class TableUtils {
                     .put(", value=").put(value)
                     .put(']');
         }
-    }
-
-    static LPSZ topFile(Path path, CharSequence columnName) {
-        return path.concat(columnName).put(".top").$();
     }
 
     static long getColumnFlags(MemoryR metaMem, int columnIndex) {

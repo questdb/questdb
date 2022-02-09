@@ -31,22 +31,13 @@ import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
 
-public class ColumnVersionWriter implements Closeable {
-    public static final int OFFSET_VERSION_64 = 0;
-    public static final int OFFSET_OFFSET_A_64 = OFFSET_VERSION_64 + 8;
-    public static final int OFFSET_SIZE_A_64 = OFFSET_OFFSET_A_64 + 8;
-    public static final int OFFSET_OFFSET_B_64 = OFFSET_SIZE_A_64 + 8;
-    public static final int OFFSET_SIZE_B_64 = OFFSET_OFFSET_B_64 + 8;
-    public static final int HEADER_SIZE = OFFSET_SIZE_B_64 + 8;
-    public static final int BLOCK_SIZE = 8;
-    public static final int BLOCK_SIZE_BYTES = BLOCK_SIZE * Long.BYTES;
-    public static final int BLOCK_SIZE_MSB = Numbers.msb(BLOCK_SIZE);
+public class ColumnVersionWriter extends ColumnVersionReader implements Closeable {
     private final MemoryCMARW mem;
-    private final LongList cachedList = new LongList();
     private long version;
     private long size;
     private long transientOffset;
     private long transientSize;
+    private boolean hasChanges;
 
     // size should be read from the transaction file
     // it can be zero when there are no columns deviating from the main
@@ -54,9 +45,9 @@ public class ColumnVersionWriter implements Closeable {
     public ColumnVersionWriter(FilesFacade ff, LPSZ fileName, long size) {
         this.mem = Vm.getCMARWInstance(ff, fileName, ff.getPageSize(), size, MemoryTag.MMAP_TABLE_READER);
         this.size = this.mem.size();
-        this.version = this.size < OFFSET_VERSION_64 + 8 ? 0 : mem.getLong(OFFSET_VERSION_64);
-        if (size > 0) {
-            ColumnVersionReader.readUnsafe(cachedList, mem);
+        super.ofRO(mem);
+        if (this.size > 0) {
+            super.readUnsafe();
         }
     }
 
@@ -66,19 +57,11 @@ public class ColumnVersionWriter implements Closeable {
     }
 
     public void commit() {
-        int entryCount = cachedList.size() / BLOCK_SIZE;
-        long areaSize = calculateSize(entryCount);
-        long writeOffset = calculateWriteOffset(areaSize);
-        bumpFileSize(writeOffset + areaSize);
-        store(entryCount, writeOffset);
-        if (isCurrentA()) {
-            updateB(writeOffset, areaSize);
-        } else {
-            updateA(writeOffset, areaSize);
+        if (!hasChanges) {
+            return;
         }
-
-        Unsafe.getUnsafe().storeFence();
-        storeNewVersion();
+        doCommit();
+        hasChanges = false;
     }
 
     public long getOffset() {
@@ -110,7 +93,8 @@ public class ColumnVersionWriter implements Closeable {
      * @param columnIndex column index
      * @param txn         column version.
      */
-    public void upsert(long timestamp, int columnIndex, long txn) {
+    public void upsert(long timestamp, int columnIndex, long txn, long columnTop) {
+        LongList cachedList = getCachedList();
         final int sz = cachedList.size();
         int index = cachedList.binarySearchBlock(BLOCK_SIZE_MSB, timestamp, BinarySearch.SCAN_UP);
         boolean insert = true;
@@ -120,7 +104,10 @@ public class ColumnVersionWriter implements Closeable {
                 final long thisIndex = cachedList.getQuick(index + 1);
 
                 if (thisIndex == columnIndex) {
-                    cachedList.setQuick(index + 2, txn);
+                    if (txn > -1) {
+                        cachedList.setQuick(index + 2, txn);
+                    }
+                    cachedList.setQuick(index + 3, columnTop);
                     insert = false;
                     break;
                 }
@@ -145,7 +132,9 @@ public class ColumnVersionWriter implements Closeable {
             cachedList.setQuick(index, timestamp);
             cachedList.setQuick(index + 1, columnIndex);
             cachedList.setQuick(index + 2, txn);
+            cachedList.setQuick(index + 3, columnTop);
         }
+        hasChanges = true;
     }
 
     private void bumpFileSize(long size) {
@@ -163,6 +152,7 @@ public class ColumnVersionWriter implements Closeable {
     private long calculateWriteOffset(long areaSize) {
         boolean currentIsA = isCurrentA();
         long currentOffset = currentIsA ? getOffsetA() : getOffsetB();
+        currentOffset = Math.max(currentOffset, HEADER_SIZE);
         if (HEADER_SIZE + areaSize <= currentOffset) {
             return HEADER_SIZE;
         }
@@ -170,8 +160,21 @@ public class ColumnVersionWriter implements Closeable {
         return currentOffset + currentSize;
     }
 
-    LongList getCachedList() {
-        return cachedList;
+    private void doCommit() {
+        LongList cachedList = getCachedList();
+        int entryCount = cachedList.size() / BLOCK_SIZE;
+        long areaSize = calculateSize(entryCount);
+        long writeOffset = calculateWriteOffset(areaSize);
+        bumpFileSize(writeOffset + areaSize);
+        store(entryCount, writeOffset);
+        if (isCurrentA()) {
+            updateB(writeOffset, areaSize);
+        } else {
+            updateA(writeOffset, areaSize);
+        }
+
+        Unsafe.getUnsafe().storeFence();
+        storeNewVersion();
     }
 
     private long getSizeA() {
@@ -187,6 +190,7 @@ public class ColumnVersionWriter implements Closeable {
     }
 
     private void store(int entryCount, long offset) {
+        LongList cachedList = getCachedList();
         for (int i = 0; i < entryCount; i++) {
             int x = i * BLOCK_SIZE;
             mem.putLong(offset, cachedList.getQuick(x));

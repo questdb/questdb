@@ -39,7 +39,32 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     public static void assertEqual(LongList expected, LongList actual) {
         Assert.assertEquals(expected.size(), actual.size());
         for (int i = 0, n = expected.size(); i < n; i++) {
-            Assert.assertEquals(expected.getQuick(i), actual.getQuick(i));
+            if (expected.getQuick(i) != actual.getQuick(i)) {
+                Assert.assertEquals("index " + i, expected.getQuick(i), actual.getQuick(i));
+            }
+        }
+    }
+
+    @Test
+    public void testColumnTop() {
+        try (
+                Path path = new Path();
+                ColumnVersionWriter w = new ColumnVersionWriter(FilesFacadeImpl.INSTANCE, path.of(root).concat("_cv").$(), 0);
+                ColumnVersionReader r = new ColumnVersionReader().ofRO(FilesFacadeImpl.INSTANCE, path)
+        ) {
+            for (int i = 0; i < 100; i += 2) {
+                w.upsert(i, i % 10, -1, i * 10L);
+            }
+
+            w.commit();
+
+            r.readSafe(configuration.getMicrosecondClock(), 1000);
+            for (int i = 0; i < 100; i++) {
+                long colTop = r.getColumnTop(i, i % 10);
+                Assert.assertEquals(i % 2 == 0 ? i * 10 : 0, colTop);
+            }
+
+            assertEqual(w.getCachedList(), r.getCachedList());
         }
     }
 
@@ -52,14 +77,14 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 ColumnVersionWriter w = new ColumnVersionWriter(FilesFacadeImpl.INSTANCE, path.of(root).concat("_cv").$(), 0);
                 ColumnVersionReader r = new ColumnVersionReader().ofRO(FilesFacadeImpl.INSTANCE, path)
         ) {
-            w.upsert(1, 2, 3);
+            w.upsert(1, 2, 3, -1);
 
             for (int i = 0; i < N; i++) {
                 // increment from 0 to 4 columns
                 int increment = rnd.nextInt(32);
 
                 for (int j = 0; j < increment; j++) {
-                    w.upsert(rnd.nextLong(20), rnd.nextInt(10), i);
+                    w.upsert(rnd.nextLong(20), rnd.nextInt(10), i, -1);
                 }
 
                 w.commit();
@@ -112,13 +137,13 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     for (int txn = 0; txn < N; txn++) {
                         int increment = rnd.nextInt(32);
                         for (int j = 0; j < increment; j++) {
-                            w.upsert(rnd.nextLong(20), rnd.nextInt(10), txn);
+                            w.upsert(rnd.nextLong(20), rnd.nextInt(10), txn, -1);
                         }
                         LongList list = w.getCachedList();
                         for (int j = 0, n = list.size(); j < n; j += ColumnVersionWriter.BLOCK_SIZE) {
                             long timestamp = list.getQuick(j);
                             int index = (int) list.getQuick(j + 1);
-                            w.upsert(timestamp, index, txn);
+                            w.upsert(timestamp, index, txn, -1);
                         }
                         w.commit();
                     }

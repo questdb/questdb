@@ -180,6 +180,7 @@ public class TableWriter implements Closeable {
     private int rowActon = ROW_ACTION_OPEN_PARTITION;
     private long committedMasterRef;
     private final ColumnVersionWriter columnVersionWriter;
+    private DirectLongList o3ColumnTopSink;
 
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
@@ -707,6 +708,12 @@ public class TableWriter implements Closeable {
         throw CairoException.instance(0).put("column '").put(name).put("' does not exist");
     }
 
+    public long getColumnTop(long timestamp, CharSequence columnName) {
+        int columnIndex = metadata.getColumnIndex(columnName);
+        long partitionTimestamp = partitionCeilMethod.ceil(timestamp);
+        return columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+    }
+
     public String getDesignatedTimestampColumnName() {
         return designatedTimestampColumnName;
     }
@@ -1143,14 +1150,7 @@ public class TableWriter implements Closeable {
 
                     for (int j = 0; j < columnCount; j++) {
                         final CharSequence columnName = metadata.getColumnName(j);
-                        final long top = TableUtils.readColumnTop(
-                                ff,
-                                path.trimTo(plen),
-                                columnName,
-                                plen,
-                                true
-                        );
-
+                        long top = columnVersionWriter.getColumnTop(ts, j);
                         if (top > 0) {
                             model.addColumnTop(ts, j, top);
                         }
@@ -1709,6 +1709,8 @@ public class TableWriter implements Closeable {
     }
 
     private void bumpStructureVersion() {
+        columnVersionWriter.commit();
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
         txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
         assert txWriter.getStructureVersion() == metadata.getStructureVersion();
     }
@@ -1830,6 +1832,7 @@ public class TableWriter implements Closeable {
             }
 
             updateIndexes();
+            columnVersionWriter.commit();
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
             txWriter.commit(commitMode, this.denseSymbolMapWriters);
 
@@ -2093,6 +2096,7 @@ public class TableWriter implements Closeable {
         Misc.free(other);
         Misc.free(todoMem);
         Misc.free(columnVersionWriter);
+        Misc.free(o3ColumnTopSink);
         freeColumns(truncate & !distressed);
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
@@ -2282,9 +2286,10 @@ public class TableWriter implements Closeable {
                             LOG.info().$("indexing [path=").$(path).$(']').$();
 
                             createIndexFiles(columnName, indexValueBlockSize, plen, true);
+                            int columnIndex = metadata.getColumnIndex(columnName);
 
                             final long partitionSize = txWriter.getPartitionSizeByPartitionTimestamp(timestamp);
-                            final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, true);
+                            final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
 
                             if (partitionSize > columnTop) {
                                 TableUtils.dFile(path.trimTo(plen), columnName);
@@ -2310,7 +2315,8 @@ public class TableWriter implements Closeable {
 
         createIndexFiles(columnName, indexValueBlockSize, plen, true);
 
-        final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, true);
+        long lastPartitionTs = PartitionBy.isPartitioned(partitionBy) ? partitionCeilMethod.ceil(txWriter.getMaxTimestamp()) : Long.MIN_VALUE;
+        final long columnTop = columnVersionWriter.getColumnTop(lastPartitionTs, columnIndex);
 
         // set indexer up to continue functioning as normal
         indexer.configureFollowerAndWriter(configuration, path.trimTo(plen), columnName, getPrimaryColumn(columnIndex), columnTop);
@@ -2493,6 +2499,7 @@ public class TableWriter implements Closeable {
                 // transientRowCount
                 long prevTransientRowCount = transientRowCount;
 
+                resizeColumnTopSink(o3TimestampMin, o3TimestampMax);
                 while (srcOoo < srcOooMax) {
                     try {
                         final long srcOooLo = srcOoo;
@@ -2660,6 +2667,14 @@ public class TableWriter implements Closeable {
                                 Vect.flattenIndex(sortedTimestampsAddr, o3RowCount);
                                 flattenTimestamp = false;
                             }
+
+                            // To collect column top values from o3 partition tasks add them to pre-allocated array of longs
+                            // use o3ColumnTopSink LongList and allocate columns + 1 longs per partition
+                            // then set first value to partition timestamp
+                            long colTopSinkIndex = (long) (pCount - 1) * (metadata.getColumnCount() + 1);
+                            long columnTopSinkAddress = colTopSinkIndex * Long.BYTES;
+                            long columnTopPartitionSinkAddr = o3ColumnTopSink.getAddress() + columnTopSinkAddress;
+                            o3ColumnTopSink.set(colTopSinkIndex, partitionTimestamp);
                             o3CommitPartitionAsync(
                                     columnCounter,
                                     maxTimestamp,
@@ -2673,7 +2688,8 @@ public class TableWriter implements Closeable {
                                     last,
                                     srcDataMax,
                                     srcNameTxn,
-                                    o3Basket
+                                    o3Basket,
+                                    columnTopPartitionSinkAddr + Long.BYTES
                             );
                         }
                     } catch (CairoException | CairoError e) {
@@ -2687,6 +2703,7 @@ public class TableWriter implements Closeable {
                 this.txWriter.transientRowCount = prevTransientRowCount;
                 this.partitionTimestampHi = Math.max(this.partitionTimestampHi, o3TimestampMax);
                 this.txWriter.updateMaxTimestamp(Math.max(txWriter.getMaxTimestamp(), o3TimestampMax));
+                updateO3ColumnTops();
             } finally {
                 // we are stealing work here it is possible we get exception from this method
                 LOG.debug()
@@ -2764,7 +2781,8 @@ public class TableWriter implements Closeable {
             boolean last,
             long srcDataMax,
             long srcNameTxn,
-            O3Basket o3Basket
+            O3Basket o3Basket,
+            long colTopSinkAddr
     ) {
         long cursor = messageBus.getO3PartitionPubSeq().next();
         if (cursor > -1) {
@@ -2788,7 +2806,8 @@ public class TableWriter implements Closeable {
                     sortedTimestampsAddr,
                     this,
                     columnCounter,
-                    o3Basket
+                    o3Basket,
+                    colTopSinkAddr
             );
             messageBus.getO3PartitionPubSeq().done(cursor);
         } else {
@@ -2812,8 +2831,55 @@ public class TableWriter implements Closeable {
                     this,
                     columnCounter,
                     o3Basket,
-                    tempMem16b
+                    tempMem16b,
+                    colTopSinkAddr
             );
+        }
+    }
+
+    private void o3OpenColumnSafe(Sequence openColumnSubSeq, long cursor, O3OpenColumnTask openColumnTask) {
+        try {
+            O3OpenColumnJob.openColumn(openColumnTask, cursor, openColumnSubSeq);
+        } catch (CairoException | CairoError e) {
+            LOG.error().$((Sinkable) e).$();
+        } catch (Throwable e) {
+            LOG.error().$(e).$();
+        }
+    }
+
+    private void openNewColumnFiles(CharSequence name, boolean indexFlag, int indexValueBlockCapacity) {
+        try {
+            // open column files
+            setStateForTimestamp(path, txWriter.getMaxTimestamp(), false);
+            final int plen = path.length();
+            final int columnIndex = columnCount - 1;
+
+            // index must be created before column is initialised because
+            // it uses primary column object as temporary tool
+            if (indexFlag) {
+                createIndexFiles(name, indexValueBlockCapacity, plen, true);
+            }
+
+            openColumnFiles(name, columnIndex, plen);
+            if (txWriter.getTransientRowCount() > 0) {
+                // write top offset to column version file
+                columnVersionWriter.upsert(txWriter.getLastPartitionTimestamp(), columnIndex, -1, txWriter.getTransientRowCount());
+            }
+
+            if (indexFlag) {
+                ColumnIndexer indexer = indexers.getQuick(columnIndex);
+                assert indexer != null;
+                indexers.getQuick(columnIndex).configureFollowerAndWriter(configuration, path.trimTo(plen), name, getPrimaryColumn(columnIndex), txWriter.getTransientRowCount());
+            }
+
+            // configure append position for variable length columns
+            MemoryMA mem2 = getSecondaryColumn(columnCount - 1);
+            if (mem2 != null) {
+                mem2.putLong(0);
+            }
+
+        } finally {
+            path.trimTo(rootLen);
         }
     }
 
@@ -3141,13 +3207,44 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void o3OpenColumnSafe(Sequence openColumnSubSeq, long cursor, O3OpenColumnTask openColumnTask) {
+    private void openPartition(long timestamp) {
         try {
-            O3OpenColumnJob.openColumn(openColumnTask, cursor, openColumnSubSeq, tempMem16b);
-        } catch (CairoException | CairoError e) {
-            LOG.error().$((Sinkable) e).$();
+            setStateForTimestamp(path, timestamp, true);
+            int plen = path.length();
+            if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
+                throw CairoException.instance(ff.errno()).put("Cannot create directory: ").put(path);
+            }
+
+            assert columnCount > 0;
+
+            for (int i = 0; i < columnCount; i++) {
+                final CharSequence name = metadata.getColumnName(i);
+                final ColumnIndexer indexer = metadata.isColumnIndexed(i) ? indexers.getQuick(i) : null;
+                final long columnTop;
+
+                // prepare index writer if column requires indexing
+                if (indexer != null) {
+                    // we have to create files before columns are open
+                    // because we are reusing MAMemoryImpl object from columns list
+                    createIndexFiles(name, metadata.getIndexValueBlockCapacity(i), plen, txWriter.getTransientRowCount() < 1);
+                    indexer.closeSlider();
+                }
+
+                openColumnFiles(name, i, plen);
+                columnTop = columnVersionWriter.getColumnTop(timestamp, i);
+                columnTops.extendAndSet(i, columnTop);
+
+                if (indexer != null) {
+                    indexer.configureFollowerAndWriter(configuration, path, name, getPrimaryColumn(i), columnTop);
+                }
+            }
+            populateDenseIndexerList();
+            LOG.info().$("switched partition [path='").$(path).$('\'').I$();
         } catch (Throwable e) {
-            LOG.error().$(e).$();
+            distressed = true;
+            throw e;
+        } finally {
+            path.trimTo(rootLen);
         }
     }
 
@@ -3615,80 +3712,35 @@ public class TableWriter implements Closeable {
         txWriter.openFirstPartition(ts);
     }
 
-    private void openNewColumnFiles(CharSequence name, boolean indexFlag, int indexValueBlockCapacity) {
-        try {
-            // open column files
-            setStateForTimestamp(path, txWriter.getMaxTimestamp(), false);
-            final int plen = path.length();
-            final int columnIndex = columnCount - 1;
-
-            // index must be created before column is initialised because
-            // it uses primary column object as temporary tool
-            if (indexFlag) {
-                createIndexFiles(name, indexValueBlockCapacity, plen, true);
-            }
-
-            openColumnFiles(name, columnIndex, plen);
-            if (txWriter.getTransientRowCount() > 0) {
-                // write .top file
-                writeColumnTop(name);
-            }
-
-            if (indexFlag) {
-                ColumnIndexer indexer = indexers.getQuick(columnIndex);
-                assert indexer != null;
-                indexers.getQuick(columnIndex).configureFollowerAndWriter(configuration, path.trimTo(plen), name, getPrimaryColumn(columnIndex), txWriter.getTransientRowCount());
-            }
-
-            // configure append position for variable length columns
-            MemoryMA mem2 = getSecondaryColumn(columnCount - 1);
-            if (mem2 != null) {
-                mem2.putLong(0);
-            }
-
-        } finally {
-            path.trimTo(rootLen);
+    private void resizeColumnTopSink(long srcOoo, long srcOooMax) {
+        long maxPartitionsAffected = (srcOooMax - srcOoo) / PartitionBy.getPartitionTimeIntervalFloor(partitionBy) + 1;
+        long size = maxPartitionsAffected * (metadata.getColumnCount() + 1);
+        if (o3ColumnTopSink == null) {
+            o3ColumnTopSink = new DirectLongList(size, MemoryTag.NATIVE_O3);
+            o3ColumnTopSink.extend(size);
+            o3ColumnTopSink.setPos(size);
+            o3ColumnTopSink.zero(-1L);
+        } else {
+            o3ColumnTopSink.extend(size);
+            o3ColumnTopSink.setPos(size);
+            o3ColumnTopSink.zero(-1L);
         }
     }
 
-    private void openPartition(long timestamp) {
-        try {
-            setStateForTimestamp(path, timestamp, true);
-            int plen = path.length();
-            if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
-                throw CairoException.instance(ff.errno()).put("Cannot create directory: ").put(path);
-            }
+    private void updateO3ColumnTops() {
+        int columnCount = metadata.getColumnCount();
+        int increment = columnCount + 1;
 
-            assert columnCount > 0;
-
-            for (int i = 0; i < columnCount; i++) {
-                final CharSequence name = metadata.getColumnName(i);
-                final ColumnIndexer indexer = metadata.isColumnIndexed(i) ? indexers.getQuick(i) : null;
-                final long columnTop;
-
-                // prepare index writer if column requires indexing
-                if (indexer != null) {
-                    // we have to create files before columns are open
-                    // because we are reusing MAMemoryImpl object from columns list
-                    createIndexFiles(name, metadata.getIndexValueBlockCapacity(i), plen, txWriter.getTransientRowCount() < 1);
-                    indexer.closeSlider();
-                }
-
-                openColumnFiles(name, i, plen);
-                columnTop = readColumnTop(ff, path, name, plen, true);
-                columnTops.extendAndSet(i, columnTop);
-
-                if (indexer != null) {
-                    indexer.configureFollowerAndWriter(configuration, path, name, getPrimaryColumn(i), columnTop);
+        for (int partitionOffset = 0, n = (int) o3ColumnTopSink.size(); partitionOffset < n; partitionOffset += increment) {
+            long partitionTimestamp = o3ColumnTopSink.get(partitionOffset);
+            if (partitionTimestamp > -1) {
+                for (int column = 0; column < columnCount; column++) {
+                    long colTop = o3ColumnTopSink.get(partitionOffset + column + 1);
+                    if (colTop > -1) {
+                        columnVersionWriter.upsert(partitionTimestamp, column, -1, colTop);
+                    }
                 }
             }
-            populateDenseIndexerList();
-            LOG.info().$("switched partition [path='").$(path).$('\'').I$();
-        } catch (Throwable e) {
-            distressed = true;
-            throw e;
-        } finally {
-            path.trimTo(rootLen);
         }
     }
 
@@ -3881,7 +3933,6 @@ public class TableWriter implements Closeable {
                     int plen = path.length();
                     removeLambda.remove(ff, dFile(path, columnName));
                     removeLambda.remove(ff, iFile(path.trimTo(plen), columnName));
-                    removeLambda.remove(ff, topFile(path.trimTo(plen), columnName));
                     removeLambda.remove(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName));
                     removeLambda.remove(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName));
                 }
@@ -4107,7 +4158,6 @@ public class TableWriter implements Closeable {
                     int plen = path.length();
                     renameFileOrLog(ff, dFile(path.trimTo(plen), columnName), dFile(other.trimTo(plen), newName));
                     renameFileOrLog(ff, iFile(path.trimTo(plen), columnName), iFile(other.trimTo(plen), newName));
-                    renameFileOrLog(ff, topFile(path.trimTo(plen), columnName), topFile(other.trimTo(plen), newName));
                     renameFileOrLog(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName), BitmapIndexUtils.keyFileName(other.trimTo(plen), newName));
                     renameFileOrLog(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName), BitmapIndexUtils.valueFileName(other.trimTo(plen), newName));
                 }
@@ -4825,20 +4875,6 @@ public class TableWriter implements Closeable {
         ddlMem.putInt(getIndexBlockCapacity(metaMem, i));
         ddlMem.putLong(getColumnHash(metaMem, i));
         ddlMem.skip(8);
-    }
-
-    private void writeColumnTop(CharSequence name) {
-        writeColumnTop(name, txWriter.getTransientRowCount());
-    }
-
-    private void writeColumnTop(CharSequence name, long columnTop) {
-        TableUtils.writeColumnTop(
-                ff,
-                path,
-                name,
-                columnTop,
-                tempMem16b
-        );
     }
 
     private void writeRestoreMetaTodo(CharSequence columnName) {
