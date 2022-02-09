@@ -210,12 +210,12 @@ public class TableUpdateDetails implements Closeable {
         writer.tick(false);
     }
 
-    long checkIfTableNeedsCommit(long millis) {
-        if (millis < nextCommitTime) {
+    long commitIfIntervalElapsed(long wallClockMillis) {
+        if (wallClockMillis < nextCommitTime) {
             return nextCommitTime;
         }
         final long commitInterval = writer.getCommitInterval();
-        commit(millis - lastMeasurementMillis < commitInterval);
+        commit(wallClockMillis - lastMeasurementMillis < commitInterval);
         nextCommitTime += commitInterval;
         return nextCommitTime;
     }

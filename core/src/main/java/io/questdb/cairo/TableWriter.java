@@ -26,7 +26,8 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
@@ -52,7 +53,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongConsumer;
 
-import static io.questdb.PropServerConfiguration.*;
 import static io.questdb.cairo.StatusCode.*;
 import static io.questdb.cairo.TableUtils.*;
 
@@ -698,27 +698,16 @@ public class TableWriter implements Closeable {
         commit(commitMode, metadata.getCommitLag());
     }
 
-    public long getCommitInterval() {
-        return commitInterval;
-    }
-
-    public void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault) {
-        this.commitIntervalFraction = commitIntervalFraction;
-        this.commitIntervalDefault = commitIntervalDefault;
-        this.commitInterval = calculateCommitInterval();
-    }
-
-    private long calculateCommitInterval() {
-        long commitIntervalMicros = (long) (metadata.getCommitLag() * commitIntervalFraction);
-        return commitIntervalMicros > 0 ? commitIntervalMicros/1000 : commitIntervalDefault;
-    }
-
     public int getColumnIndex(CharSequence name) {
         int index = metadata.getColumnIndexQuiet(name);
         if (index > -1) {
             return index;
         }
         throw CairoException.instance(0).put("column '").put(name).put("' does not exist");
+    }
+
+    public long getCommitInterval() {
+        return commitInterval;
     }
 
     public String getDesignatedTimestampColumnName() {
@@ -1426,6 +1415,12 @@ public class TableWriter implements Closeable {
         LOG.info().$("truncated [name=").$(tableName).$(']').$();
     }
 
+    public void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault) {
+        this.commitIntervalFraction = commitIntervalFraction;
+        this.commitIntervalDefault = commitIntervalDefault;
+        this.commitInterval = calculateCommitInterval();
+    }
+
     /**
      * Eagerly sets up writer instance. Otherwise, writer will initialize lazily. Invoking this method could improve
      * performance of some applications. UDP receivers use this in order to avoid initial receive buffer contention.
@@ -1711,6 +1706,11 @@ public class TableWriter implements Closeable {
     private void bumpStructureVersion() {
         txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
         assert txWriter.getStructureVersion() == metadata.getStructureVersion();
+    }
+
+    private long calculateCommitInterval() {
+        long commitIntervalMicros = (long) (metadata.getCommitLag() * commitIntervalFraction);
+        return commitIntervalMicros > 0 ? commitIntervalMicros / 1000 : commitIntervalDefault;
     }
 
     private void cancelRowAndBump() {

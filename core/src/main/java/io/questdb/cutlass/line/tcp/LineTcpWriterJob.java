@@ -87,33 +87,33 @@ class LineTcpWriterJob implements Job, Closeable {
         assert this.workerId == workerId;
         boolean busy = drainQueue();
         // while ILP is hammering the database via multiple connections the writer
-        // is likely to be very busy so checkIfTablesNeedCommit() will run infrequently
+        // is likely to be very busy so commitTables() will run infrequently
         // commit should run regardless the busy flag but has to finish quickly
         // idea is to store the tables in a heap data structure being the tables most
         // desperately need a commit on the top
         if (!busy) {
-            checkIfTablesNeedCommit();
+            commitTables();
             tickWriters();
         }
         return busy;
     }
 
-    private void checkIfTablesNeedCommit() {
-        final long millis = millisecondClock.getTicks();
-        if (millis > nextCommitTime) {
+    private void commitTables() {
+        final long wallClockMillis = millisecondClock.getTicks();
+        if (wallClockMillis > nextCommitTime) {
             long minTableNextCommitTime = Long.MAX_VALUE;
             for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
                 // the heap based solution mentioned above will eliminate the minimum search
                 // we could just process the min element of the heap until we hit the first commit
                 // time greater than millis and that will be our nextCommitTime
-                long tableNextCommitTime = assignedTables.getQuick(n).checkIfTableNeedsCommit(millis);
+                long tableNextCommitTime = assignedTables.getQuick(n).commitIfIntervalElapsed(wallClockMillis);
                 if (tableNextCommitTime < minTableNextCommitTime) {
                     // taking the earliest commit time
                     minTableNextCommitTime = tableNextCommitTime;
                 }
             }
             // if no tables, just use the default commit interval
-            nextCommitTime = minTableNextCommitTime != Long.MAX_VALUE ? minTableNextCommitTime : millis + commitIntervalDefault;
+            nextCommitTime = minTableNextCommitTime != Long.MAX_VALUE ? minTableNextCommitTime : wallClockMillis + commitIntervalDefault;
         }
     }
 
