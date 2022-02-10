@@ -279,7 +279,7 @@ public class IODispatcherTest {
                             return nf;
                         }
                     },
-                    (fd, dispatcher1) -> new HttpConnectionContext(httpContextConfiguration).of(fd, dispatcher1)
+                    (fd, dispatcher1) -> new HttpConnectionContext(httpContextConfiguration, metrics).of(fd, dispatcher1)
             )) {
 
                 // spin up dispatcher thread
@@ -346,11 +346,11 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
-                    new IOContextFactory<HttpConnectionContext>() {
+                    new IOContextFactory<>() {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -1491,10 +1491,10 @@ public class IODispatcherTest {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
+            }, Metrics.disabled());
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -1964,10 +1964,10 @@ public class IODispatcherTest {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
+            }, Metrics.disabled());
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -2587,11 +2587,11 @@ public class IODispatcherTest {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
+            }, Metrics.disabled());
 
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -3751,11 +3751,11 @@ public class IODispatcherTest {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
+            }, Metrics.disabled());
 
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -3959,10 +3959,10 @@ public class IODispatcherTest {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
+            }, Metrics.disabled());
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -4050,10 +4050,10 @@ public class IODispatcherTest {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
+            }, Metrics.disabled());
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -4157,11 +4157,11 @@ public class IODispatcherTest {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
+            }, Metrics.disabled());
 
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -4422,12 +4422,12 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     configuration,
-                    new IOContextFactory<HttpConnectionContext>() {
+                    new IOContextFactory<>() {
                         @SuppressWarnings("resource")
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             openCount.incrementAndGet();
-                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                                 @Override
                                 public void close() {
                                     closeCount.incrementAndGet();
@@ -4919,8 +4919,8 @@ public class IODispatcherTest {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
-            try (HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
+            }, Metrics.disabled());
+            try (HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -5087,8 +5087,8 @@ public class IODispatcherTest {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
-            try (HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
+            }, Metrics.disabled());
+            try (HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -5251,8 +5251,8 @@ public class IODispatcherTest {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
-            try (HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
+            }, Metrics.disabled());
+            try (HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -5467,11 +5467,11 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
-                    new IOContextFactory<HttpConnectionContext>() {
+                    new IOContextFactory<>() {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -5635,11 +5635,11 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
-                    new IOContextFactory<HttpConnectionContext>() {
+                    new IOContextFactory<>() {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -5797,11 +5797,11 @@ public class IODispatcherTest {
                             return 500;
                         }
                     },
-                    new IOContextFactory<HttpConnectionContext>() {
+                    new IOContextFactory<>() {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -6055,7 +6055,7 @@ public class IODispatcherTest {
             final SOCountDownLatch senderHalt = new SOCountDownLatch(senderCount);
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
-                    (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()).of(fd, dispatcher1)
+                    (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics).of(fd, dispatcher1)
             )) {
 
                 // server will publish status of each request to this queue

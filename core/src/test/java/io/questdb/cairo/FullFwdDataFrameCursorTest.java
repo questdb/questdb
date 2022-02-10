@@ -1400,7 +1400,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                         public boolean haltOnError() {
                             return false;
                         }
-                    });
+                    }, metrics);
                     workerPool.assign(new ColumnIndexerJob(workScheduler));
                     workerPool.start(LOG);
                 } else {
@@ -1538,7 +1538,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     public boolean haltOnError() {
                         return false;
                     }
-                });
+                }, metrics);
                 workerPool.assign(new ColumnIndexerJob(workScheduler));
 
                 try (TableWriter writer = new TableWriter(configuration, "ABC", workScheduler)) {

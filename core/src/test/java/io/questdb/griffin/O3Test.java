@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
@@ -1229,7 +1230,7 @@ public class O3Test extends AbstractO3Test {
                 public boolean isEnabled() {
                     return true;
                 }
-            });
+            }, Metrics.disabled());
 
             pool1.assign(new Job() {
                 private boolean toRun = true;
@@ -1268,7 +1269,7 @@ public class O3Test extends AbstractO3Test {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
+            }, Metrics.disabled());
 
             pool2.assign(new Job() {
                 private boolean toRun = true;

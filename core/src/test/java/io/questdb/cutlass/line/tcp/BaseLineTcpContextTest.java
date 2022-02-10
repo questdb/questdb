@@ -129,7 +129,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 affinityByThread = new int[workerCount];
                 Arrays.fill(affinityByThread, -1);
             }
-        });
+        }, metrics);
     }
 
     protected void assertTable(CharSequence expected, CharSequence tableName) {

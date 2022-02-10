@@ -59,7 +59,7 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
 
     private final ThreadLocal<Socket> tlSocket = new ThreadLocal<>();
 
-    protected final WorkerPool sharedWorkerPool = new WorkerPool(getWorkerPoolConfiguration());
+    protected final WorkerPool sharedWorkerPool = new WorkerPool(getWorkerPoolConfiguration(), metrics);
     protected WorkerPoolConfiguration getWorkerPoolConfiguration() {
         return new WorkerPoolConfiguration() {
             private final int[] affinity = {-1};
@@ -175,7 +175,7 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         this.minIdleMsBeforeWriterRelease = minIdleMsBeforeWriterRelease;
         assertMemoryLeak(() -> {
             final Path path = new Path(4096);
-            try (LineTcpReceiver receiver = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine)) {
+            try (LineTcpReceiver receiver = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine, metrics)) {
                 sharedWorkerPool.assignCleaner(Path.CLEANER);
                 try (Closeable ignored = O3Utils.setupWorkerPool(sharedWorkerPool, engine.getMessageBus())) {
                     if (needMaintenanceJob) {

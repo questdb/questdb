@@ -58,7 +58,7 @@ public class HttpServer implements Closeable {
     private final WorkerPool workerPool;
     private final WaitProcessor rescheduleContext;
 
-    public HttpServer(HttpMinServerConfiguration configuration, WorkerPool pool, boolean localPool) {
+    public HttpServer(HttpMinServerConfiguration configuration, Metrics metrics, WorkerPool pool, boolean localPool) {
         this.workerCount = pool.getWorkerCount();
         this.selectors = new ObjList<>(workerCount);
 
@@ -71,7 +71,7 @@ public class HttpServer implements Closeable {
             selectors.add(new HttpRequestProcessorSelectorImpl());
         }
 
-        this.httpContextFactory = new HttpContextFactory(configuration.getHttpContextConfiguration());
+        this.httpContextFactory = new HttpContextFactory(configuration.getHttpContextConfiguration(), metrics);
         this.dispatcher = IODispatchers.create(
                 configuration.getDispatcherConfiguration(),
                 httpContextFactory
@@ -274,7 +274,7 @@ public class HttpServer implements Closeable {
             FunctionFactoryCache functionFactoryCache,
             Metrics metrics
     ) {
-        final HttpServer s = new HttpServer(configuration, workerPool, localPool);
+        final HttpServer s = new HttpServer(configuration, metrics, workerPool, localPool);
         QueryCache.configure(configuration);
         HttpRequestProcessorBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 configuration.getJsonQueryProcessorConfiguration(),
@@ -294,7 +294,7 @@ public class HttpServer implements Closeable {
             FunctionFactoryCache functionFactoryCache,
             Metrics metrics
     ) {
-        final HttpServer s = new HttpServer(configuration, workerPool, localPool);
+        final HttpServer s = new HttpServer(configuration, metrics, workerPool, localPool);
         s.bind(new HttpRequestProcessorFactory() {
             @Override
             public HttpRequestProcessor newInstance() {
@@ -355,9 +355,9 @@ public class HttpServer implements Closeable {
         private final ThreadLocal<WeakObjectPool<HttpConnectionContext>> contextPool;
         private boolean closed = false;
 
-        public HttpContextFactory(HttpContextConfiguration configuration) {
+        public HttpContextFactory(HttpContextConfiguration configuration, Metrics metrics) {
             this.contextPool = new ThreadLocal<>(() -> new WeakObjectPool<>(() ->
-                    new HttpConnectionContext(configuration), configuration.getConnectionPoolInitialCapacity()));
+                    new HttpConnectionContext(configuration, metrics), configuration.getConnectionPoolInitialCapacity()));
         }
 
         @Override

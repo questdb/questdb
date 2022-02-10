@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.cutlass.http.processors.HealthCheckMetrics;
 import io.questdb.cutlass.http.processors.JsonQueryMetrics;
 import io.questdb.metrics.MetricsRegistry;
 import io.questdb.metrics.MetricsRegistryImpl;
@@ -36,11 +37,13 @@ import io.questdb.std.str.CharSink;
 public class Metrics implements Scrapable {
     private final boolean enabled;
     private final JsonQueryMetrics jsonQuery;
+    private final HealthCheckMetrics healthCheck;
     private final MetricsRegistry metricsRegistry;
 
     Metrics(boolean enabled, MetricsRegistry metricsRegistry) {
         this.enabled = enabled;
         this.jsonQuery = new JsonQueryMetrics(metricsRegistry);
+        this.healthCheck = new HealthCheckMetrics(metricsRegistry);
         createMemoryGauges(metricsRegistry);
         this.metricsRegistry = metricsRegistry;
     }
@@ -69,6 +72,10 @@ public class Metrics implements Scrapable {
 
     public JsonQueryMetrics jsonQuery() {
         return jsonQuery;
+    }
+
+    public HealthCheckMetrics healthCheck() {
+        return healthCheck;
     }
 
     @Override

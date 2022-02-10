@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.log.Log;
@@ -77,15 +78,18 @@ public class LineTcpReceiver implements Closeable {
             LineTcpReceiverConfiguration lineConfiguration,
             WorkerPool sharedWorkerPool,
             Log log,
-            CairoEngine cairoEngine
+            CairoEngine cairoEngine,
+            Metrics metrics
     ) {
         if (!lineConfiguration.isEnabled()) {
             return null;
         }
 
         ObjList<WorkerPool> dedicatedPools = new ObjList<>(2);
-        WorkerPool ioWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(lineConfiguration.getIOWorkerPoolConfiguration(), sharedWorkerPool);
-        WorkerPool writerWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(lineConfiguration.getWriterWorkerPoolConfiguration(), sharedWorkerPool);
+        WorkerPool ioWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(
+                lineConfiguration.getIOWorkerPoolConfiguration(), sharedWorkerPool, metrics);
+        WorkerPool writerWorkerPool = WorkerPoolAwareConfiguration.configureWorkerPool(
+                lineConfiguration.getWriterWorkerPoolConfiguration(), sharedWorkerPool, metrics);
         if (ioWorkerPool != sharedWorkerPool) {
             ioWorkerPool.assignCleaner(Path.CLEANER);
             dedicatedPools.add(ioWorkerPool);
