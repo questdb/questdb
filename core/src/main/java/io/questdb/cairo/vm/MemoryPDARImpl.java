@@ -121,6 +121,18 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
         close(true);
     }
 
+    @Override
+    public void jumpTo(long offset) {
+        boolean out = offset > getAppendOffset();
+        if (out) {
+            flushPage();
+        }
+        super.jumpTo(offset);
+        if (out) {
+            this.offsetInPage = offsetInPage(offset);
+        }
+    }
+
     public void truncate() {
         if (fd == -1) {
             // are we closed ?
@@ -159,18 +171,6 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
-    public void jumpTo(long offset) {
-        boolean out = offset > getAppendOffset();
-        if (out) {
-            flushPage();
-        }
-        super.jumpTo(offset);
-        if (out) {
-            this.offsetInPage = offsetInPage(offset);
-        }
-    }
-
-    @Override
     protected void release(long address) {
         assert false;
     }
@@ -196,15 +196,18 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
 
     void flushPage() {
         if (pageIndex > -1 && ff != null) {
-            final long offset = pageOffset(pageIndex) +  offsetInPage;
+            final long offset = pageOffset(pageIndex) + offsetInPage;
             final long len = getAppendOffset() - offset;
 //            TableUtils.allocateDiskSpace(ff, fd, offset + getExtendSegmentSize());
-//            System.out.println("flush: po="+offsetInPage+", len="+len+", fo="+offset);
-            ff.write(fd, pageAddress + offsetInPage, len, offset);
-            long sz = pageOffset(pageIndex(getAppendOffset())) + getExtendSegmentSize();
-            ff.allocate(fd, sz);
-            // prevent double-flush
-            pageIndex = -1;
+//            System.out.println("flush: po=" + offsetInPage + ", len=" + len + ", fo=" + offset);
+            if (len > 0) {
+                ff.write(fd, pageAddress + offsetInPage, len, offset);
+                long sz = pageOffset(pageIndex + 1);
+                ff.truncate(fd, sz);
+                // prevent double-flush
+                offsetInPage += len;
+//            pageIndex = -1;
+            }
         }
     }
 

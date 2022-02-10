@@ -82,6 +82,9 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
 
     @Test
     public void testAppendMidPage() {
+        final long segSize = 32 * 1024;
+        // this is half the page size
+        final int n = 2048;
         try (Path path = new Path().of(root).concat("x.d").$()) {
             try (
                     MemoryPDARImpl mem = new MemoryPDARImpl(
@@ -101,8 +104,6 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                             configuration.getWriterFileOpenOpts()
                     )
             ) {
-                // this is half the page size
-                int n = 2048;
                 Rnd rnd = new Rnd();
                 for (long i = 0; i < n; i++) {
                     mem.putLong(rnd.nextLong());
@@ -116,7 +117,7 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                 mem.of(
                         FilesFacadeImpl.INSTANCE,
                         path,
-                        32 * 1024,
+                        segSize,
                         MemoryTag.MMAP_DEFAULT,
                         CairoConfiguration.O_DIRECT
                 );
@@ -128,7 +129,7 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                 }
 
                 mem.flush();
-
+                Assert.assertEquals(segSize, Files.length(path));
 
                 rmem.resize(2 * n * 8);
                 rnd.reset();
@@ -136,18 +137,21 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                     Assert.assertEquals(rnd.nextLong(), rmem.getLong(i * 8));
                 }
             }
-            Assert.assertEquals(Files.PAGE_SIZE, Files.length(path));
+            Assert.assertEquals(segSize, Files.length(path));
         }
     }
 
     @Test
     public void testAppendNextPageMid() {
+        final long segSize = 32 * 1024;
+        // append 2/3 of page
+        int n = 3096;
         try (Path path = new Path().of(root).concat("x.d").$()) {
             try (
                     MemoryPDARImpl mem = new MemoryPDARImpl(
                             FilesFacadeImpl.INSTANCE,
                             path,
-                            32 * 1024,
+                            segSize,
                             MemoryTag.MMAP_DEFAULT,
                             CairoConfiguration.O_DIRECT
                     );
@@ -161,8 +165,6 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                             configuration.getWriterFileOpenOpts()
                     )
             ) {
-                // append half page
-                int n = 3096;
                 Rnd rnd = new Rnd();
                 for (long i = 0; i < n; i++) {
                     mem.putLong(rnd.nextLong());
@@ -188,6 +190,7 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                 }
 
                 mem.flush();
+                Assert.assertEquals(3 * segSize, Files.length(path));
 
                 rmem.resize(n * 8);
                 rnd.reset();
@@ -205,12 +208,15 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                     Assert.assertEquals(rnd.nextLong(), rmem.getLong(i * 8));
                 }
             }
-            Assert.assertEquals(2 * Files.PAGE_SIZE, Files.length(path));
+            Assert.assertEquals(2 * segSize + segSize / 2, Files.length(path));
         }
     }
 
     @Test
     public void testAppendNextPageStart() {
+        final long segSize = 32 * 1024;
+        // append half page
+        int n = 2048;
         try (Path path = new Path().of(root).concat("x.d").$()) {
             try (
                     MemoryPDARImpl mem = new MemoryPDARImpl(
@@ -230,8 +236,6 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                             configuration.getWriterFileOpenOpts()
                     )
             ) {
-                // append half page
-                int n = 2048;
                 Rnd rnd = new Rnd();
                 for (long i = 0; i < n; i++) {
                     mem.putLong(rnd.nextLong());
@@ -245,7 +249,7 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                 mem.of(
                         FilesFacadeImpl.INSTANCE,
                         path,
-                        32 * 1024,
+                        segSize,
                         MemoryTag.MMAP_DEFAULT,
                         CairoConfiguration.O_DIRECT
                 );
@@ -257,6 +261,9 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                 }
 
                 mem.flush();
+
+                // flush must align file to its extent segment size
+                Assert.assertEquals(segSize * 2, Files.length(path));
 
                 rmem.resize(n * 8);
                 rnd.reset();
@@ -274,18 +281,21 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                     Assert.assertEquals(rnd.nextLong(), rmem.getLong(i * 8));
                 }
             }
-            Assert.assertEquals(Files.PAGE_SIZE, Files.length(path));
+            Assert.assertEquals(3 * n * 8, Files.length(path));
         }
     }
 
     @Test
     public void testAppendPageEdge() {
+        final long segSize = 32 * 1024;
+        // exactly full page
+        final int n = 4096;
         try (Path path = new Path().of(root).concat("x.d").$()) {
             try (
                     MemoryPDARImpl mem = new MemoryPDARImpl(
                             FilesFacadeImpl.INSTANCE,
                             path,
-                            32 * 1024,
+                            segSize,
                             MemoryTag.MMAP_DEFAULT,
                             CairoConfiguration.O_DIRECT
                     );
@@ -299,8 +309,6 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                             configuration.getWriterFileOpenOpts()
                     )
             ) {
-                // exactly full page
-                int n = 4096;
                 Rnd rnd = new Rnd();
                 for (long i = 0; i < n; i++) {
                     mem.putLong(rnd.nextLong());
@@ -326,6 +334,7 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                 }
 
                 mem.flush();
+                Assert.assertEquals(2 * segSize, Files.length(path));
 
                 rmem.resize(2 * n * 8);
                 rnd.reset();
@@ -333,7 +342,7 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                     Assert.assertEquals("" + n, rnd.nextLong(), rmem.getLong(i * 8));
                 }
             }
-            Assert.assertEquals(Files.PAGE_SIZE, Files.length(path));
+            Assert.assertEquals(2 * segSize, Files.length(path));
         }
     }
 
