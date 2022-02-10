@@ -207,12 +207,7 @@ public class AbstractO3Test {
     }
 
     static void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
-        O3Utils.initBuf();
-        try {
-            AbstractO3Test.assertMemoryLeak(code);
-        } finally {
-            O3Utils.freeBuf();
-        }
+        AbstractO3Test.assertMemoryLeak(code);
     }
 
     protected static void executeWithPool(
@@ -345,8 +340,6 @@ public class AbstractO3Test {
                     try (Closeable ignored = O3Utils.setupWorkerPool(pool, engine.getMessageBus())) {
                         pool.start(LOG);
                     }
-                } else {
-                    O3Utils.initBuf();
                 }
 
                 runnable.run(engine, compiler, sqlExecutionContext);
@@ -356,7 +349,6 @@ public class AbstractO3Test {
                 if (pool != null) {
                     pool.halt();
                 }
-                O3Utils.freeBuf();
             }
         }
     }

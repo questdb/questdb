@@ -39,7 +39,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.cairo.O3Utils.get8ByteBuf;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableWriter.*;
 
@@ -203,6 +202,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final TableWriter tableWriter = task.getTableWriter();
         final BitmapIndexWriter indexWriter = task.getIndexWriter();
         final long colTopSinkAddr = task.getColTopSinkAddr();
+        final int columnIndex = task.getColumnIndex();
 
         subSeq.done(cursor);
 
@@ -246,7 +246,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 activeVarFd,
                 tableWriter,
                 indexWriter,
-                colTopSinkAddr
+                colTopSinkAddr,
+                columnIndex
         );
     }
 
@@ -290,7 +291,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long activeVarFd,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
-            long colTopSinkAddr
+            long colTopSinkAddr,
+            int columnIndex
     ) {
         final long mergeLen = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
         final Path pathToPartition = Path.getThreadLocal(pathToTable);
@@ -323,7 +325,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampSize,
                         tableWriter,
                         indexWriter,
-                        colTopSinkAddr
+                        colTopSinkAddr,
+                        columnIndex
                 );
                 break;
             case OPEN_MID_PARTITION_FOR_MERGE:
@@ -365,7 +368,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampSize,
                         tableWriter,
                         indexWriter,
-                        colTopSinkAddr
+                        colTopSinkAddr,
+                        partitionTimestamp,
+                        columnIndex
                 );
                 break;
             case OPEN_LAST_PARTITION_FOR_MERGE:
@@ -438,6 +443,23 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         }
     }
 
+    private static long getSrcDataTop(
+            FilesFacade ff,
+            Path path,
+            int plen,
+            CharSequence columnName,
+            TableWriter writer,
+            long partitionTimestamp,
+            int columnIndex,
+            long srcDataMax
+    ) {
+        boolean dFileExists = ff.exists(dFile(path.trimTo(plen), columnName));
+        if (dFileExists) {
+            return writer.getColumnTop(partitionTimestamp, columnIndex);
+        }
+        return srcDataMax;
+    }
+
     private static void appendMidPartition(
             Path pathToPartition,
             int plen,
@@ -460,14 +482,15 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcTimestampSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
-            long colTopSinkAddr
+            long colTopSinkAddr,
+            int columnIndex
     ) {
         long dstFixFd = 0;
         long dstVarFd = 0;
         final FilesFacade ff = tableWriter.getFilesFacade();
         if (srcDataTop == -1) {
             try {
-                srcDataTop = tableWriter.getColumnTop(partitionTimestamp, columnName);
+                srcDataTop = getSrcDataTop(ff, pathToPartition, plen, columnName, tableWriter, partitionTimestamp, columnIndex, srcDataMax);
                 if (srcDataTop == srcDataMax) {
                     Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataMax);
                 }
@@ -1525,13 +1548,15 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcTimestampSize,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
-            long tmpBuf
+            long colTopSinkAddr,
+            long partitionTimestamp,
+            int columnIndex
     ) {
         final FilesFacade ff = tableWriter.getFilesFacade();
         // not set, we need to check file existence and read
         if (srcDataTop == -1) {
             try {
-                srcDataTop = tableWriter.getColumnTop(oooPartitionMin, columnName);
+                srcDataTop = getSrcDataTop(ff, pathToPartition, plen, columnName, tableWriter, partitionTimestamp, columnIndex, srcDataMax);
             } catch (Throwable e) {
                 LOG.error().$("merge mid partition error 1 [table=").$(tableWriter.getTableName())
                         .$(", e=").$(e)
@@ -1599,7 +1624,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcDataFixFd,
                         srcDataVarFd,
                         tableWriter,
-                        tmpBuf
+                        colTopSinkAddr
                 );
                 break;
             default:
@@ -1656,7 +1681,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         indexBlockCapacity,
                         tableWriter,
                         indexWriter,
-                        tmpBuf
+                        colTopSinkAddr
                 );
                 break;
         }
@@ -2815,16 +2840,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
     @Override
     protected boolean doRun(int workerId, long cursor) {
-        // increment worker index to leave room for anonymous worker to steal work
-        openColumn(workerId + 1, queue.get(cursor), cursor, subSeq);
+        openColumn(queue.get(cursor), cursor, subSeq);
         return true;
-    }
-
-    private void openColumn(int workerId, O3OpenColumnTask task, long cursor, Sequence subSeq) {
-        openColumn(
-                task,
-                cursor,
-                subSeq
-        );
     }
 }

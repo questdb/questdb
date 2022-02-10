@@ -42,7 +42,6 @@ import io.questdb.tasks.O3PartitionTask;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.O3OpenColumnJob.*;
-import static io.questdb.cairo.O3Utils.get8ByteBuf;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableWriter.*;
 
@@ -74,7 +73,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             TableWriter tableWriter,
             AtomicInteger columnCounter,
             O3Basket o3Basket,
-            long tmpBuf,
             long colTopSinkAddr
     ) {
         // is out of order data hitting the last partition?
@@ -150,7 +148,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     tableWriter,
                     columnCounter,
                     o3Basket,
-                    tmpBuf,
                     colTopSinkAddr
             );
         } else {
@@ -531,14 +528,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     tableWriter,
                     columnCounter,
                     o3Basket,
-                    tmpBuf,
                     colTopSinkAddr
             );
         }
     }
 
     public static void processPartition(
-            long tmpBuf,
             O3PartitionTask task,
             long cursor,
             Sequence subSeq
@@ -589,7 +584,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 tableWriter,
                 columnCounter,
                 o3Basket,
-                tmpBuf,
                 colTopSinkAddr
         );
     }
@@ -659,7 +653,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long activeVarFd,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
-            long colTopSinkAddr
+            long colTopSinkAddr,
+            int columnIndex
     ) {
         final O3OpenColumnTask openColumnTask = tableWriter.getO3OpenColumnQueue().get(cursor);
         openColumnTask.of(
@@ -702,7 +697,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 activeVarFd,
                 tableWriter,
                 indexWriter,
-                colTopSinkAddr
+                colTopSinkAddr,
+                columnIndex
         );
         tableWriter.getO3OpenColumnPubSeq().done(cursor);
     }
@@ -741,7 +737,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             TableWriter tableWriter,
             AtomicInteger columnCounter,
             O3Basket o3Basket,
-            long tmpBuf,
             long colTopSinkAddr
     ) {
         LOG.debug().$("partition [ts=").$ts(oooTimestampLo).$(']').$();
@@ -764,6 +759,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final int columnCount = metadata.getColumnCount();
         columnCounter.set(columnCount);
         int columnsInFlight = columnCount;
+        if (openColumnMode == OPEN_LAST_PARTITION_FOR_MERGE || openColumnMode == OPEN_MID_PARTITION_FOR_MERGE) {
+            // Partition will be re-written. Jobs will set new column top values but by default they are 0
+            Vect.memset(colTopSinkAddr, (long) Long.BYTES * columnCount, 0);
+        }
+
         try {
             for (int i = 0; i < columnCount; i++) {
                 final int colOffset = TableWriter.getPrimaryColumnIndex(i);
@@ -850,11 +850,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 activeVarFd,
                                 tableWriter,
                                 indexWriter,
-                                colTopSinkAddr + (long) i * Long.BYTES
+                                colTopSinkAddr + (long) i * Long.BYTES,
+                                i
                         );
                     } else {
                         publishOpenColumnTaskContended(
-                                tmpBuf,
                                 cursor,
                                 openColumnMode,
                                 pathToTable,
@@ -895,7 +895,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 activeVarFd,
                                 tableWriter,
                                 indexWriter,
-                                colTopSinkAddr + (long) i * Long.BYTES
+                                colTopSinkAddr + (long) i * Long.BYTES,
+                                i
                         );
                     }
                 } catch (Throwable e) {
@@ -923,7 +924,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     private static void publishOpenColumnTaskContended(
-            long tmpBuf,
             long cursor,
             int openColumnMode,
             Path pathToTable,
@@ -964,7 +964,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long activeVarFd,
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
-            long colTopSinkAddr
+            long colTopSinkAddr,
+            int columnIndex
     ) {
         while (cursor == -2) {
             cursor = tableWriter.getO3OpenColumnPubSeq().next();
@@ -1012,7 +1013,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     activeVarFd,
                     tableWriter,
                     indexWriter,
-                    colTopSinkAddr
+                    colTopSinkAddr,
+                    columnIndex
             );
         } else {
             O3OpenColumnJob.openColumn(
@@ -1055,18 +1057,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     activeVarFd,
                     tableWriter,
                     indexWriter,
-                    tmpBuf
+                    colTopSinkAddr,
+                    columnIndex
             );
         }
     }
 
     @Override
     protected boolean doRun(int workerId, long cursor) {
-        processPartition(workerId + 1, queue.get(cursor), cursor, subSeq);
+        processPartition(queue.get(cursor), cursor, subSeq);
         return true;
-    }
-
-    private void processPartition(int workerId, O3PartitionTask task, long cursor, Sequence subSeq) {
-        processPartition(get8ByteBuf(workerId), task, cursor, subSeq);
     }
 }

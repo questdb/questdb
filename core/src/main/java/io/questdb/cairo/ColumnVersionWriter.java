@@ -47,7 +47,7 @@ public class ColumnVersionWriter extends ColumnVersionReader implements Closeabl
         this.size = this.mem.size();
         super.ofRO(mem);
         if (this.size > 0) {
-            super.readUnsafe();
+            this.version = super.readUnsafe();
         }
     }
 
@@ -80,6 +80,7 @@ public class ColumnVersionWriter extends ColumnVersionReader implements Closeabl
         return transientSize;
     }
 
+    @Override
     public long getVersion() {
         return version;
     }

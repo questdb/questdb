@@ -163,7 +163,7 @@ public class ColumnVersionReader implements Closeable {
         return this;
     }
 
-    void readUnsafe() {
+    long readUnsafe() {
         long version = mem.getLong(OFFSET_VERSION_64);
 
         boolean areaA = version % 2 == 0;
@@ -171,6 +171,7 @@ public class ColumnVersionReader implements Closeable {
         long size = areaA ? mem.getLong(OFFSET_SIZE_A_64) : mem.getLong(OFFSET_SIZE_B_64);
         mem.resize(offset + size);
         readUnsafe(offset, size, cachedList, mem);
+        return version;
     }
 
     private long unsafeGetVersion() {

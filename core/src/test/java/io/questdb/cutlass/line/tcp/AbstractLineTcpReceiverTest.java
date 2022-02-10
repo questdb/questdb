@@ -183,7 +183,6 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                         throw err;
                     } finally {
                         sharedWorkerPool.halt();
-                        O3Utils.freeBuf();
                         Path.clearThreadLocals();
                     }
                 }
