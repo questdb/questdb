@@ -49,7 +49,7 @@ public final class Constants {
                 return geoNullConstants.get(bits);
             }
         }
-        return nullConstants.getQuick(ColumnType.tagOf(columnType));
+        return nullConstants.getQuick(typeTag);
     }
 
     public static TypeConstant getTypeConstant(int columnType) {
