@@ -177,6 +177,10 @@ public class TableWriter implements Closeable {
     private int rowActon = ROW_ACTION_OPEN_PARTITION;
     private long committedMasterRef;
 
+    // ILP related
+    private double commitIntervalFraction;
+    private long commitIntervalDefault;
+    private long commitInterval;
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot());
@@ -301,6 +305,7 @@ public class TableWriter implements Closeable {
             } else {
                 partitionDirFmt = null;
             }
+            this.commitInterval = calculateCommitInterval();
 
             configureColumnMemory();
             configureTimestampSetter();
@@ -697,6 +702,10 @@ public class TableWriter implements Closeable {
             return index;
         }
         throw CairoException.instance(0).put("column '").put(name).put("' does not exist");
+    }
+
+    public long getCommitInterval() {
+        return commitInterval;
     }
 
     public String getDesignatedTimestampColumnName() {
@@ -1276,6 +1285,7 @@ public class TableWriter implements Closeable {
 
             finishMetaSwapUpdate();
             metadata.setCommitLag(commitLag);
+            commitInterval = calculateCommitInterval();
             clearTodoLog();
         } finally {
             ddlMem.close();
@@ -1401,6 +1411,12 @@ public class TableWriter implements Closeable {
         }
 
         LOG.info().$("truncated [name=").$(tableName).$(']').$();
+    }
+
+    public void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault) {
+        this.commitIntervalFraction = commitIntervalFraction;
+        this.commitIntervalDefault = commitIntervalDefault;
+        this.commitInterval = calculateCommitInterval();
     }
 
     /**
@@ -1688,6 +1704,11 @@ public class TableWriter implements Closeable {
     private void bumpStructureVersion() {
         txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
         assert txWriter.getStructureVersion() == metadata.getStructureVersion();
+    }
+
+    private long calculateCommitInterval() {
+        long commitIntervalMicros = (long) (metadata.getCommitLag() * commitIntervalFraction);
+        return commitIntervalMicros > 0 ? commitIntervalMicros / 1000 : commitIntervalDefault;
     }
 
     private void cancelRowAndBump() {

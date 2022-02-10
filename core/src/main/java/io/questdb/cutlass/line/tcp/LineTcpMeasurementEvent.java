@@ -390,7 +390,7 @@ class LineTcpMeasurementEvent implements Closeable {
                 }
             }
             row.append();
-            tableUpdateDetails.handleRowAppended();
+            tableUpdateDetails.commitIfMaxUncommittedRowsCountReached();
         } catch (CairoException ex) {
             LOG.error()
                     .$("could not write line protocol measurement [tableName=").$(tableUpdateDetails.getTableNameUtf16())
