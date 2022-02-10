@@ -48,6 +48,7 @@ public class WorkerPool {
     private final long yieldThreshold;
     private final long sleepThreshold;
     private final long sleepMs;
+    private final ObjList<Closeable> freeOnHalt = new ObjList<>();
 
     public WorkerPool(WorkerPoolConfiguration configuration) {
         this.workerCount = configuration.getWorkerCount();
@@ -103,6 +104,12 @@ public class WorkerPool {
         }
     }
 
+    public void freeOnHalt(Closeable closeable) {
+        assert !running.get();
+
+        freeOnHalt.add(closeable);
+    }
+
     public int getWorkerCount() {
         return workerCount;
     }
@@ -115,9 +122,8 @@ public class WorkerPool {
             }
             halted.await();
 
-            for (int i = 0; i < workerCount; i++) {
-                Misc.free(workers.getQuick(i));
-            }
+            Misc.freeObjList(workers);
+            Misc.freeObjList(freeOnHalt);
         }
     }
 

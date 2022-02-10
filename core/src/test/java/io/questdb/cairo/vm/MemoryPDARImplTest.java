@@ -90,7 +90,7 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                     MemoryPDARImpl mem = new MemoryPDARImpl(
                             FilesFacadeImpl.INSTANCE,
                             path,
-                            32 * 1024,
+                            segSize,
                             MemoryTag.MMAP_DEFAULT,
                             CairoConfiguration.O_DIRECT
                     );
@@ -98,7 +98,7 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                     MemoryCMR rmem = Vm.getCMARWInstance(
                             FilesFacadeImpl.INSTANCE,
                             path,
-                            FilesFacadeImpl._16M,
+                            segSize,
                             0,
                             MemoryTag.MMAP_DEFAULT,
                             configuration.getWriterFileOpenOpts()
@@ -129,7 +129,7 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                 }
 
                 mem.flush();
-                Assert.assertEquals(segSize, Files.length(path));
+                Assert.assertEquals(Files.ceilPageSize(segSize), Files.length(path));
 
                 rmem.resize(2 * n * 8);
                 rnd.reset();
@@ -137,7 +137,7 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                     Assert.assertEquals(rnd.nextLong(), rmem.getLong(i * 8));
                 }
             }
-            Assert.assertEquals(segSize, Files.length(path));
+            Assert.assertEquals(Files.ceilPageSize(segSize), Files.length(path));
         }
     }
 
@@ -159,7 +159,7 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                     MemoryCMR rmem = Vm.getCMARWInstance(
                             FilesFacadeImpl.INSTANCE,
                             path,
-                            FilesFacadeImpl._16M,
+                            segSize,
                             0,
                             MemoryTag.MMAP_DEFAULT,
                             configuration.getWriterFileOpenOpts()
@@ -178,7 +178,7 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                 mem.of(
                         FilesFacadeImpl.INSTANCE,
                         path,
-                        32 * 1024,
+                        segSize,
                         MemoryTag.MMAP_DEFAULT,
                         CairoConfiguration.O_DIRECT
                 );
@@ -192,7 +192,7 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                 mem.flush();
                 Assert.assertEquals(3 * segSize, Files.length(path));
 
-                rmem.resize(n * 8);
+                rmem.resize(3 * n * 8);
                 rnd.reset();
                 for (long i = 0; i < n; i++) {
                     Assert.assertEquals(rnd.nextLong(), rmem.getLong(i * 8));
@@ -208,7 +208,7 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                     Assert.assertEquals(rnd.nextLong(), rmem.getLong(i * 8));
                 }
             }
-            Assert.assertEquals(2 * segSize + segSize / 2, Files.length(path));
+            Assert.assertEquals(Files.ceilPageSize(2 * segSize + segSize / 2), Files.length(path));
         }
     }
 
@@ -222,7 +222,7 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                     MemoryPDARImpl mem = new MemoryPDARImpl(
                             FilesFacadeImpl.INSTANCE,
                             path,
-                            32 * 1024,
+                            segSize,
                             MemoryTag.MMAP_DEFAULT,
                             CairoConfiguration.O_DIRECT
                     );
@@ -230,7 +230,7 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                     MemoryCMR rmem = Vm.getCMARWInstance(
                             FilesFacadeImpl.INSTANCE,
                             path,
-                            FilesFacadeImpl._16M,
+                            segSize,
                             0,
                             MemoryTag.MMAP_DEFAULT,
                             configuration.getWriterFileOpenOpts()
@@ -265,7 +265,7 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                 // flush must align file to its extent segment size
                 Assert.assertEquals(segSize * 2, Files.length(path));
 
-                rmem.resize(n * 8);
+                rmem.resize(3 * n * 8);
                 rnd.reset();
                 for (long i = 0; i < n; i++) {
                     Assert.assertEquals(rnd.nextLong(), rmem.getLong(i * 8));
@@ -281,7 +281,7 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                     Assert.assertEquals(rnd.nextLong(), rmem.getLong(i * 8));
                 }
             }
-            Assert.assertEquals(3 * n * 8, Files.length(path));
+            Assert.assertEquals(Files.ceilPageSize(3 * n * 8), Files.length(path));
         }
     }
 
@@ -303,7 +303,7 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                     MemoryCMR rmem = Vm.getCMARWInstance(
                             FilesFacadeImpl.INSTANCE,
                             path,
-                            FilesFacadeImpl._16M,
+                            segSize,
                             0,
                             MemoryTag.MMAP_DEFAULT,
                             configuration.getWriterFileOpenOpts()
@@ -322,7 +322,7 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                 mem.of(
                         FilesFacadeImpl.INSTANCE,
                         path,
-                        32 * 1024,
+                        segSize,
                         MemoryTag.MMAP_DEFAULT,
                         CairoConfiguration.O_DIRECT
                 );
