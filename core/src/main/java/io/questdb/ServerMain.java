@@ -170,7 +170,7 @@ public class ServerMain {
         final ObjList<Closeable> instancesToClean = new ObjList<>();
 
         LogFactory.configureFromSystemProperties(workerPool);
-        final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration());
+        final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration(), metrics);
         workerPool.assign(cairoEngine.getEngineMaintenanceJob());
         instancesToClean.add(cairoEngine);
 

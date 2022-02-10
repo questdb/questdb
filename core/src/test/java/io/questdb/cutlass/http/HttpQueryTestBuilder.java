@@ -131,7 +131,7 @@ public class HttpQueryTestBuilder {
                 };
             }
             try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration);
+                    CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
             ) {
                 TelemetryJob telemetryJob = null;
@@ -180,7 +180,6 @@ public class HttpQueryTestBuilder {
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
                                 new SqlCompiler(engine, null),
-                                metrics,
                                 sqlExecutionContext
                         );
                     }
@@ -223,12 +222,7 @@ public class HttpQueryTestBuilder {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                1,
-                                metrics
-                        );
+                        return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine, 1);
                     }
 
                     @Override

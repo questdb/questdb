@@ -22,38 +22,39 @@
  *
  ******************************************************************************/
 
-package io.questdb.metrics;
+package io.questdb.cairo;
 
-import io.questdb.std.str.CharSink;
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.MetricsRegistry;
 
-class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwoLabels {
-    static final NullCounter INSTANCE = new NullCounter();
+public class TableWriterMetrics {
 
-    private NullCounter() {
+    // Includes all types of commits (in-order and o3)
+    private final Counter commitCounter;
+    private final Counter o3CommitCounter;
+    private final Counter committedRowCounter;
+    private final Counter rollbackCounter;
+
+    public TableWriterMetrics(MetricsRegistry metricsRegistry) {
+        this.commitCounter = metricsRegistry.newCounter("commits");
+        this.o3CommitCounter = metricsRegistry.newCounter("o3_commits");
+        this.committedRowCounter = metricsRegistry.newCounter("committed_rows");
+        this.rollbackCounter = metricsRegistry.newCounter("rollbacks");
     }
 
-    @Override
-    public void inc() {
+    public void incrementCommits() {
+        commitCounter.inc();
     }
 
-    @Override
-    public void add(long value) {
+    public void incrementO3Commits() {
+        o3CommitCounter.inc();
     }
 
-    @Override
-    public long get() {
-        return 0;
+    public void addCommittedRows(long rows) {
+        committedRowCounter.add(rows);
     }
 
-    @Override
-    public void inc(short label0) {
-    }
-
-    @Override
-    public void inc(short label0, short label1) {
-    }
-
-    @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
+    public void incrementRollbacks() {
+        rollbackCounter.inc();
     }
 }

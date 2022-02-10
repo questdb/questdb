@@ -89,9 +89,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                 // home path at txn file
                 path.of(configuration.getRoot()).concat("x").concat(TableUtils.TXN_FILE_NAME).$();
 
-                try (TableWriter w = new TableWriter(configuration, "x")) {
-
-
+                try (TableWriter w = new TableWriter(configuration, "x", metrics)) {
                     for (int i = 0; i < N; i++) {
                         TableWriter.Row r = w.newRow();
                         r.putInt(0, rnd.nextInt());
@@ -147,7 +145,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                 // make sure reload functions correctly
                 Assert.assertFalse(reader.reload());
 
-                try (TableWriter w = new TableWriter(configuration, "x")) {
+                try (TableWriter w = new TableWriter(configuration, "x", metrics)) {
                     // add more data
                     for (int i = 0; i < N; i++) {
                         TableWriter.Row r = w.newRow();

@@ -183,7 +183,7 @@ public class AbstractCairoTest {
                 return 512;
             }
         };
-        engine = new CairoEngine(configuration);
+        engine = new CairoEngine(configuration, metrics);
         messageBus = engine.getMessageBus();
     }
 

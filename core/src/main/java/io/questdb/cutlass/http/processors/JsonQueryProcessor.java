@@ -67,27 +67,24 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
-            int workerCount,
-            Metrics metrics
+            int workerCount
     ) {
-        this(configuration, engine, workerCount, null, metrics);
+        this(configuration, engine, workerCount, null);
     }
 
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
             int workerCount,
-            @Nullable FunctionFactoryCache functionFactoryCache,
-            Metrics metrics
+            @Nullable FunctionFactoryCache functionFactoryCache
     ) {
-        this(configuration, engine, new SqlCompiler(engine, functionFactoryCache), metrics, new SqlExecutionContextImpl(engine, workerCount));
+        this(configuration, engine, new SqlCompiler(engine, functionFactoryCache), new SqlExecutionContextImpl(engine, workerCount));
     }
 
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
             SqlCompiler sqlCompiler,
-            Metrics metrics,
             SqlExecutionContextImpl sqlExecutionContext
     ) {
         this.configuration = configuration;
@@ -113,7 +110,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.sqlExecutionContext = sqlExecutionContext;
         this.nanosecondClock = engine.getConfiguration().getNanosecondClock();
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration());
-        this.metrics = metrics;
+        this.metrics = engine.getMetrics();
         this.alterStartTimeout = engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout();
         this.alterStartFullTimeoutNs = engine.getConfiguration().getWriterAsyncCommandMaxTimeout() * 1000;
     }

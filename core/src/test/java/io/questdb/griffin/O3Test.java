@@ -361,7 +361,7 @@ public class O3Test extends AbstractO3Test {
             IntList newColTypes = new IntList();
             CyclicBarrier barrier = new CyclicBarrier(1);
 
-            try (TableWriter writer = new TableWriter(configuration, model.getName())) {
+            try (TableWriter writer = new TableWriter(configuration, model.getName(), Metrics.disabled())) {
                 Thread writerT = new Thread(() -> {
                     try {
                         int i = 0;

@@ -109,7 +109,7 @@ public class IODispatcherTest {
             CairoTestUtils.create(model);
         }
 
-        try (TableWriter writer = new TableWriter(configuration, "y")) {
+        try (TableWriter writer = new TableWriter(configuration, "y", metrics)) {
             for (int i = 0; i < n; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putSym(0, "ok\0ok");
@@ -660,7 +660,7 @@ public class IODispatcherTest {
         final String baseDir = temp.getRoot().getAbsolutePath();
         final CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
         try (
-                CairoEngine cairoEngine = new CairoEngine(configuration);
+                CairoEngine cairoEngine = new CairoEngine(configuration, metrics);
                 HttpServer ignored = HttpServer.create(
                         new DefaultHttpServerConfiguration(
                                 new DefaultHttpContextConfiguration() {
@@ -729,7 +729,7 @@ public class IODispatcherTest {
         final String baseDir = temp.getRoot().getAbsolutePath();
         final CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
         try (
-                CairoEngine cairoEngine = new CairoEngine(configuration);
+                CairoEngine cairoEngine = new CairoEngine(configuration, metrics);
                 HttpServer ignored = HttpServer.create(
                         new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
                             @Override
@@ -1493,7 +1493,7 @@ public class IODispatcherTest {
                 }
             }, Metrics.disabled());
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -1966,7 +1966,7 @@ public class IODispatcherTest {
                 }
             }, Metrics.disabled());
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -1987,8 +1987,7 @@ public class IODispatcherTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                workerPool.getWorkerCount(),
-                                metrics
+                                workerPool.getWorkerCount()
                         );
                     }
 
@@ -2590,7 +2589,7 @@ public class IODispatcherTest {
             }, Metrics.disabled());
 
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -2611,8 +2610,7 @@ public class IODispatcherTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                workerPool.getWorkerCount(),
-                                metrics
+                                workerPool.getWorkerCount()
                         );
                     }
 
@@ -3754,7 +3752,7 @@ public class IODispatcherTest {
             }, Metrics.disabled());
 
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -3775,8 +3773,7 @@ public class IODispatcherTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                workerPool.getWorkerCount(),
-                                metrics
+                                workerPool.getWorkerCount()
                         );
                     }
 
@@ -3961,7 +3958,7 @@ public class IODispatcherTest {
                 }
             }, Metrics.disabled());
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -3981,8 +3978,7 @@ public class IODispatcherTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                workerPool.getWorkerCount(),
-                                metrics);
+                                workerPool.getWorkerCount());
                     }
 
                     @Override
@@ -4052,7 +4048,7 @@ public class IODispatcherTest {
                 }
             }, Metrics.disabled());
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -4073,8 +4069,7 @@ public class IODispatcherTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                workerPool.getWorkerCount(),
-                                metrics);
+                                workerPool.getWorkerCount());
                     }
 
                     @Override
@@ -4160,7 +4155,7 @@ public class IODispatcherTest {
             }, Metrics.disabled());
 
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -4181,8 +4176,7 @@ public class IODispatcherTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                workerPool.getWorkerCount(),
-                                metrics
+                                workerPool.getWorkerCount()
                         );
                     }
 

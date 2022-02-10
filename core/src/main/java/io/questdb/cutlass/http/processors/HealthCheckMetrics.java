@@ -29,17 +29,17 @@ import io.questdb.metrics.MetricsRegistry;
 
 public class HealthCheckMetrics {
 
-    private final Counter unhandledErrorsCounter;
+    private final Counter unhandledErrorCounter;
 
     public HealthCheckMetrics(MetricsRegistry metricsRegistry) {
-        this.unhandledErrorsCounter = metricsRegistry.newCounter("unhandled_errors");
+        this.unhandledErrorCounter = metricsRegistry.newCounter("unhandled_errors");
     }
 
     public void incrementUnhandledErrors() {
-        unhandledErrorsCounter.inc();
+        unhandledErrorCounter.inc();
     }
 
     public long unhandledErrorsCount() {
-        return unhandledErrorsCounter.get();
+        return unhandledErrorCounter.get();
     }
 }

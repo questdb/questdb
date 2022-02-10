@@ -248,7 +248,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 CairoTestUtils.create(model);
             }
 
-            try (TableWriter w = new TableWriter(configuration, names[i])) {
+            try (TableWriter w = new TableWriter(configuration, names[i], metrics)) {
                 for (int k = 0; k < 10; k++) {
                     TableWriter.Row r = w.newRow();
                     r.putDate(0, dataRnd.nextLong());

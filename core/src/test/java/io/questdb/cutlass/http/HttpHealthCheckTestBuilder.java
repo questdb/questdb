@@ -95,7 +95,7 @@ public class HttpHealthCheckTestBuilder {
 
             DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
             try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration);
+                    CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
                     HttpServer ignored = HttpServer.createMin(httpConfiguration, workerPool, LOG, engine, null, metrics)
             ) {
                 workerPool.start(LOG);

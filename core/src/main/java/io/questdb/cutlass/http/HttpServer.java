@@ -288,8 +288,7 @@ public class HttpServer implements Closeable {
                 configuration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
                 workerPool.getWorkerCount(),
-                functionFactoryCache,
-                metrics);
+                functionFactoryCache);
         addDefaultEndpoints(s, configuration, cairoEngine, workerPool, jsonQueryProcessorBuilder, functionFactoryCache);
         return s;
     }

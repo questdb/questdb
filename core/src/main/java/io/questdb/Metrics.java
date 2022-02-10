@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.cutlass.http.processors.HealthCheckMetrics;
 import io.questdb.cutlass.http.processors.JsonQueryMetrics;
 import io.questdb.metrics.MetricsRegistry;
@@ -38,12 +39,14 @@ public class Metrics implements Scrapable {
     private final boolean enabled;
     private final JsonQueryMetrics jsonQuery;
     private final HealthCheckMetrics healthCheck;
+    private final TableWriterMetrics tableWriter;
     private final MetricsRegistry metricsRegistry;
 
     Metrics(boolean enabled, MetricsRegistry metricsRegistry) {
         this.enabled = enabled;
         this.jsonQuery = new JsonQueryMetrics(metricsRegistry);
         this.healthCheck = new HealthCheckMetrics(metricsRegistry);
+        this.tableWriter = new TableWriterMetrics(metricsRegistry);
         createMemoryGauges(metricsRegistry);
         this.metricsRegistry = metricsRegistry;
     }
@@ -76,6 +79,10 @@ public class Metrics implements Scrapable {
 
     public HealthCheckMetrics healthCheck() {
         return healthCheck;
+    }
+
+    public TableWriterMetrics tableWriter() {
+        return tableWriter;
     }
 
     @Override

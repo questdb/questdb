@@ -107,7 +107,7 @@ public class TableReaderReloadTest extends AbstractCairoTest {
         }
 
         long timestamp = 0;
-        try (TableWriter writer = new TableWriter(configuration, "all")) {
+        try (TableWriter writer = new TableWriter(configuration, "all", metrics)) {
 
             try (TableReader reader = new TableReader(configuration, "all")) {
                 Assert.assertFalse(reader.reload());

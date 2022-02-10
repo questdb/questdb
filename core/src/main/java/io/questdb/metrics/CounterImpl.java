@@ -39,8 +39,8 @@ class CounterImpl implements Counter {
     }
 
     @Override
-    public void inc() {
-        counter.increment();
+    public void add(long value) {
+        counter.add(value);
     }
 
     @Override
