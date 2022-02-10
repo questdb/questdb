@@ -70,7 +70,8 @@ public class CairoEngine implements Closeable, WriterSource {
     private long tableIdFd = -1;
     private long tableIdMem = 0;
 
-    // Kept for embedded API purposes.
+    // Kept for embedded API purposes. The second constructor (the one with metrics)
+    // should be preferred for internal use.
     public CairoEngine(CairoConfiguration configuration) {
         this(configuration, Metrics.disabled());
     }
