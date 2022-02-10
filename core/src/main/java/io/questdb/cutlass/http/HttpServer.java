@@ -244,6 +244,10 @@ public class HttpServer implements Closeable {
     }
 
     public void bind(HttpRequestProcessorFactory factory) {
+        bind(factory, false);
+    }
+
+    public void bind(HttpRequestProcessorFactory factory, boolean useAsDefault) {
         final String url = factory.getUrl();
         assert url != null;
         for (int i = 0; i < workerCount; i++) {
@@ -251,7 +255,11 @@ public class HttpServer implements Closeable {
             if (HttpServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
                 selector.defaultRequestProcessor = factory.newInstance();
             } else {
-                selector.processorMap.put(url, factory.newInstance());
+                final HttpRequestProcessor processor = factory.newInstance();
+                selector.processorMap.put(url, processor);
+                if (useAsDefault) {
+                    selector.defaultRequestProcessor = processor;
+                }
             }
         }
     }
@@ -305,7 +313,7 @@ public class HttpServer implements Closeable {
             public String getUrl() {
                 return metrics.isEnabled() ? "/status" : "*";
             }
-        });
+        }, true);
         if (metrics.isEnabled()) {
             s.bind(new HttpRequestProcessorFactory() {
                 @Override
