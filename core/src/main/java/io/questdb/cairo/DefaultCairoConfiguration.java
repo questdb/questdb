@@ -406,7 +406,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         // is immediately visible to mapped memory for the same area of file. While this is the
         // case on Linux it is absolutely not the case on Windows. We must not enable anything other
         // than MMAP on Windows.
-        return Os.type != Os.WINDOWS ? O_DIRECT : O_NONE;
+        return Os.type != Os.WINDOWS ? O_ASYNC : O_NONE;
     }
 
     @Override
