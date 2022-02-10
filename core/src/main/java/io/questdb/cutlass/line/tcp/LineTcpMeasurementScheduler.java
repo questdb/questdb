@@ -100,37 +100,37 @@ class LineTcpMeasurementScheduler implements Closeable {
         pubSeq = new MPSequence[nWriterThreads];
         //noinspection unchecked
         queue = new RingQueue[nWriterThreads];
-            for (int i = 0; i < nWriterThreads; i++) {
-                MPSequence ps = new MPSequence(queueSize);
-                pubSeq[i] = ps;
+        for (int i = 0; i < nWriterThreads; i++) {
+            MPSequence ps = new MPSequence(queueSize);
+            pubSeq[i] = ps;
 
-                RingQueue<LineTcpMeasurementEvent> q = new RingQueue<>(
-                        (address, addressSize) -> new LineTcpMeasurementEvent(
-                                address,
-                                addressSize,
-                                lineConfiguration.getMicrosecondClock(),
-                                lineConfiguration.getTimestampAdapter()
-                        ),
-                        getEventSlotSize(maxMeasurementSize),
-                        queueSize,
-                        MemoryTag.NATIVE_DEFAULT
-                );
+            RingQueue<LineTcpMeasurementEvent> q = new RingQueue<>(
+                    (address, addressSize) -> new LineTcpMeasurementEvent(
+                            address,
+                            addressSize,
+                            lineConfiguration.getMicrosecondClock(),
+                            lineConfiguration.getTimestampAdapter()
+                    ),
+                    getEventSlotSize(maxMeasurementSize),
+                    queueSize,
+                    MemoryTag.NATIVE_DEFAULT
+            );
 
-                queue[i] = q;
-                SCSequence subSeq = new SCSequence();
-                ps.then(subSeq).then(ps);
+            queue[i] = q;
+            SCSequence subSeq = new SCSequence();
+            ps.then(subSeq).then(ps);
 
-                final LineTcpWriterJob lineTcpWriterJob = new LineTcpWriterJob(
-                        i,
-                        q,
-                        subSeq,
-                        milliClock,
-                        commitInterval,
-                        this
-                );
-                writerWorkerPool.assign(i, (Job) lineTcpWriterJob);
-                writerWorkerPool.assign(i, (Closeable) lineTcpWriterJob);
-            }
+            final LineTcpWriterJob lineTcpWriterJob = new LineTcpWriterJob(
+                    i,
+                    q,
+                    subSeq,
+                    milliClock,
+                    commitInterval,
+                    this
+            );
+            writerWorkerPool.assign(i, (Job) lineTcpWriterJob);
+            writerWorkerPool.assign(i, (Closeable) lineTcpWriterJob);
+        }
         this.tableStructureAdapter = new TableStructureAdapter(cairoConfiguration, configuration.getDefaultPartitionBy());
         writerIdleTimeout = lineConfiguration.getWriterIdleTimeout();
     }
