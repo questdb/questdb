@@ -118,8 +118,13 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public long getCommitTimeout() {
-        return 1000;
+    public double getCommitIntervalFraction() {
+        return 0.5;
+    }
+
+    @Override
+    public long getCommitIntervalDefault() {
+        return 2000;
     }
 
     @Override

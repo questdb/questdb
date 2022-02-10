@@ -58,7 +58,7 @@ public class TableMetadataCursorFactoryTest extends AbstractGriffinTest {
     @Test
     public void testMetadataQueryDefaultHysterisysParams() throws Exception {
         configOverrideMaxUncommittedRows = 83737;
-        configOverrideCommitLag = 28291;
+        configOverrideCommitLagMicros = 28291;
 
         try (TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY)) {
             tm1.col("abc", ColumnType.STRING);

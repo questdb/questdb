@@ -341,7 +341,7 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
         this.waitBetweenIterationsMillis = waitBetweenIterationsMillis;
         this.pinTablesToThreads = pinTablesToThreads;
 
-        threadPushFinished = new SOCountDownLatch(numOfThreads - 1);
+        threadPushFinished = new SOCountDownLatch(numOfThreads);
         tables = new LowerCaseCharSequenceObjHashMap<>();
         tableNames = new ConcurrentHashMap<>();
     }
@@ -358,7 +358,7 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
             if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
                 handleWriterReturnEvent(name);
             }
-        });
+        }, 250);
     }
 
     void handleWriterLockSuccessEvent(CharSequence name) {
@@ -375,7 +375,7 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
         table.ready();
     }
 
-    void runTest(PoolListener listener) throws Exception {
+    void runTest(PoolListener listener, long minIdleMsBeforeWriterRelease) throws Exception {
         runInContext(receiver -> {
             for (int i = 0; i < numOfTables; i++) {
                 final CharSequence tableName = getTableName(i);
@@ -418,7 +418,7 @@ class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 });
             }
-        });
+        }, false, minIdleMsBeforeWriterRelease);
 
         if (errorMsg != null) {
             Assert.fail(errorMsg);
