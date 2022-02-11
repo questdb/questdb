@@ -190,7 +190,7 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
                 }
 
                 mem.flush();
-                Assert.assertEquals(3 * segSize, Files.length(path));
+                Assert.assertEquals(Files.ceilPageSize(3 * segSize), Files.length(path));
 
                 rmem.resize(3 * n * 8);
                 rnd.reset();

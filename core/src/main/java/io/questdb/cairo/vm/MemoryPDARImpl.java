@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
@@ -209,10 +210,10 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
                             .put(", len=").put(len)
                             .put(", offsetInPage=").put(offsetInPage);
                 }
-                long sz = pageOffset(pageIndex + 1);
+                long sz = Files.ceilPageSize(pageOffset(pageIndex + 1));
                 boolean truncated = ff.truncate(fd, sz);
 
-                assert truncated;
+//                assert truncated;
                 // prevent double-flush
                 offsetInPage += len;
 //            pageIndex = -1;
