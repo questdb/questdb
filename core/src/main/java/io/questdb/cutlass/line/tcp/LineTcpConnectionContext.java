@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
@@ -44,6 +45,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
     protected final NetworkFacade nf;
     private final LineTcpMeasurementScheduler scheduler;
+    private final Metrics metrics;
     private final MillisecondClock milliClock;
     private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
     private final LineTcpParser parser = new LineTcpParser();
@@ -58,9 +60,10 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     private long lastQueueFullLogMillis = 0;
     private boolean goodMeasurement;
 
-    LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler) {
+    LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
         nf = configuration.getNetworkFacade();
         this.scheduler = scheduler;
+        this.metrics = metrics;
         this.milliClock = configuration.getMillisecondClock();
         recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_DEFAULT);
         recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
@@ -221,6 +224,8 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                 return IOContextResult.NEEDS_DISCONNECT;
             } catch (Throwable ex) {
                 LOG.error().$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName()).$(", ex=").$(ex).I$();
+                // This is a critical error, so we treat it as an unhandled one.
+                metrics.healthCheck().incrementUnhandledErrors();
                 return IOContextResult.NEEDS_DISCONNECT;
             }
         }

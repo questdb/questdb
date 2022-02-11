@@ -1346,7 +1346,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             }
             throw e;
         }
-        throw new NullPointerException("boom");
     }
 
     private void executeTag() {

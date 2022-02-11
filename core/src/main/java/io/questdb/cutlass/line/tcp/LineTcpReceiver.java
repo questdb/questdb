@@ -48,6 +48,7 @@ public class LineTcpReceiver implements Closeable {
     private final LineTcpConnectionContextFactory contextFactory;
     private final LineTcpMeasurementScheduler scheduler;
     private final ObjList<WorkerPool> dedicatedPools;
+    private final Metrics metrics;
 
     public LineTcpReceiver(
             LineTcpReceiverConfiguration lineConfiguration,
@@ -63,7 +64,8 @@ public class LineTcpReceiver implements Closeable {
         );
         this.dedicatedPools = dedicatedPools;
         ioWorkerPool.assign(dispatcher);
-        scheduler = new LineTcpMeasurementScheduler(lineConfiguration, engine, ioWorkerPool, dispatcher, writerWorkerPool);
+        this.scheduler = new LineTcpMeasurementScheduler(lineConfiguration, engine, ioWorkerPool, dispatcher, writerWorkerPool);
+        this.metrics = engine.getMetrics();
 
         final Closeable cleaner = contextFactory::closeContextPool;
         for (int i = 0, n = ioWorkerPool.getWorkerCount(); i < n; i++) {
@@ -136,11 +138,11 @@ public class LineTcpReceiver implements Closeable {
             ObjectFactory<LineTcpConnectionContext> factory;
             if (null == configuration.getAuthDbPath()) {
                 LOG.info().$("using default context").$();
-                factory = () -> new LineTcpConnectionContext(configuration, scheduler);
+                factory = () -> new LineTcpConnectionContext(configuration, scheduler, metrics);
             } else {
                 LOG.info().$("using authenticating context").$();
                 AuthDb authDb = new AuthDb(configuration);
-                factory = () -> new LineTcpAuthConnectionContext(configuration, authDb, scheduler);
+                factory = () -> new LineTcpAuthConnectionContext(configuration, authDb, scheduler, metrics);
             }
 
             this.contextPool = new ThreadLocal<>(() -> new WeakObjectPool<>(factory, configuration.getConnectionPoolInitialCapacity()));
