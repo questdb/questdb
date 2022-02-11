@@ -1795,6 +1795,16 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUnionAllCursorLeaks() throws Exception {
+        testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select x from xx union all select x from crj");
+    }
+
+    @Test
+    public void testUnionCursorLeaks() throws Exception {
+        testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select x from xx union select x from crj");
+    }
+
+    @Test
     public void testCrossJoinAllTypes() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tkk1\ta1\tb1\tc1\td1\te1\tf1\tg1\ti1\tj1\tk1\tl1\tm1\tn1\n" +
