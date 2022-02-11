@@ -460,7 +460,7 @@ public class TableWriter implements Closeable {
 
         bumpStructureVersion();
 
-        metadata.addColumn(name, configuration.getRandom().nextLong(), type, isIndexed, indexValueBlockCapacity);
+        metadata.addColumn(name, configuration.getRandom().nextLong(), type, isIndexed, indexValueBlockCapacity, columnCount - 1);
 
         LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
     }
@@ -914,9 +914,6 @@ public class TableWriter implements Closeable {
 
         // remove symbol map writer or entry for such
         removeSymbolMapWriter(index);
-
-        // decrement column count
-        columnCount--;
 
         // reset timestamp limits
         if (timestamp) {
@@ -1859,32 +1856,41 @@ public class TableWriter implements Closeable {
     }
 
     private void configureColumn(int type, boolean indexFlag) {
-        final MemoryMAR primary = Vm.getMARInstance();
+        final MemoryMAR primary;
         final MemoryMAR secondary;
-        final MemoryCARW oooPrimary = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
+        final MemoryCARW oooPrimary;
         final MemoryCARW oooSecondary;
-        final MemoryCARW oooPrimary2 = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
+        final MemoryCARW oooPrimary2;
         final MemoryCARW oooSecondary2;
-
-
-        final MemoryMAR logPrimary = Vm.getMARInstance();
         final MemoryMAR logSecondary;
+        final MemoryMAR logPrimary;
 
-        switch (ColumnType.tagOf(type)) {
-            case ColumnType.BINARY:
-            case ColumnType.STRING:
-                secondary = Vm.getMARInstance();
-                oooSecondary = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
-                oooSecondary2 = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
-                logSecondary = Vm.getMARInstance();
-                break;
-            default:
-                secondary = null;
-                oooSecondary = null;
-                oooSecondary2 = null;
-                logSecondary = null;
-                break;
+        if (type > 0) {
+            primary = Vm.getMARInstance();
+            oooPrimary = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
+            oooPrimary2 = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
+            logPrimary = Vm.getMARInstance();
+
+            switch (ColumnType.tagOf(type)) {
+                case ColumnType.BINARY:
+                case ColumnType.STRING:
+                    secondary = Vm.getMARInstance();
+                    oooSecondary = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
+                    oooSecondary2 = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
+                    logSecondary = Vm.getMARInstance();
+                    break;
+                default:
+                    secondary = null;
+                    oooSecondary = null;
+                    oooSecondary2 = null;
+                    logSecondary = null;
+                    break;
+            }
+        } else {
+            logSecondary = logPrimary = primary = secondary = NullMemory.INSTANCE;
+            oooPrimary = oooSecondary = oooPrimary2 = oooSecondary2 = NullMemory.INSTANCE;
         }
+
         columns.add(primary);
         columns.add(secondary);
         o3Columns.add(oooPrimary);
@@ -2138,11 +2144,18 @@ public class TableWriter implements Closeable {
         metadata.setTableVersion();
     }
 
-    private void freeAndRemoveColumnPair(ObjList<?> columns, int pi, int si) {
+    private void freeAndRemoveColumnPair(ObjList<MemoryMAR> columns, int pi, int si) {
         Misc.free(columns.getQuick(pi));
         Misc.free(columns.getQuick(si));
-        columns.remove(pi);
-        columns.remove(pi);
+        columns.setQuick(pi, NullMemory.INSTANCE);
+        columns.setQuick(pi, NullMemory.INSTANCE);
+    }
+
+    private void freeAndRemoveO3ColumnPair(ObjList<MemoryCARW> columns, int pi, int si) {
+        Misc.free(columns.getQuick(pi));
+        Misc.free(columns.getQuick(si));
+        columns.setQuick(pi, NullMemory.INSTANCE);
+        columns.setQuick(pi, NullMemory.INSTANCE);
     }
 
     private void freeColumns(boolean truncate) {
@@ -3881,16 +3894,8 @@ public class TableWriter implements Closeable {
         final int pi = getPrimaryColumnIndex(columnIndex);
         final int si = getSecondaryColumnIndex(columnIndex);
         freeAndRemoveColumnPair(columns, pi, si);
-        freeAndRemoveColumnPair(o3Columns, pi, si);
-        freeAndRemoveColumnPair(o3Columns2, pi, si);
-        columnTops.removeIndex(columnIndex);
-        nullSetters.remove(columnIndex);
-        o3NullSetters.remove(columnIndex);
-        if (columnIndex < indexers.size()) {
-            Misc.free(indexers.getQuick(columnIndex));
-            indexers.remove(columnIndex);
-            populateDenseIndexerList();
-        }
+        freeAndRemoveO3ColumnPair(o3Columns, pi, si);
+        freeAndRemoveO3ColumnPair(o3Columns2, pi, si);
     }
 
     private void removeColumnFiles(CharSequence columnName, int columnType, RemoveFileLambda removeLambda) {
@@ -3922,7 +3927,7 @@ public class TableWriter implements Closeable {
         try {
             int metaSwapIndex = openMetaSwapFile(ff, ddlMem, path, rootLen, fileOperationRetryCount);
             int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
-            ddlMem.putInt(columnCount - 1);
+            ddlMem.putInt(columnCount);
             ddlMem.putInt(partitionBy);
 
             if (timestampIndex == index) {
@@ -3968,7 +3973,6 @@ public class TableWriter implements Closeable {
 
     private void removeLastColumn() {
         removeColumn(columnCount - 1);
-        columnCount--;
     }
 
     private void removeMetaFile() {
@@ -4847,7 +4851,7 @@ public class TableWriter implements Closeable {
                 }
                 metaMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
                 validationMap.clear();
-                validate(metaMem, validationMap, ColumnType.VERSION);
+                validate(metaMem, metaMem.getFd(), validationMap, ColumnType.VERSION);
             } finally {
                 metaMem.close();
                 path.trimTo(rootLen);
