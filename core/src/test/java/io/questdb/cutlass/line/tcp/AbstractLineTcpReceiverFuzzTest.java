@@ -97,7 +97,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     private volatile String errorMsg = null;
 
     @Before
-    public void setUp() {
+    public void setUp2() {
         long s0 = System.currentTimeMillis();
         long s1 = System.nanoTime();
         random = new Rnd(s0, s1);
