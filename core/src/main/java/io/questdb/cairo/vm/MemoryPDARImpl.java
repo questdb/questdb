@@ -98,7 +98,6 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
         }
         this.memoryTag = memoryTag;
         this.ff = ff;
-        setExtendSegmentSize(extendSegmentSize);
         long result;
         final long fd1 = ff.openRW(name, opts);
         if (fd1 > -1) {
@@ -217,6 +216,7 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
                 Unsafe.free(pageAddress, getExtendSegmentSize(), this.memoryTag);
             }
             this.pageAddress = Unsafe.malloc(extendSegmentSize, memoryTag);
+            setExtendSegmentSize(extendSegmentSize);
         }
         this.pageIndex = 0;
         this.offsetInPage = 0;

@@ -286,6 +286,79 @@ public class MemoryPDARImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAppendFlushEveryRow() {
+        final long segSize = 32 * 1024;
+        // append half page
+        int n = 2048;
+        try (Path path = new Path().of(root).concat("x.d").$()) {
+            try (
+                    MemoryPDARImpl mem = new MemoryPDARImpl(
+                            FilesFacadeImpl.INSTANCE,
+                            path,
+                            segSize,
+                            MemoryTag.MMAP_DEFAULT,
+                            CairoConfiguration.O_DIRECT
+                    );
+
+                    MemoryCMR rmem = Vm.getCMARWInstance(
+                            FilesFacadeImpl.INSTANCE,
+                            path,
+                            segSize,
+                            0,
+                            MemoryTag.MMAP_DEFAULT,
+                            configuration.getWriterFileOpenOpts()
+                    )
+            ) {
+                Rnd rnd = new Rnd();
+                for (long i = 0; i < n; i++) {
+                    mem.putLong(rnd.nextLong());
+                    mem.flush();
+                }
+                // this is unnecessary but we should check this is tolerated
+                mem.jumpTo(n * 8);
+
+                // deliberately avoid flush() call, re-purposing the memory must flush()
+
+                // re-open mem and set append position where we left off
+                mem.of(
+                        FilesFacadeImpl.INSTANCE,
+                        path,
+                        segSize,
+                        MemoryTag.MMAP_DEFAULT,
+                        CairoConfiguration.O_DIRECT
+                );
+
+                mem.jumpTo(2 * n * 8L);
+
+                for (long i = 0; i < n; i++) {
+                    mem.putLong(rnd.nextLong());
+                    mem.flush();
+                }
+
+                // flush must align file to its extent segment size
+                Assert.assertEquals(segSize * 2, Files.length(path));
+
+                rmem.resize(3 * n * 8);
+                rnd.reset();
+                for (long i = 0; i < n; i++) {
+                    Assert.assertEquals(rnd.nextLong(), rmem.getLong(i * 8));
+                }
+
+                // check that area we skipped over is zero
+                for (long i = n; i < 2 * n; i++) {
+                    Assert.assertEquals(0, rmem.getLong(i * 8));
+                }
+
+                // check that second page we've written is correct
+                for (long i = 2 * n; i < 3 * n; i++) {
+                    Assert.assertEquals(rnd.nextLong(), rmem.getLong(i * 8));
+                }
+            }
+            Assert.assertEquals(Files.ceilPageSize(3 * n * 8), Files.length(path));
+        }
+    }
+
+    @Test
     public void testAppendPageEdge() {
         final long segSize = 32 * 1024;
         // exactly full page
