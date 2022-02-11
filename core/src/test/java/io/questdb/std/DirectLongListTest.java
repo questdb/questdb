@@ -62,7 +62,7 @@ public class DirectLongListTest {
         long s0 = System.currentTimeMillis();
         long s1 = System.nanoTime();
         Rnd rnd = new Rnd(s0, s1);
-        LOG.info().$("random seed : %d, %d%n").$(s0).$(s1).$();
+        LOG.info().$("random seed : ").$(s0).$(", ").$(s1).$();
 
         int size = 1024 * 1024;
         int range = Integer.MAX_VALUE - 1;
