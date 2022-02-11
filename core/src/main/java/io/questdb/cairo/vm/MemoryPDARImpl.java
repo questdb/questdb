@@ -45,6 +45,7 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
         this.pageAddress = Unsafe.malloc(pageSize, memoryTag);
         this.pageIndex = 0;
         this.offsetInPage = 0;
+        setExtendSegmentSize(pageSize);
         of(ff, name, pageSize, memoryTag, opts);
     }
 
@@ -200,9 +201,18 @@ public class MemoryPDARImpl extends MemoryPARWImpl implements MemoryMAR {
 //            TableUtils.allocateDiskSpace(ff, fd, offset + getExtendSegmentSize());
 //            System.out.println("flush: po=" + offsetInPage + ", len=" + len + ", fo=" + offset);
             if (len > 0) {
-                ff.write(fd, pageAddress + offsetInPage, len, offset);
+                long written = ff.write(fd, pageAddress + offsetInPage, len, offset);
+                if (written < 0) {
+                    throw CairoException.instance(ff.errno())
+                            .put("could not write [fd=").put(fd)
+                            .put(", offset=").put(offset)
+                            .put(", len=").put(len)
+                            .put(", offsetInPage=").put(offsetInPage);
+                }
                 long sz = pageOffset(pageIndex + 1);
-                ff.truncate(fd, sz);
+                boolean truncated = ff.truncate(fd, sz);
+
+                assert truncated;
                 // prevent double-flush
                 offsetInPage += len;
 //            pageIndex = -1;
