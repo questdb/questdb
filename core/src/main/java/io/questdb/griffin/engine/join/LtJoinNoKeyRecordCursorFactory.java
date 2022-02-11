@@ -61,11 +61,17 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(
-                masterFactory.getCursor(executionContext),
-                slaveFactory.getCursor(executionContext)
-        );
-        return cursor;
+        RecordCursor masterCursor = masterFactory.getCursor(executionContext);
+        RecordCursor slaveCursor = null;
+        try {
+            slaveCursor = slaveFactory.getCursor(executionContext);
+            cursor.of(masterCursor, slaveCursor);
+            return cursor;
+        } catch (Throwable e) {
+            Misc.free(slaveCursor);
+            Misc.free(masterCursor);
+            throw e;
+        }
     }
 
     @Override

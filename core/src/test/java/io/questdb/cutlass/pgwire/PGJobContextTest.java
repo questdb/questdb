@@ -863,17 +863,36 @@ public class PGJobContextTest extends BasePGTest {
 
     @Test
     public void testFetchDisconnectReleasesReaderCrossJoin() throws Exception {
-        testFetchDisconnect("with crj as (select first(x) as p0 from xx) select x / p0 from xx cross join crj");
-    }
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                connection.setAutoCommit(false);
 
-    @Test
-    public void testFetchDisconnectReleasesReaderInnerJoin() throws Exception {
-        testFetchDisconnect("with crj as (select first(x) as p0 from xx) select x / p0 from xx join crj on 1 = 1");
-    }
+                PreparedStatement tbl = connection.prepareStatement("create table xx as (" +
+                        "select x," +
+                        " timestamp_sequence(0, 1000) ts" +
+                        " from long_sequence(100000)) timestamp (ts)");
+                tbl.execute();
 
-    @Test
-    public void testFetchDisconnectReleasesReaderLeftJoin() throws Exception {
-        testFetchDisconnect("with crj as (select first(x) as p0 from xx) select x / p0 from xx left join crj on 1 = 1");
+                PreparedStatement stmt = connection.prepareStatement("with crj as (select first(x) as p0 from xx) select x / p0 from xx cross join crj");
+
+                connection.setNetworkTimeout(Runnable::run, 5);
+                int testSize = 100000;
+                stmt.setFetchSize(testSize);
+                assertEquals(testSize, stmt.getFetchSize());
+
+                try {
+                    stmt.executeQuery();
+                    Assert.fail();
+                } catch (PSQLException ex) {
+                    // expected
+                    Assert.assertNotNull(ex);
+                }
+            }
+            // Assertion that no open readers left will be performed in assertMemoryLeak
+        });
     }
 
     @Test
@@ -4629,6 +4648,10 @@ create table tab as (
         });
     }
 
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
     private void queryTimestampsInRange(Connection connection) throws SQLException, IOException {
         try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts <= dateadd('d', -1, ?) and ts >= dateadd('d', -2, ?)")) {
             ResultSet rs = null;
@@ -4649,10 +4672,6 @@ create table tab as (
             rs.close();
         }
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     private void testAddColumnBusyWriter(boolean alterRequestReturnSuccess, SOCountDownLatch queryStartedCountDownLatch) throws SQLException, InterruptedException, BrokenBarrierException, SqlException {
         AtomicLong errors = new AtomicLong();
@@ -5026,36 +5045,6 @@ create table tab as (
                     }
                 }
             }
-        });
-    }
-
-    private void testFetchDisconnect(String sql) throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, true)
-            ) {
-                connection.setAutoCommit(false);
-
-                PreparedStatement tbl = connection.prepareStatement("create table xx as (select x from long_sequence(100000))");
-                tbl.execute();
-
-                PreparedStatement stmt = connection.prepareStatement(sql);
-
-                connection.setNetworkTimeout(Runnable::run, 5);
-                int testSize = 100000;
-                stmt.setFetchSize(testSize);
-                assertEquals(testSize, stmt.getFetchSize());
-
-                try {
-                    stmt.executeQuery();
-                    Assert.fail();
-                } catch (PSQLException ex) {
-                    // expected
-                    Assert.assertNotNull(ex);
-                }
-            }
-            // Assertion that no open readers left will be performed in assertMemoryLeak
         });
     }
 
