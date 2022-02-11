@@ -875,11 +875,6 @@ public class TableWriter implements Closeable {
     }
 
     public void removeColumn(CharSequence name) {
-        throw new UnsupportedOperationException();
-    }
-
-    public void removeColumn0(CharSequence name) {
-
         checkDistressed();
 
         final int index = getColumnIndex(name);
@@ -1479,7 +1474,8 @@ public class TableWriter implements Closeable {
         long nameOffset = getColumnNameOffset(columnCount);
         for (int i = 0; i < columnCount; i++) {
             CharSequence col = metaMem.getStr(nameOffset);
-            if (Chars.equalsIgnoreCase(col, name)) {
+            int columnType = getColumnType(metaMem, i); // Negative means deleted column
+            if (columnType > 0 && Chars.equalsIgnoreCase(col, name)) {
                 return i;
             }
             nameOffset += Vm.getStorageLength(col);
@@ -1666,7 +1662,7 @@ public class TableWriter implements Closeable {
             copyVersionAndLagValues();
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i);
+                writeColumnEntry(i, false);
             }
 
             // add new column metadata to bottom of list
@@ -1912,6 +1908,7 @@ public class TableWriter implements Closeable {
             int type = metadata.getColumnType(i);
             configureColumn(type, metadata.isColumnIndexed(i));
 
+            assert !ColumnType.isSymbol(-type); //TODO, solve symbol deletions
             if (ColumnType.isSymbol(type)) {
                 final int symbolIndex = denseSymbolMapWriters.size();
                 SymbolMapWriter symbolMapWriter = new SymbolMapWriter(
@@ -1961,7 +1958,7 @@ public class TableWriter implements Closeable {
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 if (i != columnIndex) {
-                    writeColumnEntry(i);
+                    writeColumnEntry(i, false);
                 } else {
                     ddlMem.putInt(getColumnType(metaMem, i));
                     long flags = META_FLAG_BIT_INDEXED;
@@ -1998,7 +1995,7 @@ public class TableWriter implements Closeable {
             copyVersionAndLagValues();
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i);
+                writeColumnEntry(i, false);
             }
 
             long nameOffset = getColumnNameOffset(columnCount);
@@ -3930,8 +3927,6 @@ public class TableWriter implements Closeable {
 
             if (timestampIndex == index) {
                 ddlMem.putInt(-1);
-            } else if (index < timestampIndex) {
-                ddlMem.putInt(timestampIndex - 1);
             } else {
                 ddlMem.putInt(timestampIndex);
             }
@@ -3939,17 +3934,13 @@ public class TableWriter implements Closeable {
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < columnCount; i++) {
-                if (i != index) {
-                    writeColumnEntry(i);
-                }
+                writeColumnEntry(i, i == index);
             }
 
             long nameOffset = getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
                 CharSequence columnName = metaMem.getStr(nameOffset);
-                if (i != index) {
-                    ddlMem.putStr(columnName);
-                }
+                ddlMem.putStr(columnName);
                 nameOffset += Vm.getStorageLength(columnName);
             }
 
@@ -4158,7 +4149,7 @@ public class TableWriter implements Closeable {
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i);
+                writeColumnEntry(i, false);
             }
 
             long nameOffset = getColumnNameOffset(columnCount);
@@ -4166,7 +4157,7 @@ public class TableWriter implements Closeable {
                 CharSequence columnName = metaMem.getStr(nameOffset);
                 nameOffset += Vm.getStorageLength(columnName);
 
-                if (i == index) {
+                if (i == index && getColumnType(metaMem, i) > 0) {
                     columnName = newName;
                 }
                 ddlMem.putStr(columnName);
@@ -4866,8 +4857,14 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void writeColumnEntry(int i) {
-        ddlMem.putInt(getColumnType(metaMem, i));
+    private void writeColumnEntry(int i, boolean markDeleted) {
+        int columnType = getColumnType(metaMem, i);
+        // When column is deleted it's written to metadata with negative type
+        if (markDeleted) {
+            columnType = -Math.abs(columnType);
+        }
+        ddlMem.putInt(columnType);
+
         long flags = 0;
         if (isColumnIndexed(metaMem, i)) {
             flags |= META_FLAG_BIT_INDEXED;
