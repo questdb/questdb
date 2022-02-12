@@ -24,15 +24,20 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Os;
 import org.junit.Test;
 
-// we have known issues with handling metadata reload in TableReader. Alex is working on a solution. When
-// this is ready we will make this test part of the CI
 public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
 
-    // there seem to be an issue with the transactionality of adding new columns
-    // when the issue is fixed 'newColumnFactor' can be used and this test should be enabled
+    private static final Log LOG = LogFactory.getLog(LineTcpReceiverFuzzTest.class);
+
+    @Override
+    protected Log getLog() {
+        return LOG;
+    }
+
     @Test
     public void testAddColumnsNoTagsStringsAsSymbol() throws Exception {
         initLoadParameters(15, 2, 2, 5, 75);
@@ -40,8 +45,6 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
         runTest();
     }
 
-    // there seem to be an issue with the transactionality of adding new columns
-    // when the issue is fixed 'newColumnFactor' can be used and this test should be enabled
     @Test
     public void testAddColumns() throws Exception {
         initLoadParameters(15, 2, 2, 5, 75);
