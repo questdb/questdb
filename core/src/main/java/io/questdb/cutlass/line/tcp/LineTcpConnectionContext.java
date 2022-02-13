@@ -48,7 +48,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
     private final LineTcpParser parser = new LineTcpParser();
     private final FloatingDirectCharSink floatingDirectCharSink = new FloatingDirectCharSink();
-    private final boolean shouldDisconnectOnError;
+    private final boolean disconnectOnError;
     protected long fd;
     protected IODispatcher<LineTcpConnectionContext> dispatcher;
     protected long recvBufStart;
@@ -61,7 +61,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
 
     LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler) {
         nf = configuration.getNetworkFacade();
-        shouldDisconnectOnError = configuration.shouldDisconnectOnError();
+        disconnectOnError = configuration.getDisconnectOnError();
         this.scheduler = scheduler;
         this.milliClock = configuration.getMillisecondClock();
         recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_DEFAULT);
@@ -195,7 +195,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                     }
 
                     case ERROR: {
-                        if (shouldDisconnectOnError) {
+                        if (disconnectOnError) {
                             return IOContextResult.NEEDS_DISCONNECT;
                         }
                         goodMeasurement = false;
@@ -223,7 +223,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                         .$(", msg=").$(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();
-                if (shouldDisconnectOnError) {
+                if (disconnectOnError) {
                     return IOContextResult.NEEDS_DISCONNECT;
                 }
                 goodMeasurement = false;

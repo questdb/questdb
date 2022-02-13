@@ -42,8 +42,8 @@ public class LineTcpConnectionContextBrokenUTF8Test extends BaseLineTcpContextTe
         testBrokenUTF8Encoding(true);
     }
 
-    private void testBrokenUTF8Encoding(boolean shouldDisconnectOnError) throws Exception {
-        this.shouldDisconnectOnError = shouldDisconnectOnError;
+    private void testBrokenUTF8Encoding(boolean disconnectOnError) throws Exception {
+        this.disconnectOnError = disconnectOnError;
 
         char nonPrintable = 0x3000;
         char nonPrintable1 = 0x3080;
@@ -60,7 +60,7 @@ public class LineTcpConnectionContextBrokenUTF8Test extends BaseLineTcpContextTe
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
 
             handleContextIO();
-            Assert.assertEquals(shouldDisconnectOnError, disconnected);
+            Assert.assertEquals(disconnectOnError, disconnected);
             closeContext();
         });
     }

@@ -91,7 +91,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected WorkerPool workerPool;
     protected int nWriterThreads;
     protected long microSecondTicks;
-    protected boolean shouldDisconnectOnError;
+    protected boolean disconnectOnError;
 
     @Before
     public void before() {
@@ -100,7 +100,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         recvBuffer = null;
         disconnected = true;
         netMsgBufferSize.set(512);
-        shouldDisconnectOnError = false;
+        disconnectOnError = false;
         lineTcpConfiguration = createNoAuthReceiverConfiguration(provideLineTcpNetworkFacade());
     }
 
@@ -176,8 +176,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean shouldDisconnectOnError() {
-                return shouldDisconnectOnError;
+            public boolean getDisconnectOnError() {
+                return disconnectOnError;
             }
 
             @Override

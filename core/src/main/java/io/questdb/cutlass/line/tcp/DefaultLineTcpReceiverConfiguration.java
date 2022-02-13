@@ -48,8 +48,8 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public boolean shouldDisconnectOnError() {
-        return false;
+    public boolean getDisconnectOnError() {
+        return true;
     }
 
     @Override
