@@ -2988,7 +2988,7 @@ public class TableWriter implements Closeable {
     private long o3MoveUncommitted(final int timestampIndex) {
         final long committedRowCount = txWriter.getCommittedFixedRowCount() + txWriter.getCommittedTransientRowCount();
         final long rowsAdded = txWriter.getRowCount() - committedRowCount;
-        long transientRowsAdded = Math.min(txWriter.getTransientRowCount(), rowsAdded);
+        final long transientRowsAdded = Math.min(txWriter.getTransientRowCount(), rowsAdded);
         final long committedTransientRowCount = txWriter.getTransientRowCount() - transientRowsAdded;
         if (transientRowsAdded > 0) {
             LOG.debug()
@@ -3055,12 +3055,12 @@ public class TableWriter implements Closeable {
                     alignedExtraLen = 0;
                 } else {
                     // Linux requires the mmap offset to be page aligned
-                    long alignedOffset = Files.floorPageSize(sourceOffset);
+                    final long alignedOffset = Files.floorPageSize(sourceOffset);
                     alignedExtraLen = sourceOffset - alignedOffset;
                     srcAddress = mapRO(ff, srcFixMem.getFd(), sourceLen + alignedExtraLen, alignedOffset, MemoryTag.MMAP_TABLE_WRITER);
                 }
 
-                long srcVarOffset = Unsafe.getUnsafe().getLong(srcAddress + alignedExtraLen);
+                final long srcVarOffset = Unsafe.getUnsafe().getLong(srcAddress + alignedExtraLen);
                 O3Utils.shiftCopyFixedSizeColumnData(
                         srcVarOffset - dstVarOffset,
                         srcAddress + alignedExtraLen + Long.BYTES,
@@ -3075,8 +3075,7 @@ public class TableWriter implements Closeable {
                     ff.munmap(srcAddress, sourceLen + alignedExtraLen, MemoryTag.MMAP_TABLE_WRITER);
                 }
 
-                long sourceEndOffset = srcDataMem.getAppendOffset();
-                extendedSize = sourceEndOffset - srcVarOffset;
+                extendedSize = srcDataMem.getAppendOffset() - srcVarOffset;
                 srcFixOffset = srcVarOffset;
                 srcFixMem.jumpTo(sourceOffset + Long.BYTES);
             }

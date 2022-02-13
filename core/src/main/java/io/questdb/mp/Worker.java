@@ -104,7 +104,6 @@ public class Worker extends Thread {
                 int n = jobs.size();
                 long uselessCounter = 0;
                 while (running == 1) {
-
                     boolean useful = false;
                     for (int i = 0; i < n; i++) {
                         Unsafe.getUnsafe().loadFence();
