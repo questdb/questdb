@@ -325,8 +325,6 @@ public class CairoMemoryTest {
                         mem.putLong(rnd.nextLong());
                     }
 
-                    mem.flush();
-
                     try (MemorySRImpl mem2 = new MemorySRImpl()) {
                         mem2.of(mem, MemoryTag.MMAP_DEFAULT);
 
@@ -381,8 +379,6 @@ public class CairoMemoryTest {
                     for (int i = 0; i < N; i++) {
                         mem.putLong(rnd.nextLong());
                     }
-
-                    mem.flush();
 
                     try (MemorySRImpl mem2 = new MemorySRImpl()) {
                         mem2.of(mem, MemoryTag.MMAP_DEFAULT);

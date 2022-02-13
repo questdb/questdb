@@ -81,11 +81,6 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
-    public void flush() {
-        // there is nothing to flush, it is a mamory mapped file
-    }
-
-    @Override
     public void close() {
         close(true);
     }

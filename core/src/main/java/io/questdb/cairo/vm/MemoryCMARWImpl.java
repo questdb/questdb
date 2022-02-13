@@ -165,11 +165,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void flush() {
-        // there is nothing to flush, it is a memory mapped file
-    }
-
-    @Override
     public void close() {
         close(true);
     }

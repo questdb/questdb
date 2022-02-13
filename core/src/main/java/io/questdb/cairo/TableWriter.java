@@ -1819,8 +1819,6 @@ public class TableWriter implements Closeable {
 
         if (inTransaction()) {
 
-            flushColumns();
-
             if (hasO3() && o3Commit(commitLag)) {
                 // Bookmark masterRef to track how many rows is in uncommitted state
                 this.committedMasterRef = masterRef;
@@ -4657,16 +4655,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void flushColumns() {
-        for (int i = 0; i < columnCount; i++) {
-            columns.getQuick(i * 2).flush();
-            final MemoryMA m2 = columns.getQuick(i * 2 + 1);
-            if (m2 != null) {
-                m2.flush();
-            }
-        }
-    }
-
     private void throwDistressException(Throwable cause) {
         this.distressed = true;
         throw new CairoError(cause);
@@ -4677,7 +4665,6 @@ public class TableWriter implements Closeable {
             avoidIndexOnCommit = false;
             return;
         }
-        flushColumns();
         updateIndexesSlow();
     }
 
