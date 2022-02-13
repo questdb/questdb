@@ -31,6 +31,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 
 public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor {
     static final int SCAN_UP = -1;
@@ -77,10 +78,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
 
     @Override
     public void close() {
-        if (reader != null) {
-            reader.close();
-            reader = null;
-        }
+        reader = Misc.free(reader);
     }
 
     @Override

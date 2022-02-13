@@ -24,10 +24,16 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GeoShortFunction;
+import org.jetbrains.annotations.TestOnly;
+
+import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
 public class GeoShortColumn extends GeoShortFunction {
+    private static final GeoShortColumn[] COLUMNS;
+
     private final int columnIndex;
 
     public GeoShortColumn(int columnIndex, int columnType) {
@@ -38,5 +44,34 @@ public class GeoShortColumn extends GeoShortFunction {
     @Override
     public short getGeoShort(Record rec) {
         return rec.getGeoShort(columnIndex);
+    }
+
+    public static GeoShortColumn newInstance(int columnIndex, int columnType) {
+        assert ColumnType.getGeoHashBits(columnType) >= ColumnType.GEOSHORT_MIN_BITS &&
+                ColumnType.getGeoHashBits(columnType) <= ColumnType.GEOSHORT_MAX_BITS;
+
+        final int bits = (ColumnType.GEOSHORT_MAX_BITS - ColumnType.GEOSHORT_MIN_BITS + 1);
+
+        if (columnIndex < STATIC_COLUMN_COUNT) {
+            return COLUMNS[columnIndex * bits + ColumnType.getGeoHashBits(columnType) - ColumnType.GEOSHORT_MIN_BITS];
+        }
+
+        return new GeoShortColumn(columnIndex, columnType);
+    }
+
+    static {
+        int bits = ColumnType.GEOSHORT_MAX_BITS - ColumnType.GEOSHORT_MIN_BITS + 1;
+        COLUMNS = new GeoShortColumn[STATIC_COLUMN_COUNT * bits];
+
+        for (int col = 0; col < STATIC_COLUMN_COUNT; col++) {
+            for (int bit = ColumnType.GEOSHORT_MIN_BITS; bit <= ColumnType.GEOSHORT_MAX_BITS; bit++) {
+                COLUMNS[col * bits + bit - ColumnType.GEOSHORT_MIN_BITS] = new GeoShortColumn(col, ColumnType.getGeoHashTypeWithBits(bit));
+            }
+        }
+    }
+
+    @TestOnly
+    int getColumnIndex() {
+        return columnIndex;
     }
 }
