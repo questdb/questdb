@@ -330,9 +330,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             return !closed || !Unsafe.cas(e.allocations, index, UNALLOCATED, owner);
         }
 
-        LOG.error().$('\'').$(name).$("' is available [at=").$(e.index).$(':').$(index).$(']').$();
-        return true;
-
+        throw CairoException.instance(0).put("double close [table=").put(name).put(", index=").put(index).put(']');
     }
 
     public static class Entry {
