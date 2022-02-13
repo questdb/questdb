@@ -214,14 +214,16 @@ public class TableUpdateDetails implements Closeable {
         if (wallClockMillis < nextCommitTime) {
             return nextCommitTime;
         }
-        final long commitInterval = writer.getCommitInterval();
-        commit(wallClockMillis - lastMeasurementMillis < commitInterval);
-        nextCommitTime += commitInterval;
+        if (writer != null) {
+            final long commitInterval = writer.getCommitInterval();
+            commit(wallClockMillis - lastMeasurementMillis < commitInterval);
+            nextCommitTime += commitInterval;
+        }
         return nextCommitTime;
     }
 
     private void commit(boolean withLag) {
-        if (writer != null && writer.getUncommittedRowCount() > 0) {
+        if (writer.getUncommittedRowCount() > 0) {
             try {
                 LOG.debug().$("time-based commit " + (withLag ? "with lag " : "") + "[rows=").$(writer.getUncommittedRowCount()).$(", table=").$(tableNameUtf16).I$();
                 if (withLag) {
