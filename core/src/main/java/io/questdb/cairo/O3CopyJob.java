@@ -839,13 +839,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long fromAddress = src + (srcLo << shl);
         if (directIoFlag) {
             ff.write(Math.abs(dstFd), fromAddress, len, dstFixFileOffset);
-/*
-            for (int i = 0; i < len; i++) {
-                if (Unsafe.getUnsafe().getByte(dstFixAddr + i) != Unsafe.getUnsafe().getByte(fromAddress + i)) {
-                    System.out.println("oops");
-                }
-            }
-*/
         } else {
             Vect.memcpy(dstFixAddr, fromAddress, len);
         }
