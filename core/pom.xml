@@ -35,7 +35,7 @@
         <nodejs.version>v16.13.1</nodejs.version>
         <runtime.assembly>none</runtime.assembly>
         <javac.target>11</javac.target>
-        <argLine>-Dfile.encoding=UTF-8</argLine>
+        <argLine>-ea -Dfile.encoding=UTF-8</argLine>
         <test.exclude>None</test.exclude>
     </properties>
 
@@ -206,6 +206,28 @@
                 </configuration>
             </plugin>
             <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>3.2.0</version>
+                <executions>
+                    <execution>
+                        <id>attach-javadocs</id>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <additionalJOptions>
+                        <additionalJOption>${compilerArg1}</additionalJOption>
+                        <additionalJOption>${compilerArg2}</additionalJOption>
+                    </additionalJOptions>
+                    <sourceFileExcludes>
+                        <sourceFileExclude>${excludePattern1}</sourceFileExclude>
+                    </sourceFileExcludes>
+                </configuration>
+            </plugin>
+            <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>1.6.0</version>
@@ -271,28 +293,6 @@
                                 </goals>
                             </execution>
                         </executions>
-                    </plugin>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-javadoc-plugin</artifactId>
-                        <version>3.2.0</version>
-                        <executions>
-                            <execution>
-                                <id>attach-javadocs</id>
-                                <goals>
-                                    <goal>jar</goal>
-                                </goals>
-                            </execution>
-                        </executions>
-                        <configuration>
-                            <additionalJOptions>
-                                <additionalJOption>${compilerArg1}</additionalJOption>
-                                <additionalJOption>${compilerArg2}</additionalJOption>
-                            </additionalJOptions>
-                            <sourceFileExcludes>
-                                <sourceFileExclude>${excludePattern1}</sourceFileExclude>
-                            </sourceFileExcludes>
-                        </configuration>
                     </plugin>
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>

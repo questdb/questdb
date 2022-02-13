@@ -178,6 +178,10 @@ public class TableWriter implements Closeable {
     private int rowActon = ROW_ACTION_OPEN_PARTITION;
     private long committedMasterRef;
 
+    // ILP related
+    private double commitIntervalFraction;
+    private long commitIntervalDefault;
+    private long commitInterval;
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot());
@@ -303,6 +307,7 @@ public class TableWriter implements Closeable {
             } else {
                 partitionDirFmt = null;
             }
+            this.commitInterval = calculateCommitInterval();
 
             configureColumnMemory();
             configureTimestampSetter();
@@ -701,6 +706,10 @@ public class TableWriter implements Closeable {
         throw CairoException.instance(0).put("column '").put(name).put("' does not exist");
     }
 
+    public long getCommitInterval() {
+        return commitInterval;
+    }
+
     public String getDesignatedTimestampColumnName() {
         return designatedTimestampColumnName;
     }
@@ -727,6 +736,10 @@ public class TableWriter implements Closeable {
 
     public int getPartitionCount() {
         return txWriter.getPartitionCount();
+    }
+
+    public long getPartitionTimestamp(int partitionIndex) {
+        return txWriter.getPartitionTimestamp(partitionIndex);
     }
 
     public long getRawMetaMemory() {
@@ -1274,6 +1287,7 @@ public class TableWriter implements Closeable {
 
             finishMetaSwapUpdate();
             metadata.setCommitLag(commitLag);
+            commitInterval = calculateCommitInterval();
             clearTodoLog();
         } finally {
             ddlMem.close();
@@ -1399,6 +1413,12 @@ public class TableWriter implements Closeable {
         }
 
         LOG.info().$("truncated [name=").$(tableName).$(']').$();
+    }
+
+    public void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault) {
+        this.commitIntervalFraction = commitIntervalFraction;
+        this.commitIntervalDefault = commitIntervalDefault;
+        this.commitInterval = calculateCommitInterval();
     }
 
     /**
@@ -1686,6 +1706,11 @@ public class TableWriter implements Closeable {
     private void bumpStructureVersion() {
         txWriter.bumpStructureVersion(this.denseSymbolMapWriters);
         assert txWriter.getStructureVersion() == metadata.getStructureVersion();
+    }
+
+    private long calculateCommitInterval() {
+        long commitIntervalMicros = (long) (metadata.getCommitLag() * commitIntervalFraction);
+        return commitIntervalMicros > 0 ? commitIntervalMicros / 1000 : commitIntervalDefault;
     }
 
     private void cancelRowAndBump() {
@@ -3563,17 +3588,17 @@ public class TableWriter implements Closeable {
         o3TimestampMem.putLong128(timestamp, getO3RowCount0());
     }
 
-    private void openColumnFiles(CharSequence name, int i, int plen) {
-        MemoryMAR mem1 = getPrimaryColumn(i);
-        MemoryMAR mem2 = getSecondaryColumn(i);
+    private void openColumnFiles(CharSequence name, int columnIndex, int pathTrimToLen) {
+        MemoryMAR mem1 = getPrimaryColumn(columnIndex);
+        MemoryMAR mem2 = getSecondaryColumn(columnIndex);
 
         try {
-            mem1.of(ff, dFile(path.trimTo(plen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
+            mem1.of(ff, dFile(path.trimTo(pathTrimToLen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
             if (mem2 != null) {
-                mem2.of(ff, iFile(path.trimTo(plen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
+                mem2.of(ff, iFile(path.trimTo(pathTrimToLen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
             }
         } finally {
-            path.trimTo(plen);
+            path.trimTo(pathTrimToLen);
         }
     }
 
@@ -4434,6 +4459,7 @@ public class TableWriter implements Closeable {
                 masterRef--;
                 clearO3();
             }
+            rowValueIsNotNull.fill(0, columnCount, masterRef);
             return;
         }
 
@@ -4574,6 +4600,7 @@ public class TableWriter implements Closeable {
     }
 
     private void setRowValueNotNull(int columnIndex) {
+        assert rowValueIsNotNull.getQuick(columnIndex) != masterRef;
         rowValueIsNotNull.setQuick(columnIndex, masterRef);
     }
 
@@ -4956,6 +4983,7 @@ public class TableWriter implements Closeable {
         @Override
         public void putDate(int columnIndex, long value) {
             putLong(columnIndex, value);
+            // putLong calls setRowValueNotNull
         }
 
         @Override

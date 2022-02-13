@@ -205,7 +205,10 @@ public class TxReader implements Closeable, Mutable {
 
     /**
      * Load variable length area sized from the file, e.g. Symbol Column Count and Partitions Size
-     * to fail fast reload if they are not clean values
+     * to fail fast reload if they are not clean values.
+     *
+     * @param symbolColumnCount symbol count is used to calculate offset of partition table in file.
+     * @return size partition table in bytes
      */
     public int unsafeReadPartitionSegmentSize(int symbolColumnCount) {
         roTxMem.extend(getPartitionTableSizeOffset(symbolColumnCount) + 4);

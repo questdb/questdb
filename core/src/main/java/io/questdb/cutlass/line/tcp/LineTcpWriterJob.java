@@ -46,24 +46,24 @@ class LineTcpWriterJob implements Job, Closeable {
     private final FloatingDirectCharSink floatingCharSink = new FloatingDirectCharSink();
     private final ObjList<TableUpdateDetails> assignedTables = new ObjList<>();
     private final MillisecondClock millisecondClock;
-    private final long commitInterval;
+    private final long commitIntervalDefault;
     private final LineTcpMeasurementScheduler scheduler;
-    private long commitDeadLine;
+    private long nextCommitTime;
 
     LineTcpWriterJob(
             int workerId,
             RingQueue<LineTcpMeasurementEvent> queue,
             Sequence sequence,
             MillisecondClock millisecondClock,
-            long commitInterval,
+            long commitIntervalDefault,
             LineTcpMeasurementScheduler scheduler
     ) {
         this.workerId = workerId;
         this.queue = queue;
         this.sequence = sequence;
         this.millisecondClock = millisecondClock;
-        this.commitInterval = commitInterval;
-        this.commitDeadLine = millisecondClock.getTicks() + commitInterval;
+        this.commitIntervalDefault = commitIntervalDefault;
+        this.nextCommitTime = millisecondClock.getTicks();
         this.scheduler = scheduler;
     }
 
@@ -87,34 +87,34 @@ class LineTcpWriterJob implements Job, Closeable {
         assert this.workerId == workerId;
         boolean busy = drainQueue();
         // while ILP is hammering the database via multiple connections the writer
-        // is likely to be very busy so commitIfTimeoutElapsed() will run infrequently
+        // is likely to be very busy so commitTables() will run infrequently
         // commit should run regardless the busy flag but has to finish quickly
         // idea is to store the tables in a heap data structure being the tables most
         // desperately need a commit on the top
-        if (!busy && !commitIfTimeoutElapsed()) {
+        if (!busy) {
+            commitTables();
             tickWriters();
         }
         return busy;
     }
 
-    private boolean commitIfTimeoutElapsed() {
-        final long millis = millisecondClock.getTicks();
-        if (millis > commitDeadLine) {
+    private void commitTables() {
+        final long wallClockMillis = millisecondClock.getTicks();
+        if (wallClockMillis > nextCommitTime) {
+            long minTableNextCommitTime = Long.MAX_VALUE;
             for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
-                if (assignedTables.getQuick(n).commitIfTimeoutElapsed(millis)) {
-                    // this return is to avoid holding up ingestion
-                    // after every successful commit we go back to drain the queue
-                    // if the queue is still empty we will come back and other tables will have their chance for a commit too
-                    // obviously tables at the end of the list (assignedTables) are disadvantaged but commits are
-                    // still issued automatically after we reached the max number of uncommitted rows and eventually
-                    // all tables in the list will get their commit after ingestion stops or slows down
-                    // the heap based solution mentioned above will eliminate this problem completely
-                    return true;
+                // the heap based solution mentioned above will eliminate the minimum search
+                // we could just process the min element of the heap until we hit the first commit
+                // time greater than millis and that will be our nextCommitTime
+                long tableNextCommitTime = assignedTables.getQuick(n).commitIfIntervalElapsed(wallClockMillis);
+                if (tableNextCommitTime < minTableNextCommitTime) {
+                    // taking the earliest commit time
+                    minTableNextCommitTime = tableNextCommitTime;
                 }
             }
-            commitDeadLine = millis + commitInterval;
+            // if no tables, just use the default commit interval
+            nextCommitTime = minTableNextCommitTime != Long.MAX_VALUE ? minTableNextCommitTime : wallClockMillis + commitIntervalDefault;
         }
-        return false;
     }
 
     private void tickWriters() {
@@ -140,12 +140,13 @@ class LineTcpWriterJob implements Job, Closeable {
                 // we check the event's writer thread ID to avoid consuming
                 // incomplete events
 
+                final TableUpdateDetails tab = event.getTableUpdateDetails();
                 if (event.getWriterWorkerId() == workerId) {
-                    final TableUpdateDetails tab = event.getTableUpdateDetails();
                     try {
                         if (!tab.isAssignedToJob()) {
                             assignedTables.add(tab);
                             tab.setAssignedToJob(true);
+                            nextCommitTime = millisecondClock.getTicks();
                             LOG.info()
                                     .$("assigned table to writer thread [tableName=").$(tab.getTableNameUtf16())
                                     .$(", threadId=").$(workerId)
@@ -155,7 +156,7 @@ class LineTcpWriterJob implements Job, Closeable {
                         eventProcessed = true;
                     } catch (Throwable ex) {
                         LOG.error()
-                                .$("closing writer for because of error [table=").$(tab.getTableNameUtf16())
+                                .$("closing writer because of error [table=").$(tab.getTableNameUtf16())
                                 .$(",ex=").$(ex)
                                 .I$();
                         event.createWriterReleaseEvent(tab, false);
@@ -164,6 +165,9 @@ class LineTcpWriterJob implements Job, Closeable {
                 } else {
                     if (event.getWriterWorkerId() == LineTcpMeasurementEventType.ALL_WRITERS_RELEASE_WRITER) {
                         eventProcessed = scheduler.processWriterReleaseEvent(event, workerId);
+                        assignedTables.remove(tab);
+                        tab.setAssignedToJob(false);
+                        nextCommitTime = millisecondClock.getTicks();
                     } else {
                         eventProcessed = true;
                     }

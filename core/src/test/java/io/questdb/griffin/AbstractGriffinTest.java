@@ -434,12 +434,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             }
         } else {
             try {
-                record.getRowId();
-                Assert.fail();
-            } catch (UnsupportedOperationException ignore) {
-            }
-
-            try {
                 cursor.getRecordB();
                 Assert.fail();
             } catch (UnsupportedOperationException ignore) {
@@ -550,7 +544,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 long ts = record.getTimestamp(index);
                 if ((isAscending && timestamp > ts) ||
                         (!isAscending && timestamp < ts)) {
-                    Assert.fail("record # " + c + " should have " + (isAscending ? "bigger" : "smaller") + " (or equal) timestamp than the row before");
+                    Assert.fail("record # " + c + " should have " + (isAscending ? "bigger" : "smaller") +
+                            " (or equal) timestamp than the row before. Values prior=" + timestamp + " current=" + ts);
                 }
                 timestamp = ts;
                 c++;
@@ -931,8 +926,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                     compile(query, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals(Chars.toString(query), expectedPosition, e.getPosition());
                     TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+                    Assert.assertEquals(Chars.toString(query), expectedPosition, e.getPosition());
                 }
                 Assert.assertEquals(0, engine.getBusyReaderCount());
                 Assert.assertEquals(0, engine.getBusyWriterCount());
@@ -1179,6 +1174,10 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = cc.getRecordCursorFactory()) {
             Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
         }
+    }
+
+    protected static void assertCompile(CharSequence query) throws Exception {
+        assertMemoryLeak(() -> compile(query));
     }
 
     @NotNull

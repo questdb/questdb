@@ -8,7 +8,9 @@ pr:
 variables:
   QDB_LOG_W_FILE_LOCATION: "$(Build.BinariesDirectory)/tests.log"
   ARCHIVED_LOGS: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).zip"
-  DIFF_CONVER_THRESHOLD_PCT: 50
+  DIFF_COVER_THRESHOLD_PCT: 50
+  includeTests: ""
+  excludeTests: ""
 
 stages:
   - stage: CheckChanges
@@ -40,8 +42,8 @@ stages:
               project=$(System.TeamProject) --use-git-aliases true
             displayName: "Set default Azure DevOps organization and project"
           - task: LambdaInvokeFunction@1
-            displayName: "Start Agent"
-            name: "Start_Agent"
+            displayName: "Start Agent 1"
+            name: "Start_Agent1"
             inputs:
               awsCredentials: "ondemand-dev"
               regionName: "eu-west-1"
@@ -75,3 +77,70 @@ stages:
       - CheckChanges
     jobs:
       - template: templates/hosted-jobs.yml
+
+  - stage: HostedRunTestsCoverageBranches
+    displayName: "Hosted Running tests with cover"
+    dependsOn:
+      - CheckChanges
+    jobs:
+      - template: templates/hosted-cover-jobs.yml
+
+  - stage: CoverageReports
+    displayName: "Coverage Report"
+    dependsOn:
+      - CheckChanges
+      - HostedRunTestsCoverageBranches
+    jobs:
+      - job: CoverageReport
+        displayName: "Coverage Report"
+        pool:
+          vmImage: "ubuntu-latest"
+        variables:
+          SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
+          CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
+          MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m"
+          COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
+        condition: |
+          and(
+            and(
+              eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
+              eq(variables['SOURCE_CODE_CHANGED'], 'true')
+            ),
+            eq(variables['System.PullRequest.IsFork'], 'false')
+          )
+        steps:
+          - checkout: self
+            fetchDepth: 1
+            lfs: false
+            submodules: false
+          - task: Cache@2
+            inputs:
+              key: '"questdb_main" | "maven"'
+              restoreKeys: |
+              path: $(MAVEN_CACHE_FOLDER)
+          - task: Maven@3
+            displayName: "Compile with Maven"
+            inputs:
+              mavenPomFile: "core/pom.xml"
+              mavenOptions: "$(MAVEN_OPTS)"
+              options: "compile -DskipTests"
+              jdkVersionOption: "1.11"
+          - download: current
+            artifact: jacoco-coverage
+          - task: Maven@3
+            displayName: "Merge coverage reports"
+            inputs:
+              mavenPomFile: "ci/jacoco-merge.xml"
+              goals: "verify"
+              options:
+                "-Dhttp.keepAlive=false -DincludeRoot=$(Pipeline.Workspace)
+                -DoutputDirectory=$(Pipeline.Workspace)/jacoco-aggregate
+                -DcoverDiff=$(COVERAGE_DIFF)"
+          - bash:
+              $JAVA_HOME_11_X64/bin/java -jar
+              $(Build.SourcesDirectory)/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar
+              -c $(Pipeline.Workspace)/jacoco-aggregate/jacoco.xml
+              --github-token $(GH_TOKEN) --repo "questdb/questdb" --pr
+              $(System.PullRequest.PullRequestNumber)
+              -t  $(DIFF_COVER_THRESHOLD_PCT) -type jacoco;
+            displayName: "Diff coverage PR report"

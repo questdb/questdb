@@ -541,6 +541,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean enableDevelopmentUpdates() {
+        return false;
+    }
+
+    @Override
     public int getSqlMapMaxResizes() {
         return 64;
     }

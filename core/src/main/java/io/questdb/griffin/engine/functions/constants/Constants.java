@@ -41,7 +41,15 @@ public final class Constants {
     }
 
     public static ConstantFunction getNullConstant(int columnType) {
-        return nullConstants.getQuick(ColumnType.tagOf(columnType));
+        int typeTag = ColumnType.tagOf(columnType);
+        if (typeTag >= ColumnType.GEOBYTE &&
+                typeTag <= ColumnType.GEOLONG) {
+            int bits = ColumnType.getGeoHashBits(columnType);
+            if (bits != 0) {
+                return geoNullConstants.get(bits);
+            }
+        }
+        return nullConstants.getQuick(typeTag);
     }
 
     public static TypeConstant getTypeConstant(int columnType) {
@@ -98,7 +106,7 @@ public final class Constants {
         typeConstants.extendAndSet(ColumnType.BINARY, BinTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.LONG256, Long256TypeConstant.INSTANCE);
 
-        for (int b = 1; b < ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
+        for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
             geoNullConstants.extendAndSet(b, getGeoHashConstant(GeoHashes.NULL, b));
         }
     }

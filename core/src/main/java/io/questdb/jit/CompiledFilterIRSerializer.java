@@ -122,6 +122,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * @param node   filter expression tree's root node.
      * @param scalar set use only scalar instruction set execution hint in the returned options.
      * @param debug  set enable debug flag in the returned options.
+     * @param nullChecks a flag for JIT, allowing or disallowing generation of null check
      * @return JIT compiler options stored in a single int in the following way:
      * <ul>
      * <li>1 LSB - debug flag</li>

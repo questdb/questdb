@@ -71,4 +71,19 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
     }
+
+    @Override
+    public boolean supportsUpdateRowId(CharSequence tableName) {
+        return base.supportsUpdateRowId(tableName);
+    }
+
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
+
+    @Override
+    public boolean hasDescendingOrder() {
+        return base.hasDescendingOrder();
+    }
 }

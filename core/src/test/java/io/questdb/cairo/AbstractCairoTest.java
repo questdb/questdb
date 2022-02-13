@@ -63,7 +63,7 @@ public class AbstractCairoTest {
     protected static CairoEngine engine;
     protected static String inputRoot = null;
     protected static FilesFacade ff;
-    protected static long configOverrideCommitLag = -1;
+    protected static long configOverrideCommitLagMicros = -1;
     protected static int configOverrideMaxUncommittedRows = -1;
     protected static Metrics metrics = Metrics.enabled();
     protected static int capacity = -1;
@@ -128,6 +128,11 @@ public class AbstractCairoTest {
             }
 
             @Override
+            public long getCommitLag() {
+                return configOverrideCommitLagMicros >= 0 ? configOverrideCommitLagMicros : super.getCommitLag();
+            }
+
+            @Override
             public long getSpinLockTimeoutUs() {
                 if (spinLockTimeoutUs > -1) {
                     return spinLockTimeoutUs;
@@ -174,6 +179,23 @@ public class AbstractCairoTest {
             }
 
             @Override
+            public boolean enableDevelopmentUpdates() {
+                return true;
+            }
+
+            @Override
+            public int getSqlJitMode() {
+                // JIT compiler is a beta feature and thus is disabled by default,
+                // but we want to have it enabled in tests.
+                return SqlJitMode.JIT_MODE_ENABLED;
+            }
+
+            @Override
+            public int getSqlPageFrameMaxSize() {
+                return pageFrameMaxSize < 0 ? super.getSqlPageFrameMaxSize() : pageFrameMaxSize;
+            }
+
+            @Override
             public int getPartitionPurgeListCapacity() {
                 // Bump it to high number so that test don't fail with memory leak if LongList
                 // re-allocates
@@ -206,7 +228,7 @@ public class AbstractCairoTest {
         engine.clear();
         TestUtils.removeTestPath(root);
         configOverrideMaxUncommittedRows = -1;
-        configOverrideCommitLag = -1;
+        configOverrideCommitLagMicros = -1;
         currentMicros = -1;
         sampleByIndexSearchPageSize = -1;
         defaultMapType = null;

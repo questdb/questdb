@@ -1656,6 +1656,36 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> Assert.assertEquals(SET, compiler.compile(query, sqlExecutionContext).getType()));
     }
 
+    //close command is a no-op in qdb
+    @Test
+    public void testCompileCloseDoesNothing() throws Exception {
+        String query = "CLOSE ALL;";
+        assertMemoryLeak(() -> Assert.assertEquals(SET, compiler.compile(query, sqlExecutionContext).getType()));
+    }
+
+    //reset command is a no-op in qdb
+    @Test
+    public void testCompileResetDoesNothing() throws Exception {
+        String query = "RESET ALL;";
+        assertMemoryLeak(() -> Assert.assertEquals(SET, compiler.compile(query, sqlExecutionContext).getType()));
+    }
+
+    //unlisten command is a no-op in qdb (it's a pg-specific notification mechanism)
+    @Test
+    public void testCompileUnlistenDoesNothing() throws Exception {
+        String query = "UNLISTEN *;";
+        assertMemoryLeak(() -> Assert.assertEquals(SET, compiler.compile(query, sqlExecutionContext).getType()));
+    }
+    
+    @Test
+    public void testCompileStatementsBatch() throws Exception {
+        String query = "SELECT pg_advisory_unlock_all(); CLOSE ALL;";
+
+        assertMemoryLeak(()-> {
+            compiler.compileBatch(query, sqlExecutionContext, null);
+        });
+    }
+
     @Test
     public void testCreateAsSelect() throws SqlException {
         String expectedData = "a1\ta\tb\tc\td\te\tf\tf1\tg\th\ti\tj\tj1\tk\tl\tm\n" +
@@ -2308,8 +2338,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         "t TIMESTAMP, " +
                         "x SYMBOL capacity 16 cache, " +
                         "z STRING, " +
-                        "y BOOLEAN) " +
-                        "partition by MONTH",
+                        "y BOOLEAN) ",
                 sqlExecutionContext
         );
 
@@ -2320,7 +2349,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     "{\"columnCount\":12,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"b\",\"type\":\"BYTE\"},{\"index\":2,\"name\":\"c\",\"type\":\"SHORT\"},{\"index\":3,\"name\":\"d\",\"type\":\"LONG\"},{\"index\":4,\"name\":\"e\",\"type\":\"FLOAT\"},{\"index\":5,\"name\":\"f\",\"type\":\"DOUBLE\"},{\"index\":6,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"h\",\"type\":\"BINARY\"},{\"index\":8,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":9,\"name\":\"x\",\"type\":\"SYMBOL\"},{\"index\":10,\"name\":\"z\",\"type\":\"STRING\"},{\"index\":11,\"name\":\"y\",\"type\":\"BOOLEAN\"}],\"timestampIndex\":-1}",
                     sink);
 
-            Assert.assertEquals(PartitionBy.MONTH, reader.getPartitionedBy());
+            Assert.assertEquals(PartitionBy.NONE, reader.getPartitionedBy());
             Assert.assertEquals(0L, reader.size());
 
             SymbolMapReader symbolMapReader = reader.getSymbolMapReader(reader.getMetadata().getColumnIndexQuiet("x"));
@@ -3174,7 +3203,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testInsertAsSelectInconvertibleList3() throws Exception {
-        testInsertAsSelectError("create table x (a SHORT, b INT, n TIMESTAMP)",
+        testInsertAsSelectError("create table x (a BYTE, b INT, n TIMESTAMP)",
                 "insert into x (b,a)" +
                         "select" +
                         " rnd_int()," +

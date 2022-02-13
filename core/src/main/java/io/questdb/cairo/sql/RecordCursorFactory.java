@@ -60,6 +60,9 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
     default void close() {
     }
 
+    /**
+     * True if record cusor factory followed order by advice and doesn't require sorting .
+     */
     default boolean followedOrderByAdvice() {
         return false;
     }
@@ -73,6 +76,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
      *
      * @param executionContext name of a SQL execution context
      * @return instance of cursor
+     * @throws SqlException when cursor cannot be produced due a deferred SQL syntax error
      */
     default RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         throw new UnsupportedOperationException();
@@ -96,6 +100,10 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
     boolean recordCursorSupportsRandomAccess();
 
     default boolean supportPageFrameCursor() {
+        return false;
+    }
+
+    default boolean supportsUpdateRowId(CharSequence tableName) {
         return false;
     }
 
