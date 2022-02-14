@@ -577,6 +577,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
                             table + ",location=us-eastcoast temperature=81 1465839830101400200\n" +
                             table + ",location=us-midwest temperature=85i 1465839830102300200\n" +
+                            table + ",location=us-midwest temperature=tyu 1465839830102300200\n" +
                             table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
@@ -589,6 +590,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
                     "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
                     "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
                     "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
                     "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";

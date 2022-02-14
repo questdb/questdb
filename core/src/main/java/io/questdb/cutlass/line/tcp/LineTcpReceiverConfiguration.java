@@ -78,5 +78,7 @@ public interface LineTcpReceiverConfiguration {
 
     boolean isEnabled();
 
+    boolean getDisconnectOnError();
+
     long getSymbolCacheWaitUsBeforeReload();
 }

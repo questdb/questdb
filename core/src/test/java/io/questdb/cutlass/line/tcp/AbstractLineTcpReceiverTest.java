@@ -98,6 +98,7 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected long maintenanceInterval = 25;
     protected double commitIntervalFraction = 0.5;
     protected long commitIntervalDefault = 2000;
+    protected boolean disconnectOnError = false;
 
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
         @Override
@@ -153,6 +154,11 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         @Override
         public long getWriterIdleTimeout() {
             return minIdleMsBeforeWriterRelease;
+        }
+
+        @Override
+        public boolean getDisconnectOnError() {
+            return disconnectOnError;
         }
     };
 

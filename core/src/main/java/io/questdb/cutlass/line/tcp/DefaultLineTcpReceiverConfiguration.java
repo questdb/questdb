@@ -48,6 +48,11 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
+    public boolean getDisconnectOnError() {
+        return true;
+    }
+
+    @Override
     public CairoSecurityContext getCairoSecurityContext() {
         return AllowAllCairoSecurityContext.INSTANCE;
     }
