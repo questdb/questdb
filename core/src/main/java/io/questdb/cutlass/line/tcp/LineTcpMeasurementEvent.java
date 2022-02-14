@@ -208,6 +208,14 @@ class LineTcpMeasurementEvent implements Closeable {
                                 row.putDate(colIndex, v);
                                 break;
 
+                            case ColumnType.DOUBLE:
+                                row.putDouble(colIndex, v);
+                                break;
+
+                            case ColumnType.FLOAT:
+                                row.putFloat(colIndex, v);
+                                break;
+
                             default:
                                 throw CairoException.instance(0)
                                         .put("cast error for line protocol integer [columnIndex=").put(colIndex)
