@@ -27,7 +27,7 @@ const path = require("path")
 const monacoConfig = require("./monaco.config")
 
 const removeLine = (filePath) => {
-  // only interested in css and javascript files. Other files, like css or fonts are ignored
+  // only interested in css and javascript files. Other files, like images or fonts are ignored
   if (filePath.endsWith(".js") || filePath.endsWith(".css")) {
     const content = fs.readFileSync(filePath, "utf8").split("\n")
     const contentWithoutSourceMap = content
