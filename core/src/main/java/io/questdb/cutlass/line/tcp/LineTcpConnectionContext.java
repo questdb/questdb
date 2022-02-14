@@ -50,6 +50,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
     private final LineTcpParser parser = new LineTcpParser();
     private final FloatingDirectCharSink floatingDirectCharSink = new FloatingDirectCharSink();
+    private final boolean disconnectOnError;
     protected long fd;
     protected IODispatcher<LineTcpConnectionContext> dispatcher;
     protected long recvBufStart;
@@ -62,6 +63,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
 
     LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
         nf = configuration.getNetworkFacade();
+        disconnectOnError = configuration.getDisconnectOnError();
         this.scheduler = scheduler;
         this.metrics = metrics;
         this.milliClock = configuration.getMillisecondClock();
@@ -196,6 +198,9 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                     }
 
                     case ERROR: {
+                        if (disconnectOnError) {
+                            return IOContextResult.NEEDS_DISCONNECT;
+                        }
                         goodMeasurement = false;
                         continue;
                     }
@@ -221,9 +226,15 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                         .$(", msg=").$(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();
-                return IOContextResult.NEEDS_DISCONNECT;
+                if (disconnectOnError) {
+                    return IOContextResult.NEEDS_DISCONNECT;
+                }
+                goodMeasurement = false;
             } catch (Throwable ex) {
-                LOG.error().$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName()).$(", ex=").$(ex).I$();
+                LOG.error().
+                        $('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName()).
+                        $(", ex=").$(ex)
+                        .I$();
                 // This is a critical error, so we treat it as an unhandled one.
                 metrics.healthCheck().incrementUnhandledErrors();
                 return IOContextResult.NEEDS_DISCONNECT;
