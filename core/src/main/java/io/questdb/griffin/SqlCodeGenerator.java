@@ -1308,7 +1308,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return generateSubQuery(model, executionContext);
     }
 
-    private RecordCursorFactory generateOrderBy(RecordCursorFactory recordCursorFactory, QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+    private RecordCursorFactory generateOrderBy(
+            RecordCursorFactory recordCursorFactory,
+            QueryModel model,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         if (recordCursorFactory.followedOrderByAdvice()) {
             return recordCursorFactory;
         }
@@ -1320,6 +1324,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (size > 0) {
 
                 final RecordMetadata metadata = recordCursorFactory.getMetadata();
+                final int timestampIndex = metadata.getTimestampIndex();
+
                 listColumnFilterA.clear();
                 intHashSet.clear();
 
@@ -1361,10 +1367,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // 2. metadata of the new cursor will have timestamp
 
                 RecordMetadata orderedMetadata;
-                if (metadata.getTimestampIndex() != -1) {
+                if (timestampIndex != -1) {
                     CharSequence column = columnNames.getQuick(0);
                     int index = metadata.getColumnIndexQuiet(column);
-                    if (index == metadata.getTimestampIndex()) {
+                    if (index == timestampIndex) {
                         if (size == 1) {
                             if (orderBy.get(column) == QueryModel.ORDER_DIRECTION_ASCENDING) {
                                 return recordCursorFactory;
@@ -1375,6 +1381,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     }
                 }
+
                 orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
 
                 final Function loFunc = getLoFunction(model, executionContext);
@@ -1387,7 +1394,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 orderedMetadata,
                                 recordCursorFactory,
                                 recordComparatorCompiler.compile(metadata, listColumnFilterA),
-                                loFunc, hiFunc);
+                                loFunc,
+                                hiFunc
+                        );
                     } else {
                         return new SortedLightRecordCursorFactory(
                                 configuration,
@@ -1406,7 +1415,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         configuration,
                         orderedMetadata,
                         recordCursorFactory,
-                        orderedMetadata,
                         RecordSinkFactory.getInstance(
                                 asm,
                                 orderedMetadata,

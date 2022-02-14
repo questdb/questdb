@@ -48,7 +48,13 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     private final long skipLast;  //skip last N rows
     private long rowsLeft;
 
-    public LimitedSizeSortedLightRecordCursor(LimitedSizeLongTreeChain chain, RecordComparator comparator, long limit, long skipFirst, long skipLast) {
+    public LimitedSizeSortedLightRecordCursor(
+            LimitedSizeLongTreeChain chain,
+            RecordComparator comparator,
+            long limit,
+            long skipFirst,
+            long skipLast
+    ) {
         this.chain = chain;
         this.comparator = comparator;
         this.chainCursor = chain.getCursor();

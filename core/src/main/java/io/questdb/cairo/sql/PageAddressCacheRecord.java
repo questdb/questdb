@@ -169,6 +169,11 @@ public class PageAddressCacheRecord implements Record {
     }
 
     @Override
+    public long getUpdateRowId() {
+        return getRowId();
+    }
+
+    @Override
     public short getShort(int columnIndex) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (address == 0) {

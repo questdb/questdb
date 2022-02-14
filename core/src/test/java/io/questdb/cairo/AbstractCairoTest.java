@@ -96,12 +96,6 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public long getCommitLag() {
-                if (configOverrideCommitLag >= 0) return configOverrideCommitLag;
-                return super.getCommitLag();
-            }
-
-            @Override
             public int getCopyPoolCapacity() {
                 return capacity == -1 ? super.getCopyPoolCapacity() : capacity;
             }
@@ -181,18 +175,6 @@ public class AbstractCairoTest {
             @Override
             public boolean enableDevelopmentUpdates() {
                 return true;
-            }
-
-            @Override
-            public int getSqlJitMode() {
-                // JIT compiler is a beta feature and thus is disabled by default,
-                // but we want to have it enabled in tests.
-                return SqlJitMode.JIT_MODE_ENABLED;
-            }
-
-            @Override
-            public int getSqlPageFrameMaxSize() {
-                return pageFrameMaxSize < 0 ? super.getSqlPageFrameMaxSize() : pageFrameMaxSize;
             }
 
             @Override

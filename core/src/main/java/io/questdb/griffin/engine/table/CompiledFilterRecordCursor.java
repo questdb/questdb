@@ -274,24 +274,6 @@ class CompiledFilterRecordCursor implements RecordCursor {
         return false;
     }
 
-    private boolean nextRow() {
-        if (current < hi) {
-            recordA.setIndex(rows.get(getCurrentRowIndex()));
-            current++;
-            return true;
-        }
-        return nextPage();
-    }
-
-    private void seekNextColTopsRow() {
-        while (++current < hi) {
-            recordA.setIndex(getCurrentRowIndex());
-            if (colTopsFilter.getBool(recordA)) {
-                return;
-            }
-        }
-    }
-
     private void writeBindVarFunction(Function function, SqlExecutionContext executionContext) throws SqlException {
         final int columnType = function.getType();
         final int columnTypeTag = ColumnType.tagOf(columnType);
