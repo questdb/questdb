@@ -346,6 +346,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private String lineTcpAuthDbPath;
     private int lineTcpDefaultPartitionBy;
     private long minIdleMsBeforeWriterRelease;
+    private boolean lineTcpDisconnectOnError;
     private String httpVersion;
     private int httpMinWorkerCount;
     private boolean httpMinWorkerHaltOnError;
@@ -824,6 +825,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     this.lineTcpAuthDbPath = new File(root, this.lineTcpAuthDbPath).getAbsolutePath();
                 }
                 this.minIdleMsBeforeWriterRelease = getLong(properties, env, "line.tcp.min.idle.ms.before.writer.release", 10_000);
+                this.lineTcpDisconnectOnError = getBoolean(properties, env, "line.tcp.disconnect.on.error", true);
             }
 
             this.sharedWorkerCount = getInt(properties, env, "shared.worker.count", Math.max(1, cpuAvailable / 2 - 1 - cpuUsed));
@@ -2481,6 +2483,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isEnabled() {
             return lineTcpEnabled;
+        }
+
+        @Override
+        public boolean getDisconnectOnError() {
+            return lineTcpDisconnectOnError;
         }
 
         @Override
