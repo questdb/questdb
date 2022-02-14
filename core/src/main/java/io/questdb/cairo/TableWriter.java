@@ -460,7 +460,7 @@ public class TableWriter implements Closeable {
 
         bumpStructureVersion();
 
-        metadata.addColumn(name, configuration.getRandom().nextLong(), type, isIndexed, indexValueBlockCapacity, columnCount - 1);
+        metadata.addColumn(name, configuration.getRandom().nextLong(), type, isIndexed, indexValueBlockCapacity);
 
         LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
     }
@@ -937,7 +937,7 @@ public class TableWriter implements Closeable {
 
         bumpStructureVersion();
 
-        metadata.removeColumn(name);
+        metadata.removeColumn(index);
         if (timestamp) {
             metadata.setTimestampIndex(-1);
         } else if (timestampColumnName != null) {
@@ -1184,53 +1184,53 @@ public class TableWriter implements Closeable {
             }
             offset += Vm.getStorageLength(name);
         }
-
-        final long pTransitionIndex = TableUtils.createTransitionIndex(
-                metaMem,
-                slaveMetaMem,
-                slaveColumnCount,
-                slaveColumnNameIndexMap
-        );
-
-        try {
-            final long pIndexBase = pTransitionIndex + 8;
-
-            int addedColumnMetadataIndex = -1;
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-
-                final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L) - 1;
-
-                if (copyFrom == i) {
-                    // It appears that column hasn't changed its position. There are three possibilities here:
-                    // 1. Column has been deleted and re-added by the same name. We must check if file
-                    //    descriptor is still valid. If it isn't, reload the column from disk
-                    // 2. Column has been forced out of the reader via closeColumnForRemove(). This is required
-                    //    on Windows before column can be deleted. In this case we must check for marker
-                    //    instance and the column from disk
-                    // 3. Column hasn't been altered, and we can skip to next column.
-                    continue;
-                }
-
-                if (copyFrom > -1) {
-                    int copyTo = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4) - 1;
-                    if (copyTo == -1) {
-                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_REMOVE, i, -1);
-                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_MOVE, copyFrom, i);
-                    } else {
-                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_MOVE, copyFrom, copyTo + 1);
-                    }
-                } else {
-                    // new column
-                    model.addColumnMetadata(metadata.getColumnQuick(i));
-                    if (copyFrom == -2) {
-                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_REMOVE, i, -1);
-                    }
-                    model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_ADD, ++addedColumnMetadataIndex, i);
-                }
-            }
-        } finally {
-            TableUtils.freeTransitionIndex(pTransitionIndex);
-        }
+//
+//        final long pTransitionIndex = TableUtils.createTransitionIndex(
+//                metaMem,
+//                slaveMetaMem,
+//                slaveColumnCount,
+//                slaveColumnNameIndexMap
+//        );
+//
+//        try {
+//            final long pIndexBase = pTransitionIndex + 8;
+//
+//            int addedColumnMetadataIndex = -1;
+//            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+//
+//                final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L) - 1;
+//
+//                if (copyFrom == i) {
+//                    // It appears that column hasn't changed its position. There are three possibilities here:
+//                    // 1. Column has been deleted and re-added by the same name. We must check if file
+//                    //    descriptor is still valid. If it isn't, reload the column from disk
+//                    // 2. Column has been forced out of the reader via closeColumnForRemove(). This is required
+//                    //    on Windows before column can be deleted. In this case we must check for marker
+//                    //    instance and the column from disk
+//                    // 3. Column hasn't been altered, and we can skip to next column.
+//                    continue;
+//                }
+//
+//                if (copyFrom > -1) {
+//                    int copyTo = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4) - 1;
+//                    if (copyTo == -1) {
+//                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_REMOVE, i, -1);
+//                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_MOVE, copyFrom, i);
+//                    } else {
+//                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_MOVE, copyFrom, copyTo + 1);
+//                    }
+//                } else {
+//                    // new column
+//                    model.addColumnMetadata(metadata.getColumnQuick(i));
+//                    if (copyFrom == -2) {
+//                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_REMOVE, i, -1);
+//                    }
+//                    model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_ADD, ++addedColumnMetadataIndex, i);
+//                }
+//            }
+//        } finally {
+//            TableUtils.freeTransitionIndex(pTransitionIndex);
+//        }
 
         return model;
     }
@@ -1914,7 +1914,6 @@ public class TableWriter implements Closeable {
             int type = metadata.getColumnType(i);
             configureColumn(type, metadata.isColumnIndexed(i));
 
-            assert !ColumnType.isSymbol(-type); //TODO, solve symbol deletions
             if (ColumnType.isSymbol(type)) {
                 final int symbolIndex = denseSymbolMapWriters.size();
                 SymbolMapWriter symbolMapWriter = new SymbolMapWriter(
@@ -4064,7 +4063,7 @@ public class TableWriter implements Closeable {
 
     private void removeSymbolMapWriter(int index) {
         SymbolMapWriter writer = symbolMapWriters.getQuick(index);
-        symbolMapWriters.remove(index);
+        symbolMapWriters.setQuick(index, null);
         if (writer != null) {
             int symColIndex = denseSymbolMapWriters.remove(writer);
             // Shift all subsequent symbol indexes by 1 back
@@ -4851,7 +4850,7 @@ public class TableWriter implements Closeable {
                 }
                 metaMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
                 validationMap.clear();
-                validate(metaMem, metaMem.getFd(), validationMap, ColumnType.VERSION);
+                validate(metaMem, validationMap, ColumnType.VERSION);
             } finally {
                 metaMem.close();
                 path.trimTo(rootLen);

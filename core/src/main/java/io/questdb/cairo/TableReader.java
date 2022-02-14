@@ -71,7 +71,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private ObjList<MemoryMR> columns;
     private ObjList<BitmapIndexReader> bitmapIndexes;
     private int columnCount;
-    private int columnCountBits;
+    private int columnCountShl;
     private long rowCount;
     private long txn = TableUtils.INITIAL_TXN;
     private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
@@ -93,7 +93,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         try {
             this.metadata = openMetaFile();
             this.columnCount = this.metadata.getColumnCount();
-            this.columnCountBits = getColumnBits(columnCount);
+            this.columnCountShl = getColumnBits(columnCount);
             this.partitionBy = this.metadata.getPartitionBy();
             this.columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
@@ -233,7 +233,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public int getColumnBase(int partitionIndex) {
-        return partitionIndex << columnCountBits;
+        return partitionIndex << columnCountShl;
     }
 
     public long getColumnTop(int base, int columnIndex) {
@@ -630,8 +630,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         return reader;
     }
 
-    private void createNewColumnList(int columnCount, long pTransitionIndex, int columnBits) {
-        int capacity = partitionCount << columnBits;
+    private void createNewColumnList(int columnCount, long pTransitionIndex, int columnCountShl) {
+        int capacity = partitionCount << columnCountShl;
         final ObjList<MemoryMR> columns = new ObjList<>(capacity);
         final LongList columnTops = new LongList(capacity / 2);
         final ObjList<BitmapIndexReader> indexReaders = new ObjList<>(capacity);
@@ -643,8 +643,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         final long pIndexBase = pTransitionIndex + 8;
 
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-            final int base = partitionIndex << columnBits;
-            final int oldBase = partitionIndex << columnCountBits;
+            final int base = partitionIndex << columnCountShl;
+            final int oldBase = partitionIndex << this.columnCountShl;
             try {
                 final Path path = pathGenPartitioned(partitionIndex).$();
                 long partitionRowCount = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
@@ -671,7 +671,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         this.columns = columns;
         this.columnTops = columnTops;
-        this.columnCountBits = columnBits;
+        this.columnCountShl = columnCountShl;
         this.bitmapIndexes = indexReaders;
     }
 
@@ -742,7 +742,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     int getPartitionIndex(int columnBase) {
-        return columnBase >>> columnCountBits;
+        return columnBase >>> columnCountShl;
     }
 
     long getPartitionRowCount(int partitionIndex) {
@@ -1106,17 +1106,17 @@ public class TableReader implements Closeable, SymbolTableSource {
                     throw CairoException.instance(0).put("Metadata read timeout");
                 }
                 try {
-                    metadata.applyTransitionIndex(pTransitionIndex);
+                    metadata.applyTransitionIndex();
                     if (reshuffleColumns) {
                         final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
 
-                        int columnCountBits = getColumnBits(columnCount);
+                        int columnCountShl = getColumnBits(columnCount);
                         // when a column is added we cannot easily reshuffle columns in-place
                         // the reason is that we'd have to create gaps in columns list between
                         // partitions. It is possible in theory, but this could be an algo for
                         // another day.
-                        if (columnCountBits > this.columnCountBits) {
-                            createNewColumnList(columnCount, pTransitionIndex, columnCountBits);
+                        if (columnCountShl > this.columnCountShl) {
+                            createNewColumnList(columnCount, pTransitionIndex, columnCountShl);
                         } else {
                             reshuffleColumns(columnCount, pTransitionIndex);
                         }

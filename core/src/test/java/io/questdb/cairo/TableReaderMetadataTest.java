@@ -25,9 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.ObjIntHashMap;
-import io.questdb.std.Os;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -35,6 +33,9 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -186,6 +187,26 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRemoveFirstAndLastColumns2() throws Exception {
+        final String expected = "short:SHORT\n" +
+                "byte:BYTE\n" +
+                "double:DOUBLE\n" +
+                "float:FLOAT\n" +
+                "long:LONG\n" +
+                "str:STRING\n" +
+                "sym:SYMBOL\n" +
+                "bool:BOOLEAN\n" +
+                "bin:BINARY\n";
+
+        try (TableWriter writer = new TableWriter(configuration, "all")) {
+            writer.removeColumn("date");
+        }
+        assertThat(expected, (writer) -> {
+            writer.removeColumn("int");
+        }, 9);
+    }
+
+    @Test
     public void testRemoveAndAddSameColumn() throws Exception {
         final String expected = "int:INT\n" +
                 "short:SHORT\n" +
@@ -262,6 +283,45 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRemoveRandomColumns() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        final String allColumns = "int:INT\n" +
+                "short:SHORT\n" +
+                "byte:BYTE\n" +
+                "double:DOUBLE\n" +
+                "float:FLOAT\n" +
+                "long:LONG\n" +
+                "str:STRING\n" +
+                "sym:SYMBOL\n" +
+                "bool:BOOLEAN\n" +
+                "bin:BINARY\n" +
+                "date:DATE\n";
+
+        List<String> lines = new ArrayList<>(Arrays.asList(allColumns.split("\n")));
+
+        while (lines.size() > 0) {
+            try (TableWriter w = new TableWriter(configuration, "all")) {
+                int removeIndex = rnd.nextInt() % lines.size();
+                if (removeIndex >= 0 && removeIndex < lines.size()) {
+                    String line = lines.get(removeIndex);
+                    String name = line.substring(0, line.indexOf(':'));
+                    w.removeColumn(name);
+                    lines.remove(removeIndex);
+                }
+            }
+
+            if (rnd.nextBoolean() || lines.size() == 0) {
+                String expected = String.join("\n", lines);
+                if (lines.size() > 0) {
+                    expected += "\n";
+                }
+                assertThat(expected, (w) -> {
+                }, lines.size());
+            }
+        }
+    }
+
+    @Test
     public void testRemoveFirstColumn() throws Exception {
         final String expected =
                 "short:SHORT\n" +
@@ -311,6 +371,26 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRemoveSparseColumns2() throws Exception {
+        final String expected = "int:INT\n" +
+                "short:SHORT\n" +
+                "byte:BYTE\n" +
+                "float:FLOAT\n" +
+                "long:LONG\n" +
+                "sym:SYMBOL\n" +
+                "bool:BOOLEAN\n" +
+                "bin:BINARY\n" +
+                "date:DATE\n";
+
+        try (TableWriter writer = new TableWriter(configuration, "all")) {
+            writer.removeColumn("double");
+        }
+        assertThat(expected, (w) -> {
+            w.removeColumn("str");
+        }, 9);
+    }
+
+    @Test
     public void testRenameColumn() throws Exception {
         final String expected = "int:INT\n" +
                 "short:SHORT\n" +
@@ -342,13 +422,13 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                     long pTransitionIndex = metadata.createTransitionIndex(structVersion);
                     StringSink sink = new StringSink();
                     try {
-                        metadata.applyTransitionIndex(pTransitionIndex);
-                        Assert.assertEquals(columnCount, metadata.getColumnCount());
+                        metadata.applyTransitionIndex();
                         for (int i = 0; i < columnCount; i++) {
                             sink.put(metadata.getColumnName(i)).put(':').put(ColumnType.nameOf(metadata.getColumnType(i))).put('\n');
                         }
 
                         TestUtils.assertEquals(expected, sink);
+                        Assert.assertEquals(columnCount, metadata.getColumnCount());
 
                         if (expected.length() > 0) {
                             String[] lines = expected.split("\n");

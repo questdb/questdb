@@ -94,6 +94,10 @@ public abstract class BaseRecordMetadata implements RecordMetadata {
         return getColumnQuick(columnIndex).getMetadata();
     }
 
+    public int getWriterIndex(int columnIndex) {
+        return getColumnQuick(columnIndex).getWriterIndex();
+    }
+
     @Override
     public boolean isColumnIndexed(int columnIndex) {
         return getColumnQuick(columnIndex).isIndexed();

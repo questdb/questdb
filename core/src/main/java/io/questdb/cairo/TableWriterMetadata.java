@@ -141,15 +141,11 @@ public class TableWriterMetadata extends BaseRecordMetadata {
         }
     }
 
-    void removeColumn(CharSequence name) {
-        int index = columnNameIndexMap.keyIndex(name);
-        int columnIndex = columnNameIndexMap.valueAt(index);
+    void removeColumn(int columnIndex) {
         if (ColumnType.isSymbol(columnMetadata.getQuick(columnIndex).getType())) {
             symbolMapCount--;
         }
-        columnMetadata.remove(columnIndex);
-        columnNameIndexMap.removeAt(index);
-        columnCount--;
+        columnMetadata.getQuick(columnIndex).markDeleted();
 
         // enumerate columns that would have moved up after column deletion
         for (int i = columnIndex; i < columnCount; i++) {

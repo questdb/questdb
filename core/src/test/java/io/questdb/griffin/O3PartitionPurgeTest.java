@@ -209,7 +209,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
     @Test
     public void testManyTablesFuzzTest() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
-        int tableCount = 3;
+        int tableCount = 1;
         int testIterations = 100;
 
         assertMemoryLeak(() -> {

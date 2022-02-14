@@ -265,50 +265,61 @@ public final class TableUtils {
 
     public static long createTransitionIndex(
             MemoryR masterMeta,
-            MemoryR slaveMeta,
-            int slaveColumnCount,
-            LowerCaseCharSequenceIntHashMap slaveColumnNameIndexMap
+            BaseRecordMetadata slaveMeta
     ) {
+        int slaveColumnCount = slaveMeta.columnCount;
         int masterColumnCount = masterMeta.getInt(META_OFFSET_COUNT);
-        int n = Math.max(slaveColumnCount, masterColumnCount);
         final long pTransitionIndex;
-        final int size = n * 16;
+        final int size = masterColumnCount * 16;
 
         long index = pTransitionIndex = Unsafe.calloc(size, MemoryTag.NATIVE_DEFAULT);
         Unsafe.getUnsafe().putInt(index, size);
-        Unsafe.getUnsafe().putInt(index + 4, masterColumnCount);
         index += 8;
 
         // index structure is
-        // [copy from, copy to] int tuples, each of which is index into original column metadata
-        // the number of these tuples is DOUBLE of maximum of old and new column count.
-        // Tuples are separated into two areas, one is immutable, which drives how metadata should be moved,
-        // the other is the state of moving algo. Moving algo will start with copy of immutable area and will
-        // continue to zero out tuple values in mutable area when metadata is moved. Mutable area is
+        // [delete: int, copy from:int]
 
-        // "copy from" == 0 indicates that column is newly added, similarly
-        // "copy to" == 0 indicates that old column has been deleted
-        //
+        // delete: if -1 then current column in slave is deleted, else it's reused
+        // "copy from" >= 0 indicates that column is to be copied from slave position
+        // "copy from" < 0  indicates that column is new and should be taken from updated metadata position
+
 
         long offset = getColumnNameOffset(masterColumnCount);
-        for (int i = 0; i < masterColumnCount; i++) {
+        int slaveIndex = 0;
+        int shiftLeft = 0;
+        for (int masterIndex = 0; masterIndex < masterColumnCount; masterIndex++) {
             CharSequence name = masterMeta.getStr(offset);
             offset += Vm.getStorageLength(name);
-            int oldPosition = slaveColumnNameIndexMap.get(name);
-            // write primary (immutable) index
-            boolean hashMatch = true;
-            if (
-                    oldPosition > -1
-                            && getColumnType(masterMeta, i) == getColumnType(slaveMeta, oldPosition)
-                            && isColumnIndexed(masterMeta, i) == isColumnIndexed(slaveMeta, oldPosition)
-                            && (hashMatch = (getColumnHash(masterMeta, i) == getColumnHash(slaveMeta, oldPosition)))
-            ) {
-                Unsafe.getUnsafe().putInt(index + i * 8L, oldPosition + 1);
-                Unsafe.getUnsafe().putInt(index + oldPosition * 8L + 4, i + 1);
-            } else {
-                Unsafe.getUnsafe().putLong(index + i * 8L, hashMatch ? 0 : -1);
+            int masterColumnType = getColumnType(masterMeta, masterIndex);
+
+            if (slaveIndex < slaveColumnCount) {
+                int existingWriterIndex = slaveMeta.getWriterIndex(slaveIndex);
+                if (existingWriterIndex > masterIndex) {
+                    // This column must be deleted so existing dense columns do not contain it
+                    assert masterColumnType < 0;
+                    continue;
+                }
+                assert existingWriterIndex == masterIndex;
             }
+
+            int outIndex = slaveIndex - shiftLeft;
+            if (masterColumnType < 0) {
+                shiftLeft++; // Deleted in master
+                Unsafe.getUnsafe().putInt(index + outIndex * 8L, -1);
+            } else {
+                if (
+                        slaveIndex < slaveColumnCount
+                                && isColumnIndexed(masterMeta, masterIndex) == slaveMeta.isColumnIndexed(slaveIndex)
+                                && Chars.equals(name, slaveMeta.getColumnName(slaveIndex))
+                ) {
+                    Unsafe.getUnsafe().putInt(index + outIndex * 8L + 4, slaveIndex);
+                } else {
+                    Unsafe.getUnsafe().putInt(index + outIndex * 8L + 4, -masterIndex - 1);
+                }
+            }
+            slaveIndex++;
         }
+        Unsafe.getUnsafe().putInt(pTransitionIndex + 4, slaveIndex - shiftLeft);
         return pTransitionIndex;
     }
 
@@ -764,7 +775,7 @@ public final class TableUtils {
 
             // validate column types and index attributes
             for (int i = 0; i < columnCount; i++) {
-                int type = getColumnType(metaMem, i);
+                int type = Math.abs(getColumnType(metaMem, i));
                 if (ColumnType.sizeOf(type) == -1) {
                     throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(i).put(']');
                 }
@@ -799,7 +810,7 @@ public final class TableUtils {
 
                 CharSequence name = metaMem.getStr(offset);
 
-                if (nameIndex.put(name, i)) {
+                if (getColumnType(metaMem, i) < 0 || nameIndex.put(name, i)) {
                     offset += Vm.getStorageLength(name);
                 } else {
                     throw validationException(metaMem).put("Duplicate column: ").put(name).put(" at [").put(i).put(']');
