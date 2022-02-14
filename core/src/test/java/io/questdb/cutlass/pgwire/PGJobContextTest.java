@@ -1288,7 +1288,7 @@ public class PGJobContextTest extends BasePGTest {
 
                     insert.execute();
                     Assert.assertEquals(1, insert.getUpdateCount());
-                    micros += 1000;
+                    micros += 1;
 
                     if (i % 128 == 0) {
                         connection.commit();
