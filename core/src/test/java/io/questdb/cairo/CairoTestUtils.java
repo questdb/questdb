@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.Metrics;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 
@@ -116,7 +117,7 @@ public class CairoTestUtils {
             create(model);
         }
 
-        try (TableWriter writer = new TableWriter(configuration, "x")) {
+        try (TableWriter writer = new TableWriter(configuration, "x", Metrics.disabled())) {
             for (int i = 0; i < n; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putByte(0, rnd.nextByte());

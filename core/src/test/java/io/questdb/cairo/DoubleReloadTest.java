@@ -41,7 +41,7 @@ public class DoubleReloadTest extends AbstractCairoTest {
 
         try (
                 TableReader reader = new TableReader(configuration, "int_test");
-                TableWriter w = new TableWriter(configuration, "int_test")
+                TableWriter w = new TableWriter(configuration, "int_test", metrics)
         ) {
             reader.reload();
 
