@@ -312,7 +312,7 @@ public class CairoEngineTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             createX();
 
-            try (TableWriter ignored1 = new TableWriter(configuration, "x")) {
+            try (TableWriter ignored1 = new TableWriter(configuration, "x", metrics)) {
 
                 try (CairoEngine engine = new CairoEngine(configuration)) {
                     try {

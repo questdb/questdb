@@ -192,7 +192,7 @@ public class CompactMapTest extends AbstractCairoTest {
             BytecodeAssembler asm = new BytecodeAssembler();
             final int N = 1000;
             final Rnd rnd = new Rnd();
-            try (TableWriter writer = new TableWriter(configuration, "x")) {
+            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < N; i++) {
                     TableWriter.Row row = writer.newRow();
                     long rndGeohash = GeoHashes.fromCoordinatesDeg(rnd.nextDouble() * 180 - 90, rnd.nextDouble() * 360 - 180, precisionBits);

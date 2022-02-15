@@ -24,6 +24,7 @@
 
 package io.questdb.mp;
 
+import io.questdb.Metrics;
 import io.questdb.log.Log;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
@@ -45,6 +46,7 @@ public class Worker extends Thread {
     private final long yieldThreshold;
     private final long sleepThreshold;
     private volatile int running = 0;
+    private final Metrics metrics;
 
     public Worker(
             final ObjHashSet<? extends Job> jobs,
@@ -57,7 +59,8 @@ public class Worker extends Thread {
             String poolName,
             long yieldThreshold,
             long sleepThreshold,
-            long sleepMs
+            long sleepMs,
+            Metrics metrics
     ) {
         this.log = log;
         this.jobs = jobs;
@@ -70,6 +73,7 @@ public class Worker extends Thread {
         this.yieldThreshold = yieldThreshold;
         this.sleepThreshold = sleepThreshold;
         this.sleepMs = sleepMs;
+        this.metrics = metrics;
     }
 
     public int getWorkerId() {
@@ -152,6 +156,7 @@ public class Worker extends Thread {
     }
 
     private void onError(int i, Throwable e) throws Throwable {
+        metrics.healthCheck().incrementUnhandledErrors();
         // Log error even when halt on error is set
         if (log != null) {
             log.error().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).$(']').$();

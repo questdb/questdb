@@ -28,8 +28,8 @@ import io.questdb.MessageBus;
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterPool;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.Atomicity;
@@ -1955,7 +1955,7 @@ public class SqlCompiler implements Closeable {
 
     //sets insertCount to number of copied rows
     private TableWriter copyTableData(CharSequence tableName, RecordCursor cursor, RecordMetadata cursorMetadata) {
-        TableWriter writer = new TableWriter(configuration, tableName, messageBus, false, DefaultLifecycleManager.INSTANCE);
+        TableWriter writer = new TableWriter(configuration, tableName, messageBus, false, DefaultLifecycleManager.INSTANCE, engine.getMetrics());
         try {
             RecordMetadata writerMetadata = writer.getMetadata();
             entityColumnFilter.of(writerMetadata.getColumnCount());

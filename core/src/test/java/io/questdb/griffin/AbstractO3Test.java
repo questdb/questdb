@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
@@ -258,7 +259,8 @@ public class AbstractO3Test {
                             public boolean isEnabled() {
                                 return true;
                             }
-                        }
+                        },
+                        Metrics.disabled()
                 );
 
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {

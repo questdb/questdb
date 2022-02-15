@@ -5314,8 +5314,21 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectDistinctGroupByFunctionArithmeticLimit() throws SqlException {
-        assertQuery("select-distinct a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from (select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1 from (select [a, c, b] from tab)) limit 10)",
+        assertQuery("select-distinct a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from (select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1 from (select [a, c, b] from tab))) limit 10",
                 "select distinct a, sum(b)+sum(c) bb from tab limit 10",
+                modelOf("tab")
+                        .col("a", ColumnType.STRING)
+                        .col("b", ColumnType.LONG)
+                        .col("c", ColumnType.LONG)
+        );
+    }
+
+    @Test
+    public void testSelectDistinctGroupByFunctionArithmeticOrderByLimit() throws SqlException {
+        assertQuery("select-distinct a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from " +
+                        "(select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1 " +
+                        "from (select [a, c, b] from tab))) order by a limit 10",
+                "select distinct a, sum(b)+sum(c) bb from tab order by a limit 10",
                 modelOf("tab")
                         .col("a", ColumnType.STRING)
                         .col("b", ColumnType.LONG)

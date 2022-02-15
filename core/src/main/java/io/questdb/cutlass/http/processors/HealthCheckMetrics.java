@@ -22,16 +22,24 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.cutlass.http.processors;
 
-public class OrderByMnemonic {
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.MetricsRegistry;
 
-    //Order is unknown at this stage and needs to be checked. It might be optional .    
-    public static final int ORDER_BY_UNKNOWN = 0;
+public class HealthCheckMetrics {
 
-    //Order is required by current stage/nested model (even though it might still be unknown) 
-    public static final int ORDER_BY_REQUIRED = 1;
+    private final Counter unhandledErrorCounter;
 
-    //Order is known and needs to be maintained at current stage/nested model 
-    public static final int ORDER_BY_INVARIANT = 2;
+    public HealthCheckMetrics(MetricsRegistry metricsRegistry) {
+        this.unhandledErrorCounter = metricsRegistry.newCounter("unhandled_errors");
+    }
+
+    public void incrementUnhandledErrors() {
+        unhandledErrorCounter.inc();
+    }
+
+    public long unhandledErrorsCount() {
+        return unhandledErrorCounter.get();
+    }
 }

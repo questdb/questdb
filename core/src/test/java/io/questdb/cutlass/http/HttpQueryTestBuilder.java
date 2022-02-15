@@ -83,6 +83,9 @@ public class HttpQueryTestBuilder {
             final DefaultHttpServerConfiguration httpConfiguration = serverConfigBuilder
                     .withBaseDir(baseDir)
                     .build();
+            if (metrics == null) {
+                metrics = Metrics.enabled();
+            }
 
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
@@ -99,7 +102,7 @@ public class HttpQueryTestBuilder {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
+            }, metrics);
             if (workerCount > 1) {
                 workerPool.assignCleaner(Path.CLEANER);
             }
@@ -128,8 +131,8 @@ public class HttpQueryTestBuilder {
                 };
             }
             try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+                    CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
             ) {
                 TelemetryJob telemetryJob = null;
                 if (telemetry) {
@@ -177,7 +180,6 @@ public class HttpQueryTestBuilder {
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
                                 new SqlCompiler(engine, null),
-                                metrics != null ? metrics : Metrics.enabled(),
                                 sqlExecutionContext
                         );
                     }
@@ -220,12 +222,7 @@ public class HttpQueryTestBuilder {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                1,
-                                metrics != null ? metrics : Metrics.enabled()
-                        );
+                        return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine, 1);
                     }
 
                     @Override

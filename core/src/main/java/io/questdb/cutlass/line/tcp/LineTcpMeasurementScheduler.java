@@ -126,7 +126,8 @@ class LineTcpMeasurementScheduler implements Closeable {
                     subSeq,
                     milliClock,
                     commitIntervalDefault,
-                    this
+                    this,
+                    engine.getMetrics()
             );
             writerWorkerPool.assign(i, (Job) lineTcpWriterJob);
             writerWorkerPool.assign(i, (Closeable) lineTcpWriterJob);
