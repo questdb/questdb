@@ -180,6 +180,12 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     @Test
     public void testBackwardCursorTimeout() throws Exception {
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public long getSpinLockTimeoutUs() {
+                return 100;
+            }
+        };
         TestUtils.assertMemoryLeak(() -> {
             create(configuration, path.trimTo(plen), "x", 1024);
 
@@ -209,30 +215,48 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     @Test
     public void testBackwardReaderConstructorBadSequence() throws Exception {
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public long getSpinLockTimeoutUs() {
+                return 100;
+            }
+        };
         TestUtils.assertMemoryLeak(() -> {
             setupIndexHeader();
-            assertBackwardReaderConstructorFail("could not consistently");
-            assertForwardReaderConstructorFail("could not consistently");
+            assertBackwardReaderConstructorFail(configuration, "could not consistently");
+            assertForwardReaderConstructorFail(configuration, "could not consistently");
         });
     }
 
     @Test
     public void testBackwardReaderConstructorBadSig() throws Exception {
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public long getSpinLockTimeoutUs() {
+                return 100;
+            }
+        };
         TestUtils.assertMemoryLeak(() -> {
             try (MemoryA mem = openKey()) {
                 mem.skip(BitmapIndexUtils.KEY_FILE_RESERVED);
             }
-            assertBackwardReaderConstructorFail("Unknown format");
-            assertForwardReaderConstructorFail("Unknown format");
+            assertBackwardReaderConstructorFail(configuration, "Unknown format");
+            assertForwardReaderConstructorFail(configuration, "Unknown format");
         });
     }
 
     @Test
     public void testBackwardReaderConstructorFileTooSmall() throws Exception {
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public long getSpinLockTimeoutUs() {
+                return 100;
+            }
+        };
         TestUtils.assertMemoryLeak(() -> {
             openKey().close();
-            assertBackwardReaderConstructorFail("Index file too short");
-            assertForwardReaderConstructorFail("Index file too short");
+            assertBackwardReaderConstructorFail(configuration,"Index file too short");
+            assertForwardReaderConstructorFail(configuration, "Index file too short");
         });
     }
 
@@ -293,6 +317,12 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     @Test
     public void testBackwardReaderKeyUpdateFail() {
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public long getSpinLockTimeoutUs() {
+                return 400;
+            }
+        };
         create(configuration, path.trimTo(plen), "x", 1024);
 
         try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
@@ -658,7 +688,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = new TableWriter(configuration, "x")) {
+            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += timestampIncrement);
                     row.putStr(0, rnd.nextChars(20));
@@ -743,6 +773,13 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     @Test
     public void testForwardCursorTimeout() throws Exception {
+        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public long getSpinLockTimeoutUs() {
+                return 100;
+            }
+        };
+
         TestUtils.assertMemoryLeak(() -> {
             create(configuration, path.trimTo(plen), "x", 1024);
 
@@ -829,6 +866,14 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     @Test
     public void testForwardReaderKeyUpdateFail() {
+
+        final  CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public long getSpinLockTimeoutUs() {
+                return 3000;
+            }
+        };
+
         create(configuration, path.trimTo(plen), "x", 1024);
 
         try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
@@ -1244,7 +1289,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         }
     }
 
-    private void assertBackwardReaderConstructorFail(CharSequence contains) {
+    private void assertBackwardReaderConstructorFail(CairoConfiguration configuration, CharSequence contains) {
         try {
             new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", 0);
             Assert.fail();
@@ -1273,7 +1318,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         }
     }
 
-    private void assertForwardReaderConstructorFail(CharSequence contains) {
+    private void assertForwardReaderConstructorFail(CairoConfiguration configuration, CharSequence contains) {
         try {
             new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", 0);
             Assert.fail();

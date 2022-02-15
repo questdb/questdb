@@ -24,16 +24,20 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.MPSequence;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.O3PurgeDiscoveryTask;
 import org.jetbrains.annotations.Nullable;
 
 public final class TableUtils {
@@ -58,8 +62,9 @@ public final class TableUtils {
     public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
     public static final long META_OFFSET_VERSION = 12;
     public static final long META_OFFSET_TABLE_ID = 16;
-    public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20;
-    public static final long META_OFFSET_COMMIT_LAG = 24;
+    public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // LONG
+    public static final long META_OFFSET_COMMIT_LAG = 24; // LONG
+    public static final long META_OFFSET_STRUCTURE_VERSION = 32; // LONG
     public static final String FILE_SUFFIX_I = ".i";
     public static final String FILE_SUFFIX_D = ".d";
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
@@ -202,7 +207,7 @@ public final class TableUtils {
                 }
             }
             mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-            TableUtils.resetTxn(mem, symbolMapCount, 0L, INITIAL_TXN, 0L);
+            TableUtils.resetTxn(mem, symbolMapCount, 0L, INITIAL_TXN, 0L, 0L);
             resetTodoLog(ff, path, rootLen, mem);
             // allocate txn scoreboard
             path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();
@@ -437,6 +442,12 @@ public final class TableUtils {
      * Maps a file in read-only mode.
      * <p>
      * Important note. Linux requires the offset to be page aligned.
+     * @param ff files facade, - intermediary to allow intercepting calls to the OS.
+     * @param fd file descriptor, previously provided by one of openFile() functions
+     * @param size size of the mapped file region
+     * @param offset offset in file to begin mapping
+     * @param memoryTag bucket to trace memory allocation calls
+     * @return read-only memory address
      */
     public static long mapRO(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
         assert offset % ff.getPageSize() == 0;
@@ -462,6 +473,13 @@ public final class TableUtils {
      * Maps a file in read-write mode.
      * <p>
      * Important note. Linux requires the offset to be page aligned.
+     *
+     * @param ff files facade, - intermediary to allow intercepting calls to the OS.
+     * @param fd file descriptor, previously provided by one of openFile() functions. File has to be opened read-write
+     * @param size size of the mapped file region
+     * @param offset offset in file to begin mapping
+     * @param memoryTag bucket to trace memory allocation calls
+     * @return read-write memory address
      */
     public static long mapRW(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
         assert offset % ff.getPageSize() == 0;
@@ -529,7 +547,13 @@ public final class TableUtils {
     }
 
     /**
-     * path member variable has to be set to location of "top" file.
+     * Reads 8 bytes from "top" file.
+     *
+     * @param ff files facade, - intermediary to intercept OS file system calls.
+     * @param path path has to be set to location of "top" file, excluding file name. Zero terminated string.
+     * @param name name of top file
+     * @param plen path length to truncate "path" back to, path is reusable.
+     * @param failIfCouldNotRead if true the method will throw exception if top file cannot be read. Otherwise, 0.
      *
      * @return number of rows column doesn't have when column was added to table that already had data.
      */
@@ -608,7 +632,7 @@ public final class TableUtils {
         mem.jumpTo(40);
     }
 
-    public static void resetTxn(MemoryMW txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion) {
+    public static void resetTxn(MemoryMW txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion, long structureVersion) {
         // txn to let readers know table is being reset
         txMem.putLong(TX_OFFSET_TXN, txn);
         Unsafe.getUnsafe().storeFence();
@@ -622,7 +646,7 @@ public final class TableUtils {
         // max timestamp value in table
         txMem.putLong(TX_OFFSET_MAX_TIMESTAMP, Long.MIN_VALUE);
         // structure version
-        txMem.putLong(TX_OFFSET_STRUCT_VERSION, 0);
+        txMem.putLong(TX_OFFSET_STRUCT_VERSION, structureVersion);
         // data version
         txMem.putLong(TX_OFFSET_DATA_VERSION, dataVersion);
         // partition table version
@@ -636,16 +660,31 @@ public final class TableUtils {
             txMem.putInt(offset, 0);
         }
 
+        // partition update count
+        txMem.putInt(getPartitionTableSizeOffset(symbolMapCount), 0);
+
         Unsafe.getUnsafe().storeFence();
         // txn check
         txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
 
-        // partition update count
-        txMem.putInt(getPartitionTableSizeOffset(symbolMapCount), 0);
-
         // make sure we put append pointer behind our data so that
         // files does not get truncated when closing
         txMem.setTruncateSize(getPartitionTableIndexOffset(symbolMapCount, 0));
+    }
+
+    public static boolean schedulePurgeO3Partitions(MessageBus messageBus, String tableName, int partitionBy) {
+        final MPSequence seq = messageBus.getO3PurgeDiscoveryPubSeq();
+        while (true) {
+            long cursor = seq.next();
+            if (cursor > -1) {
+                O3PurgeDiscoveryTask task = messageBus.getO3PurgeDiscoveryQueue().get(cursor);
+                task.of(tableName, partitionBy);
+                seq.done(cursor);
+                return true;
+            } else if (cursor == -1) {
+                return false;
+            }
+        }
     }
 
     /**
@@ -675,13 +714,53 @@ public final class TableUtils {
         }
     }
 
+    public static void safeReadTxn(TxReader txReader, MicrosecondClock microsecondClock, long spinLockTimeoutUs) {
+        long txn;
+        int loadCount = 0;
+        long deadline = microsecondClock.getTicks() + spinLockTimeoutUs;
+        while (true) {
+            txn = txReader.unsafeReadTxnCheck();
+            Unsafe.getUnsafe().loadFence();
+
+            int symbolColumnCount = txReader.unsafeReadSymbolColumnCount();
+            int partitionSegmentSize = txReader.unsafeReadPartitionSegmentSize(symbolColumnCount);
+            Unsafe.getUnsafe().loadFence();
+
+            if (txn == txReader.unsafeReadTxn()) {
+                txReader.unsafeLoadAll(symbolColumnCount, partitionSegmentSize, loadCount++ > 0);
+                Unsafe.getUnsafe().loadFence();
+
+                if (txn == txReader.unsafeReadTxn()) {
+                    // All good, snapshot read
+                    return;
+                }
+            }
+            // This is unlucky, sequences have changed while we were reading transaction data
+            // We must discard and try again
+            if (microsecondClock.getTicks() > deadline) {
+                LOG.error().$("tx read timeout [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
+                throw CairoException.instance(0).put("Transaction read timeout");
+            }
+            Os.pause();
+        }
+    }
+
+    public static void unsafeReadTxFile(TxReader txReader) {
+        int symbolColumnCount = txReader.unsafeReadSymbolColumnCount();
+        int partitionSegmentSize = txReader.unsafeReadPartitionSegmentSize(symbolColumnCount);
+        txReader.unsafeLoadAll(symbolColumnCount, partitionSegmentSize, true);
+    }
+
     public static void validate(
-            FilesFacade ff,
             MemoryMR metaMem,
             LowerCaseCharSequenceIntHashMap nameIndex,
             int expectedVersion
     ) {
         try {
+            long memSize = metaMem.size();
+            if (memSize < META_OFFSET_COLUMN_TYPES) {
+                throw CairoException.instance(0).put(". File is too small ").put(memSize);
+            }
             final int metaVersion = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
             if (expectedVersion != metaVersion) {
                 throw validationException(metaMem)
@@ -692,9 +771,12 @@ public final class TableUtils {
 
             final int columnCount = metaMem.getInt(META_OFFSET_COUNT);
             long offset = getColumnNameOffset(columnCount);
+            if (memSize < offset) {
+                throw validationException(metaMem).put("File is too small, column types are missing ").put(memSize);
+            }
 
             if (offset < columnCount || (
-                    columnCount > 0 && (offset < 0 || offset >= ff.length(metaMem.getFd())))) {
+                    columnCount > 0 && (offset < 0 || offset >= memSize))) {
                 throw validationException(metaMem).put("Incorrect columnCount: ").put(columnCount);
             }
 
@@ -730,15 +812,31 @@ public final class TableUtils {
 
             // validate column names
             for (int i = 0; i < columnCount; i++) {
-                CharSequence name = metaMem.getStr(offset);
-                if (name == null || name.length() < 1) {
+                if (offset + 4 >= memSize) {
+                    throw validationException(metaMem).put("File is too small, column length for column ").put(i).put(" is missing");
+                }
+                int strLength = metaMem.getInt(offset);
+                if (strLength == TableUtils.NULL_LEN) {
                     throw validationException(metaMem).put("NULL column name at [").put(i).put(']');
                 }
+                if (strLength < 1 || strLength > 255 || offset + Vm.getStorageLength(strLength) > memSize) {
+                    // EXT4 and many others do not allow file name length > 255 bytes
+                    throw validationException(metaMem)
+                            .put("Column name length of ")
+                            .put(strLength).put(" is invalid at offset ")
+                            .put(offset);
+                }
+
+                CharSequence name = metaMem.getStr(offset);
 
                 if (nameIndex.put(name, i)) {
                     offset += Vm.getStorageLength(name);
                 } else {
                     throw validationException(metaMem).put("Duplicate column: ").put(name).put(" at [").put(i).put(']');
+                }
+
+                if (offset >= memSize) {
+                    throw validationException(metaMem).put("File is too small, column names are missing ").put(memSize);
                 }
             }
         } catch (Throwable e) {
@@ -893,7 +991,7 @@ public final class TableUtils {
     }
 
     private static CairoException validationException(MemoryMR mem) {
-        return CairoException.instance(0).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
+        return CairoException.instance(CairoException.METADATA_VALIDATION).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
     }
 
     static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {

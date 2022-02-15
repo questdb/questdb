@@ -24,14 +24,13 @@
 
 package io.questdb.std;
 
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.ClassRule;
 import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
 
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -71,5 +70,24 @@ public class OsTest {
         Assert.assertTrue(actual > 0);
         long delta = actual / 1_000_000 - reference;
         Assert.assertTrue(delta < 200);
+    }
+
+    @Test
+    public void testSleepEnds() {
+        SOCountDownLatch doneLatch = new SOCountDownLatch(1);
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        Thread t = new Thread(() -> {
+            TestUtils.await(barrier);
+            Os.sleep(1000);
+            doneLatch.countDown();
+        });
+
+        long time = System.currentTimeMillis();
+        t.start();
+
+        TestUtils.await(barrier);
+        t.interrupt();
+        Assert.assertTrue(doneLatch.await(10_000_000_000L));
+        Assert.assertTrue(System.currentTimeMillis() - time >= 1000);
     }
 }

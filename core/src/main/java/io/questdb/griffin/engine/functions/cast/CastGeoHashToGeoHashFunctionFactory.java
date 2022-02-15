@@ -55,6 +55,10 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         final Function value = args.getQuick(0);
         int srcType = value.getType();
         int targetType = args.getQuick(1).getType();
+        return newInstance(position, value, srcType, targetType);
+    }
+
+    public static Function newInstance(int position, Function value, int srcType, int targetType) throws SqlException {
         int srcBitsPrecision = ColumnType.getGeoHashBits(srcType);
         int targetBitsPrecision = ColumnType.getGeoHashBits(targetType);
         int shift = srcBitsPrecision - targetBitsPrecision;
@@ -86,7 +90,7 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
                 .put("b)");
     }
 
-    private Function castFunc(int shift, int targetType, Function value, int srcType) {
+    private static Function castFunc(int shift, int targetType, Function value, int srcType) {
         switch (ColumnType.tagOf(srcType)) {
             case ColumnType.GEOBYTE:
                 return new CastByteFunc(shift, targetType, value);

@@ -185,6 +185,15 @@ public final class Vect {
 
     public static native long shiftTimestampIndex(long pSrc, long count, long pDest);
 
+    /**
+     * Sorts assuming 128 bit integers.
+     * Can be used to sort pairs of longs from DirectLongList when both longs are positive
+     *
+     * @param pLongData memory address
+     * @param count     count of 128bit integers to sort
+     */
+    public static native void sort128BitAscInPlace(long pLongData, long count);
+
     public static native void sortLongIndexAscInPlace(long pLongData, long count);
 
     public static native void sortULongAscInPlace(long pLongData, long count);

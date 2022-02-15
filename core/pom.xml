@@ -35,10 +35,11 @@
         <nodejs.version>v16.13.1</nodejs.version>
         <runtime.assembly>none</runtime.assembly>
         <javac.target>11</javac.target>
-        <argLine>-Dfile.encoding=UTF-8</argLine>
+        <argLine>-ea -Dfile.encoding=UTF-8</argLine>
+        <test.exclude>None</test.exclude>
     </properties>
 
-    <version>6.1.4-SNAPSHOT</version>
+    <version>6.2.1-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
@@ -193,12 +194,37 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>2.17</version>
                 <configuration>
+                    <excludes>
+                        <exclude>${test.exclude}</exclude>
+                    </excludes>
                     <properties>
                         <property>
                             <name>listener</name>
                             <value>io.questdb.TestListener</value>
                         </property>
                     </properties>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>3.2.0</version>
+                <executions>
+                    <execution>
+                        <id>attach-javadocs</id>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <additionalJOptions>
+                        <additionalJOption>${compilerArg1}</additionalJOption>
+                        <additionalJOption>${compilerArg2}</additionalJOption>
+                    </additionalJOptions>
+                    <sourceFileExcludes>
+                        <sourceFileExclude>${excludePattern1}</sourceFileExclude>
+                    </sourceFileExcludes>
                 </configuration>
             </plugin>
             <plugin>
@@ -267,28 +293,6 @@
                                 </goals>
                             </execution>
                         </executions>
-                    </plugin>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-javadoc-plugin</artifactId>
-                        <version>3.2.0</version>
-                        <executions>
-                            <execution>
-                                <id>attach-javadocs</id>
-                                <goals>
-                                    <goal>jar</goal>
-                                </goals>
-                            </execution>
-                        </executions>
-                        <configuration>
-                            <additionalJOptions>
-                                <additionalJOption>${compilerArg1}</additionalJOption>
-                                <additionalJOption>${compilerArg2}</additionalJOption>
-                            </additionalJOptions>
-                            <sourceFileExcludes>
-                                <sourceFileExclude>${excludePattern1}</sourceFileExclude>
-                            </sourceFileExcludes>
-                        </configuration>
                     </plugin>
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>

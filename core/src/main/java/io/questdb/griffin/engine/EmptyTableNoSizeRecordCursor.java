@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine;
 
+import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
@@ -55,7 +56,7 @@ final public class EmptyTableNoSizeRecordCursor implements NoRandomAccessRecordC
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        return null;
+        return EmptySymbolMapReader.INSTANCE;
     }
 
     @Override

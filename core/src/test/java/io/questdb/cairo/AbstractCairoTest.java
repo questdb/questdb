@@ -61,7 +61,7 @@ public class AbstractCairoTest {
     protected static CairoEngine engine;
     protected static String inputRoot = null;
     protected static FilesFacade ff;
-    protected static long configOverrideCommitLag = -1;
+    protected static long configOverrideCommitLagMicros = -1;
     protected static int configOverrideMaxUncommittedRows = -1;
     protected static Metrics metrics = Metrics.enabled();
     protected static int capacity = -1;
@@ -74,6 +74,7 @@ public class AbstractCairoTest {
     public TestName testName = new TestName();
     public static long writerAsyncCommandBusyWaitTimeout = -1;
     public static long writerAsyncCommandMaxTimeout = -1;
+    public static long spinLockTimeoutUs = -1;
 
     @BeforeClass
     public static void setUpStatic() {
@@ -113,8 +114,15 @@ public class AbstractCairoTest {
 
             @Override
             public long getCommitLag() {
-                if (configOverrideCommitLag >= 0) return configOverrideCommitLag;
-                return super.getCommitLag();
+                return configOverrideCommitLagMicros >= 0 ? configOverrideCommitLagMicros : super.getCommitLag();
+            }
+
+            @Override
+            public long getSpinLockTimeoutUs() {
+                if (spinLockTimeoutUs > -1) {
+                    return spinLockTimeoutUs;
+                }
+                return 5_000_000;
             }
 
             @Override
@@ -152,6 +160,11 @@ public class AbstractCairoTest {
             }
 
             @Override
+            public boolean enableDevelopmentUpdates() {
+                return true;
+            }
+
+            @Override
             public int getSqlJitMode() {
                 // JIT compiler is a beta feature and thus is disabled by default,
                 // but we want to have it enabled in tests.
@@ -162,8 +175,15 @@ public class AbstractCairoTest {
             public int getSqlPageFrameMaxSize() {
                 return pageFrameMaxSize < 0 ? super.getSqlPageFrameMaxSize() : pageFrameMaxSize;
             }
+
+            @Override
+            public int getPartitionPurgeListCapacity() {
+                // Bump it to high number so that test don't fail with memory leak if LongList
+                // re-allocates
+                return 512;
+            }
         };
-        engine = new CairoEngine(configuration);
+        engine = new CairoEngine(configuration, metrics);
         messageBus = engine.getMessageBus();
     }
 
@@ -189,13 +209,14 @@ public class AbstractCairoTest {
         engine.clear();
         TestUtils.removeTestPath(root);
         configOverrideMaxUncommittedRows = -1;
-        configOverrideCommitLag = -1;
+        configOverrideCommitLagMicros = -1;
         currentMicros = -1;
         sampleByIndexSearchPageSize = -1;
         defaultMapType = null;
         writerAsyncCommandBusyWaitTimeout = -1;
         writerAsyncCommandMaxTimeout = -1;
         pageFrameMaxSize = -1;
+        spinLockTimeoutUs = -1;
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {

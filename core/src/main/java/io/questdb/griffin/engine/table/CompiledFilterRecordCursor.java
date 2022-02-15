@@ -64,7 +64,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
     private int pageFrameIndex;
     // The following fields are used for table iteration:
     // when compiled filter is in use, they store rows array indexes;
-    // when Java filter is in use, they store rowids
+    // when Java filter is in use, they store row ids
     private long hi;
     private long current;
 
@@ -74,8 +74,10 @@ class CompiledFilterRecordCursor implements RecordCursor {
     private final BooleanSupplier nextColTopsRow = this::nextColTopsRow;
     private final BooleanSupplier nextRow = this::nextRow;
     private final BooleanSupplier nextReenterPageFrame = this::nextReenterPageFrame;
+    private final boolean hasDescendingOrder;
 
-    public CompiledFilterRecordCursor(CairoConfiguration configuration) {
+    public CompiledFilterRecordCursor(CairoConfiguration configuration, boolean hasDescendingOrder) {
+        this.hasDescendingOrder = hasDescendingOrder;
         rowsCapacityThreshold = configuration.getSqlJitRowsThreshold() / Long.BYTES;
         pageAddressCache = new PageAddressCache(configuration);
     }
@@ -189,26 +191,13 @@ class CompiledFilterRecordCursor implements RecordCursor {
         return -1;
     }
 
+    private long getCurrentRowIndex() {
+        return hasDescendingOrder ? (hi - current - 1) : current;
+    }
+
     private boolean nextColTopsRow() {
         seekNextColTopsRow();
         if (current < hi) {
-            return true;
-        }
-        return nextPage();
-    }
-
-    private void seekNextColTopsRow() {
-        while (++current < hi) {
-            recordA.setIndex(current);
-            if (colTopsFilter.getBool(recordA)) {
-                return;
-            }
-        }
-    }
-
-    private boolean nextRow() {
-        if (current < hi) {
-            recordA.setIndex(rows.get(current++));
             return true;
         }
         return nextPage();
@@ -263,13 +252,31 @@ class CompiledFilterRecordCursor implements RecordCursor {
             );
 
             if (current < hi) {
-                recordA.setIndex(rows.get(current));
+                recordA.setIndex(rows.get(getCurrentRowIndex()));
                 current += 1;
                 next = nextRow;
                 return true;
             }
         }
         return false;
+    }
+
+    private boolean nextRow() {
+        if (current < hi) {
+            recordA.setIndex(rows.get(getCurrentRowIndex()));
+            current++;
+            return true;
+        }
+        return nextPage();
+    }
+
+    private void seekNextColTopsRow() {
+        while (++current < hi) {
+            recordA.setIndex(getCurrentRowIndex());
+            if (colTopsFilter.getBool(recordA)) {
+                return;
+            }
+        }
     }
 
     private void writeBindVarFunction(Function function, SqlExecutionContext executionContext) throws SqlException {
@@ -361,6 +368,11 @@ class CompiledFilterRecordCursor implements RecordCursor {
         @Override
         public long getRowId() {
             return Rows.toRowID(frameIndex, index);
+        }
+
+        @Override
+        public long getUpdateRowId() {
+            return pageAddressCache.toTableRowID(frameIndex, index);
         }
 
         @Override
@@ -681,7 +693,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
         }
     }
 
-    private static class PageAddressCache implements Mutable {
+    public static class PageAddressCache implements Mutable {
 
         private final int cacheSizeThreshold;
         private int columnCount;
@@ -694,6 +706,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
         // Index page addresses and page sizes are stored only for variable length columns.
         private LongList indexPageAddresses = new LongList();
         private LongList pageSizes = new LongList();
+        private LongList pageRowIdOffsets = new LongList();
 
         public PageAddressCache(CairoConfiguration configuration) {
             cacheSizeThreshold = configuration.getSqlJitPageAddressCacheThreshold() / Long.BYTES;
@@ -718,10 +731,12 @@ class CompiledFilterRecordCursor implements RecordCursor {
                 pageAddresses.clear();
                 indexPageAddresses.clear();
                 pageSizes.clear();
+                pageRowIdOffsets.clear();
             } else {
                 pageAddresses = new LongList();
                 indexPageAddresses = new LongList();
                 pageSizes = new LongList();
+                pageRowIdOffsets = new LongList();
             }
         }
 
@@ -737,6 +752,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
                     pageSizes.add(frame.getPageSize(columnIndex));
                 }
             }
+            pageRowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
         }
 
         public long getPageAddress(int frameIndex, int columnIndex) {
@@ -766,6 +782,10 @@ class CompiledFilterRecordCursor implements RecordCursor {
                 }
             }
             return false;
+        }
+
+        public long toTableRowID(int frameIndex, long index) {
+            return pageRowIdOffsets.get(frameIndex) + index;
         }
     }
 }

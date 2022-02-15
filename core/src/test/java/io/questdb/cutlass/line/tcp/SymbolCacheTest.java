@@ -70,7 +70,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                 final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
                 final AtomicBoolean cacheInError = new AtomicBoolean(false);
 
-                RingQueue<Holder> wheel = new RingQueue<Holder>(Holder::new, 256);
+                RingQueue<Holder> wheel = new RingQueue<>(Holder::new, 256);
                 SPSequence pubSeq = new SPSequence(wheel.getCycle());
                 SCSequence subSeq = new SCSequence();
                 pubSeq.then(subSeq).then(pubSeq);
@@ -160,7 +160,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
             ) {
                 CairoTestUtils.create(model);
                 try (
-                        TableWriter writer = new TableWriter(configuration, tableName);
+                        TableWriter writer = new TableWriter(configuration, tableName, metrics);
                         MemoryMR txMem = Vm.getMRInstance()
                 ) {
                     int symColIndex1 = writer.getColumnIndex("symCol1");
@@ -233,9 +233,11 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     r.putSym(symColIndex1, "sym12");
                     r.putSym(symColIndex2, "sym23");
                     r.append();
+                    r = writer.newRow();
                     r.putSym(symColIndex1, "sym12");
                     r.putSym(symColIndex2, "sym24");
                     r.append();
+                    r = writer.newRow();
                     r.putSym(symColIndex1, "sym12");
                     r.putSym(symColIndex2, "sym25");
                     r.append();

@@ -158,6 +158,8 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                 createX(tbl);
             }
             engine.releaseAllWriters();
+            spinLockTimeoutUs = 1000;
+
             ff = new FilesFacadeImpl() {
                 int attempt = 0;
 
@@ -172,15 +174,24 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
             };
             String alterCommand = "ALTER TABLE X SET PARAM maxUncommittedRows = 11111";
             try {
-                compile(alterCommand, sqlExecutionContext);//.getAlterStatement().apply(writer);
+                compile(alterCommand, sqlExecutionContext);
                 Assert.fail("Alter table should fail");
             } catch (CairoError e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-only");
             }
 
             engine.releaseAllReaders();
-            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
-                Assert.assertEquals(11111, rdr.getMetadata().getMaxUncommittedRows());
+            try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "Metadata read timeout");
+            }
+
+            // Reopen writer to fix
+            try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "X", "setMaxUncommittedRowsFailsToReopenBackMetaFile")) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
+                    Assert.assertEquals(1000, reader.getMaxUncommittedRows());
+                }
             }
             engine.releaseAllReaders();
             engine.releaseAllWriters();
@@ -230,6 +241,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
     @Test
     public void setMaxUncommittedRowsFailsToSwapMetadataUntilWriterReopen() throws Exception {
         assertMemoryLeak(() -> {
+            spinLockTimeoutUs = 1000;
             try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
                 CairoTestUtils.create(tbl.timestamp("ts")
                         .col("i", ColumnType.INT)
@@ -271,6 +283,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
     @Test
     public void setMaxUncommittedRowsFailsToSwapMetadataUntilWriterReopen2() throws Exception {
         assertMemoryLeak(() -> {
+            spinLockTimeoutUs = 1000;
             try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
                 CairoTestUtils.create(tbl.timestamp("ts")
                         .col("i", ColumnType.INT)
@@ -305,11 +318,11 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                 engine.releaseAllWriters();
                 ff = new FilesFacadeImpl() {
                     @Override
-                    public boolean exists(LPSZ from) {
+                    public long openRO(LPSZ from) {
                         if (Chars.endsWith(from, TableUtils.META_FILE_NAME)) {
-                            return false;
+                            return -1;
                         }
-                        return super.exists(from);
+                        return super.openRO(from);
                     }
 
                 };
@@ -317,7 +330,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (CairoException | SqlException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(), "File not found:");
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-only");
                 }
             }
         });

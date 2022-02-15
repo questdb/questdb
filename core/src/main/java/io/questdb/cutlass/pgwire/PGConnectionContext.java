@@ -48,7 +48,15 @@ import static io.questdb.cutlass.pgwire.PGOids.*;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_FORMAT;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT;
 
+/**
+ * Useful PostgreSQL documentation links:<br>
+ * <a href="https://www.postgresql.org/docs/current/protocol-flow.html">Wire protocol</a><br>
+ * <a href="https://www.postgresql.org/docs/current/protocol-message-formats.html">Message formats</a>
+ */
 public class PGConnectionContext implements IOContext, Mutable, WriterSource {
+
+    private final static Log LOG = LogFactory.getLog(PGConnectionContext.class);
+
     public static final String TAG_SET = "SET";
     public static final String TAG_BEGIN = "BEGIN";
     public static final String TAG_COMMIT = "COMMIT";
@@ -57,25 +65,31 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     public static final String TAG_OK = "OK";
     public static final String TAG_COPY = "COPY";
     public static final String TAG_INSERT = "INSERT";
+
     public static final char STATUS_IN_TRANSACTION = 'T';
     public static final char STATUS_IN_ERROR = 'E';
     public static final char STATUS_IDLE = 'I';
+
     private static final int INT_BYTES_X = Numbers.bswap(Integer.BYTES);
     private static final int INT_NULL_X = Numbers.bswap(-1);
+
     private static final int SYNC_PARSE = 1;
     private static final int SYNC_DESCRIBE = 2;
     private static final int SYNC_BIND = 3;
     private static final int SYNC_DESCRIBE_PORTAL = 4;
-    private static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
+
+
     private static final int INIT_SSL_REQUEST = 80877103;
     private static final int INIT_STARTUP_MESSAGE = 196608;
     private static final int INIT_CANCEL_REQUEST = 80877102;
+
+    private static final int PREFIXED_MESSAGE_HEADER_LEN = 5;
+
+    private static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
     private static final byte MESSAGE_TYPE_COMMAND_COMPLETE = 'C';
     private static final byte MESSAGE_TYPE_EMPTY_QUERY = 'I';
     private static final byte MESSAGE_TYPE_DATA_ROW = 'D';
     private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
-    private final static Log LOG = LogFactory.getLog(PGConnectionContext.class);
-    private static final int PREFIXED_MESSAGE_HEADER_LEN = 5;
     private static final byte MESSAGE_TYPE_LOGIN_RESPONSE = 'R';
     private static final byte MESSAGE_TYPE_PARAMETER_STATUS = 'S';
     private static final byte MESSAGE_TYPE_ROW_DESCRIPTION = 'T';
@@ -86,13 +100,16 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private static final byte MESSAGE_TYPE_NO_DATA = 'n';
     private static final byte MESSAGE_TYPE_COPY_IN_RESPONSE = 'G';
     private static final byte MESSAGE_TYPE_PORTAL_SUSPENDED = 's';
+
     private static final int NO_TRANSACTION = 0;
     private static final int IN_TRANSACTION = 1;
     private static final int COMMIT_TRANSACTION = 2;
     private static final int ERROR_TRANSACTION = 3;
     private static final int ROLLING_BACK_TRANSACTION = 4;
+
     private static final String WRITER_LOCK_REASON = "pgConnection";
     private static final int PROTOCOL_TAIL_COMMAND_LENGTH = 64;
+
     private final long recvBuffer;
     private final long sendBuffer;
     private final int recvBufferSize;
@@ -105,8 +122,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private final int maxBlobSizeOnQuery;
     private final NetworkFacade nf;
     private final boolean dumpNetworkTraffic;
-    private final int idleSendCountBeforeGivingUp;
-    private final int idleRecvCountBeforeGivingUp;
     private final String serverVersion;
     private final PGAuthenticator authenticator;
     private final SqlExecutionContextImpl sqlExecutionContext;
@@ -128,7 +143,15 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final SCSequence tempSequence = new SCSequence();
+
+    //list of pair: column types (with format flag stored in first bit) AND additional type flag  
     private IntList activeSelectColumnTypes;
+
+    //stores result format codes (0=Text,1=Binary) from latest bind message
+    //we need it in case cursor gets invalidated and bind used non-default binary format for some column(s)
+    //pg clients (like asyncpg) fail when format sent by server is not the same as requested in bind message  
+    private final IntList bindSelectColumnFormats;
+
     private int parsePhaseBindVariableCount;
     private long sendBufferPtr;
     private boolean requireInitialMessage = false;
@@ -148,6 +171,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private TypesAndInsert typesAndInsert = null;
     private long fd;
     private CharSequence queryText;
+
+    //command tag used when returning row count to client, 
+    //see CommandComplete (B) at https://www.postgresql.org/docs/current/protocol-message-formats.html
     private CharSequence queryTag;
     private CharSequence username;
     private boolean authenticationRequired = true;
@@ -169,6 +195,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private long maxRows;
     private final PGResumeProcessor resumeCursorExecuteRef = this::resumeCursorExecute;
     private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
+    private final BatchCallback batchCallback;
 
     public PGConnectionContext(CairoEngine engine, PGWireConfiguration configuration, SqlExecutionContextImpl sqlExecutionContext) {
         this.engine = engine;
@@ -188,8 +215,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         );
         this.maxBlobSizeOnQuery = configuration.getMaxBlobSizeOnQuery();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
-        this.idleSendCountBeforeGivingUp = configuration.getIdleSendCountBeforeGivingUp();
-        this.idleRecvCountBeforeGivingUp = configuration.getIdleRecvCountBeforeGivingUp();
         this.serverVersion = configuration.getServerVersion();
         this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword());
         this.locale = configuration.getDefaultDateLocale();
@@ -207,6 +232,43 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         final int blockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1; // 8
         final int rowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1; // 8
         this.typesAndInsertCache = new AssociativeCache<>(blockCount, rowCount);
+        this.batchCallback = new PGConnectionBatchCallback();
+        this.bindSelectColumnFormats = new IntList();
+    }
+
+    class PGConnectionBatchCallback implements BatchCallback {
+        @Override
+        public void preCompile(SqlCompiler compiler) throws SqlException {
+            prepareForNewBatchQuery();
+            PGConnectionContext.this.typesAndInsert = null;
+            PGConnectionContext.this.typesAndSelect = null;
+        }
+
+        @Override
+        public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence text)
+                throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
+            PGConnectionContext.this.queryText = text;
+            LOG.info().$("parse [fd=").$(fd).$(", q=").utf8(text).I$();
+            processCompiledQuery(compiler, cq);
+
+            if (typesAndSelect != null) {
+                activeSelectColumnTypes = selectColumnTypes;
+                buildSelectColumnTypes();
+                assert queryText != null;
+                queryTag = TAG_SELECT;
+                setupFactoryAndCursor(compiler);
+                prepareRowDescription();
+                sendCursor(0, resumeCursorQueryRef, resumeQueryCompleteRef);
+            } else if (typesAndInsert != null) {
+                executeInsert();
+            } else if (cq.getType() == CompiledQuery.INSERT_AS_SELECT ||
+                    cq.getType() == CompiledQuery.CREATE_TABLE_AS_SELECT) {
+                prepareCommandComplete(true);
+            } else {
+                executeTag();
+                prepareCommandComplete(false);
+            }
+        }
     }
 
     public static int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
@@ -1047,43 +1109,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             }
 
             // not cached - compile to see what it is
-            final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
-            sqlExecutionContext.storeTelemetry(cc.getType(), Telemetry.ORIGIN_POSTGRES);
+            final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext); //here
+            processCompiledQuery(compiler, cc);
 
-            switch (cc.getType()) {
-                case CompiledQuery.SELECT:
-                    typesAndSelect = typesAndSelectPool.pop();
-                    typesAndSelect.of(cc.getRecordCursorFactory(), bindVariableService);
-                    queryTag = TAG_SELECT;
-                    LOG.debug().$("cache select [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
-                    break;
-                case CompiledQuery.INSERT:
-                    queryTag = TAG_INSERT;
-                    typesAndInsert = typesAndInsertPool.pop();
-                    typesAndInsert.of(cc.getInsertStatement(), bindVariableService);
-                    if (bindVariableService.getIndexedVariableCount() > 0) {
-                        LOG.debug().$("cache insert [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
-                        // we can add insert to cache right away because it is local to the connection
-                        typesAndInsertCache.put(queryText, typesAndInsert);
-                    }
-                    break;
-                case CompiledQuery.COPY_LOCAL:
-                    // uncached
-                    queryTag = TAG_COPY;
-                    sendCopyInResponse(compiler.getEngine(), cc.getTextLoader());
-                    break;
-                case CompiledQuery.SET:
-                    configureContextForSet();
-                    break;
-                case CompiledQuery.ALTER:
-                    try (QueryFuture cf = cc.execute(tempSequence)) {
-                        cf.await();
-                    }
-                default:
-                    // DDL SQL
-                    queryTag = TAG_OK;
-                    break;
-            }
         } else {
             isEmptyQuery = true;
         }
@@ -1091,20 +1119,65 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         return true;
     }
 
-    private void configureContextForSet() {
-        if (SqlKeywords.isBegin(queryText)) {
-            queryTag = TAG_BEGIN;
-            transactionState = IN_TRANSACTION;
-        } else if (SqlKeywords.isCommit(queryText)) {
-            queryTag = TAG_COMMIT;
-            if (transactionState != ERROR_TRANSACTION) {
-                transactionState = COMMIT_TRANSACTION;
-            }
-        } else if (SqlKeywords.isRollback(queryText)) {
-            queryTag = TAG_ROLLBACK;
-            transactionState = ROLLING_BACK_TRANSACTION;
-        } else {
-            queryTag = TAG_SET;
+    private void processCompiledQuery(SqlCompiler compiler, CompiledQuery cq) 
+            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+        sqlExecutionContext.storeTelemetry(cq.getType(), Telemetry.ORIGIN_POSTGRES);
+        
+        switch (cq.getType()) {
+            case CompiledQuery.CREATE_TABLE_AS_SELECT:
+                queryTag = TAG_SELECT;
+                rowCount = cq.getInsertCount();
+                break;
+            case CompiledQuery.SELECT:
+                typesAndSelect = typesAndSelectPool.pop();
+                typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService);
+                queryTag = TAG_SELECT;
+                LOG.debug().$("cache select [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
+                break;
+            case CompiledQuery.INSERT:
+                queryTag = TAG_INSERT;
+                typesAndInsert = typesAndInsertPool.pop();
+                typesAndInsert.of(cq.getInsertStatement(), bindVariableService);
+                if (bindVariableService.getIndexedVariableCount() > 0) {
+                    LOG.debug().$("cache insert [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
+                    // we can add insert to cache right away because it is local to the connection
+                    typesAndInsertCache.put(queryText, typesAndInsert);
+                }
+                break;
+            case CompiledQuery.INSERT_AS_SELECT:
+                queryTag = TAG_INSERT;
+                rowCount = cq.getInsertCount();
+                break;
+            case CompiledQuery.COPY_LOCAL:
+                // uncached
+                queryTag = TAG_COPY;
+                sendCopyInResponse(compiler.getEngine(), cq.getTextLoader());
+                break;
+            case CompiledQuery.SET:
+                queryTag = TAG_SET;
+                break;
+            case CompiledQuery.BEGIN:
+                queryTag = TAG_BEGIN;
+                transactionState = IN_TRANSACTION;
+                break;
+            case CompiledQuery.COMMIT:
+                queryTag = TAG_COMMIT;
+                if (transactionState != ERROR_TRANSACTION) {
+                    transactionState = COMMIT_TRANSACTION;
+                }
+                break;
+            case CompiledQuery.ROLLBACK:
+                queryTag = TAG_ROLLBACK;
+                transactionState = ROLLING_BACK_TRANSACTION;
+                break;
+            case CompiledQuery.ALTER:
+                try (QueryFuture cf = cq.execute(tempSequence)) {
+                    cf.await();
+                }
+            default:
+                // DDL SQL
+                queryTag = TAG_OK;
+                break;
         }
     }
 
@@ -1204,26 +1277,26 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private void doSendWithRetries(int bufferOffset, int bufferSize) throws PeerDisconnectedException, PeerIsSlowToReadException {
         int offset = bufferOffset;
         int remaining = bufferSize;
-        int idleSendCount = 0;
 
-        while (remaining > 0 && idleSendCount < idleSendCountBeforeGivingUp) {
+        while (remaining > 0) {
             int m = nf.send(
                     getFd(),
                     sendBuffer + offset,
                     remaining
             );
             if (m < 0) {
+                LOG.info().$("disconnected on write [code=").$(m).$(']').$();
                 throw PeerDisconnectedException.INSTANCE;
+            }
+            if (m == 0) {
+                // The socket is not ready for write.
+                break;
             }
 
             dumpBuffer('<', sendBuffer + offset, m);
 
-            if (m > 0) {
-                remaining -= m;
-                offset += m;
-            } else {
-                idleSendCount++;
-            }
+            remaining -= m;
+            offset += m;
         }
 
         if (remaining > 0) {
@@ -1341,7 +1414,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     /**
      * returns address of where parsing stopped. If there are remaining bytes left
-     * int the buffer they need to be passed again in parse function along with
+     * in the buffer they need to be passed again in parse function along with
      * any additional bytes received
      */
     private void parse(long address, int len, @Transient SqlCompiler compiler)
@@ -1544,10 +1617,17 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void prepareForNewQuery() {
+        prepareForNewBatchQuery();
+        if(completed) {
+            characterStore.clear();
+        }
+    }
+    
+    //clears whole state except for characterStore because top-level batch text is using it 
+    private void prepareForNewBatchQuery(){
         if (completed) {
             LOG.debug().$("prepare for new query").$();
             isEmptyQuery = false;
-            characterStore.clear();
             bindVariableService.clear();
             currentCursor = Misc.free(currentCursor);
             typesAndInsert = null;
@@ -1712,6 +1792,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
 
         if (typesAndSelect != null) {
+            bindSelectColumnFormats.clear();
+
             short columnFormatCodeCount = getShort(lo, msgLimit, "could not read result set column format codes");
             if (columnFormatCodeCount > 0) {
 
@@ -1722,12 +1804,15 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
                 final long spaceNeeded = lo + (columnFormatCodeCount + 1) * Short.BYTES;
                 if (spaceNeeded <= msgLimit) {
+                    bindSelectColumnFormats.setPos(columnCount);
+
                     if (columnFormatCodeCount == columnCount) {
                         // good to go
                         for (int i = 0; i < columnCount; i++) {
                             lo += Short.BYTES;
                             final short code = getShortUnsafe(lo);
                             activeSelectColumnTypes.setQuick(2 * i, toColumnBinaryType(code, m.getColumnType(i)));
+                            bindSelectColumnFormats.setQuick(i, code);
                             activeSelectColumnTypes.setQuick(2 * i + 1, 0);
                         }
                     } else if (columnFormatCodeCount == 1) {
@@ -1735,6 +1820,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                         final short code = getShortUnsafe(lo);
                         for (int i = 0; i < columnCount; i++) {
                             activeSelectColumnTypes.setQuick(2 * i, toColumnBinaryType(code, m.getColumnType(i)));
+                            bindSelectColumnFormats.setQuick(i, code);
                             activeSelectColumnTypes.setQuick(2 * i + 1, 0);
                         }
                     } else {
@@ -1751,7 +1837,18 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                             .$(']').$();
                     throw BadProtocolException.INSTANCE;
                 }
+            } else if (columnFormatCodeCount == 0) {
+                //if count == 0 then we've to use default and clear binary flags that might come from cached statements
+                final RecordMetadata m = typesAndSelect.getFactory().getMetadata();
+                final int columnCount = m.getColumnCount();
+                bindSelectColumnFormats.setPos(columnCount);
+
+                for (int i = 0; i < columnCount; i++) {
+                    activeSelectColumnTypes.setQuick(2 * i, toColumnBinaryType((short) 0, m.getColumnType(i)));
+                    bindSelectColumnFormats.setQuick(i, 0);
+                }
             }
+
         }
 
         syncActions.add(SYNC_BIND);
@@ -1999,27 +2096,21 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
         syncActions.add(SYNC_PARSE);
     }
-
+    
+    //process one or more queries (batch/script) . "Simple Query" in PostgreSQL docs.  
     private void processQuery(long lo, long limit, @Transient SqlCompiler compiler)
             throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
-        // simple query, typically a script, which we don't yet support
-        prepareForNewQuery();
-        parseQueryText(lo, limit - 1, compiler);
-
-        if (typesAndSelect != null) {
-            activeSelectColumnTypes = selectColumnTypes;
-            buildSelectColumnTypes();
-            assert queryText != null;
-            queryTag = TAG_SELECT;
-            setupFactoryAndCursor(compiler);
-            prepareRowDescription();
-            sendCursor(0, resumeCursorQueryRef, resumeQueryCompleteRef);
-        } else if (typesAndInsert != null) {
-            executeInsert();
+        prepareForNewQuery(); 
+        CharacterStoreEntry e = characterStore.newEntry();
+        
+        if (Chars.utf8Decode(lo, limit - 1, e)) {
+            queryText = characterStore.toImmutable();
+            compiler.compileBatch(queryText, sqlExecutionContext, batchCallback );
         } else {
-            executeTag();
-            prepareCommandComplete(false);
+            LOG.error().$("invalid UTF8 bytes in parse query").$();
+            throw BadProtocolException.INSTANCE;
         }
+
         sendReadyForNewQuery();
     }
 
@@ -2088,30 +2179,14 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         int n = doReceive(remaining);
         LOG.debug().$("recv [n=").$(n).$(']').$();
         if (n < 0) {
+            LOG.info().$("disconnected on read [code=").$(n).$(']').$();
             throw PeerDisconnectedException.INSTANCE;
         }
-
         if (n == 0) {
-            int retriesRemaining = idleRecvCountBeforeGivingUp;
-            while (retriesRemaining > 0) {
-                n = doReceive(remaining);
-                if (n == 0) {
-                    retriesRemaining--;
-                    continue;
-                }
-
-                if (n < 0) {
-                    LOG.info().$("disconnect [code=").$(n).$(']').$();
-                    throw PeerDisconnectedException.INSTANCE;
-                }
-
-                break;
-            }
-
-            if (retriesRemaining == 0) {
-                throw PeerIsSlowToWriteException.INSTANCE;
-            }
+            // The socket is not ready for read.
+            throw PeerIsSlowToWriteException.INSTANCE;
         }
+
         recvBufferWriteOffset += n;
         return n;
     }
@@ -2261,6 +2336,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     currentFactory = Misc.free(currentFactory);
                     compileQuery(compiler);
                     buildSelectColumnTypes();
+                    applyLatestBindColumnFormats();
                 } catch (Throwable e) {
                     currentFactory = Misc.free(currentFactory);
                     throw e;
@@ -2280,6 +2356,15 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         this.activeSelectColumnTypes = wrapper.selectColumnTypes;
         if (compileQuery(compiler) && typesAndSelect != null) {
             buildSelectColumnTypes();
+        }
+    }
+
+    //replace column formats in activeSelectColumnTypes with those from latest bind call 
+    private void applyLatestBindColumnFormats() {
+        for (int i = 0; i < bindSelectColumnFormats.size(); i++) {
+            int newValue = toColumnBinaryType((short) bindSelectColumnFormats.get(i),
+                    toColumnType(activeSelectColumnTypes.getQuick(2 * i)));
+            activeSelectColumnTypes.setQuick(2 * i, newValue);
         }
     }
 

@@ -38,10 +38,13 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     private final DataFrameRecordCursor cursor;
     private final int columnIndex;
     private final Function filter;
-    private final ObjList<RowCursorFactory> cursorFactories;
+    private final ObjList<SymbolFunctionRowCursorFactory> cursorFactories;
+    // Points at the next factory to be reused.
+    private int cursorFactoriesIdx;
     private final ObjList<Function> keyExcludedValueFunctions = new ObjList<>();
-    private final ObjList<CharSequence> includedValues = new ObjList<>();
-    private final ObjList<CharSequence> excludedValues = new ObjList<>();
+    private final IntHashSet includedKeys = new IntHashSet();
+    private final IntHashSet excludedKeys = new IntHashSet();
+    private final boolean dynamicExcludedKeys;
     private final boolean followedOrderByAdvice;
     private final int indexDirection;
     private final int maxSymbolNotEqualsCount;
@@ -63,6 +66,14 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
         this.indexDirection = indexDirection;
         this.maxSymbolNotEqualsCount = maxSymbolNotEqualsCount;
         final int nKeyValues = keyValues.size();
+        boolean dynamicValues = false;
+        for (int i = 0; i < nKeyValues; i++) {
+            if (!keyValues.getQuick(i).isConstant()) {
+                dynamicValues = true;
+                break;
+            }
+        }
+        this.dynamicExcludedKeys = dynamicValues;
         this.keyExcludedValueFunctions.addAll(keyValues);
         this.columnIndex = columnIndex;
         this.filter = filter;
@@ -79,7 +90,6 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     @Override
     public void close() {
         Misc.free(filter);
-        Misc.free(includedValues);
         Misc.free(keyExcludedValueFunctions);
     }
 
@@ -94,51 +104,81 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     }
 
     public void recalculateIncludedValues(TableReader tableReader) {
-        excludedValues.clear();
-        for (int i = 0, n = keyExcludedValueFunctions.size(); i < n; i++) {
-            excludedValues.add(Chars.toString(keyExcludedValueFunctions.getQuick(i).getStr(null)));
+        cursorFactoriesIdx = 0;
+        excludedKeys.clear();
+        if (dynamicExcludedKeys) {
+            // In case of bind variable excluded values that may change between
+            // query executions the sets have to be subtracted from scratch.
+            includedKeys.clear();
         }
+
         final SymbolMapReaderImpl symbolMapReader = (SymbolMapReaderImpl) tableReader.getSymbolMapReader(columnIndex);
-        for (int i = 0, n = symbolMapReader.getSymbolCount(); i < n; i++) {
-            final CharSequence symbol = symbolMapReader.valueOf(i);
-            if (excludedValues.indexOf(symbol) < 0 && includedValues.indexOf(symbol) < 0) {
-                final RowCursorFactory rowCursorFactory;
-                int symbolKey = symbolMapReader.keyOf(symbol);
-                if (filter == null) {
-                    rowCursorFactory = new SymbolIndexRowCursorFactory(
-                            columnIndex,
-                            symbolKey,
-                            cursorFactories.size() == 0,
-                            indexDirection,
-                            null
-                    );
-                } else {
-                    rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(
-                            columnIndex,
-                            symbolKey,
-                            filter,
-                            cursorFactories.size() == 0,
-                            indexDirection,
-                            columnIndexes,
-                            null
-                    );
-                }
-                includedValues.add(Chars.toString(symbol));
-                cursorFactories.add(rowCursorFactory);
+
+        // Generate excluded key set.
+        for (int i = 0, n = keyExcludedValueFunctions.size(); i < n; i++) {
+            final CharSequence value = keyExcludedValueFunctions.getQuick(i).getStr(null);
+            excludedKeys.add(symbolMapReader.keyOf(value));
+        }
+
+        // Append new keys to the included set filtering out the excluded ones.
+        // Note: both includedKeys and cursorFactories are guaranteed to be monotonically
+        // growing in terms of the collection size.
+        for (int k = 0, n = symbolMapReader.getSymbolCount(); k < n; k++) {
+            if (!excludedKeys.contains(k) && includedKeys.add(k)) {
+                upsertRowCursorFactory(k);
             }
         }
+
+        if (symbolMapReader.containsNullValue()
+                && !excludedKeys.contains(SymbolTable.VALUE_IS_NULL) && includedKeys.add(SymbolTable.VALUE_IS_NULL)) {
+            // If the table contains null values and they're not excluded, we need to include
+            // them to the result set to match the behavior of the NOT IN() SQL function.
+            upsertRowCursorFactory(SymbolTable.VALUE_IS_NULL);
+        }
+    }
+
+    private void upsertRowCursorFactory(int symbolKey) {
+        if (cursorFactoriesIdx < cursorFactories.size()) {
+            // Reuse the existing factory.
+            cursorFactories.get(cursorFactoriesIdx).of(symbolKey);
+            cursorFactoriesIdx++;
+            return;
+        }
+
+        // Create a new factory.
+        final SymbolFunctionRowCursorFactory rowCursorFactory;
+        if (filter == null) {
+            rowCursorFactory = new SymbolIndexRowCursorFactory(
+                    columnIndex,
+                    symbolKey,
+                    false,
+                    indexDirection,
+                    null
+            );
+        } else {
+            rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(
+                    columnIndex,
+                    symbolKey,
+                    filter,
+                    false,
+                    indexDirection,
+                    columnIndexes,
+                    null
+            );
+        }
+        cursorFactories.add(rowCursorFactory);
+        cursorFactoriesIdx++;
     }
 
     @Override
     protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext)
             throws SqlException {
-        try (TableReader reader = dataFrameCursor.getTableReader()) {
-            if (reader.getSymbolMapReader(columnIndex).getSymbolCount() > maxSymbolNotEqualsCount) {
-                throw ReaderOutOfDateException.of(reader.getTableName());
-            }
-            Function.init(keyExcludedValueFunctions, reader, executionContext);
+        TableReader reader = dataFrameCursor.getTableReader();
+        if (reader.getSymbolMapReader(columnIndex).getSymbolCount() > maxSymbolNotEqualsCount) {
+            throw ReaderOutOfDateException.of(reader.getTableName());
         }
-        this.recalculateIncludedValues(dataFrameCursor.getTableReader());
+        Function.init(keyExcludedValueFunctions, reader, executionContext);
+        this.recalculateIncludedValues(reader);
         this.cursor.of(dataFrameCursor, executionContext);
         if (filter != null) {
             filter.init(this.cursor, executionContext);

@@ -123,6 +123,11 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
+    public long getUpdateRowId() {
+        return getRowId();
+    }
+
+    @Override
     public long getLong(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);

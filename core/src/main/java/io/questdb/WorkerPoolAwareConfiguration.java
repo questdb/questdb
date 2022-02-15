@@ -29,6 +29,7 @@ import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -54,14 +55,14 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
         public boolean isEnabled() {
             return true;
         }
-
     };
 
     static WorkerPool configureWorkerPool(
             WorkerPoolAwareConfiguration configuration,
-            WorkerPool sharedPool
+            WorkerPool sharedPool,
+            Metrics metrics
     ) {
-        return configuration.getWorkerCount() > 0 ? new WorkerPool(configuration) : sharedPool;
+        return configuration.getWorkerCount() > 0 ? new WorkerPool(configuration, metrics) : sharedPool;
     }
 
     @Nullable
@@ -76,12 +77,12 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
     ) {
         final T server;
         if (configuration.isEnabled()) {
-
-            final WorkerPool localPool = configureWorkerPool(configuration, sharedWorkerPool);
+            final WorkerPool localPool = configureWorkerPool(configuration, sharedWorkerPool, metrics);
             final boolean local = localPool != sharedWorkerPool;
             server = factory.create(configuration, cairoEngine, localPool, local, functionFactoryCache, metrics);
 
             if (local) {
+                localPool.assignCleaner(Path.CLEANER);
                 localPool.start(log);
             }
 

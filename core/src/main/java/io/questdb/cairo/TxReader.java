@@ -33,13 +33,14 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.*;
 
-public class TxReader implements Closeable {
+public class TxReader implements Closeable, Mutable {
     protected static final int PARTITION_TS_OFFSET = 0;
     protected static final int PARTITION_SIZE_OFFSET = 1;
     protected static final int PARTITION_NAME_TX_OFFSET = 2;
     protected static final int PARTITION_DATA_TX_OFFSET = 3;
     protected final LongList attachedPartitions = new LongList();
-    private final PartitionBy.PartitionFloorMethod partitionFloorMethod;
+    private final IntList symbolCountSnapshot = new IntList();
+    private final FilesFacade ff;
     protected long minTimestamp;
     protected long maxTimestamp;
     protected long txn;
@@ -51,21 +52,23 @@ public class TxReader implements Closeable {
     protected int partitionBy;
     protected long partitionTableVersion;
     protected int attachedPartitionsSize = 0;
+    private PartitionBy.PartitionFloorMethod partitionFloorMethod;
     private MemoryMR roTxMem;
 
-    public TxReader(FilesFacade ff, @Transient Path path, int partitionBy) {
-        try {
-            roTxMem = openTxnFile(ff, path);
-            this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
-            this.partitionBy = partitionBy;
-        } catch (Throwable e) {
-            close();
-            throw e;
-        }
+    public TxReader(FilesFacade ff) {
+        this.ff = ff;
     }
 
     public boolean attachedPartitionsContains(long ts) {
         return findAttachedPartitionIndex(ts) > -1;
+    }
+
+    @Override
+    public void clear() {
+        close();
+        partitionTableVersion = 0;
+        attachedPartitionsSize = 0;
+        attachedPartitions.clear();
     }
 
     @Override
@@ -149,6 +152,14 @@ public class TxReader implements Closeable {
         return structureVersion;
     }
 
+    public int getSymbolColumnCount() {
+        return symbolColumnCount;
+    }
+
+    public int getSymbolValueCount(int i) {
+        return symbolCountSnapshot.get(i);
+    }
+
     public long getTransientRowCount() {
         return transientRowCount;
     }
@@ -159,6 +170,57 @@ public class TxReader implements Closeable {
 
     public long getTxn() {
         return txn;
+    }
+
+    public TxReader ofRO(@Transient Path path, int partitionBy) {
+        clear();
+        int tableRootLen = path.length();
+        try {
+            roTxMem = openTxnFile(ff, path);
+            this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
+            this.partitionBy = partitionBy;
+        } catch (Throwable e) {
+            close();
+            path.trimTo(tableRootLen);
+            throw e;
+        }
+        return this;
+    }
+
+    public void unsafeLoadAll(int symbolColumnCount, int partitionSegmentSize, boolean forceClean) {
+        this.txn = roTxMem.getLong(TX_OFFSET_TXN);
+        this.transientRowCount = roTxMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
+        this.fixedRowCount = roTxMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
+        this.minTimestamp = roTxMem.getLong(TX_OFFSET_MIN_TIMESTAMP);
+        this.maxTimestamp = roTxMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
+        this.dataVersion = roTxMem.getLong(TX_OFFSET_DATA_VERSION);
+        this.structureVersion = roTxMem.getLong(TX_OFFSET_STRUCT_VERSION);
+        final long prevPartitionTableVersion = this.partitionTableVersion;
+        this.partitionTableVersion = roTxMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION);
+        this.symbolColumnCount = symbolColumnCount;
+
+        unsafeLoadSymbolCounts(symbolColumnCount);
+        unsafeLoadPartitions(prevPartitionTableVersion, partitionSegmentSize, forceClean);
+    }
+
+    /**
+     * Load variable length area sized from the file, e.g. Symbol Column Count and Partitions Size
+     * to fail fast reload if they are not clean values.
+     *
+     * @param symbolColumnCount symbol count is used to calculate offset of partition table in file.
+     * @return size partition table in bytes
+     */
+    public int unsafeReadPartitionSegmentSize(int symbolColumnCount) {
+        roTxMem.extend(getPartitionTableSizeOffset(symbolColumnCount) + 4);
+        return roTxMem.getInt(getPartitionTableSizeOffset(symbolColumnCount));
+    }
+
+    public int unsafeReadSymbolColumnCount() {
+        return roTxMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
+    }
+
+    public long unsafeReadPartitionTableVersion() {
+        return roTxMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION);
     }
 
     private int findAttachedPartitionIndex(long ts) {
@@ -182,39 +244,26 @@ public class TxReader implements Closeable {
     }
 
     protected MemoryMR openTxnFile(FilesFacade ff, Path path) {
-        if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
-            return Vm.getMRInstance(ff, path, ff.length(path), MemoryTag.MMAP_DEFAULT);
+        int pathLen = path.length();
+        try {
+            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
+                return Vm.getMRInstance(ff, path, ff.length(path), MemoryTag.MMAP_DEFAULT);
+            }
+            throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
+        } finally {
+            path.trimTo(pathLen);
         }
-        throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
     }
 
     protected long unsafeGetRawMemory() {
         return roTxMem.getPageAddress(0);
     }
 
-    public void unsafeLoadAll() {
-        this.txn = roTxMem.getLong(TX_OFFSET_TXN);
-        this.transientRowCount = roTxMem.getLong(TX_OFFSET_TRANSIENT_ROW_COUNT);
-        this.fixedRowCount = roTxMem.getLong(TX_OFFSET_FIXED_ROW_COUNT);
-        this.minTimestamp = roTxMem.getLong(TX_OFFSET_MIN_TIMESTAMP);
-        this.maxTimestamp = roTxMem.getLong(TX_OFFSET_MAX_TIMESTAMP);
-        this.dataVersion = roTxMem.getLong(TX_OFFSET_DATA_VERSION);
-        this.structureVersion = roTxMem.getLong(TX_OFFSET_STRUCT_VERSION);
-        final long prevSymbolCount = this.symbolColumnCount;
-        this.symbolColumnCount = roTxMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
-        final long prevPartitionTableVersion = this.partitionTableVersion;
-        this.partitionTableVersion = roTxMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION);
-        if (prevSymbolCount != symbolColumnCount) {
-            roTxMem.growToFileSize();
-        }
-        unsafeLoadPartitions(prevPartitionTableVersion);
-    }
-
-    private void unsafeLoadPartitions(long prevPartitionTableVersion) {
+    private void unsafeLoadPartitions(long prevPartitionTableVersion, int partitionTableSize, boolean forceClean) {
         if (PartitionBy.isPartitioned(partitionBy)) {
-            int txAttachedPartitionsSize = roTxMem.getInt(getPartitionTableSizeOffset(symbolColumnCount)) / Long.BYTES;
+            int txAttachedPartitionsSize = partitionTableSize / Long.BYTES;
             if (txAttachedPartitionsSize > 0) {
-                if (prevPartitionTableVersion != partitionTableVersion) {
+                if (prevPartitionTableVersion != partitionTableVersion || forceClean) {
                     attachedPartitions.clear();
                     unsafeLoadPartitions0(txAttachedPartitionsSize, 0);
                 } else {
@@ -249,14 +298,12 @@ public class TxReader implements Closeable {
         attachedPartitionsSize = txAttachedPartitionsSize;
     }
 
-    void unsafeLoadSymbolCounts(IntList symbolCountSnapshot) {
-        int symbolMapCount = roTxMem.getInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT);
-        if (symbolMapCount > 0) {
-            // No need to call setSize here, file mapped beyond symbol section already
-            // while reading attached partitions
-            for (int i = 0; i < symbolMapCount; i++) {
-                symbolCountSnapshot.add(roTxMem.getInt(TableUtils.getSymbolWriterIndexOffset(i)));
-            }
+    private void unsafeLoadSymbolCounts(int symbolMapCount) {
+        this.symbolCountSnapshot.clear();
+        // No need to call setSize here, file mapped beyond symbol section already
+        // while reading attached partition count
+        for (int i = 0; i < symbolMapCount; i++) {
+            symbolCountSnapshot.add(roTxMem.getInt(TableUtils.getSymbolWriterIndexOffset(i)));
         }
     }
 
@@ -278,9 +325,5 @@ public class TxReader implements Closeable {
 
     long unsafeReadTxnCheck() {
         return roTxMem.getLong(TableUtils.TX_OFFSET_TXN_CHECK);
-    }
-
-    int unsafeReadWriterCount() {
-        return roTxMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
     }
 }

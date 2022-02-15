@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine;
 
 
+import io.questdb.cairo.EmptySymbolMapReader;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -32,6 +33,6 @@ public class EmptyTableNoSizeRecordCursorTest {
 
     @Test
     public void testImplementsSymbolTable() {
-        Assert.assertNull(EmptyTableNoSizeRecordCursor.INSTANCE.getSymbolTable(0));
+        Assert.assertEquals(EmptySymbolMapReader.INSTANCE, EmptyTableNoSizeRecordCursor.INSTANCE.getSymbolTable(0));
     }
 }

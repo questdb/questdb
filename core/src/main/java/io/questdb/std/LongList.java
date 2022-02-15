@@ -419,7 +419,7 @@ public class LongList implements Mutable, LongVec {
         return false;
     }
 
-    private int indexOf(long o) {
+    public int indexOf(long o) {
         for (int i = 0, n = pos; i < n; i++) {
             if (o == getQuick(i)) {
                 return i;
@@ -523,5 +523,4 @@ public class LongList implements Mutable, LongVec {
         } while (data[high << shl] == value);
         return (high + 1) << shl;
     }
-
 }

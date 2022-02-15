@@ -2885,6 +2885,44 @@ public class TextLoaderTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testAppendToTableColumnReorder() throws Exception {
+        assertNoLeak(textLoader -> {
+            final String expected1 = "timing\ta\tb\tc\n" +
+                    "2022-01-04T09:58:53.225032Z\t1\t0\t0\n" +
+                    "2022-01-04T09:58:54.225032Z\t1\t0\t0\n" +
+                    "2022-01-04T09:58:55.225032Z\t1\t0\t0\n";
+
+            final String csv1 = "timing\ta\tb\tc\n" +
+                    "2022-01-04T09:58:53.225032Z\t1\t0\t0\n" +
+                    "2022-01-04T09:58:54.225032Z\t1\t0\t0\n" +
+                    "2022-01-04T09:58:55.225032Z\t1\t0\t0\n";
+
+            final String expected2 = "timing\ta\tb\tc\n" +
+                    "2022-01-04T09:58:53.225032Z\t1\t0\t0\n" +
+                    "2022-01-04T09:58:54.225032Z\t1\t0\t0\n" +
+                    "2022-01-04T09:58:55.225032Z\t1\t0\t0\n" +
+                    "2022-01-04T09:58:56.225032Z\t0\t0\t1\n" +
+                    "2022-01-04T09:58:57.225032Z\t0\t0\t1\n" +
+                    "2022-01-04T09:58:58.225032Z\t0\t0\t1\n";
+
+            final String csv2 = "c\tb\ta\ttiming\n" +
+                    "1\t0\t0\t2022-01-04T09:58:56.225032Z\n" +
+                    "1\t0\t0\t2022-01-04T09:58:57.225032Z\n" +
+                    "1\t0\t0\t2022-01-04T09:58:58.225032Z";
+
+            configureLoaderDefaults(textLoader);
+            playText0(textLoader, csv1, 1024, ENTITY_MANIPULATOR);
+            assertTable(expected1);
+            textLoader.clear();
+
+            configureLoaderDefaults(textLoader);
+            playText0(textLoader, csv2, 1024, ENTITY_MANIPULATOR);
+            assertTable(expected2);
+            textLoader.clear();
+        });
+    }
+
     private static String extractLast(Path path) {
         String nameStr = path.toString();
         String[] pathElements = nameStr.split(PATH_SEP_REGEX);

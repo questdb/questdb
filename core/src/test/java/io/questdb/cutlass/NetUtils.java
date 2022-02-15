@@ -41,7 +41,7 @@ public class NetUtils {
             int port) {
         long clientFd = nf.socketTcp(true);
         long sockAddress = nf.sockaddr(Net.parseIPv4(ipv4Address), port);
-        TestUtils.assertConnect(clientFd, sockAddress, false);
+        TestUtils.assertConnect(clientFd, sockAddress);
 
         final int N = 1024 * 1024;
         final long sendBuf = Unsafe.malloc(N, MemoryTag.NATIVE_DEFAULT);

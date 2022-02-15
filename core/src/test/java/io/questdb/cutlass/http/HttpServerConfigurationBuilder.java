@@ -58,11 +58,6 @@ public class HttpServerConfigurationBuilder {
             public NetworkFacade getNetworkFacade() {
                 return nf;
             }
-
-            @Override
-            public boolean getPeerNoLinger() {
-                return serverKeepAlive;
-            }
         };
 
         return new DefaultHttpServerConfiguration() {

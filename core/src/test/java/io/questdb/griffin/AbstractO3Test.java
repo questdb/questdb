@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
@@ -41,6 +42,7 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
+import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.net.URISyntaxException;
@@ -258,7 +260,8 @@ public class AbstractO3Test {
                             public boolean isEnabled() {
                                 return true;
                             }
-                        }
+                        },
+                        Metrics.disabled()
                 );
 
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
@@ -284,11 +287,6 @@ public class AbstractO3Test {
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                     @Override
                     public int getO3PurgeDiscoveryQueueCapacity() {
-                        return 0;
-                    }
-
-                    @Override
-                    public int getO3PurgeQueueCapacity() {
                         return 0;
                     }
 
@@ -346,8 +344,9 @@ public class AbstractO3Test {
             try {
                 if (pool != null) {
                     pool.assignCleaner(Path.CLEANER);
-                    O3Utils.setupWorkerPool(pool, engine.getMessageBus());
-                    pool.start(LOG);
+                    try (Closeable ignored = O3Utils.setupWorkerPool(pool, engine.getMessageBus())) {
+                        pool.start(LOG);
+                    }
                 } else {
                     O3Utils.initBuf();
                 }

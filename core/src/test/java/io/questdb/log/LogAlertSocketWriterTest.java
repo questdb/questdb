@@ -41,6 +41,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.CyclicBarrier;
 import java.util.function.Consumer;
 
 import static io.questdb.log.LogAlertSocketWriter.ALERT_PROPS;
@@ -82,11 +83,21 @@ public class LogAlertSocketWriterTest {
                         // Vlad: we are wasting time here not connecting anywhere
                         final SOCountDownLatch haltLatch = new SOCountDownLatch(2);
                         final MockAlertTarget[] alertsTarget = new MockAlertTarget[2];
-                        alertsTarget[0] = new MockAlertTarget(1234, haltLatch::countDown);
-                        alertsTarget[1] = new MockAlertTarget(1242, haltLatch::countDown);
+                        final CyclicBarrier startBarrier = new CyclicBarrier(3);
+                        alertsTarget[0] = new MockAlertTarget(
+                                1234,
+                                haltLatch::countDown,
+                                () -> TestUtils.await(startBarrier)
+                        );
+                        alertsTarget[1] = new MockAlertTarget(
+                                1242,
+                                haltLatch::countDown,
+                                () -> TestUtils.await(startBarrier)
+                        );
                         alertsTarget[0].start();
                         alertsTarget[1].start();
 
+                        TestUtils.await(startBarrier);
                         writer.setAlertTargets("localhost:1234,localhost:1242");
                         writer.bindProperties(LogFactory.INSTANCE);
 
@@ -187,8 +198,15 @@ public class LogAlertSocketWriterTest {
                     try {
                         // create mock alert target server
                         final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
-                        final MockAlertTarget alertTarget = new MockAlertTarget(1234, haltLatch::countDown);
+                        final CyclicBarrier startBarrier = new CyclicBarrier(2);
+                        final MockAlertTarget alertTarget = new MockAlertTarget(
+                                1234,
+                                haltLatch::countDown,
+                                () -> TestUtils.await(startBarrier)
+                        );
                         alertTarget.start();
+
+                        TestUtils.await(startBarrier);
                         writer.setLocation("/alert-manager-tpt-international.json");
                         writer.setAlertTargets("localhost:1234");
                         writer.setReconnectDelay("100");
@@ -227,7 +245,7 @@ public class LogAlertSocketWriterTest {
                                         "    }\n" +
                                         "  }\n" +
                                         "]\n" +
-                                "\n",
+                                        "\n",
                                 writer.getAlertSink()
                         );
 
@@ -448,7 +466,7 @@ public class LogAlertSocketWriterTest {
             final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
             final byte[] bytes = fileContent.getBytes(Files.UTF_8);
             long p = buffPtr;
-            for (int i = 0; i < bytes.length; i++) {
+            for (int i = 0, n = bytes.length; i < n; i++) {
                 Unsafe.getUnsafe().putByte(p++, bytes[i]);
             }
             try (Path path = new Path()) {

@@ -24,8 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.griffin.model.ExpressionNode;
-
 public class SqlKeywords {
     public static final String CONCAT_FUNC_NAME = "concat";
     public static final int CASE_KEYWORD_LENGTH = 4;
@@ -79,31 +77,6 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'r';
     }
 
-    public static boolean isFirstFunction(CharSequence tok) {
-        if (tok.length() != 5) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'f'
-                && (tok.charAt(i++) | 32) == 'i'
-                && (tok.charAt(i++) | 32) == 'r'
-                && (tok.charAt(i++) | 32) == 's'
-                && (tok.charAt(i) | 32) == 't';
-    }
-
-    public static boolean isLastFunction(CharSequence tok) {
-        if (tok.length() != 4) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'l'
-                && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i++) | 32) == 's'
-                && (tok.charAt(i) | 32) == 't';
-    }
-
     public static boolean isAndKeyword(CharSequence tok) {
         if (tok.length() != 3) {
             return false;
@@ -113,16 +86,6 @@ public class SqlKeywords {
         return (tok.charAt(i++) | 32) == 'a'
                 && (tok.charAt(i++) | 32) == 'n'
                 && (tok.charAt(i) | 32) == 'd';
-    }
-
-    public static boolean isOrKeyword(CharSequence tok) {
-        if (tok.length() != 2) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'o'
-                && (tok.charAt(i) | 32) == 'r';
     }
 
     public static boolean isAsKeyword(CharSequence tok) {
@@ -548,6 +511,19 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'l';
     }
 
+    public static boolean isFirstFunction(CharSequence tok) {
+        if (tok.length() != 5) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'f'
+                && (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i++) | 32) == 'r'
+                && (tok.charAt(i++) | 32) == 's'
+                && (tok.charAt(i) | 32) == 't';
+    }
+
     public static boolean isFirstKeyword(CharSequence tok) {
         if (tok.length() != 5) {
             return false;
@@ -575,29 +551,6 @@ public class SqlKeywords {
 
     public static boolean isGeoHashKeyword(CharSequence tok) {
         if (tok.length() != 7) {
-            return false;
-        }
-
-        int i = 0;
-        return isGeoHashKeyword(tok, i);
-    }
-
-    public static boolean isQuote(CharSequence tok) {
-        return tok.length() == 1 && tok.charAt(0) == '\'';
-    }
-
-    private static boolean isGeoHashKeyword(CharSequence tok, int i) {
-        return (tok.charAt(i++) | 32) == 'g'
-                && (tok.charAt(i++) | 32) == 'e'
-                && (tok.charAt(i++) | 32) == 'o'
-                && (tok.charAt(i++) | 32) == 'h'
-                && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i++) | 32) == 's'
-                && (tok.charAt(i) | 32) == 'h';
-    }
-
-    public static boolean startsWithGeoHashKeyword(CharSequence tok) {
-        if (tok.length() < 7) {
             return false;
         }
 
@@ -653,20 +606,6 @@ public class SqlKeywords {
         int i = 0;
         return (tok.charAt(i++) | 32) == 'i'
                 && (tok.charAt(i) | 32) == 'f';
-    }
-
-    public static boolean isWithinKeyword(CharSequence tok) {
-        if (tok == null || tok.length() != 6) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'w'
-                && (tok.charAt(i++) | 32) == 'i'
-                && (tok.charAt(i++) | 32) == 't'
-                && (tok.charAt(i++) | 32) == 'h'
-                && (tok.charAt(i++) | 32) == 'i'
-                && (tok.charAt(i) | 32) == 'n';
     }
 
     public static boolean isInKeyword(CharSequence tok) {
@@ -750,6 +689,18 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'i'
                 && (tok.charAt(i++) | 32) == 'o'
                 && (tok.charAt(i) | 32) == 'n';
+    }
+
+    public static boolean isLastFunction(CharSequence tok) {
+        if (tok.length() != 4) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'l'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 's'
+                && (tok.charAt(i) | 32) == 't';
     }
 
     public static boolean isLatestKeyword(CharSequence tok) {
@@ -971,6 +922,16 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'y';
     }
 
+    public static boolean isOrKeyword(CharSequence tok) {
+        if (tok.length() != 2) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i) | 32) == 'r';
+    }
+
     public static boolean isOrderKeyword(CharSequence tok) {
         if (tok.length() != 5) {
             return false;
@@ -1039,6 +1000,24 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'n';
     }
 
+    public static boolean isPartitionsKeyword(CharSequence tok) {
+        if (tok.length() != 10) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'p'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 'r'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == 'n'
+                && (tok.charAt(i) | 32) == 's';
+    }
+
     public static boolean isPrecisionKeyword(CharSequence tok) {
         if (tok.length() != 9) {
             return false;
@@ -1054,6 +1033,10 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'i'
                 && (tok.charAt(i++) | 32) == 'o'
                 && (tok.charAt(i) | 32) == 'n';
+    }
+
+    public static boolean isQuote(CharSequence tok) {
+        return tok.length() == 1 && tok.charAt(0) == '\'';
     }
 
     public static boolean isRegclassKeyword(CharSequence tok) {
@@ -1397,6 +1380,20 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'k';
     }
 
+    public static boolean isUpdateKeyword(CharSequence tok) {
+        if (tok.length() != 6) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'u'
+                && (tok.charAt(i++) | 32) == 'p'
+                && (tok.charAt(i++) | 32) == 'd'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i) | 32) == 'e';
+    }
+
     public static boolean isValuesKeyword(CharSequence tok) {
         if (tok.length() != 6) {
             return false;
@@ -1436,6 +1433,20 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'h';
     }
 
+    public static boolean isWithinKeyword(CharSequence tok) {
+        if (tok == null || tok.length() != 6) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'w'
+                && (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'h'
+                && (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i) | 32) == 'n';
+    }
+
     public static boolean isWriterKeyword(CharSequence tok) {
         if (tok.length() != 6) {
             return false;
@@ -1460,5 +1471,24 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'o'
                 && (tok.charAt(i++) | 32) == 'n'
                 && (tok.charAt(i) | 32) == 'e';
+    }
+
+    public static boolean startsWithGeoHashKeyword(CharSequence tok) {
+        if (tok.length() < 7) {
+            return false;
+        }
+
+        int i = 0;
+        return isGeoHashKeyword(tok, i);
+    }
+
+    private static boolean isGeoHashKeyword(CharSequence tok, int i) {
+        return (tok.charAt(i++) | 32) == 'g'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == 'h'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 's'
+                && (tok.charAt(i) | 32) == 'h';
     }
 }

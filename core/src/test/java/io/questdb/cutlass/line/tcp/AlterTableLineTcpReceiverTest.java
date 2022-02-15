@@ -65,7 +65,6 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     server,
                     lineData,
                     WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                    false,
                     "ALTER TABLE plug Add COLUMN label2 INT");
 
             Assert.assertNull(exception);
@@ -105,7 +104,6 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             server,
                             lineData,
                             WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                            false,
                             "ALTER TABLE plug DROP PARTITION LIST '1970-01-01'");
 
                     Assert.assertNull(exception);
@@ -114,7 +112,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             "6C\t333\t1970-03-03T00:00:00.000000Z\n";
                     assertTable(expected);
                 },
-                true
+                true, 250
         );
     }
 
@@ -127,7 +125,6 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             SqlException exception = sendWithAlterStatement(server, lineData,
                     WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                    false,
                     "ALTER TABLE plug DROP COLUMN label");
 
             Assert.assertNotNull(exception);
@@ -136,7 +133,6 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     server,
                     lineData,
                     WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                    false,
                     "ALTER TABLE plug RENAME COLUMN label TO label2"
             );
 
@@ -180,7 +176,6 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                                 server,
                                 lineData,
                                 WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                                false,
                                 "ALTER TABLE plug add column col" + i + " int");
                         Assert.assertNull(exception);
                     }
@@ -198,7 +193,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             "6B\t22\t1970-02-02T00:00:00.000000Z\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\n";
                     assertTable(expected);
                 },
-                true
+                true, 250
         );
     }
 
@@ -213,7 +208,6 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     server,
                     lineData,
                     WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                    false,
                     "ALTER TABLE plug SET PARAM commitLag = 20s;");
             Assert.assertNull(exception);
 
@@ -221,7 +215,6 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     server,
                     lineData,
                     WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                    false,
                     "ALTER TABLE plug SET PARAM maxUncommittedRows = 1;");
             Assert.assertNull(exception);
 
@@ -229,7 +222,6 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     server,
                     lineData,
                     WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                    false,
                     "alter table plug alter column label nocache;");
             Assert.assertNull(exception3);
 
@@ -261,7 +253,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             String lineData = "plug,label=Power,room=6A watts=\"1\" 2631819999000\n" +
                     "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
                     "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
-            SqlException ex = sendWithAlterStatement(server, lineData, WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE, false,
+            SqlException ex = sendWithAlterStatement(server, lineData, WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
                     "ALTER TABLE plug ALTER COLUMN label ADD INDEX");
             Assert.assertNull(ex);
 
@@ -306,13 +298,13 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     private void send(LineTcpReceiver receiver, String lineData) throws Exception {
-        SqlException ex = sendWithAlterStatement(receiver, lineData, WAIT_ENGINE_TABLE_RELEASE, true, null);
+        SqlException ex = sendWithAlterStatement(receiver, lineData, WAIT_ENGINE_TABLE_RELEASE, null);
         if (ex != null) {
             throw ex;
         }
     }
 
-    private SqlException sendWithAlterStatement(LineTcpReceiver server, String lineData, int wait, boolean noLinger, String alterTableCommand) {
+    private SqlException sendWithAlterStatement(LineTcpReceiver server, String lineData, int wait, String alterTableCommand) {
         sqlException = null;
         int countDownCount = 1;
         if ((wait & WAIT_ENGINE_TABLE_RELEASE) != 0 && (wait & WAIT_ALTER_TABLE_RELEASE) != 0) {
@@ -383,7 +375,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             long sockaddr = Net.sockaddr(ipv4address, bindPort);
             long fd = Net.socketTcp(true);
             try {
-                TestUtils.assertConnect(fd, sockaddr, noLinger);
+                TestUtils.assertConnect(fd, sockaddr);
                 byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
                 long bufaddr = Unsafe.malloc(lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
                 try {

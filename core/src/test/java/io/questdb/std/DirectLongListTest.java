@@ -27,12 +27,76 @@ package io.questdb.std;
 import io.questdb.cairo.BinarySearch;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.Arrays;
 
 public class DirectLongListTest {
 
     private static final Log LOG = LogFactory.getLog(DirectLongListTest.class);
+
+    @Test
+    public void test128BitSort() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (DirectLongList list = new DirectLongList(256, MemoryTag.NATIVE_LONG_LIST)) {
+                final int N = 100;
+                for (int i = 0; i < N; ++i) {
+                    list.add((100 - i - 1) / 10);
+                    list.add((100 - i - 1));
+                }
+
+                Vect.sort128BitAscInPlace(list.getAddress(), list.size() / 2);
+
+                for (int i = 0; i < 100; i++) {
+                    Assert.assertEquals(i / 10, list.get(i * 2));
+                    Assert.assertEquals(i, list.get(i * 2 + 1));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void test128BitSortFuzzTest() throws Exception {
+        long s0 = System.currentTimeMillis();
+        long s1 = System.nanoTime();
+        Rnd rnd = new Rnd(s0, s1);
+        LOG.info().$("random seed : ").$(s0).$(", ").$(s1).$();
+
+        int size = 1024 * 1024;
+        int range = Integer.MAX_VALUE - 1;
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (DirectLongList list = new DirectLongList(size, MemoryTag.NATIVE_LONG_LIST)) {
+                long[] longList = new long[size];
+                for (int i = 0; i < size; ++i) {
+                    int rnd1 = Math.abs(rnd.nextInt() % (range));
+                    int rnd2 = Math.abs(rnd.nextShort());
+
+                    list.add(rnd1);
+                    list.add(rnd2);
+
+                    longList[i] = Numbers.encodeLowHighInts(rnd1, rnd2);
+                    assert longList[i] >= 0;
+                }
+
+                Vect.sort128BitAscInPlace(list.getAddress(), list.size() / 2);
+                Arrays.sort(longList);
+
+                for (int i = 0; i < size; i++) {
+                    int rnd1 = (int) list.get(2 * i);
+                    int rnd2 = (int) list.get(2 * i + 1);
+
+                    int expectedLow = Numbers.decodeLowInt(longList[i]);
+                    int expectedHi = Numbers.decodeHighInt(longList[i]);
+
+                    Assert.assertEquals(expectedLow, rnd1);
+                    Assert.assertEquals(expectedHi, rnd2);
+                }
+            }
+        });
+    }
 
     @Test
     public void testAddList() {

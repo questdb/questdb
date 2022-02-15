@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.Metrics;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
@@ -46,24 +47,28 @@ class LineTcpWriterJob implements Job, Closeable {
     private final FloatingDirectCharSink floatingCharSink = new FloatingDirectCharSink();
     private final ObjList<TableUpdateDetails> assignedTables = new ObjList<>();
     private final MillisecondClock millisecondClock;
-    private final long maintenanceInterval;
+    private final long commitIntervalDefault;
     private final LineTcpMeasurementScheduler scheduler;
-    private long lastMaintenanceMillis = 0;
+    private long nextCommitTime;
+    private final Metrics metrics;
 
     LineTcpWriterJob(
             int workerId,
             RingQueue<LineTcpMeasurementEvent> queue,
             Sequence sequence,
             MillisecondClock millisecondClock,
-            long maintenanceInterval,
-            LineTcpMeasurementScheduler scheduler
+            long commitIntervalDefault,
+            LineTcpMeasurementScheduler scheduler,
+            Metrics metrics
     ) {
         this.workerId = workerId;
         this.queue = queue;
         this.sequence = sequence;
         this.millisecondClock = millisecondClock;
-        this.maintenanceInterval = maintenanceInterval;
+        this.commitIntervalDefault = commitIntervalDefault;
+        this.nextCommitTime = millisecondClock.getTicks();
         this.scheduler = scheduler;
+        this.metrics = metrics;
     }
 
     @Override
@@ -85,23 +90,35 @@ class LineTcpWriterJob implements Job, Closeable {
     public boolean run(int workerId) {
         assert this.workerId == workerId;
         boolean busy = drainQueue();
-        if (!busy && !doMaintenance()) {
+        // while ILP is hammering the database via multiple connections the writer
+        // is likely to be very busy so commitTables() will run infrequently
+        // commit should run regardless the busy flag but has to finish quickly
+        // idea is to store the tables in a heap data structure being the tables most
+        // desperately need a commit on the top
+        if (!busy) {
+            commitTables();
             tickWriters();
         }
         return busy;
     }
 
-    private boolean doMaintenance() {
-        final long ticks = millisecondClock.getTicks();
-        if (ticks - lastMaintenanceMillis < maintenanceInterval) {
-            return false;
+    private void commitTables() {
+        final long wallClockMillis = millisecondClock.getTicks();
+        if (wallClockMillis > nextCommitTime) {
+            long minTableNextCommitTime = Long.MAX_VALUE;
+            for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
+                // the heap based solution mentioned above will eliminate the minimum search
+                // we could just process the min element of the heap until we hit the first commit
+                // time greater than millis and that will be our nextCommitTime
+                long tableNextCommitTime = assignedTables.getQuick(n).commitIfIntervalElapsed(wallClockMillis);
+                if (tableNextCommitTime < minTableNextCommitTime) {
+                    // taking the earliest commit time
+                    minTableNextCommitTime = tableNextCommitTime;
+                }
+            }
+            // if no tables, just use the default commit interval
+            nextCommitTime = minTableNextCommitTime != Long.MAX_VALUE ? minTableNextCommitTime : wallClockMillis + commitIntervalDefault;
         }
-
-        lastMaintenanceMillis = ticks;
-        for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
-            assignedTables.getQuick(n).handleWriterThreadMaintenance(ticks, maintenanceInterval);
-        }
-        return true;
     }
 
     private void tickWriters() {
@@ -127,12 +144,13 @@ class LineTcpWriterJob implements Job, Closeable {
                 // we check the event's writer thread ID to avoid consuming
                 // incomplete events
 
+                final TableUpdateDetails tab = event.getTableUpdateDetails();
                 if (event.getWriterWorkerId() == workerId) {
-                    final TableUpdateDetails tab = event.getTableUpdateDetails();
                     try {
                         if (!tab.isAssignedToJob()) {
                             assignedTables.add(tab);
                             tab.setAssignedToJob(true);
+                            nextCommitTime = millisecondClock.getTicks();
                             LOG.info()
                                     .$("assigned table to writer thread [tableName=").$(tab.getTableNameUtf16())
                                     .$(", threadId=").$(workerId)
@@ -142,15 +160,20 @@ class LineTcpWriterJob implements Job, Closeable {
                         eventProcessed = true;
                     } catch (Throwable ex) {
                         LOG.error()
-                                .$("closing writer for because of error [table=").$(tab.getTableNameUtf16())
+                                .$("closing writer because of error [table=").$(tab.getTableNameUtf16())
                                 .$(",ex=").$(ex)
                                 .I$();
                         event.createWriterReleaseEvent(tab, false);
                         eventProcessed = false;
+                        // This is a critical error, so we treat it as an unhandled one.
+                        metrics.healthCheck().incrementUnhandledErrors();
                     }
                 } else {
                     if (event.getWriterWorkerId() == LineTcpMeasurementEventType.ALL_WRITERS_RELEASE_WRITER) {
                         eventProcessed = scheduler.processWriterReleaseEvent(event, workerId);
+                        assignedTables.remove(tab);
+                        tab.setAssignedToJob(false);
+                        nextCommitTime = millisecondClock.getTicks();
                     } else {
                         eventProcessed = true;
                     }

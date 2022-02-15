@@ -101,6 +101,7 @@ const QueryResult = ({ compiler, count, execute, fetch, rowCount }: Props) => {
           {formatTiming(fetch)}
         </Text>
       </div>
+
       <Details>
         <DetailsColumn>
           <DetailsText color="draculaForeground">

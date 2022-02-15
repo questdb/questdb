@@ -24,8 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.ObjIntHashMap;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -33,7 +35,12 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
+
 public class TableReaderMetadataTest extends AbstractCairoTest {
+
+    private volatile Throwable exception = null;
 
     @Before
     public void setUp2() {
@@ -55,6 +62,59 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "date:DATE\n" +
                 "xyz:STRING\n";
         assertThat(expected, (w) -> w.addColumn("xyz", ColumnType.STRING), 12);
+    }
+
+    @Test
+    public void testAddColumnConcurrent() throws Throwable {
+        CyclicBarrier start = new CyclicBarrier(2);
+        AtomicInteger done = new AtomicInteger();
+        AtomicInteger columnsAdded = new AtomicInteger();
+        AtomicInteger reloadCount = new AtomicInteger();
+        int totalColAddCount = 1000;
+
+        Thread writerThread = new Thread(() -> {
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "all", "test")) {
+                start.await();
+                for (int i = 0; i < totalColAddCount; i++) {
+                    writer.addColumn("col" + i, ColumnType.INT);
+                    columnsAdded.incrementAndGet();
+                }
+            } catch (Throwable e) {
+                exception = e;
+                LOG.error().$(e).$();
+            } finally {
+                done.incrementAndGet();
+            }
+        });
+
+        Thread readerThread = new Thread(() -> {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "all")) {
+                start.await();
+                int colAdded = -1, newColsAdded;
+                while (colAdded < totalColAddCount) {
+                    if (colAdded < (newColsAdded = columnsAdded.get())) {
+                        reader.reload();
+                        colAdded = newColsAdded;
+                        reloadCount.incrementAndGet();
+                    }
+                    Os.pause();
+                }
+            } catch (Throwable e) {
+                exception = e;
+                LOG.error().$(e).$();
+            }
+        });
+        writerThread.start();
+        readerThread.start();
+
+        writerThread.join();
+        readerThread.join();
+
+        if (exception != null) {
+            throw exception;
+        }
+        Assert.assertTrue(reloadCount.get() > 100);
+        LOG.infoW().$("total reload count ").$(reloadCount.get()).$();
     }
 
     @Test
@@ -257,7 +317,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "byte:BYTE\n" +
                 "double:DOUBLE\n" +
                 "float:FLOAT\n" +
-                "long:LONG\n"+
+                "long:LONG\n" +
                 "str1:STRING\n" +
                 "sym:SYMBOL\n" +
                 "bool:BOOLEAN\n" +
@@ -273,11 +333,13 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path.concat(TableUtils.META_FILE_NAME).$())) {
 
                     tableId = metadata.getId();
-                    try (TableWriter writer = new TableWriter(configuration, "all")) {
+                    long structVersion;
+                    try (TableWriter writer = new TableWriter(configuration, "all", metrics)) {
                         manipulator.restructure(writer);
+                        structVersion = writer.getStructureVersion();
                     }
 
-                    long pTransitionIndex = metadata.createTransitionIndex();
+                    long pTransitionIndex = metadata.createTransitionIndex(structVersion);
                     StringSink sink = new StringSink();
                     try {
                         metadata.applyTransitionIndex(pTransitionIndex);

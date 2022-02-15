@@ -26,56 +26,49 @@ package io.questdb.cairo;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Numbers;
-import io.questdb.std.Transient;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-public class TxnScoreboard implements Closeable {
+public class TxnScoreboard implements Closeable, Mutable {
 
     private static final Log LOG = LogFactory.getLog(TxnScoreboard.class);
-
-    private long fd ;
-    private long mem;
+    private final int pow2EntryCount;
     private final long size;
     private final FilesFacade ff;
+    private long fd = -1;
+    private long mem;
 
-    public TxnScoreboard(FilesFacade ff, @Transient Path root, int entryCount) {
+    public TxnScoreboard(FilesFacade ff, int entryCount) {
         this.ff = ff;
-        root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
-        int pow2EntryCount = Numbers.ceilPow2(entryCount);
+        this.pow2EntryCount = Numbers.ceilPow2(entryCount);
         this.size = TxnScoreboard.getScoreboardSize(pow2EntryCount);
-        this.fd = openCleanRW(ff, root, this.size);
-
-        // truncate is required to give file a size
-        // allocate above does not seem to update file system's size entry
-        ff.truncate(fd, this.size);
-        try {
-            this.mem = TableUtils.mapRW(ff, fd, this.size, MemoryTag.MMAP_DEFAULT);
-            init(mem, pow2EntryCount);
-        } catch (Throwable e) {
-            ff.close(fd);
-            throw e;
-        }
     }
 
     public static native long getScoreboardSize(int entryCount);
 
-    public static void releaseTxn(long pTxnScoreboard, long txn) {
-        assert pTxnScoreboard > 0;
-        LOG.debug().$("release  [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
-        releaseTxn0(pTxnScoreboard, txn);
+    public boolean acquireTxn(long txn) {
+        assert txn > -1;
+        final long internalTxn = toInternalTxn(txn);
+        final long response = acquireTxn(mem, internalTxn);
+        if (response == 0) {
+            // all good
+            return true;
+        }
+        if (response == -1) {
+            // retry
+            return false;
+        }
+        final long min = fromInternalTxn(-response - 2);
+        throw CairoException.instance(0).put("max txn-inflight limit reached [txn=").put(txn).put(", min=").put(min).put(", size=").put(pow2EntryCount).put(']');
     }
 
-    public void acquireTxn(long txn) {
-        if (acquireTxn(mem, txn)) {
-            return;
-        }
-        throw CairoException.instance(0).put("max txn-inflight limit reached [txn=").put(txn).put(", min=").put(getMin()).put(']');
+    @Override
+    public void clear() {
+        // Do full close, all memory used is native but instance will be reusable
+        close();
     }
 
     @Override
@@ -92,36 +85,109 @@ public class TxnScoreboard implements Closeable {
     }
 
     public long getActiveReaderCount(long txn) {
-        return getCount(mem, txn);
+        return getCount(mem, toInternalTxn(txn));
+    }
+
+    public int getEntryCount() {
+        return pow2EntryCount;
     }
 
     public long getMin() {
-        return getMin(mem);
+        final long min = getMin(mem);
+        // min can be 0 on empty scoreboard, so we simply treat it as txn 0.
+        if (min == 0) {
+            return 0;
+        }
+        return fromInternalTxn(min);
     }
 
-    public boolean isTxnAvailable(long nameTxn) {
-        return isTxnAvailable(mem, nameTxn);
+    public boolean isRangeAvailable(long fromTxn, long toTxn) {
+        return isRangeAvailable0(mem, toInternalTxn(fromTxn), toInternalTxn(toTxn));
     }
 
-    public void releaseTxn(long txn) {
-        releaseTxn(mem, txn);
+    public boolean isTxnAvailable(long txn) {
+        return getActiveReaderCount(txn) == 0;
     }
 
-    private static boolean acquireTxn(long pTxnScoreboard, long txn) {
+    public TxnScoreboard ofRO(@Transient Path root) {
+        clear();
+        int rootLen = root.length();
+        root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
+        this.fd = openCleanRW(ff, root, this.size);
+        try {
+            this.mem = TableUtils.mapRO(ff, fd, this.size, MemoryTag.MMAP_DEFAULT);
+        } catch (Throwable e) {
+            ff.close(fd);
+            root.trimTo(rootLen);
+            fd = -1;
+            throw e;
+        }
+        return this;
+    }
+
+    public TxnScoreboard ofRW(@Transient Path root) {
+        clear();
+        root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
+        this.fd = openCleanRW(ff, root, this.size);
+
+        // truncate is required to give file a size
+        // allocate above does not seem to update file system's size entry
+        ff.truncate(fd, this.size);
+        try {
+            this.mem = TableUtils.mapRW(ff, fd, this.size, MemoryTag.MMAP_DEFAULT);
+            init(mem, pow2EntryCount);
+        } catch (Throwable e) {
+            ff.close(fd);
+            fd = -1;
+            throw e;
+        }
+        return this;
+    }
+
+    public long releaseTxn(long txn) {
+        long released = releaseTxn(mem, txn);
+        assert released > -1 : "released count " + txn + " must be positive: " + (released + 1);
+        return released;
+    }
+
+    /**
+     * Table readers use 0 txn as the empty table transaction number.
+     * The scoreboard only supports txn > 0, so we have to patch the value
+     * to avoid races in the scoreboard initialization.
+     */
+    private static long toInternalTxn(long txn) {
+        return txn + 1;
+    }
+
+    /**
+     * Reverts toInternalTxn() value.
+     */
+    private static long fromInternalTxn(long txn) {
+        return txn - 1;
+    }
+
+    private static long acquireTxn(long pTxnScoreboard, long txn) {
         assert pTxnScoreboard > 0;
         LOG.debug().$("acquire [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
         return acquireTxn0(pTxnScoreboard, txn);
     }
 
-    private native static boolean acquireTxn0(long pTxnScoreboard, long txn);
+    private static long releaseTxn(long pTxnScoreboard, long txn) {
+        assert pTxnScoreboard > 0;
+        LOG.debug().$("release  [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
+        final long internalTxn = toInternalTxn(txn);
+        return releaseTxn0(pTxnScoreboard, internalTxn);
+    }
+
+    private native static long acquireTxn0(long pTxnScoreboard, long txn);
 
     private native static long releaseTxn0(long pTxnScoreboard, long txn);
+
+    private native static boolean isRangeAvailable0(long pTxnScoreboard, long txnFrom, long txnTo);
 
     private static native long getCount(long pTxnScoreboard, long txn);
 
     private static native long getMin(long pTxnScoreboard);
-
-    private static native boolean isTxnAvailable(long pTxnScoreboard, long txn);
 
     private static native void init(long pTxnScoreboard, int entryCount);
 

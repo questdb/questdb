@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
+import io.questdb.Metrics;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
@@ -56,6 +57,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final WriterPool writerPool;
     private final ReaderPool readerPool;
     private final CairoConfiguration configuration;
+    private final Metrics metrics;
     private final EngineMaintenanceJob engineMaintenanceJob;
     private final MessageBus messageBus;
     private final RingQueue<TelemetryTask> telemetryQueue;
@@ -68,11 +70,18 @@ public class CairoEngine implements Closeable, WriterSource {
     private long tableIdFd = -1;
     private long tableIdMem = 0;
 
+    // Kept for embedded API purposes. The second constructor (the one with metrics)
+    // should be preferred for internal use.
     public CairoEngine(CairoConfiguration configuration) {
+        this(configuration, Metrics.disabled());
+    }
+
+    public CairoEngine(CairoConfiguration configuration, Metrics metrics) {
         this.configuration = configuration;
+        this.metrics = metrics;
         this.messageBus = new MessageBusImpl(configuration);
-        this.writerPool = new WriterPool(configuration, messageBus);
-        this.readerPool = new ReaderPool(configuration);
+        this.writerPool = new WriterPool(configuration, messageBus, metrics);
+        this.readerPool = new ReaderPool(configuration, messageBus);
         this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
         if (configuration.getTelemetryConfiguration().getEnabled()) {
             this.telemetryQueue = new RingQueue<>(TelemetryTask::new, configuration.getTelemetryConfiguration().getQueueCapacity());
@@ -174,7 +183,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         securityContext.checkWritePermission();
         // There is no point in pooling/caching these writers since they are only used once, backups are not incremental
-        return new TableWriter(configuration, tableName, messageBus, null, true, DefaultLifecycleManager.INSTANCE, backupDirName);
+        return new TableWriter(configuration, tableName, messageBus, null, true, DefaultLifecycleManager.INSTANCE, backupDirName, Metrics.disabled());
     }
 
     public int getBusyReaderCount() {
@@ -187,6 +196,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public CairoConfiguration getConfiguration() {
         return configuration;
+    }
+
+    public Metrics getMetrics() {
+        return metrics;
     }
 
     public Job getEngineMaintenanceJob() {

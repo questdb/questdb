@@ -27,5 +27,10 @@ package io.questdb.network;
 import io.questdb.cutlass.http.HttpException;
 
 public class NoSpaceLeftInResponseBufferException extends HttpException {
-    public final static NoSpaceLeftInResponseBufferException INSTANCE = new NoSpaceLeftInResponseBufferException();
+    public final static NoSpaceLeftInResponseBufferException INSTANCE;
+
+    static {
+        INSTANCE = new NoSpaceLeftInResponseBufferException();
+        INSTANCE.put("no space left in response buffer");
+    }
 }

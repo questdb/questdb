@@ -27,23 +27,19 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableReader;
-import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.sql.RowCursorFactory;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 
 public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFactory {
     private final int columnIndex;
-    private final String symbol;
+    private final Function symbolFunc;
     private final boolean cachedIndexReaderCursor;
     private final LatestByValueIndexedRowCursor cursor = new LatestByValueIndexedRowCursor();
     private int symbolKey;
 
-    // todo: make symbol function to allow use with bind variables
-    public LatestByValueDeferredIndexedRowCursorFactory(int columnIndex, String symbol, boolean cachedIndexReaderCursor) {
+    public LatestByValueDeferredIndexedRowCursorFactory(int columnIndex, Function symbolFunc, boolean cachedIndexReaderCursor) {
         this.columnIndex = columnIndex;
-        this.symbol = symbol;
+        this.symbolFunc = symbolFunc;
         this.symbolKey = SymbolTable.VALUE_NOT_FOUND;
         this.cachedIndexReaderCursor = cachedIndexReaderCursor;
     }
@@ -66,11 +62,10 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
 
     @Override
     public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
-        if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-            symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbol);
-            if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                symbolKey++;
-            }
+        final CharSequence symbol = symbolFunc.getStr(null);
+        symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbol);
+        if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+            symbolKey++;
         }
     }
 

@@ -24,13 +24,13 @@
 
 package io.questdb.mp;
 
+import io.questdb.Metrics;
 import io.questdb.log.Log;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.LockSupport;
 
 public class Worker extends Thread {
     private final static long RUNNING_OFFSET = Unsafe.getFieldOffset(Worker.class, "running");
@@ -42,9 +42,11 @@ public class Worker extends Thread {
     private final WorkerCleaner cleaner;
     private final boolean haltOnError;
     private final int workerId;
+    private final long sleepMs;
     private volatile int running = 0;
     private final long yieldThreshold;
     private final long sleepThreshold;
+    private final Metrics metrics;
 
     public Worker(
             final ObjHashSet<? extends Job> jobs,
@@ -56,7 +58,9 @@ public class Worker extends Thread {
             final int workerId,
             String poolName,
             long yieldThreshold,
-            long sleepThreshold
+            long sleepThreshold,
+            long sleepMs,
+            Metrics metrics
     ) {
         this.log = log;
         this.jobs = jobs;
@@ -68,6 +72,8 @@ public class Worker extends Thread {
         this.workerId = workerId;
         this.yieldThreshold = yieldThreshold;
         this.sleepThreshold = sleepThreshold;
+        this.sleepMs = sleepMs;
+        this.metrics = metrics;
     }
 
     public int getWorkerId() {
@@ -134,7 +140,7 @@ public class Worker extends Thread {
                     }
 
                     if (uselessCounter > sleepThreshold) {
-                        LockSupport.parkNanos(1000000);
+                        Os.sleep(sleepMs);
                     }
                 }
             }
@@ -151,6 +157,7 @@ public class Worker extends Thread {
     }
 
     private void onError(int i, Throwable e) throws Throwable {
+        metrics.healthCheck().incrementUnhandledErrors();
         // Log error even when halt on error is set
         if (log != null) {
             log.error().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).$(']').$();

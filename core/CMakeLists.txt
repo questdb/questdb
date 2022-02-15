@@ -183,7 +183,7 @@ add_library(questdb SHARED ${SOURCE_FILES} ${ZLIB_SRCS} ${ASMJIT_SRC})
 
 set(COMMON_OPTIONS "-Wno-gnu-anonymous-struct;-Wno-nested-anon-types;-Wno-unused-parameter;-fPIC;-fno-rtti;-fno-exceptions")
 
-set(DEBUG_OPTIONS "-Wall;-pedantic;-Wextra;-g;-O2")
+set(DEBUG_OPTIONS "-Wall;-pedantic;-Wextra;-g;-O0")
 set(RELEASE_OPTIONS "-O3")
 
 list(APPEND DEBUG_OPTIONS  "${ASMJIT_CFLAGS};${COMMON_OPTIONS}")

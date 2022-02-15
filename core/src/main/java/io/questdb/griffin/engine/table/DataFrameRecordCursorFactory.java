@@ -127,6 +127,11 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         return cursor;
     }
 
+    @Override
+    public boolean supportsUpdateRowId(CharSequence tableName) {
+        return dataFrameCursorFactory.supportTableRowId(tableName);
+    }
+
     public static class TableReaderPageFrameCursor implements PageFrameCursor {
         private final LongList columnPageNextAddress = new LongList();
         private final LongList columnPageAddress = new LongList();
@@ -240,12 +245,11 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                         long fixOffset = partitionLoAdjusted << 3;
 
                         long varAddress = col.getPageAddress(0);
-                        long varOffset = Unsafe.getUnsafe().getLong(fixAddress + fixOffset);
                         long varAddressSize = Unsafe.getUnsafe().getLong(fixAddress + fixAddressSize);
 
-                        columnPageAddress.setQuick(i * 2, varAddress + varOffset);
+                        columnPageAddress.setQuick(i * 2, varAddress);
                         columnPageAddress.setQuick(i * 2 + 1, fixAddress + fixOffset);
-                        pageSizes.setQuick(i * 2, varAddressSize - varOffset);
+                        pageSizes.setQuick(i * 2, varAddressSize);
                         pageSizes.setQuick(i * 2 + 1, fixAddressSize - fixOffset);
                     }
                 } else {

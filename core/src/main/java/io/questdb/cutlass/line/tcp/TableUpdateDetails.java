@@ -55,7 +55,7 @@ public class TableUpdateDetails implements Closeable {
     private TableWriter writer;
     private boolean assignedToJob = false;
     private long lastMeasurementMillis = Long.MAX_VALUE;
-    private long lastCommitMillis;
+    private long nextCommitTime;
     private int networkIOOwnerCount = 0;
 
     TableUpdateDetails(
@@ -74,19 +74,21 @@ public class TableUpdateDetails implements Closeable {
                     configuration, netIoJobs[i].getUnusedSymbolCaches(), writer.getMetadata().getColumnCount());
         }
         CairoConfiguration cairoConfiguration = engine.getConfiguration();
+        TableWriterMetadata metadata = writer.getMetadata();
         this.millisecondClock = cairoConfiguration.getMillisecondClock();
         this.writerTickRowsCountMod = cairoConfiguration.getWriterTickRowsCountMod();
-        this.lastCommitMillis = millisecondClock.getTicks();
         this.writer = writer;
-        this.timestampIndex = writer.getMetadata().getTimestampIndex();
+        this.timestampIndex = metadata.getTimestampIndex();
         this.tableNameUtf16 = writer.getTableName();
+        writer.updateCommitInterval(configuration.getCommitIntervalFraction(), configuration.getCommitIntervalDefault());
+        this.nextCommitTime = millisecondClock.getTicks() + writer.getCommitInterval();
     }
 
     public void addReference(int workerId) {
         networkIOOwnerCount++;
         LOG.info()
                 .$("network IO thread using table [workerId=").$(workerId)
-                .$(", tableName=").$(getTableNameUtf16())
+                .$(", tableName=").$(tableNameUtf16)
                 .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
                 .$(']').$();
 
@@ -192,51 +194,61 @@ public class TableUpdateDetails implements Closeable {
         return writer;
     }
 
-    void handleRowAppended() {
-        if (checkMaxAndCommitLag(writer)) {
-            lastCommitMillis = millisecondClock.getTicks();
-        }
-    }
-
-    private boolean checkMaxAndCommitLag(TableWriter writer) {
+    void commitIfMaxUncommittedRowsCountReached() {
         final long rowsSinceCommit = writer.getUncommittedRowCount();
         if (rowsSinceCommit < writer.getMetadata().getMaxUncommittedRows()) {
             if ((rowsSinceCommit & writerTickRowsCountMod) == 0) {
                 // Tick without commit. Some tick commands may force writer to commit though.
                 writer.tick(false);
             }
-            return false;
-        }
-        writer.commitWithLag(engine.getConfiguration().getCommitMode());
-        // Tick after commit.
-        writer.tick(false);
-        return true;
-    }
-
-    void handleWriterThreadMaintenance(long ticks, long maintenanceInterval) {
-        if (ticks - lastCommitMillis < maintenanceInterval) {
             return;
         }
-        if (null != writer) {
-            LOG.debug().$("maintenance commit [table=").$(writer.getTableName()).I$();
+        LOG.debug().$("max-uncommitted-rows commit with lag [").$(tableNameUtf16).I$();
+        nextCommitTime = millisecondClock.getTicks() + writer.getCommitInterval();
+        writer.commitWithLag();
+        // Tick after commit.
+        writer.tick(false);
+    }
+
+    long commitIfIntervalElapsed(long wallClockMillis) {
+        if (wallClockMillis < nextCommitTime) {
+            return nextCommitTime;
+        }
+        final long commitInterval = writer.getCommitInterval();
+        commit(wallClockMillis - lastMeasurementMillis < commitInterval);
+        nextCommitTime += commitInterval;
+        return nextCommitTime;
+    }
+
+    private void commit(boolean withLag) {
+        if (writer != null && writer.getUncommittedRowCount() > 0) {
             try {
-                writer.commit();
-            } catch (Throwable e) {
-                LOG.error().$("could not commit [table=").$(writer.getTableName()).I$();
-                writer = Misc.free(writer);
+                LOG.debug().$("time-based commit " + (withLag ? "with lag " : "") + "[rows=").$(writer.getUncommittedRowCount()).$(", table=").$(tableNameUtf16).I$();
+                if (withLag) {
+                    writer.commitWithLag();
+                } else {
+                    writer.commit();
+                }
+            } catch (Throwable ex) {
+                LOG.error().$("could not commit [table=").$(tableNameUtf16).$(", e=").$(ex).I$();
+                try {
+                    writer.rollback();
+                } catch (Throwable th) {
+                    LOG.error().$("could not perform emergency rollback [table=").$(tableNameUtf16).$(", e=").$(th).I$();
+                }
             }
         }
     }
 
     void releaseWriter(boolean commit) {
-        if (null != writer) {
-            LOG.debug().$("release commit [table=").$(writer.getTableName()).I$();
+        if (writer != null) {
             try {
                 if (commit) {
+                    LOG.debug().$("release commit [table=").$(tableNameUtf16).I$();
                     writer.commit();
                 }
             } catch (Throwable ex) {
-                LOG.error().$("writer commit fails, force closing it [table=").$(writer.getTableName()).$(",ex=").$(ex).I$();
+                LOG.error().$("writer commit fails, force closing it [table=").$(tableNameUtf16).$(",ex=").$(ex).I$();
             } finally {
                 // writer or FS can be in a bad state
                 // do not leave writer locked
@@ -285,6 +297,9 @@ public class TableUpdateDetails implements Closeable {
 
         private SymbolCache addSymbolCache(int colIndex) {
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16)) {
+                if (!ColumnType.isSymbol(reader.getMetadata().getColumnType(colIndex))) {
+                    throw CairoException.instance(0).put(reader.getMetadata().getColumnName(colIndex)).put(" expected to be Symbol type in table ").put(tableNameUtf16);
+                }
                 path.of(engine.getConfiguration().getRoot()).concat(tableNameUtf16);
                 SymbolCache symCache;
                 final int lastUnusedSymbolCacheIndex = unusedSymbolCaches.size() - 1;

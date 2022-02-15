@@ -52,8 +52,8 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final CairoSecurityContext securityContext;
     private final RingQueue<LineTcpMeasurementEvent> queue;
     private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();
-    private final CharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
-    private final CharSequenceObjHashMap<TableUpdateDetails> idleTableUpdateDetailsUtf16;
+    private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
+    private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> idleTableUpdateDetailsUtf16;
     private final long[] loadByWriterThread;
     private final long writerIdleTimeout;
     private final NetworkIOJob[] netIoJobs;
@@ -90,8 +90,8 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         // Worker count is set to 1 because we do not use this execution context
         // in worker threads.
-        tableUpdateDetailsUtf16 = new CharSequenceObjHashMap<>();
-        idleTableUpdateDetailsUtf16 = new CharSequenceObjHashMap<>();
+        tableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
+        idleTableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
         loadByWriterThread = new long[writerWorkerPool.getWorkerCount()];
         int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();
         int queueSize = lineConfiguration.getWriterQueueCapacity();
@@ -109,6 +109,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         pubSeq = new MPSequence(queueSize);
 
+        long commitIntervalDefault = configuration.getCommitIntervalDefault();
         int nWriterThreads = writerWorkerPool.getWorkerCount();
         if (nWriterThreads > 1) {
             FanOut fanOut = new FanOut();
@@ -120,8 +121,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                         queue,
                         subSeq,
                         milliClock,
-                        configuration.getMaintenanceInterval(),
-                        this
+                        commitIntervalDefault,
+                        this,
+                        engine.getMetrics()
                 );
                 writerWorkerPool.assign(i, (Job) lineTcpWriterJob);
                 writerWorkerPool.assign(i, (Closeable) lineTcpWriterJob);
@@ -135,8 +137,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                     queue,
                     subSeq,
                     milliClock,
-                    configuration.getMaintenanceInterval(),
-                    this
+                    commitIntervalDefault,
+                    this,
+                    engine.getMetrics()
             );
             writerWorkerPool.assign(0, (Job) lineTcpWriterJob);
             writerWorkerPool.assign(0, (Closeable) lineTcpWriterJob);
@@ -284,11 +287,14 @@ class LineTcpMeasurementScheduler implements Closeable {
 
                 final int idleTudKeyIndex = idleTableUpdateDetailsUtf16.keyIndex(tableNameUtf16);
                 if (idleTudKeyIndex < 0) {
-                    LOG.info().$("idle table going active [tableName=").$(tableNameUtf16).I$();
                     tab = idleTableUpdateDetailsUtf16.valueAt(idleTudKeyIndex);
+                    LOG.info().$("idle table going active [tableName=").$(tab.getTableNameUtf16()).I$();
                     if (tab.getWriter() == null) {
                         tab.closeNoLock();
-                        tab = unsafeAssignTableToWriterThread(tudKeyIndex, tableNameUtf16);
+                        // Use actual table name from the "details" to avoid case mismatches in the
+                        // WriterPool. There was an error in the LineTcpReceiverFuzzTest, which helped
+                        // to identify the cause
+                        tab = unsafeAssignTableToWriterThread(tudKeyIndex, tab.getTableNameUtf16());
                     } else {
                         idleTableUpdateDetailsUtf16.removeAt(idleTudKeyIndex);
                         tableUpdateDetailsUtf16.putAt(tudKeyIndex, tab.getTableNameUtf16(), tab);

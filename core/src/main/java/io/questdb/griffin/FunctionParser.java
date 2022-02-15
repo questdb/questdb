@@ -29,8 +29,11 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
+import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastSymbolToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.*;
@@ -41,6 +44,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
 
@@ -114,13 +118,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.RECORD:
                 return new RecordColumn(index, metadata.getMetadata(index));
             case ColumnType.GEOBYTE:
-                return new GeoByteColumn(index, columnType);
+                return GeoByteColumn.newInstance(index, columnType);
             case ColumnType.GEOSHORT:
-                return new GeoShortColumn(index, columnType);
+                return GeoShortColumn.newInstance(index, columnType);
             case ColumnType.GEOINT:
-                return new GeoIntColumn(index, columnType);
+                return GeoIntColumn.newInstance(index, columnType);
             case ColumnType.GEOLONG:
-                return new GeoLongColumn(index, columnType);
+                return GeoLongColumn.newInstance(index, columnType);
             case ColumnType.NULL:
                 return NullConstant.NULL;
             case ColumnType.LONG256:
@@ -150,6 +154,46 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
         }
         return NullConstant.NULL;
+    }
+
+    public Function createImplicitCast(int position, Function function, int toType) throws SqlException {
+        Function cast = createImplicitCastOrNull(position, function, toType);
+        if (cast != null && cast.isConstant()) {
+            Function constant = functionToConstant(cast);
+            // incoming function is now converted to a constant and can be closed here
+            // since the returning constant will not use the function as underlying arg
+            function.close();
+            return constant;
+        }
+        // Do not close incoming function if cast is not a constant
+        // it will be used inside the cast as an argument
+        return cast;
+    }
+
+    @Nullable
+    private Function createImplicitCastOrNull(int position, Function function, int toType) throws SqlException {
+        int fromType = function.getType();
+        switch (fromType) {
+            case ColumnType.STRING:
+            case ColumnType.SYMBOL:
+                if (toType == ColumnType.TIMESTAMP) {
+                    return new CastStrToTimestampFunctionFactory.Func(position, function);
+                }
+                if (ColumnType.isGeoHash(toType)) {
+                    return CastStrToGeoHashFunctionFactory.newInstance(position, toType, function);
+                }
+                break;
+            default:
+                if (ColumnType.isGeoHash(fromType)) {
+                    int fromGeoBits = ColumnType.getGeoHashBits(fromType);
+                    int toGeoBits = ColumnType.getGeoHashBits(toType);
+                    if (ColumnType.isGeoHash(toType) && toGeoBits < fromGeoBits) {
+                        return CastGeoHashToGeoHashFunctionFactory.newInstance(position, function, fromType, toType);
+                    }
+                }
+                break;
+        }
+        return null;
     }
 
     public FunctionFactoryCache getFunctionFactoryCache() {
@@ -196,16 +240,20 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
         try {
             this.metadata = metadata;
-            traverseAlgo.traverse(node, this);
+            try {
+                traverseAlgo.traverse(node, this);
+            } catch (SqlException e) {
+                // release parsed functions
+                Misc.free(functionStack.poll());
+                positionStack.clear();
+                throw e;
+            }
+
             final Function function = functionStack.poll();
             positionStack.pop();
             assert positionStack.size() == functionStack.size();
             if (function != null && function.isConstant() && (function instanceof ScalarFunction)) {
-                try {
-                    return functionToConstant(function);
-                } finally {
-                    function.close();
-                }
+                return functionToConstant(function);
             }
             return function;
         } finally {
@@ -252,8 +300,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             mutableArgPositions.clear();
             mutableArgPositions.setPos(argCount);
             for (int n = 0; n < argCount; n++) {
-                mutableArgs.setQuick(n, functionStack.poll());
-                mutableArgPositions.setQuick(n, positionStack.pop());
+                final Function arg = functionStack.poll();
+                final int pos = positionStack.pop();
+
+                mutableArgs.setQuick(n, arg);
+                mutableArgPositions.setQuick(n, pos);
+
+                if (arg instanceof GroupByFunction) {
+                    Misc.freeObjList(mutableArgs);
+                    throw SqlException.position(pos).put("Aggregate function cannot be passed as an argument");
+                }
             }
             functionStack.push(createFunction(node, mutableArgs, mutableArgPositions));
         }
@@ -275,6 +331,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
         }
         ex.put(')');
+        Misc.freeObjList(args);
         return ex;
     }
 
@@ -314,6 +371,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
         }
         ex.put(')');
+        Misc.freeObjList(args);
         return ex;
     }
 
@@ -328,14 +386,17 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         try {
             function = factory.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
         } catch (SqlException e) {
+            Misc.freeObjList(args);
             throw e;
         } catch (Throwable e) {
             LOG.error().$("exception in function factory: ").$(e).$();
+            Misc.freeObjList(args);
             throw SqlException.position(position).put("exception in function factory");
         }
 
         if (function == null) {
             LOG.error().$("NULL function").$(" [signature=").$(factory.getSignature()).$(",class=").$(factory.getClass().getName()).$(']').$();
+            Misc.freeObjList(args);
             throw SqlException.position(position).put("bad function factory (NULL), check log");
         }
         return function;
@@ -642,12 +703,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         if (candidateSigVarArgConst) {
             for (int k = candidateSigArgCount; k < argCount; k++) {
                 Function func = args.getQuick(k);
-                if (!func.isConstant()) {
+                if (!(func.isConstant() || func.isRuntimeConstant())) {
+                    Misc.freeObjList(args);
                     throw SqlException.$(argPositions.getQuick(k), "constant expected");
                 }
             }
         }
-
 
         // it is possible that we have more undefined variables than
         // args in the descriptor, in case of vararg for example
@@ -713,6 +774,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     private Function functionToConstant(Function function) {
+        Function newFunction = functionToConstant0(function);
+        // Sometimes functionToConstant0 returns same instance as passed in parameter
+        if (newFunction != function) {
+            // and we want to close underlying function only in case it's different form returned newFunction
+            function.close();
+        }
+        return newFunction;
+    }
+
+    private Function functionToConstant0(Function function) {
         int type = function.getType();
         switch (ColumnType.tagOf(type)) {
             case ColumnType.INT:

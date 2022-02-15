@@ -30,7 +30,6 @@ import org.junit.Test;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReadWriteLock;
 
 public class SimpleReadWriteLockTest {
@@ -163,7 +162,7 @@ public class SimpleReadWriteLockTest {
                         if (n < 1 || n >= WRITER_ACTIVITY_NUM) {
                             throw new IllegalStateException("reader lock: " + n);
                         }
-                        LockSupport.parkNanos(10);
+                        Os.pause();
                         activity.decrementAndGet();
                     } finally {
                         lock.readLock().unlock();
@@ -204,7 +203,7 @@ public class SimpleReadWriteLockTest {
                         if (n != WRITER_ACTIVITY_NUM) {
                             throw new IllegalStateException("writer lock: " + n);
                         }
-                        LockSupport.parkNanos(10);
+                        Os.pause();
                         activity.addAndGet(-WRITER_ACTIVITY_NUM);
                     } finally {
                         lock.writeLock().unlock();
@@ -245,7 +244,7 @@ public class SimpleReadWriteLockTest {
                             if (n != WRITER_ACTIVITY_NUM) {
                                 throw new IllegalStateException("writer lock: " + n);
                             }
-                            LockSupport.parkNanos(10);
+                            Os.pause();
                             activity.addAndGet(-WRITER_ACTIVITY_NUM);
                         } finally {
                             lock.writeLock().unlock();

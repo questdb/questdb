@@ -34,7 +34,7 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.*;
 
-public final class TxWriter extends TxReader implements Closeable, SymbolValueCountCollector {
+public final class TxWriter extends TxReader implements Closeable, Mutable, SymbolValueCountCollector {
     private long prevTransientRowCount;
     private int attachedPositionDirtyIndex;
     private int txPartitionCount;
@@ -42,17 +42,8 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
     private long prevMinTimestamp;
     private MemoryCMARW txMem;
 
-    public TxWriter(FilesFacade ff, @Transient Path path, int partitionBy) {
-        super(ff, path, partitionBy);
-        try {
-            unsafeLoadAll();
-        } catch (Throwable e) {
-            // Do not truncate in case the file cannot be read
-            txMem.close(false);
-            txMem = null;
-            super.close();
-            throw e;
-        }
+    public TxWriter(FilesFacade ff) {
+        super(ff);
     }
 
     public void append() {
@@ -117,10 +108,18 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
     }
 
     @Override
+    public void clear() {
+        close();
+    }
+
+    @Override
     public void close() {
         try {
+            // Never trim _txn file to size. Size of the file can only grow up.
             if (txMem != null) {
                 txMem.jumpTo(getTxEofOffset());
+                txMem.close(false);
+                txMem = null;
             }
         } finally {
             super.close();
@@ -128,19 +127,38 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
     }
 
     @Override
-    public void unsafeLoadAll() {
-        super.unsafeLoadAll();
-        this.prevTransientRowCount = this.transientRowCount;
-        this.prevMaxTimestamp = maxTimestamp;
-        this.prevMinTimestamp = minTimestamp;
+    public TxWriter ofRO(@Transient Path path, int partitionBy) {
+        throw new IllegalStateException();
     }
 
     @Override
     protected MemoryCMR openTxnFile(FilesFacade ff, Path path) {
-        if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
-            return txMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT);
+        int pathLen = path.length();
+        try {
+            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
+                return txMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT);
+            }
+            throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
+        } finally {
+            path.trimTo(pathLen);
         }
-        throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
+    }
+
+    public void removeAttachedPartitions(long timestamp) {
+        final long partitionTimestampLo = getPartitionTimestampLo(timestamp);
+        int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
+        if (index > -1) {
+            final int size = attachedPartitions.size();
+            final int lim = size - LONGS_PER_TX_ATTACHED_PARTITION;
+            if (index < lim) {
+                attachedPartitions.arrayCopy(index + LONGS_PER_TX_ATTACHED_PARTITION, index, lim - index);
+                attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, index);
+            }
+            attachedPartitions.setPos(lim);
+            partitionTableVersion++;
+        } else {
+            assert false;
+        }
     }
 
     @Override
@@ -205,24 +223,36 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
         return getPartitionTimestampLo(maxTimestamp) == timestamp;
     }
 
+    public TxWriter ofRW(@Transient Path path, int partitionBy) {
+        super.ofRO(path, partitionBy);
+        try {
+            unsafeLoadAll();
+        } catch (Throwable e) {
+            // Do not truncate in case the file cannot be read
+            txMem.close(false);
+            txMem = null;
+            super.close();
+            throw e;
+        }
+        return this;
+    }
+
     public void openFirstPartition(long timestamp) {
         txPartitionCount = 1;
         updateAttachedPartitionSizeByTimestamp(timestamp, 0);
     }
 
-    public void removeAttachedPartitions(long timestamp) {
-        final long partitionTimestampLo = getPartitionTimestampLo(timestamp);
-        int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
-        if (index > -1) {
-            final int size = attachedPartitions.size();
-            final int lim = size - LONGS_PER_TX_ATTACHED_PARTITION;
-            if (index < lim) {
-                attachedPartitions.arrayCopy(index + LONGS_PER_TX_ATTACHED_PARTITION, index, lim - index);
-                attachedPositionDirtyIndex = Math.min(attachedPositionDirtyIndex, index);
-            }
-            attachedPartitions.setPos(lim);
-            partitionTableVersion++;
-        }
+    public void truncate() {
+        maxTimestamp = Long.MIN_VALUE;
+        minTimestamp = Long.MAX_VALUE;
+        prevTransientRowCount = 0;
+        transientRowCount = 0;
+        fixedRowCount = 0;
+        txn++;
+        txPartitionCount = 1;
+        attachedPositionDirtyIndex = 0;
+        attachedPartitions.clear();
+        resetTxn(txMem, getSymbolColumnCount(), txn, ++dataVersion, ++partitionTableVersion, structureVersion);
     }
 
     public void reset(long fixedRowCount, long transientRowCount, long maxTimestamp) {
@@ -277,17 +307,11 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
         txPartitionCount++;
     }
 
-    public void truncate() {
-        maxTimestamp = Long.MIN_VALUE;
-        minTimestamp = Long.MAX_VALUE;
-        prevTransientRowCount = 0;
-        transientRowCount = 0;
-        fixedRowCount = 0;
-        txn++;
-        txPartitionCount = 1;
-        attachedPositionDirtyIndex = 0;
-        attachedPartitions.clear();
-        resetTxn(txMem, symbolColumnCount, txn, ++dataVersion, ++partitionTableVersion);
+    public void unsafeLoadAll() {
+        TableUtils.unsafeReadTxFile(this);
+        this.prevTransientRowCount = this.transientRowCount;
+        this.prevMaxTimestamp = maxTimestamp;
+        this.prevMinTimestamp = minTimestamp;
     }
 
     public void updateMaxTimestamp(long timestamp) {
@@ -344,10 +368,12 @@ public final class TxWriter extends TxReader implements Closeable, SymbolValueCo
     }
 
     private void saveAttachedPartitionsToTx(int symbolColumnCount) {
-        final int size = attachedPartitions.size();
-        final long partitionTableOffset = getPartitionTableSizeOffset(symbolColumnCount);
-        txMem.putInt(partitionTableOffset, size * Long.BYTES);
+        // change partition count only when we have something to save to the
+        // partition table
         if (maxTimestamp != Long.MIN_VALUE) {
+            final int size = attachedPartitions.size();
+            final long partitionTableOffset = getPartitionTableSizeOffset(symbolColumnCount);
+            txMem.putInt(partitionTableOffset, size * Long.BYTES);
             for (int i = attachedPositionDirtyIndex; i < size; i++) {
                 txMem.putLong(getPartitionTableIndexOffset(partitionTableOffset, i), attachedPartitions.getQuick(i));
             }

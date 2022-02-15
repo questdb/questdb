@@ -47,14 +47,6 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_bindUdp
 
 /*
  * Class:     com_questdb_network_Net
- * Method:    configureNoLinger
- * Signature: (J)I
- */
-JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureNoLinger
-        (JNIEnv *, jclass, jlong);
-
-/*
- * Class:     com_questdb_network_Net
  * Method:    configureNonBlocking
  * Signature: (J)I
  */

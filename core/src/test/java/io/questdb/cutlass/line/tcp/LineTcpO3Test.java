@@ -97,7 +97,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
         configuration = serverConf.getCairoConfiguration();
         lineConfiguration = serverConf.getLineTcpReceiverConfiguration();
         sharedWorkerPoolConfiguration = serverConf.getWorkerPoolConfiguration();
-        engine = new CairoEngine(configuration);
+        engine = new CairoEngine(configuration, metrics);
         messageBus = engine.getMessageBus();
         LOG.info().$("setup engine completed").$();
     }
@@ -160,10 +160,10 @@ public class LineTcpO3Test extends AbstractCairoTest {
             long clientFd = Net.socketTcp(true);
             Assert.assertTrue(clientFd >= 0);
 
-            long ilpSockAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), lineConfiguration.getNetDispatcherConfiguration().getBindPort());
-            WorkerPool sharedWorkerPool = new WorkerPool(sharedWorkerPoolConfiguration);
+            long ilpSockAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), lineConfiguration.getDispatcherConfiguration().getBindPort());
+            WorkerPool sharedWorkerPool = new WorkerPool(sharedWorkerPoolConfiguration, metrics);
             try (
-                    LineTcpReceiver ignored = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine);
+                    LineTcpReceiver ignored = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine, metrics);
                     SqlCompiler compiler = new SqlCompiler(engine);
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
             ) {

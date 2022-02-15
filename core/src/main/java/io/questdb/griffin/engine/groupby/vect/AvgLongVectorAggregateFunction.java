@@ -50,10 +50,10 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
         this.columnIndex = columnIndex;
         if (keyKind == GKK_HOUR_INT) {
             distinctFunc = Rosti::keyedHourDistinct;
-            keyValueFunc = Rosti::keyedHourSumLong;
+            keyValueFunc = Rosti::keyedHourSumLongLong;
         } else {
             distinctFunc = Rosti::keyedIntDistinct;
-            keyValueFunc = Rosti::keyedIntSumLong;
+            keyValueFunc = Rosti::keyedIntSumLongLong;
         }
     }
 
@@ -94,23 +94,25 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
         // correctly with long sum and count in mind.
         Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
         Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0);
+        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 2), 0);
     }
 
     @Override
     public void merge(long pRostiA, long pRostiB) {
-        Rosti.keyedIntSumLongMerge(pRostiA, pRostiA, valueOffset);
+        Rosti.keyedIntSumLongLongMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes types) {
         this.valueOffset = types.getColumnCount();
-        types.add(ColumnType.DOUBLE);
-        types.add(ColumnType.LONG);
+        types.add(ColumnType.LONG); // accumulator low part
+        types.add(ColumnType.LONG); // accumulator high part
+        types.add(ColumnType.LONG); // count
     }
 
     @Override
     public void wrapUp(long pRosti) {
-        Rosti.keyedIntAvgLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
+        Rosti.keyedIntAvgLongLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
     }
 
     @Override

@@ -42,7 +42,6 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.locks.LockSupport;
 
 public class ReaderPoolTest extends AbstractCairoTest {
     @Before
@@ -73,7 +72,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         if (i == 1) {
                             barrier.await();
                         }
-                        LockSupport.parkNanos(10L);
+                        Os.pause();
                     }
                 } catch (Exception e) {
                     e.printStackTrace();
@@ -89,7 +88,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
                     for (int i = 0; i < 1000; i++) {
                         pool.releaseInactive();
-                        LockSupport.parkNanos(10L);
+                        Os.pause();
                     }
 
                 } catch (Exception e) {
@@ -213,7 +212,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                             String m = names[rnd.nextPositiveInt() % readerCount];
 
                             try (TableReader ignored = pool.get(m)) {
-                                LockSupport.parkNanos(100);
+                                Os.pause();
                             }
                         }
 
@@ -249,7 +248,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 CairoTestUtils.create(model);
             }
 
-            try (TableWriter w = new TableWriter(configuration, names[i])) {
+            try (TableWriter w = new TableWriter(configuration, names[i], metrics)) {
                 for (int k = 0; k < 10; k++) {
                     TableWriter.Row r = w.newRow();
                     r.putDate(0, dataRnd.nextLong());
@@ -438,13 +437,16 @@ public class ReaderPoolTest extends AbstractCairoTest {
     public void testGetReaderFailure() throws Exception {
         final int N = 3;
         final int K = 40;
+        AtomicInteger locked = new AtomicInteger(1);
 
         TestFilesFacade ff = new TestFilesFacade() {
             int count = N;
 
             @Override
+
             public long openRO(LPSZ name) {
-                if (count-- > 0) {
+                count--;
+                if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && locked.get() == 1) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -467,6 +469,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 Assert.assertEquals(0, pool.getBusyCount());
             }
 
+            locked.set(0);
             ObjHashSet<TableReader> readers = new ObjHashSet<>();
             for (int i = 0; i < K; i++) {
                 Assert.assertTrue(readers.add(pool.get("u")));
@@ -485,6 +488,11 @@ public class ReaderPoolTest extends AbstractCairoTest {
             @Override
             public FilesFacade getFilesFacade() {
                 return ff;
+            }
+
+            @Override
+            public long getSpinLockTimeoutUs() {
+                return 1000;
             }
         });
 
@@ -793,14 +801,12 @@ public class ReaderPoolTest extends AbstractCairoTest {
             Assert.assertEquals(1, pool.getBusyCount());
             reader.close();
             Assert.assertEquals(0, pool.getBusyCount());
-            reader.close();
-
-            reader = pool.get("u");
-            Assert.assertNotNull(reader);
-            Assert.assertTrue(reader.isOpen());
-            reader.close();
-
-            Assert.assertEquals("[10,1,11,1]", listener.events.toString());
+            try {
+                reader.close();
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "double close");
+            }
         });
     }
 
@@ -875,7 +881,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
     private void assertWithPool(PoolAwareCode code, final CairoConfiguration configuration) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (ReaderPool pool = new ReaderPool(configuration)) {
+            try (ReaderPool pool = new ReaderPool(configuration, null)) {
                 code.run(pool);
             }
         });

@@ -627,8 +627,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateAsSelectMissingTimestamp() throws Exception {
         assertSyntaxError(
                 "create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 100000000000l) t from long_sequence(100000))) partition by DAY",
-                0,
-                "timestamp is not defined"
+                153,
+                "partitioning is possible only on tables with designated timestamps"
         );
     }
 
@@ -887,8 +887,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableCastIndexCapacityHigh() throws Exception {
         assertSyntaxError(
-                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache index capacity 100000000)",
-                96,
+                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache), index(c capacity 100000000)",
+                100,
                 "max index block capacity is",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -901,8 +901,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableCastIndexCapacityLow() throws Exception {
         assertSyntaxError(
-                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache index capacity 1)",
-                96,
+                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache), index(c capacity 1)",
+                100,
                 "min index block capacity is",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -915,8 +915,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableCastIndexDef() throws SqlException {
         assertCreateTable(
-                "create table x as (select-choose a, b, c from (select [a, b, c] from tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 32 nocache index capacity 512)",
-                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache index capacity 300)",
+                "create table x as (select-choose a, b, c from (select [a, b, c] from tab)), index(c capacity 512), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 32 nocache)",
+                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache), index(c capacity 300)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.LONG)
@@ -928,8 +928,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableCastIndexInvalidCapacity() throws Exception {
         assertSyntaxError(
-                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache index capacity -)",
-                97,
+                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache), index(c capacity -)",
+                101,
                 "bad integer",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -942,8 +942,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableCastIndexNegativeCapacity() throws Exception {
         assertSyntaxError(
-                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache index capacity -3)",
-                96,
+                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache), index(c capacity -3)",
+                100,
                 "min index block capacity is",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -1326,6 +1326,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "partition by YEAR",
                 112,
                 "Invalid column"
+        );
+    }
+
+    @Test
+    public void testCreateTableWithoutDesignatedTimestamp() throws Exception {
+        assertSyntaxError(
+                "create table x (a timestamp) " +
+                        "partition by DAY",
+                42,
+                "partitioning is possible only on tables with designated timestamps"
         );
     }
 
@@ -2216,7 +2226,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create table tab (\n" +
                         "    tag string,\n" +
                         "    seq long\n" +
-                        ")  partition by NONE",
+                        ")",
                 71,
                 "empty where clause"
         );
@@ -2302,7 +2312,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create table tab (\n" +
                         "    x double,\n" +
                         "    y int\n" +
-                        ")  partition by NONE",
+                        ")",
                 27,
                 "Invalid column: tab.x"
         );
@@ -2315,7 +2325,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create table tab (\n" +
                         "    a int,\n" +
                         "    b int\n" +
-                        ")  partition by NONE",
+                        ")",
                 37,
                 "Invalid column: tab.b"
         );
@@ -2328,7 +2338,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create table tab (\n" +
                         "    a int,\n" +
                         "    b int\n" +
-                        ")  partition by NONE",
+                        ")",
                 40,
                 "Invalid column: tab.b"
         );
@@ -2341,7 +2351,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create table tab (\n" +
                         "    a int,\n" +
                         "    b int\n" +
-                        ")  partition by NONE",
+                        ")",
                 44,
                 "Invalid column: tab.b"
         );
@@ -2354,7 +2364,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create table tab (\n" +
                         "    x double,\n" +
                         "    y int\n" +
-                        ")  partition by NONE",
+                        ")",
                 59,
                 "Invalid column: tab.y"
         );
@@ -3719,6 +3729,33 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testLatestByOnDesignatedTimestampWithSubQuery() throws SqlException {
+        assertQuery(
+                "select-choose ts, x, y, z from (select [ts, x, y, z] from (select-choose [ts, x, y, z] ts, x, y, z from (select [ts, x, y, z] from tab timestamp (ts)) order by ts) _xQdbA1 latest on ts partition by z)",
+                "select * from (tab order by ts) latest on ts partition by z",
+                modelOf("tab").timestamp("ts").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testLatestByOnNonDesignatedTimestampWithSubQuery() throws SqlException {
+        assertQuery(
+                "select-choose ts, another_ts, x, y, z from (select [ts, another_ts, x, y, z] from (select-choose [another_ts, ts, x, y, z] ts, another_ts, x, y, z from (select [another_ts, ts, x, y, z] from tab timestamp (ts)) order by another_ts) _xQdbA1 latest on another_ts partition by z)",
+                "(tab order by another_ts) latest on another_ts partition by z",
+                modelOf("tab").timestamp("ts").col("another_ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testLatestByWithFilterAndSubQuery() throws SqlException {
+        assertQuery(
+                "select-choose x, ts from (select [x, ts, z] from (select-choose [ts, x, z] ts, x, y, z from (select [ts, x, z] from tab timestamp (ts) where x > 0) order by ts) _xQdbA1 latest on ts partition by z)",
+                "select x, ts from (tab order by ts) where x > 0 latest on ts partition by z",
+                modelOf("tab").timestamp("ts").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.STRING)
+        );
+    }
+
+    @Test
     public void testLatestBySyntax() throws Exception {
         assertSyntaxError(
                 "select * from tab latest",
@@ -4074,7 +4111,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "    sym symbol,\n" +
                         "    bid int,\n" +
                         "    ask int\n" +
-                        ")  partition by NONE",
+                        ")",
                 71,
                 "literal expected"
         );
@@ -5277,8 +5314,21 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectDistinctGroupByFunctionArithmeticLimit() throws SqlException {
-        assertQuery("select-distinct a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from (select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1 from (select [a, c, b] from tab)) limit 10)",
+        assertQuery("select-distinct a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from (select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1 from (select [a, c, b] from tab))) limit 10",
                 "select distinct a, sum(b)+sum(c) bb from tab limit 10",
+                modelOf("tab")
+                        .col("a", ColumnType.STRING)
+                        .col("b", ColumnType.LONG)
+                        .col("c", ColumnType.LONG)
+        );
+    }
+
+    @Test
+    public void testSelectDistinctGroupByFunctionArithmeticOrderByLimit() throws SqlException {
+        assertQuery("select-distinct a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from " +
+                        "(select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1 " +
+                        "from (select [a, c, b] from tab))) order by a limit 10",
+                "select distinct a, sum(b)+sum(c) bb from tab order by a limit 10",
                 modelOf("tab")
                         .col("a", ColumnType.STRING)
                         .col("b", ColumnType.LONG)
@@ -5869,6 +5919,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
             @Override
             public FilesFacade getFilesFacade() {
                 return ff;
+            }
+
+            @Override
+            public long getSpinLockTimeoutUs() {
+                return 1000;
             }
         };
 

@@ -102,16 +102,6 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
-    public int getIdleRecvCountBeforeGivingUp() {
-        return 10_000;
-    }
-
-    @Override
-    public int getIdleSendCountBeforeGivingUp() {
-        return 10_000;
-    }
-
-    @Override
     public boolean isInsertCacheEnabled() {
         return true;
     }

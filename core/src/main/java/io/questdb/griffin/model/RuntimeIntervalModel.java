@@ -162,19 +162,24 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
 
                     outIntervals.extendAndSet(divider + 1, hi);
                     outIntervals.setQuick(divider, lo);
+                    if (divider == 0 && negated) {
+                        // Divider == 0 means it's the first interval applied
+                        // Invert the interval, since it will not be applied negated to anything
+                        IntervalUtils.invert(outIntervals, divider);
+                    }
                 } else {
                     // This is subtract or intersect with a string interval (not a single timestamp)
                     CharSequence strValue = dynamicFunction.getStr(null);
                     if (operation == IntervalOperation.INTERSECT_INTERVALS) {
                         // This is intersect
-                        if (parseIntervalFails(outIntervals, strValue)){
+                        if (parseIntervalFails(outIntervals, strValue)) {
                             // return empty set
                             outIntervals.clear();
                             return;
                         }
                     } else {
                         // This is subtract
-                        if (parseIntervalFails(outIntervals, strValue)){
+                        if (parseIntervalFails(outIntervals, strValue)) {
                             // full set
                             negatedNothing(outIntervals, divider);
                             continue;

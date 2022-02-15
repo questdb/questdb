@@ -24,9 +24,8 @@
 
 package io.questdb.mp;
 
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-
-import java.util.concurrent.locks.LockSupport;
 
 /**
  * Single owner count down latch. This latch is mutable and it does not actively
@@ -40,7 +39,7 @@ public class SOUnboundedCountDownLatch implements CountDownLatchSPI {
 
     public void await(int count) {
         while (this.count > -count) {
-            LockSupport.parkNanos(1);
+            Os.pause();
         }
     }
 

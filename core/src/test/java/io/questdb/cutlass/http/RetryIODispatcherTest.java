@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableWriter;
@@ -436,7 +437,9 @@ public class RetryIODispatcherTest {
                                 for (int r = 0; r < insertCount; r++) {
                                     // insert one record
                                     try {
-                                        new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                        new SendAndReceiveRequestBuilder()
+                                                .withClientLinger(60)
+                                                .executeWithStandardHeaders(
                                                 "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n",
                                                 IODispatcherTest.JSON_DDL_RESPONSE
                                         );
@@ -496,7 +499,9 @@ public class RetryIODispatcherTest {
                                 for (int r = 0; r < insertCount; r++) {
                                     // insert one record
                                     try {
-                                        new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                        new SendAndReceiveRequestBuilder()
+                                                .withClientLinger(60)
+                                                .executeWithStandardHeaders(
                                                 "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n",
                                                 IODispatcherTest.JSON_DDL_RESPONSE
                                         );
@@ -558,7 +563,8 @@ public class RetryIODispatcherTest {
                                     try {
                                         SendAndReceiveRequestBuilder sendAndReceiveRequestBuilder = new SendAndReceiveRequestBuilder()
                                                 .withNetworkFacade(getSendDelayNetworkFacade(slowServerReceiveNetAfterSending))
-                                                .withCompareLength(importResponse.length());
+                                                .withCompareLength(importResponse.length())
+                                                .withClientLinger(60);
                                         sendAndReceiveRequestBuilder
                                                 .execute(importRequest, importResponse);
                                         successRequests.incrementAndGet();
@@ -611,17 +617,22 @@ public class RetryIODispatcherTest {
 
     private void assertInsertsIsPerformedWhenWriterLockedAndDisconnected() throws Exception {
         final int parallelCount = 4;
+        final Metrics metrics = Metrics.enabled();
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
                 .withWorkerCount(parallelCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withMetrics(metrics)
                 .withTelemetry(false)
                 .run(engine -> {
+                    long nonInsertQueries = 0;
+
                     // create table
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n",
                             IODispatcherTest.JSON_DDL_RESPONSE
                     );
+                    nonInsertQueries++;
 
                     TableWriter writer = lockWriter(engine, "balances_x");
                     CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
@@ -638,7 +649,9 @@ public class RetryIODispatcherTest {
                                     Os.sleep(threadI * 5);
                                     String request = "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(" + threadI +
                                             "%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" + SendAndReceiveRequestBuilder.RequestHeaders;
-                                    long fd = new SendAndReceiveRequestBuilder().connectAndSendRequest(request);
+                                    long fd = new SendAndReceiveRequestBuilder()
+                                            .withClientLinger(60)
+                                            .connectAndSendRequest(request);
                                     fds[threadI] = fd;
                                 } catch (Exception e) {
                                     LOG.error().$("Failed execute insert http request. Server error ").$(e);
@@ -650,41 +663,59 @@ public class RetryIODispatcherTest {
                         threads[i].start();
                     }
                     countDownLatch.await();
+
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=SELECT+1 HTTP/1.1\r\n",
                             "54\r\n" +
                                     "{\"query\":\"SELECT 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"dataset\":[[1]],\"count\":1}\r\n" +
                                     "00\r\n" +
                                     "\r\n");
-                    for (int n = 0; n < fds.length; n++) {
-                        Assert.assertNotEquals(fds[n], -1);
-                        NetworkFacadeImpl.INSTANCE.close(fds[n]);
+                    nonInsertQueries++;
+
+                    final int maxWaitTimeMillis = 3000;
+                    final int sleepMillis = 10;
+
+                    // wait for all insert queries to be initially handled
+                    long startedInserts;
+                    for (int i = 0; i < maxWaitTimeMillis / sleepMillis; i++) {
+                        startedInserts = metrics.jsonQuery().startedQueriesCount() - nonInsertQueries;
+                        if (startedInserts >= parallelCount) {
+                            break;
+                        }
+                        Os.sleep(sleepMillis);
+                    }
+                    startedInserts = metrics.jsonQuery().startedQueriesCount() - nonInsertQueries;
+                    Assert.assertTrue("expected at least " + parallelCount + "insert attempts, but got: " + startedInserts,
+                            startedInserts >= parallelCount);
+
+                    // close the client sockets
+                    for (long fd : fds) {
+                        Assert.assertNotEquals(fd, -1);
+                        NetworkFacadeImpl.INSTANCE.close(fd);
                     }
 
                     writer.close();
 
-                    // check if we have parallelCount x insertCount  records
-                    int waitCount = 1000 / 50 * parallelCount;
-                    for (int i = 0; i < waitCount; i++) {
-
-                        try {
-                            new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                                    "GET /query?query=select+count()+from+balances_x&count=true HTTP/1.1\r\n",
-                                    "6f\r\n" +
-                                            "{\"query\":\"select count() from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + parallelCount + "]],\"count\":1}\r\n" +
-                                            "00\r\n" +
-                                            "\r\n"
-                            );
-                            return;
-                        } catch (ComparisonFailure e) {
-                            if (i < waitCount - 1) {
-                                Os.sleep(50);
-                            } else {
-                                throw e;
-                            }
-
+                    // wait for all insert queries to be executed
+                    long completeInserts;
+                    for (int i = 0; i < maxWaitTimeMillis / sleepMillis; i++) {
+                        completeInserts = metrics.jsonQuery().completedQueriesCount() - nonInsertQueries;
+                        if (completeInserts == parallelCount) {
+                            break;
                         }
+                        Os.sleep(sleepMillis);
                     }
+                    completeInserts = metrics.jsonQuery().completedQueriesCount() - nonInsertQueries;
+                    Assert.assertEquals("expected all inserts to succeed", parallelCount, completeInserts);
+
+                    // check that we have all the records inserted
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=select+count()+from+balances_x&count=true HTTP/1.1\r\n",
+                            "6f\r\n" +
+                                    "{\"query\":\"select count() from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + parallelCount + "]],\"count\":1}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n"
+                    );
                 });
     }
 
@@ -773,7 +804,9 @@ public class RetryIODispatcherTest {
                         try {
                             try {
                                 // Rename table
-                                new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                                new SendAndReceiveRequestBuilder()
+                                        .withClientLinger(60)
+                                        .executeWithStandardHeaders(
                                         "GET /query?query=rename+table+%27balances_x%27+to+%27balances_y%27&limit=0%2C1000&count=true HTTP/1.1\r\n",
                                         IODispatcherTest.JSON_DDL_RESPONSE
                                 );

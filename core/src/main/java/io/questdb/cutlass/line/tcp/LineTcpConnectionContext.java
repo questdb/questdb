@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
@@ -44,10 +45,12 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
     protected final NetworkFacade nf;
     private final LineTcpMeasurementScheduler scheduler;
+    private final Metrics metrics;
     private final MillisecondClock milliClock;
     private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
     private final LineTcpParser parser = new LineTcpParser();
     private final FloatingDirectCharSink floatingDirectCharSink = new FloatingDirectCharSink();
+    private final boolean disconnectOnError;
     protected long fd;
     protected IODispatcher<LineTcpConnectionContext> dispatcher;
     protected long recvBufStart;
@@ -58,9 +61,11 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     private long lastQueueFullLogMillis = 0;
     private boolean goodMeasurement;
 
-    LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler) {
+    LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
         nf = configuration.getNetworkFacade();
+        disconnectOnError = configuration.getDisconnectOnError();
         this.scheduler = scheduler;
+        this.metrics = metrics;
         this.milliClock = configuration.getMillisecondClock();
         recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_DEFAULT);
         recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
@@ -180,6 +185,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                             }
                         } else {
                             int position = (int) (parser.getBufferAddress() - recvBufStartOfMeasurement);
+                            assert position >= 0;
                             LOG.error().$('[').$(fd).$("] could not parse measurement, code ").$(parser.getErrorCode()).$(" at ").$(position)
                                     .$(" line (may be mangled due to partial parsing) is ")
                                     .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress())).$();
@@ -192,6 +198,9 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                     }
 
                     case ERROR: {
+                        if (disconnectOnError) {
+                            return IOContextResult.NEEDS_DISCONNECT;
+                        }
                         goodMeasurement = false;
                         continue;
                     }
@@ -217,9 +226,17 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                         .$(", msg=").$(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();
-                return IOContextResult.NEEDS_DISCONNECT;
+                if (disconnectOnError) {
+                    return IOContextResult.NEEDS_DISCONNECT;
+                }
+                goodMeasurement = false;
             } catch (Throwable ex) {
-                LOG.error().$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName()).$(", ex=").$(ex).I$();
+                LOG.error().
+                        $('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName()).
+                        $(", ex=").$(ex)
+                        .I$();
+                // This is a critical error, so we treat it as an unhandled one.
+                metrics.healthCheck().incrementUnhandledErrors();
                 return IOContextResult.NEEDS_DISCONNECT;
             }
         }
@@ -232,6 +249,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         if (recvBufStartOfMeasurement == recvBufPos) {
             recvBufPos = recvBufStart;
             parser.of(recvBufStart);
+            recvBufStartOfMeasurement = recvBufStart;
         }
     }
 

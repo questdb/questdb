@@ -120,6 +120,11 @@ public class VirtualRecord implements ColumnTypes, Record {
     }
 
     @Override
+    public long getUpdateRowId() {
+        return base.getUpdateRowId();
+    }
+
+    @Override
     public short getShort(int col) {
         return getFunction(col).getShort(base);
     }

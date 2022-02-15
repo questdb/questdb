@@ -29,8 +29,12 @@ import io.questdb.TelemetryJob;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cutlass.http.processors.*;
-import io.questdb.griffin.*;
+import io.questdb.griffin.QueryFutureUpdateListener;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -42,19 +46,23 @@ import io.questdb.std.str.Path;
 import org.junit.rules.TemporaryFolder;
 
 import java.util.Arrays;
+import java.util.concurrent.BrokenBarrierException;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class HttpQueryTestBuilder {
 
     private static final Log LOG = LogFactory.getLog(HttpQueryTestBuilder.class);
+
     private boolean telemetry;
+    private Metrics metrics;
     private TemporaryFolder temp;
     private HttpServerConfigurationBuilder serverConfigBuilder;
     private HttpRequestProcessorBuilder textImportProcessor;
     private int workerCount = 1;
     private long startWriterWaitTimeout = 500_000;
     private long maxWriterWaitTimeout = 30_000_000L;
+    private int jitMode = SqlJitMode.JIT_MODE_DISABLED;
     private FilesFacade filesFacade = new FilesFacadeImpl();
     private QueryFutureUpdateListener queryFutureUpdateListener;
 
@@ -75,6 +83,9 @@ public class HttpQueryTestBuilder {
             final DefaultHttpServerConfiguration httpConfiguration = serverConfigBuilder
                     .withBaseDir(baseDir)
                     .build();
+            if (metrics == null) {
+                metrics = Metrics.enabled();
+            }
 
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
@@ -91,7 +102,7 @@ public class HttpQueryTestBuilder {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
+            }, metrics);
             if (workerCount > 1) {
                 workerPool.assignCleaner(Path.CLEANER);
             }
@@ -112,11 +123,16 @@ public class HttpQueryTestBuilder {
                     public long getWriterAsyncCommandMaxTimeout() {
                         return maxWriterWaitTimeout;
                     }
+
+                    @Override
+                    public int getSqlJitMode() {
+                        return jitMode;
+                    }
                 };
             }
             try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+                    CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
             ) {
                 TelemetryJob telemetryJob = null;
                 if (telemetry) {
@@ -164,7 +180,6 @@ public class HttpQueryTestBuilder {
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
                                 new SqlCompiler(engine, null),
-                                Metrics.enabled(),
                                 sqlExecutionContext
                         );
                     }
@@ -207,12 +222,7 @@ public class HttpQueryTestBuilder {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                1,
-                                Metrics.enabled()
-                        );
+                        return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine, 1);
                     }
 
                     @Override
@@ -268,6 +278,11 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
+    public HttpQueryTestBuilder withMetrics(Metrics metrics) {
+        this.metrics = metrics;
+        return this;
+    }
+
     public HttpQueryTestBuilder withTempFolder(TemporaryFolder temp) {
         this.temp = temp;
         return this;
@@ -283,6 +298,11 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
+    public HttpQueryTestBuilder withJitMode(int jitMode) {
+        this.jitMode = jitMode;
+        return this;
+    }
+
     @FunctionalInterface
     public interface HttpRequestProcessorBuilder {
         HttpRequestProcessor create(
@@ -294,6 +314,6 @@ public class HttpQueryTestBuilder {
 
     @FunctionalInterface
     public interface HttpClientCode {
-        void run(CairoEngine engine) throws InterruptedException, SqlException;
+        void run(CairoEngine engine) throws InterruptedException, SqlException, BrokenBarrierException;
     }
 }

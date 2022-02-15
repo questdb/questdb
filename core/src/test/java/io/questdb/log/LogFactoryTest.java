@@ -24,10 +24,7 @@
 
 package io.questdb.log;
 
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SCSequence;
-import io.questdb.mp.SOCountDownLatch;
-import io.questdb.mp.SPSequence;
+import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -41,7 +38,6 @@ import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.locks.LockSupport;
 
 public class LogFactoryTest {
 
@@ -74,6 +70,44 @@ public class LogFactoryTest {
             assertEnabled(logger.critical());
             assertEnabled(logger.debug());
             assertEnabled(logger.advisory());
+        }
+    }
+
+    @Test
+    public void testHexLongWrite() throws Exception {
+        final File x = temp.newFile();
+        final File y = temp.newFile();
+
+        try (LogFactory factory = new LogFactory()) {
+
+            factory.add(new LogWriterConfig(LogLevel.INFO | LogLevel.DEBUG, (ring, seq, level) -> {
+                LogFileWriter w = new LogFileWriter(ring, seq, level);
+                w.setLocation(x.getAbsolutePath());
+                return w;
+            }));
+
+            factory.add(new LogWriterConfig(LogLevel.DEBUG | LogLevel.ERROR, (ring, seq, level) -> {
+                LogFileWriter w = new LogFileWriter(ring, seq, level);
+                w.setLocation(y.getAbsolutePath());
+                return w;
+            }));
+
+            factory.bind();
+            factory.startThread();
+
+            try {
+                Log logger = factory.create("x");
+                for (int i = 0; i < 64; i++) {
+                    logger.xerror().$("test ").$hex(i).$();
+                }
+
+                Os.sleep(100);
+
+                Assert.assertEquals(0, x.length());
+                Assert.assertEquals(576, y.length());
+            } finally {
+                factory.haltThread();
+            }
         }
     }
 
@@ -160,15 +194,28 @@ public class LogFactoryTest {
 
         try (LogFactory factory = new LogFactory()) {
 
+            final SOUnboundedCountDownLatch xLatch = new SOUnboundedCountDownLatch();
+            final SOUnboundedCountDownLatch yLatch = new SOUnboundedCountDownLatch();
+
             factory.add(new LogWriterConfig(LogLevel.INFO | LogLevel.DEBUG, (ring, seq, level) -> {
                 LogFileWriter w = new LogFileWriter(ring, seq, level);
                 w.setLocation(x.getAbsolutePath());
+                final QueueConsumer<LogRecordSink> consumer = w.getMyConsumer();
+                w.setMyConsumer(slot -> {
+                    xLatch.countDown();
+                    consumer.consume(slot);
+                });
                 return w;
             }));
 
             factory.add(new LogWriterConfig(LogLevel.DEBUG | LogLevel.ERROR, (ring, seq, level) -> {
                 LogFileWriter w = new LogFileWriter(ring, seq, level);
                 w.setLocation(y.getAbsolutePath());
+                final QueueConsumer<LogRecordSink> consumer = w.getMyConsumer();
+                w.setMyConsumer(slot -> {
+                    yLatch.countDown();
+                    consumer.consume(slot);
+                });
                 return w;
             }));
 
@@ -181,58 +228,14 @@ public class LogFactoryTest {
                     logger.xerror().$("test ").$(i).$();
                 }
 
-                Os.sleep(100);
-
-                Assert.assertEquals(0, x.length());
-                Assert.assertEquals(9890, y.length());
+                yLatch.await(-1000);
+                Os.sleep(500);
 
                 for (int i = 0; i < 1000; i++) {
                     logger.xinfo().$("test ").$(i).$();
                 }
 
-                Os.sleep(100);
-
-                Assert.assertEquals(9890, x.length());
-                Assert.assertEquals(9890, y.length());
-
-            } finally {
-                factory.haltThread();
-            }
-        }
-    }
-
-    @Test
-    public void testHexLongWrite() throws Exception {
-        final File x = temp.newFile();
-        final File y = temp.newFile();
-
-        try (LogFactory factory = new LogFactory()) {
-
-            factory.add(new LogWriterConfig(LogLevel.INFO | LogLevel.DEBUG, (ring, seq, level) -> {
-                LogFileWriter w = new LogFileWriter(ring, seq, level);
-                w.setLocation(x.getAbsolutePath());
-                return w;
-            }));
-
-            factory.add(new LogWriterConfig(LogLevel.DEBUG | LogLevel.ERROR, (ring, seq, level) -> {
-                LogFileWriter w = new LogFileWriter(ring, seq, level);
-                w.setLocation(y.getAbsolutePath());
-                return w;
-            }));
-
-            factory.bind();
-            factory.startThread();
-
-            try {
-                Log logger = factory.create("x");
-                for (int i = 0; i < 64; i++) {
-                    logger.xerror().$("test ").$hex(i).$();
-                }
-
-                Os.sleep(100);
-
-                Assert.assertEquals(0, x.length());
-                Assert.assertEquals(576, y.length());
+                xLatch.await(-1000);
             } finally {
                 factory.haltThread();
             }
@@ -371,7 +374,7 @@ public class LogFactoryTest {
                 long cursor = pubSeq.next();
 
                 if (cursor < 0) {
-                    LockSupport.parkNanos(1);
+                    Os.pause();
                     continue;
                 }
 
@@ -481,46 +484,6 @@ public class LogFactoryTest {
     }
 
     @Test
-    public void testSetProperties() throws Exception {
-        File conf = temp.newFile();
-        File out = new File(temp.newFolder(), "testSetProperties.log");
-
-        TestUtils.writeStringToFile(conf, "writers=file\n" +
-                "recordLength=4096\n" +
-                "queueDepth=1024\n" +
-                "w.file.class=io.questdb.log.LogFileWriter\n" +
-                "w.file.location=" + out.getAbsolutePath().replaceAll("\\\\", "/") + "\n" +
-                "w.file.level=INFO,ERROR\n" +
-                "w.file.bufferSize=4M"
-        );
-
-        LogFactory.envEnabled = false;
-        try {
-            System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
-
-            try (LogFactory factory = new LogFactory()) {
-                LogFactory.configureFromSystemProperties(factory);
-
-                Log log = factory.create("xyz");
-
-                log.xinfo().$("hello").$();
-
-                Assert.assertEquals(1, factory.getJobs().size());
-                Assert.assertTrue(factory.getJobs().get(0) instanceof LogFileWriter);
-
-                LogFileWriter w = (LogFileWriter) factory.getJobs().get(0);
-
-                Assert.assertEquals(4 * 1024 * 1024, w.getBufSize());
-
-                Assert.assertEquals(1024, factory.getQueueDepth());
-                Assert.assertEquals(4096, factory.getRecordLength());
-            }
-        } finally {
-            LogFactory.envEnabled = true;
-        }
-    }
-
-    @Test
     public void testSetIncorrectQueueDepthProperty() throws Exception {
         File conf = temp.newFile();
         File out = new File(temp.newFolder(), "testSetProperties.log");
@@ -559,6 +522,46 @@ public class LogFactoryTest {
             Assert.fail();
         } catch (LogError e) {
             Assert.assertEquals("Invalid value for recordLength", e.getMessage());
+        }
+    }
+
+    @Test
+    public void testSetProperties() throws Exception {
+        File conf = temp.newFile();
+        File out = new File(temp.newFolder(), "testSetProperties.log");
+
+        TestUtils.writeStringToFile(conf, "writers=file\n" +
+                "recordLength=4096\n" +
+                "queueDepth=1024\n" +
+                "w.file.class=io.questdb.log.LogFileWriter\n" +
+                "w.file.location=" + out.getAbsolutePath().replaceAll("\\\\", "/") + "\n" +
+                "w.file.level=INFO,ERROR\n" +
+                "w.file.bufferSize=4M"
+        );
+
+        LogFactory.envEnabled = false;
+        try {
+            System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
+
+            try (LogFactory factory = new LogFactory()) {
+                LogFactory.configureFromSystemProperties(factory);
+
+                Log log = factory.create("xyz");
+
+                log.xinfo().$("hello").$();
+
+                Assert.assertEquals(1, factory.getJobs().size());
+                Assert.assertTrue(factory.getJobs().get(0) instanceof LogFileWriter);
+
+                LogFileWriter w = (LogFileWriter) factory.getJobs().get(0);
+
+                Assert.assertEquals(4 * 1024 * 1024, w.getBufSize());
+
+                Assert.assertEquals(1024, factory.getQueueDepth());
+                Assert.assertEquals(4096, factory.getRecordLength());
+            }
+        } finally {
+            LogFactory.envEnabled = true;
         }
     }
 

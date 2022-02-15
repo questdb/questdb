@@ -25,127 +25,173 @@
 #include <cstdint>
 #include "util.h"
 #include "jni.h"
+#include <atomic>
+#include <algorithm>
 
 #define COUNTER_T uint16_t
-
-template<typename T>
-void set_max_atomic(T *slot, T value) {
-    do {
-        T current = __atomic_load_n(slot, __ATOMIC_RELAXED);
-        if (value <= current || __sync_val_compare_and_swap(slot, current, value) == current) {
-            break;
-        }
-    } while (true);
-}
-
-template<typename NEXT, typename T>
-inline T atomic_next(volatile T *val, NEXT next) {
-    do {
-        T current = __atomic_load_n(val, __ATOMIC_RELAXED);
-        T n = next(current);
-        if (__sync_val_compare_and_swap(val, current, n) == current) {
-            return n;
-        }
-    } while (true);
-}
 
 template<typename T>
 class txn_scoreboard_t {
     uint32_t mask = 0;
     uint32_t size = 0;
-    int64_t max = 0;
-    // 1-based min txn that is in-use
-    // we have to use 1 based txn to rule out possibility of 0 txn
-    // 0 is initial value when shared memory is created
-    int64_t min = L_MAX;
-    T counts[];
+    std::atomic<int64_t> max{0};
+    // The min txn that is in-use. Increases monotonically.
+    // Once the scoreboard is initialized, min is guaranteed to be
+    // greater than 0.
+    std::atomic<int64_t> min{0};
+    std::atomic<T> counts[];
 
-    inline static T inc(T val) {
-        return val + 1;
+    template<typename TT>
+    inline static TT set_max_atomic(std::atomic<TT> &slot, TT value) {
+        TT current = slot.load();
+        while (value > current && !slot.compare_exchange_weak(current, value));
+        return std::max(value, current);
     }
 
-    inline static T dec(T val) {
-        return val - 1;
+    inline std::atomic<T> &get_counter(const int64_t offset) {
+        return counts[offset & mask];
+    }
+
+    inline bool increment_count(int64_t txn) {
+        // Increment txn count
+        // but do not allow to use txn below max value
+        // Once there is count for txn 100
+        // there cannot be increments for txn 99, 98 etc
+        // When an attempt to acquire below max happens
+        // the attempt is rejected and TableReader should re-read _txn file
+        auto current_max = max.load();
+        if (txn < current_max || txn - min.load() >= size) {
+            return false;
+        }
+        get_counter(txn)++; // atomic
+
+        current_max = max.load();
+        while (txn > current_max && !max.compare_exchange_weak(current_max, txn));
+
+        if (txn < current_max || txn - min.load() >= size) {
+            // We cannot increment below max, only max or higher
+            // Also incrementing beyond size is not allowed
+            // Roll back the increment
+            get_counter(txn)--; //atomic
+            return false;
+        }
+        return true;
+    }
+
+    inline int64_t update_min(const int64_t offset) {
+        return set_max_atomic(min, calculate_min(offset));
+    }
+
+    inline int64_t calculate_min(const int64_t &offset) {
+        int64_t o = min.load();
+        while (o < offset && get_count(o) == 0) {
+            o++;
+        }
+        return o;
     }
 
 public:
 
-    inline int64_t get_min() {
-        return __atomic_load_n(&min, __ATOMIC_RELAXED);
+    inline int64_t get_clean_min() {
+        int64_t val = min;
+        return val == L_MIN ? 0 : val;
     }
 
-    inline int64_t get_max() {
-        return __atomic_load_n(&max, __ATOMIC_RELAXED);
+    inline T get_count(const int64_t &offset) {
+        return get_counter(offset);
     }
 
-    inline T *get_count_ptr(int64_t offset) {
-        return &(counts[offset & mask]);
-    }
-
-    inline T get_count(int64_t offset) {
-        return __atomic_load_n(get_count_ptr(offset), __ATOMIC_RELAXED);
-    }
-
-    inline void update_min(const int64_t offset) {
-        int64_t o = get_min();
-        while (o < offset && get_count(o) == 0) {
-            o++;
+    inline int64_t txn_release(int64_t txn) {
+        auto last_min = min.load();
+        if (txn < last_min) {
+            return -last_min - 1;
         }
-        set_max_atomic(&min, o);
-    }
-
-    inline void txn_release(int64_t txn) {
-        const int64_t max_offset = get_max();
-        if (atomic_next(get_count_ptr(txn), dec) == 0 && get_min() == txn) {
-            update_min(max_offset);
+        auto countAfter = get_counter(txn).fetch_sub(1) - 1;
+        if (countAfter == 0 && last_min == txn) {
+            update_min(max);
         }
+        return countAfter;
     }
 
-    inline bool txn_acquire(int64_t txn) {
-        if (txn - get_min() >= size) {
+    // txn must be > 0
+    inline int64_t txn_acquire(int64_t txn) {
+        int64_t current_min = min.load();
+        if (current_min == L_MIN) {
+            if (min.compare_exchange_strong(current_min, txn)) {
+                current_min = txn;
+            }
+        }
+        if (txn < current_min) {
+            return -1;
+        }
+
+        if (txn - current_min >= size) {
+            while (txn - current_min >= size) {
+                // We need to move min closer to txn
+                // Updating min directly will create a race condition
+                // instead move min size by size
+                auto dummy_txn = current_min + size - 1;
+                if (increment_count(dummy_txn)) {
+                    current_min = update_min(txn);
+                    // release dummy txn
+                    get_counter(dummy_txn)--;
+                } else {
+                    // Someone else pushed max, check if the updated min is better than current one
+                    current_min = calculate_min(dummy_txn);
+                }
+
+                if (current_min != dummy_txn && txn - current_min >= size) {
+                    // No luck to move min any farther
+                    return -current_min - 2;
+                };
+            }
+            // After pushing min as far as possible, take the clean value for next steps
+            current_min = min.load();
+
+        }
+
+        if (txn - current_min < size) {
+            if (!increment_count(txn)) {
+                // Race lost, someone updated max to higher value
+                return -1;
+            }
             update_min(txn);
+            return 0;
         }
-
-        if (txn - get_min() < size) {
-            atomic_next(get_count_ptr(txn), inc);
-            set_max_atomic(&max, txn);
-            update_min(txn);
-            return true;
-        }
-        return false;
-    }
-
-    inline bool is_txn_avalable(int64_t txn) {
-        int64_t _min = get_min();
-        if (_min == -1 || get_count(txn) == 0) {
-            return true;
-        }
-        update_min(txn);
-        _min = get_min();
-        return _min == txn && get_count(txn) == 0;
+        return -current_min - 2;
     }
 
     void init(uint32_t entry_count) {
         mask = entry_count - 1;
         size = entry_count;
+        int64_t expected = 0;
+        // Since txn values are guaranteed to be greater than 0, min can be 0 only on
+        // a newly created scoreboard. So, this CAS should only succeed single time.
+        min.compare_exchange_strong(expected, L_MIN);
+    }
+
+    bool isRangeAvailable(int64_t from, int64_t to) {
+        if (to >= min && from <= max) {
+            for (int64_t txn = from; txn < to; txn++) {
+                if (get_count(txn) > 0) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 };
 
 extern "C" {
 
-JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_TxnScoreboard_acquireTxn0
+JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_acquireTxn0
         (JAVA_STATIC, jlong p_txn_scoreboard, jlong txn) {
     return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->txn_acquire(txn);
 }
 
-JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_TxnScoreboard_isTxnAvailable
+JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_releaseTxn0
         (JAVA_STATIC, jlong p_txn_scoreboard, jlong txn) {
-    return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->is_txn_avalable(txn);
-}
-
-JNIEXPORT void JNICALL Java_io_questdb_cairo_TxnScoreboard_releaseTxn0
-        (JAVA_STATIC, jlong p_txn_scoreboard, jlong txn) {
-    reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->txn_release(txn);
+    return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->txn_release(txn);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getCount
@@ -155,17 +201,22 @@ JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getCount
 
 JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getMin
         (JAVA_STATIC, jlong p_txn_scoreboard) {
-    return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->get_min();
+    return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->get_clean_min();
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getScoreboardSize
         (JAVA_STATIC, jlong entryCount) {
-    return sizeof(txn_scoreboard_t<COUNTER_T>) + entryCount * sizeof(COUNTER_T);
+    return (jlong) sizeof(txn_scoreboard_t<COUNTER_T>) + entryCount * (jlong) sizeof(std::atomic<COUNTER_T>);
 }
 
 JNIEXPORT void JNICALL Java_io_questdb_cairo_TxnScoreboard_init
         (JAVA_STATIC, jlong p_txn_scoreboard, jlong entryCount) {
     reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->init(entryCount);
+}
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_TxnScoreboard_isRangeAvailable0
+        (JAVA_STATIC, jlong p_txn_scoreboard, jlong from, jlong to) {
+    return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->isRangeAvailable(from, to);
 }
 
 }

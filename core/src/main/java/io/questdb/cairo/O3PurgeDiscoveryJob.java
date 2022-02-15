@@ -28,181 +28,362 @@ import io.questdb.MessageBus;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.Sequence;
 import io.questdb.std.*;
+import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.O3PurgeDiscoveryTask;
-import io.questdb.tasks.O3PurgeTask;
-import org.jetbrains.annotations.Nullable;
 
-public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscoveryTask> {
+import java.io.Closeable;
+import java.io.IOException;
+
+public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscoveryTask> implements Closeable {
 
     private final static Log LOG = LogFactory.getLog(O3PurgeDiscoveryJob.class);
     private final CairoConfiguration configuration;
     private final MutableCharSink[] sink;
     private final StringSink[] fileNameSinks;
-    private final LongList[] txnList;
-    private final RingQueue<O3PurgeTask> purgeQueue;
-    private final Sequence purgePubSeq;
+    private final ObjList<DirectLongList> partitionList;
+    private final ObjList<TxnScoreboard> txnScoreboards;
+    private final ObjList<TxReader> txnReaders;
 
     public O3PurgeDiscoveryJob(MessageBus messageBus, int workerCount) {
         super(messageBus.getO3PurgeDiscoveryQueue(), messageBus.getO3PurgeDiscoverySubSeq());
         this.configuration = messageBus.getConfiguration();
-        this.purgeQueue = messageBus.getO3PurgeQueue();
-        this.purgePubSeq = messageBus.getO3PurgePubSeq();
         this.sink = new MutableCharSink[workerCount];
         this.fileNameSinks = new StringSink[workerCount];
-        this.txnList = new LongList[workerCount];
+        this.partitionList = new ObjList<>(workerCount);
+        this.txnScoreboards = new ObjList<>(workerCount);
+        this.txnReaders = new ObjList<>(workerCount);
+
         for (int i = 0; i < workerCount; i++) {
             sink[i] = new StringSink();
             fileNameSinks[i] = new StringSink();
-            txnList[i] = new LongList();
+            partitionList.add(new DirectLongList(configuration.getPartitionPurgeListCapacity() * 2L, MemoryTag.NATIVE_O3));
+            txnScoreboards.add(new TxnScoreboard(configuration.getFilesFacade(), configuration.getTxnScoreboardEntryCount()));
+            txnReaders.add(new TxReader(configuration.getFilesFacade()));
         }
     }
 
-    public static boolean discoverPartitions(
+    @Override
+    public void close() throws IOException {
+        Misc.freeObjList(partitionList);
+        Misc.freeObjList(txnReaders);
+        Misc.freeObjList(txnScoreboards);
+    }
+
+    private static void processPartition(
+            FilesFacade ff,
+            Path path,
+            int tableRootLen,
+            TxReader txReader,
+            TxnScoreboard txnScoreboard,
+            long partitionTimestamp,
+            int partitionBy,
+            DirectLongList partitionList,
+            int lo,
+            int hi
+    ) {
+        boolean partitionInTxnFile = txReader.getPartitionSizeByPartitionTimestamp(partitionTimestamp) > 0;
+        if (partitionInTxnFile) {
+            processPartition0(
+                    ff,
+                    path,
+                    tableRootLen,
+                    txReader,
+                    txnScoreboard,
+                    partitionTimestamp,
+                    partitionBy,
+                    partitionList,
+                    lo,
+                    hi
+            );
+        } else {
+            processDetachedPartition(
+                    ff,
+                    path,
+                    tableRootLen,
+                    txReader,
+                    txnScoreboard,
+                    partitionTimestamp,
+                    partitionBy,
+                    partitionList,
+                    lo,
+                    hi
+            );
+        }
+    }
+
+    private static void processDetachedPartition(
+            FilesFacade ff,
+            Path path,
+            int tableRootLen,
+            TxReader txReader,
+            TxnScoreboard txnScoreboard,
+            long partitionTimestamp,
+            int partitionBy,
+            DirectLongList partitionList,
+            int lo,
+            int hi
+    ) {
+        // Partition is dropped or not fully committed.
+        // It is only possible to delete when there are no readers
+        long lastTxn = txReader.getTxn();
+        for (int i = hi - 2, n = lo - 1; i > n; i -= 2) {
+            long nameTxn = partitionList.get(i);
+            boolean rangeUnlocked = txnScoreboard.isRangeAvailable(nameTxn, lastTxn);
+            if (rangeUnlocked) {
+                // nameTxn can be deleted
+                // -1 here is to compensate +1 added when partition version parsed from folder name
+                // See comments of why +1 added there in parsePartitionDateVersion()
+                LOG.info()
+                        .$("purging removed partition directory [ts=")
+                        .$ts(partitionTimestamp)
+                        .$(", nameTxn=").$(nameTxn - 1)
+                        .I$();
+                deletePartitionDirectory(
+                        ff,
+                        path,
+                        tableRootLen,
+                        partitionTimestamp,
+                        partitionBy,
+                        nameTxn - 1
+                );
+                lastTxn = nameTxn;
+            } else {
+                break;
+            }
+        }
+    }
+
+    private static void processPartition0(
+            FilesFacade ff,
+            Path path,
+            int tableRootLen,
+            TxReader txReader,
+            TxnScoreboard txnScoreboard,
+            long partitionTimestamp,
+            int partitionBy,
+            DirectLongList partitionList,
+            int lo,
+            int hi
+    ) {
+        long lastCommittedPartitionName = txReader.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
+        if (lastCommittedPartitionName > -1) {
+            assert hi <= partitionList.size();
+            // lo points to the beginning element in partitionList, hi next after last
+            // each partition folder represented by a pair in the partitionList (partition version, partition timestamp)
+            // Skip first pair, start from second and check if it can be deleted.
+            for (int i = lo + 2; i < hi; i += 2) {
+                long nextNameVersion = Math.min(lastCommittedPartitionName + 1, partitionList.get(i));
+                long previousNameVersion = partitionList.get(i - 2);
+
+                boolean rangeUnlocked = previousNameVersion < nextNameVersion
+                        && txnScoreboard.isRangeAvailable(previousNameVersion, nextNameVersion);
+
+                if (rangeUnlocked) {
+                    // previousNameVersion can be deleted
+                    // -1 here is to compensate +1 added when partition version parsed from folder name
+                    // See comments of why +1 added there in parsePartitionDateVersion()
+                    LOG.info()
+                            .$("purging [ts=")
+                            .$ts(partitionTimestamp)
+                            .$(", nameTxn=").$(previousNameVersion - 1)
+                            .$(", nameTxnNext=").$(nextNameVersion)
+                            .$(", lastCommittedPartitionName=").$(lastCommittedPartitionName)
+                            .I$();
+                    deletePartitionDirectory(
+                            ff,
+                            path,
+                            tableRootLen,
+                            partitionTimestamp,
+                            partitionBy,
+                            previousNameVersion - 1);
+                }
+            }
+        }
+    }
+
+    private static void deletePartitionDirectory(
+            FilesFacade ff,
+            Path path,
+            int tableRootLen,
+            long partitionTimestamp,
+            int partitionBy,
+            long previousNameVersion
+    ) {
+        path.trimTo(tableRootLen);
+        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
+        TableUtils.txnPartitionConditionally(path, previousNameVersion);
+        path.slash$();
+
+        long errno;
+        if ((errno = ff.rmdir(path)) == 0) {
+            LOG.info()
+                    .$("purged [path=").$(path)
+                    .I$();
+        } else {
+            LOG.info()
+                    .$("partition purge failed [path=").$(path)
+                    .$(", errno=").$(errno)
+                    .I$();
+        }
+    }
+
+    private void discoverPartitions(
             FilesFacade ff,
             MutableCharSink sink,
             StringSink fileNameSink,
-            LongList txnList,
-            RingQueue<O3PurgeTask> purgeQueue,
-            @Nullable Sequence purgePubSeq,
+            DirectLongList partitionList,
             CharSequence root,
             CharSequence tableName,
-            int partitionBy,
-            long partitionTimestamp,
             TxnScoreboard txnScoreboard,
-            long mostRecentTxn
-    ) {
-        LOG.info().$("processing [table=").$(tableName)
-                .$(", ts=").$ts(partitionTimestamp)
-                .I$();
+            TxReader txReader,
+            int partitionBy) {
+
+        LOG.info().$("processing [table=").$(tableName).I$();
         Path path = Path.getThreadLocal(root);
         path.concat(tableName).slash$();
         sink.clear();
-        PartitionBy.setSinkForPartition(sink, partitionBy, partitionTimestamp, false);
         path.slash$();
 
-        txnList.clear();
+        partitionList.clear();
+        DateFormat partitionByFormat = PartitionBy.getPartitionDirFormatMethod(partitionBy);
 
         long p = ff.findFirst(path);
         if (p > 0) {
             try {
                 do {
-                    processDir(sink, fileNameSink, tableName, txnList, ff.findName(p), ff.findType(p));
+                    long fileName = ff.findName(p);
+                    if (Files.isDir(fileName, ff.findType(p), fileNameSink)) {
+                        // extract txn, partition ts from name
+                        parsePartitionDateVersion(fileNameSink, partitionList, tableName, partitionByFormat);
+                    }
                 } while (ff.findNext(p) > 0);
             } finally {
                 ff.findClose(p);
             }
         }
 
-        if (txnList.size() > 1) {
-            txnList.sort();
+        // find duplicate partitions
+        assert partitionList.size() % 2 == 0;
+        Vect.sort128BitAscInPlace(partitionList.getAddress(), partitionList.size() / 2);
 
-            for (int i = 0, n = txnList.size() - 1; i < n; i++) {
-                final long nameTxnToRemove = txnList.getQuick(i);
-                if (nameTxnToRemove <= mostRecentTxn) {
-                    final long minTxnToExpect = txnList.getQuick(i + 1);
-                    int errno;
-                    if ((errno = O3PurgeJob.purgePartitionDir(
-                            ff,
-                            path.of(root).concat(tableName),
-                            partitionBy,
-                            partitionTimestamp,
-                            txnScoreboard,
-                            nameTxnToRemove,
-                            minTxnToExpect
-                    )) != 0) {
-                        // queue the job
-                        if (purgePubSeq != null) {
-                            long cursor = purgePubSeq.next();
-                            if (cursor > -1) {
-                                LOG.error()
-                                        .$("queuing [table=").$(tableName)
-                                        .$(", ts=").$ts(partitionTimestamp)
-                                        .$(", txn=").$(nameTxnToRemove)
-                                        .$(", errno=").$(errno)
-                                        .$(']').$();
-                                O3PurgeTask task = purgeQueue.get(cursor);
-                                task.of(
-                                        tableName,
-                                        partitionBy,
-                                        txnScoreboard,
-                                        partitionTimestamp,
-                                        nameTxnToRemove,
-                                        minTxnToExpect
-                                );
-                                purgePubSeq.done(cursor);
-                            } else {
-                                LOG.error()
-                                        .$("purge queue is full [table=").$(tableName)
-                                        .$(", ts=").$ts(partitionTimestamp)
-                                        .$(", txn=").$(nameTxnToRemove)
-                                        .$(", errno=").$(errno)
-                                        .$(']').$();
-                            }
-                        } else {
-                            LOG.error()
-                                    .$("could not purge [table=").$(tableName)
-                                    .$(", ts=").$ts(partitionTimestamp)
-                                    .$(", txn=").$(nameTxnToRemove)
-                                    .$(", errno=").$(errno)
-                                    .$(']').$();
-                        }
+        long partitionTimestamp = Numbers.LONG_NaN;
+        int lo = 0;
+        int n = (int) partitionList.size();
+
+        path.of(root).concat(tableName);
+        int tableRootLen = path.length();
+        try {
+            txnScoreboard.ofRO(path);
+            path.trimTo(tableRootLen);
+            txReader.ofRO(path, partitionBy);
+            TableUtils.safeReadTxn(txReader, this.configuration.getMicrosecondClock(), this.configuration.getSpinLockTimeoutUs());
+
+            for (int i = 0; i < n; i += 2) {
+                long currentPartitionTs = partitionList.get(i + 1);
+                if (currentPartitionTs != partitionTimestamp) {
+                    if (i > lo + 2 ||
+                            (i > 0 && txReader.getPartitionSizeByPartitionTimestamp(partitionTimestamp) < 0)) {
+                        processPartition(
+                                ff,
+                                path,
+                                tableRootLen,
+                                txReader,
+                                txnScoreboard,
+                                partitionTimestamp,
+                                partitionBy,
+                                partitionList,
+                                lo,
+                                i
+                        );
                     }
+                    lo = i;
+                    partitionTimestamp = currentPartitionTs;
                 }
             }
-            return true;
-        }
-        return false;
-    }
-
-    private static void processDir(
-            MutableCharSink sink,
-            StringSink fileNameSink,
-            CharSequence tableName,
-            LongList txnList,
-            long pUtf8NameZ,
-            int type
-    ) {
-        if (Files.isDir(pUtf8NameZ, type, fileNameSink)) {
-            if (Chars.startsWith(fileNameSink, sink)) {
-                // extract txn from name
-                int index = Chars.lastIndexOf(fileNameSink, '.');
-                if (index < 0) {
-                    txnList.add(-1);
-                } else {
-                    try {
-                        txnList.add(Numbers.parseLong(fileNameSink, index + 1, fileNameSink.length()));
-                    } catch (NumericException e) {
-                        LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).$(']').$();
-                    }
-                }
+            // Tail
+            if (n > lo + 2) {
+                processPartition(
+                        ff,
+                        path,
+                        tableRootLen,
+                        txReader,
+                        txnScoreboard,
+                        partitionTimestamp,
+                        partitionBy,
+                        partitionList,
+                        lo,
+                        n
+                );
             }
+        } catch (CairoException ex) {
+            // It is possible that table is dropped while this async job was in the queue.
+            // so it can be not too bad. Log error and continue work on the queue
+            LOG.error()
+                    .$("could not purge partition open [table=`").utf8(tableName)
+                    .$("`, ex=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
+            LOG.error().$(ex.getFlyweightMessage()).$();
+        } finally {
+            txReader.clear();
+            txnScoreboard.clear();
         }
     }
 
     @Override
     protected boolean doRun(int workerId, long cursor) {
         final O3PurgeDiscoveryTask task = queue.get(cursor);
-        final boolean useful = discoverPartitions(
+        discoverPartitions(
                 configuration.getFilesFacade(),
                 sink[workerId],
                 fileNameSinks[workerId],
-                txnList[workerId],
-                purgeQueue,
-                purgePubSeq,
+                partitionList.get(workerId),
                 configuration.getRoot(),
                 task.getTableName(),
-                task.getPartitionBy(),
-                task.getTimestamp(),
-                task.getTxnScoreboard(),
-                task.getMostRecentTxn()
+                txnScoreboards.get(workerId),
+                txnReaders.get(workerId),
+                task.getPartitionBy()
         );
         subSeq.done(cursor);
-        return useful;
+        return true;
+    }
+
+    private void parsePartitionDateVersion(StringSink fileNameSink, DirectLongList partitionList, CharSequence tableName, DateFormat partitionByFormat) {
+        int index = Chars.lastIndexOf(fileNameSink, '.');
+
+        int len = fileNameSink.length();
+        if (index < 0) {
+            index = len;
+        }
+        try {
+            if (index < len) {
+                long partitionVersion = Numbers.parseLong(fileNameSink, index + 1, len);
+                // When reader locks transaction 100 it opens partition version .99 or lower.
+                // Also, when there is no transaction version in the name, it is counted as -1.
+                // By adding +1 here we kill 2 birds in with one stone, partition versions are aligned with
+                // txn scoreboard reader locks and no need to add -1 which allows us to use 128bit
+                // sort to sort 2 x 64bit unsigned integers
+                partitionList.add(partitionVersion + 1);
+            } else {
+                // This should be -1, but it is only possible to correctly sort 2 unsigned longs
+                // as 128bit integer sort
+                // Set 0 instead of -1 and revert it later on. There should be not possible to have .0 in the partition name
+                partitionList.add(0);
+            }
+
+            try {
+                long partitionTs = partitionByFormat.parse(fileNameSink, 0, index, null);
+                partitionList.add(partitionTs);
+            } catch (NumericException e) {
+                LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).$(']').$();
+                partitionList.setPos(partitionList.size() - 1); // remove partition version record
+            }
+        } catch (NumericException e) {
+            LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).$(']').$();
+        }
     }
 }

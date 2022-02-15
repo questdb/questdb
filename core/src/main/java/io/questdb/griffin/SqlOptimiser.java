@@ -688,12 +688,20 @@ class SqlOptimiser {
         }
     }
 
+    private void copyColumnTypesFromMetadata(QueryModel model, TableReaderMetadata m){
+        // TODO: optimise by copying column indexes, types of the columns used in SET clause in the UPDATE only
+        for (int i = 0, k = m.getColumnCount(); i < k; i++) {
+            model.addUpdateTableColumnMetadata(m.getColumnType(i), m.getColumnName(i));
+        }
+    }
+
     private void copyColumnsFromMetadata(QueryModel model, RecordMetadata m, boolean cleanColumnNames) throws SqlException {
         // column names are not allowed to have dot
 
         for (int i = 0, k = m.getColumnCount(); i < k; i++) {
             CharSequence columnName = createColumnAlias(m.getColumnName(i), model, cleanColumnNames);
-            model.addField(queryColumnPool.next().of(columnName, expressionNodePool.next().of(LITERAL, columnName, 0, 0)));
+            QueryColumn column = queryColumnPool.next().of(columnName, expressionNodePool.next().of(LITERAL, columnName, 0, 0));
+            model.addField(column);
         }
 
         // validate explicitly defined timestamp, if it exists
@@ -1362,6 +1370,9 @@ class SqlOptimiser {
             final QueryModel nested = model.getNestedModel();
             if (nested != null) {
                 enumerateTableColumns(nested, executionContext);
+                if (model.isUpdate()) {
+                    model.copyUpdateTableMetadata(nested);
+                }
                 // copy columns of nested model onto parent one
                 // we must treat sub-query just like we do a table
 //                model.copyColumnsFrom(nested, queryColumnPool, expressionNodePool);
@@ -1667,7 +1678,13 @@ class SqlOptimiser {
         if (nested != null) {
             moveTimestampToChooseModel(nested);
             ExpressionNode timestamp = nested.getTimestamp();
-            if (timestamp != null && nested.getSelectModelType() == QueryModel.SELECT_MODEL_NONE && nested.getTableName() == null && nested.getTableNameFunction() == null) {
+            if (
+                    timestamp != null
+                            && nested.getSelectModelType() == QueryModel.SELECT_MODEL_NONE
+                            && nested.getTableName() == null
+                            && nested.getTableNameFunction() == null
+                            && nested.getLatestBy().size() == 0
+            ) {
                 model.setTimestamp(timestamp);
                 nested.setTimestamp(null);
             }
@@ -1864,10 +1881,81 @@ class SqlOptimiser {
             model.setTableVersion(r.getVersion());
             model.setTableId(r.getMetadata().getId());
             copyColumnsFromMetadata(model, r.getMetadata(), false);
+            if (model.isUpdate()) {
+                copyColumnTypesFromMetadata(model, r.getMetadata());
+            }
         } catch (EntryLockedException e) {
             throw SqlException.position(tableNamePosition).put("table is locked: ").put(tableLookupSequence);
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition).put(e);
+        }
+    }
+
+    void optimiseUpdate(QueryModel updateQueryModel, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
+        selectQueryModel.setIsUpdate(true);
+        QueryModel optimisedNested = optimise(selectQueryModel, sqlExecutionContext);
+        assert optimisedNested.isUpdate();
+        updateQueryModel.setNestedModel(optimisedNested);
+
+        // And then generate plan for UPDATE top level QueryModel
+        validateUpdateColumns(updateQueryModel, sqlExecutionContext, optimisedNested.getTableId(), optimisedNested.getTableVersion());
+    }
+
+    private void validateUpdateColumns(QueryModel updateQueryModel, SqlExecutionContext executionContext, int tableId, long tableVersion) throws SqlException {
+        try (
+                TableReader r = engine.getReader(
+                        executionContext.getCairoSecurityContext(),
+                        updateQueryModel.getTableName().token,
+                        tableId,
+                        tableVersion
+                )
+        ) {
+            TableReaderMetadata metadata = r.getMetadata();
+            if (metadata.getPartitionBy() == PartitionBy.NONE) {
+                throw SqlException.$(updateQueryModel.getModelPosition(), "UPDATE query can only be executed on partitioned tables");
+            }
+            int timestampIndex = metadata.getTimestampIndex();
+            if (timestampIndex < 0) {
+                throw SqlException.$(updateQueryModel.getModelPosition(), "UPDATE query can only be executed on tables with Designated timestamp");
+            }
+
+            tempList.clear(metadata.getColumnCount());
+            tempList.setPos(metadata.getColumnCount());
+            int updateSetColumnCount = updateQueryModel.getUpdateExpressions().size();
+            for(int i = 0; i < updateSetColumnCount; i++) {
+
+                // SET left hand side expressions are stored in top level UPDATE QueryModel
+                ExpressionNode columnExpression = updateQueryModel.getUpdateExpressions().get(i);
+                int position = columnExpression.position;
+                int columnIndex = metadata.getColumnIndexQuiet(columnExpression.token);
+
+                // SET right hand side expressions are stored in the Nested SELECT QueryModel as columns
+                QueryColumn queryColumn = updateQueryModel.getNestedModel().getColumns().get(i);
+                if (columnIndex < 0) {
+                    throw SqlException.invalidColumn(position, queryColumn.getName());
+                }
+                if (columnIndex == timestampIndex) {
+                    throw SqlException.$(position, "Designated timestamp column cannot be updated");
+                }
+                if (tempList.getQuick(columnIndex) == 1) {
+                    throw SqlException.$(position, "Duplicate column ").put(queryColumn.getName()).put(" in SET clause");
+                }
+                tempList.set(columnIndex, 1);
+
+                ExpressionNode rhs = queryColumn.getAst();
+                if (rhs.type == FUNCTION) {
+                    if (functionParser.getFunctionFactoryCache().isGroupBy(rhs.token)) {
+                        throw SqlException.$(rhs.position, "Unsupported function in SET clause");
+                    }
+                }
+            }
+            // Save update table name as a String to not re-create string later on from CharSequence
+            updateQueryModel.setUpdateTableName(r.getTableName());
+        } catch (EntryLockedException e) {
+            throw SqlException.position(updateQueryModel.getModelPosition()).put("table is locked: ").put(tableLookupSequence);
+        } catch (CairoException e) {
+            throw SqlException.position(updateQueryModel.getModelPosition()).put(e);
         }
     }
 
@@ -2085,11 +2173,17 @@ class SqlOptimiser {
         }
     }
 
-    // removes redundant order by clauses from sub-queries
-    private void optimiseOrderBy(QueryModel model, final int topLevelOrderByMnemonic) {
+    // removes redundant order by clauses from sub-queries (only those that don't force materialization of other order by clauses )
+    private void optimiseOrderBy(QueryModel model, int topLevelOrderByMnemonic) {
         ObjList<QueryColumn> columns = model.getBottomUpColumns();
         int orderByMnemonic;
         int n = columns.size();
+
+        //limit x,y forces order materialization; we can't push order by past it and need to discover actual nested ordering 
+        if (model.getLimitLo() != null) {
+            topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
+        }
+
         // determine if ordering is required
         switch (topLevelOrderByMnemonic) {
             case OrderByMnemonic.ORDER_BY_UNKNOWN:
@@ -2512,12 +2606,16 @@ class SqlOptimiser {
         QueryModel base = model;
         QueryModel baseParent = model;
         QueryModel wrapper = null;
+        QueryModel limitModel = model;//bottom-most model which contains limit, order by can't be moved past it  
         final int modelColumnCount = model.getBottomUpColumns().size();
         boolean groupByOrDistinct = false;
 
         while (base.getBottomUpColumns().size() > 0 && !base.isNestedModelIsSubQuery()) {
             baseParent = base;
             base = base.getNestedModel();
+            if (base.getLimitLo() != null) {
+                limitModel = base;
+            }
             final int selectModelType = baseParent.getSelectModelType();
             groupByOrDistinct = groupByOrDistinct
                     || selectModelType == QueryModel.SELECT_MODEL_GROUP_BY
@@ -2624,12 +2722,13 @@ class SqlOptimiser {
                         }
                     }
                 }
-                if (base != baseParent) {
-                    model.addOrderBy(orderBy, base.getOrderByDirection().getQuick(i));
+                //order by can't be pushed through limit clause because it'll produce bad results 
+                if (base != baseParent && base != limitModel) {
+                    limitModel.addOrderBy(orderBy, base.getOrderByDirection().getQuick(i));
                 }
             }
 
-            if (base != model) {
+            if (base != model && base != limitModel) {
                 base.clearOrderBy();
             }
         }
@@ -3083,6 +3182,7 @@ class SqlOptimiser {
 
         if (useDistinctModel) {
             distinctModel.setNestedModel(root);
+            distinctModel.moveLimitFrom(root);
             root = distinctModel;
         }
 
@@ -3094,6 +3194,10 @@ class SqlOptimiser {
             root.setUnionModel(model.getUnionModel());
             root.setSetOperationType(model.getSetOperationType());
             root.setModelPosition(model.getModelPosition());
+            if (model.isUpdate()) {
+                root.setIsUpdate(true);
+                root.copyUpdateTableMetadata(model);
+            }
         }
         return root;
     }
@@ -3116,6 +3220,7 @@ class SqlOptimiser {
                         && model.getTableNameFunction() == null
                         && model.getJoinModels().size() == 1
                         && model.getWhereClause() == null
+                        && model.getLatestBy().size() == 0
         ) {
             model = model.getNestedModel();
         }

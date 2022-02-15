@@ -22,6 +22,7 @@
  *
  ******************************************************************************/
 
+
 package io.questdb.metrics;
 
 import io.questdb.std.str.CharSink;
@@ -38,8 +39,13 @@ class CounterImpl implements Counter {
     }
 
     @Override
-    public void inc() {
-        counter.increment();
+    public void add(long value) {
+        counter.add(value);
+    }
+
+    @Override
+    public long get() {
+        return counter.sum();
     }
 
     @Override

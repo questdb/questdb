@@ -59,11 +59,18 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final RecordCursor masterCursor = masterFactory.getCursor(executionContext);
-        RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
-        if (masterCursor.hasNext()) {
-            cursor.of(masterCursor, slaveCursor);
-            return cursor;
+        RecordCursor masterCursor = masterFactory.getCursor(executionContext);
+        RecordCursor slaveCursor = null;
+        try {
+            slaveCursor = slaveFactory.getCursor(executionContext);
+            if (masterCursor.hasNext()) {
+                cursor.of(masterCursor, slaveCursor);
+                return cursor;
+            }
+        } catch (Throwable ex) {
+            Misc.free(masterCursor);
+            Misc.free(slaveCursor);
+            throw ex;
         }
 
         return EmptyTableRecordCursor.INSTANCE;
@@ -72,6 +79,11 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    public boolean supportsUpdateRowId(CharSequence tableName) {
+        return masterFactory.supportsUpdateRowId(tableName);
     }
 
     private static class CrossJoinRecordCursor implements NoRandomAccessRecordCursor {

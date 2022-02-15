@@ -67,38 +67,38 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
-            int workerCount,
-            Metrics metrics
+            int workerCount
     ) {
-        this(configuration, engine, workerCount, null, metrics);
+        this(configuration, engine, workerCount, null);
     }
 
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
             int workerCount,
-            @Nullable FunctionFactoryCache functionFactoryCache,
-            Metrics metrics
+            @Nullable FunctionFactoryCache functionFactoryCache
     ) {
-        this(configuration, engine, new SqlCompiler(engine, functionFactoryCache), metrics, new SqlExecutionContextImpl(engine, workerCount));
+        this(configuration, engine, new SqlCompiler(engine, functionFactoryCache), new SqlExecutionContextImpl(engine, workerCount));
     }
 
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
             SqlCompiler sqlCompiler,
-            Metrics metrics,
             SqlExecutionContextImpl sqlExecutionContext
     ) {
         this.configuration = configuration;
         this.compiler = sqlCompiler;
-        final QueryExecutor sendConfirmation = JsonQueryProcessor::sendConfirmation;
+        final QueryExecutor sendConfirmation = this::updateMetricsAndSendConfirmation;
         this.queryExecutors.extendAndSet(CompiledQuery.SELECT, this::executeNewSelect);
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT, this::executeInsert);
         this.queryExecutors.extendAndSet(CompiledQuery.TRUNCATE, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.ALTER, this::executeAlterTable);
         this.queryExecutors.extendAndSet(CompiledQuery.REPAIR, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.SET, sendConfirmation);
+        this.queryExecutors.extendAndSet(CompiledQuery.BEGIN, sendConfirmation);
+        this.queryExecutors.extendAndSet(CompiledQuery.COMMIT, sendConfirmation);
+        this.queryExecutors.extendAndSet(CompiledQuery.ROLLBACK, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.DROP, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.RENAME_TABLE, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.COPY_LOCAL, sendConfirmation);
@@ -106,13 +106,16 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT_AS_SELECT, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.COPY_REMOTE, JsonQueryProcessor::cannotCopyRemote);
         this.queryExecutors.extendAndSet(CompiledQuery.BACKUP_TABLE, sendConfirmation);
+        this.queryExecutors.extendAndSet(CompiledQuery.CREATE_TABLE_AS_SELECT, sendConfirmation);
         this.sqlExecutionContext = sqlExecutionContext;
         this.nanosecondClock = engine.getConfiguration().getNanosecondClock();
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration());
-        this.metrics = metrics;
+        this.metrics = engine.getMetrics();
         this.alterStartTimeout = engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout();
         this.alterStartFullTimeoutNs = engine.getConfiguration().getWriterAsyncCommandMaxTimeout() * 1000;
     }
+
+
 
     @Override
     public void close() {
@@ -289,6 +292,15 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 .$(", totalBytesSent=").$(context.getTotalBytesSent()).$(']').$();
     }
 
+    private void updateMetricsAndSendConfirmation(
+            JsonQueryProcessorState state,
+            CompiledQuery cq,
+            CharSequence keepAliveHeader
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        metrics.jsonQuery().markComplete();
+        sendConfirmation(state, keepAliveHeader);
+    }
+
     protected static void sendConfirmation(
             JsonQueryProcessorState state,
             CompiledQuery cq,
@@ -393,9 +405,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 queryFuture.close();
             }
         }
+        metrics.jsonQuery().markComplete();
         sendConfirmation(state, cc, keepAliveHeader);
     }
-
 
     private void executeInsert(
             JsonQueryProcessorState state,
@@ -405,6 +417,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         try (QueryFuture execution = cc.execute(state.getEventSubSequence())) {
             execution.await();
         }
+        metrics.jsonQuery().markComplete();
         sendConfirmation(state, cc, keepAliveHeader);
     }
 
@@ -431,6 +444,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             if (state.of(factory, sqlExecutionContext)) {
                 header(context.getChunkedResponseSocket(), keepAliveHeader);
                 doResumeSend(state, context);
+                metrics.jsonQuery().markComplete();
             } else {
                 readyForNextRequest(context);
             }
@@ -448,8 +462,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (e instanceof CairoException && ((CairoException) e).isInterruption()) {
             state.info().$("query cancelled [q=`").utf8(state.getQuery()).$("`, reason=`").$(((CairoException) e).getFlyweightMessage()).$("`]").$();
+        } else if (e instanceof HttpException) {
+            state.error().$("internal HTTP server error [q=`").utf8(state.getQuery()).$("`, reason=`").$(((HttpException) e).getFlyweightMessage()).$("`]").$();
         } else {
             state.error().$("internal error [q=`").utf8(state.getQuery()).$("`, ex=").$(e).$(']').$();
+            // This is a critical error, so we treat it as an unhandled one.
+            metrics.healthCheck().incrementUnhandledErrors();
         }
         sendException(socket, 0, message, state.getQuery(), configuration.getKeepAliveHeader());
     }

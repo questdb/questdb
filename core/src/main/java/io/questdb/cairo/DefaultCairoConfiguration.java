@@ -59,13 +59,43 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getDataIndexKeyAppendPageSize() {
-        return Files.PAGE_SIZE;
+    public boolean enableTestFactories() {
+        return true;
     }
 
     @Override
-    public long getDataIndexValueAppendPageSize() {
-        return Files.ceilPageSize(1024*1024);
+    public int getAnalyticColumnPoolCapacity() {
+        return 64;
+    }
+
+    @Override
+    public long getDataAppendPageSize() {
+        return getFilesFacade().getMapPageSize();
+    }
+
+    @Override
+    public DateFormat getBackupDirTimestampFormat() {
+        return null;
+    }
+
+    @Override
+    public int getBackupMkDirMode() {
+        return 509;
+    }
+
+    @Override
+    public CharSequence getBackupRoot() {
+        return null;
+    }
+
+    @Override
+    public CharSequence getBackupTempDirName() {
+        return "tmp";
+    }
+
+    @Override
+    public int getBinaryEncodingMaxLength() {
+        return 32768;
     }
 
     @Override
@@ -74,23 +104,33 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getO3PurgeDiscoveryQueueCapacity() {
+    public BuildInformation getBuildInformation() {
+        return buildInformation;
+    }
+
+    @Override
+    public int getColumnCastModelPoolCapacity() {
+        return 32;
+    }
+
+    @Override
+    public int getColumnIndexerQueueCapacity() {
         return 1024;
     }
 
     @Override
-    public int getO3PurgeQueueCapacity() {
-        return 1024;
-    }
-
-    @Override
-    public int getSampleByIndexSearchPageSize() {
+    public long getCommitLag() {
         return 0;
     }
 
     @Override
-    public int getSqlCopyBufferSize() {
-        return 1024 * 1024;
+    public int getCommitMode() {
+        return CommitMode.NOSYNC;
+    }
+
+    @Override
+    public CharSequence getConfRoot() {
+        return confRoot;
     }
 
     @Override
@@ -101,6 +141,41 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getCreateAsSelectRetryCount() {
         return 5;
+    }
+
+    @Override
+    public int getCreateTableModelPoolCapacity() {
+        return 32;
+    }
+
+    @Override
+    public long getDataIndexKeyAppendPageSize() {
+        return Files.PAGE_SIZE;
+    }
+
+    @Override
+    public long getDataIndexValueAppendPageSize() {
+        return Files.ceilPageSize(1024 * 1024);
+    }
+
+    @Override
+    public long getDatabaseIdHi() {
+        return databaseIdHi;
+    }
+
+    @Override
+    public long getDatabaseIdLo() {
+        return databaseIdLo;
+    }
+
+    @Override
+    public CharSequence getDbDirectory() {
+        return PropServerConfiguration.DB_DIRECTORY;
+    }
+
+    @Override
+    public DateLocale getDefaultDateLocale() {
+        return DateFormatUtils.enLocale;
     }
 
     @Override
@@ -119,6 +194,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getDoubleToStrCastScale() {
+        return Numbers.MAX_SCALE;
+    }
+
+    @Override
     public int getFileOperationRetryCount() {
         return 30;
     }
@@ -126,6 +206,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public FilesFacade getFilesFacade() {
         return FilesFacadeImpl.INSTANCE;
+    }
+
+    @Override
+    public int getFloatToStrCastScale() {
+        return 4;
+    }
+
+    @Override
+    public int getGroupByMapCapacity() {
+        return 1024;
+    }
+
+    @Override
+    public int getGroupByPoolCapacity() {
+        return 1024;
     }
 
     @Override
@@ -149,18 +244,33 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getDoubleToStrCastScale() {
-        return Numbers.MAX_SCALE;
+    public CharSequence getInputRoot() {
+        return null;
     }
 
     @Override
-    public int getFloatToStrCastScale() {
-        return 4;
+    public int getInsertPoolCapacity() {
+        return 8;
+    }
+
+    @Override
+    public int getLatestByQueueCapacity() {
+        return 32;
     }
 
     @Override
     public int getMaxSwapFileCount() {
         return 30;
+    }
+
+    @Override
+    public int getMaxSymbolNotEqualsCount() {
+        return 100;
+    }
+
+    @Override
+    public int getMaxUncommittedRows() {
+        return 1000;
     }
 
     @Override
@@ -179,8 +289,48 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getO3CallbackQueueCapacity() {
+        return 1024;
+    }
+
+    @Override
+    public int getO3ColumnMemorySize() {
+        return 16 * Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public int getO3CopyQueueCapacity() {
+        return 1024;
+    }
+
+    @Override
+    public int getO3OpenColumnQueueCapacity() {
+        return 1024;
+    }
+
+    @Override
+    public int getO3PartitionQueueCapacity() {
+        return 1024;
+    }
+
+    @Override
+    public int getO3PartitionUpdateQueueCapacity() {
+        return 1024;
+    }
+
+    @Override
+    public int getO3PurgeDiscoveryQueueCapacity() {
+        return 1024;
+    }
+
+    @Override
     public int getParallelIndexThreshold() {
         return 100000;
+    }
+
+    @Override
+    public int getPartitionPurgeListCapacity() {
+        return 64;
     }
 
     @Override
@@ -189,48 +339,58 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getRenameTableModelPoolCapacity() {
+        return 8;
+    }
+
+    @Override
     public CharSequence getRoot() {
         return root;
     }
 
     @Override
-    public CharSequence getDbDirectory() {
-        return PropServerConfiguration.DB_DIRECTORY;
+    public int getSampleByIndexSearchPageSize() {
+        return 0;
     }
 
     @Override
-    public CharSequence getConfRoot() {
-        return confRoot;
-    }
-
-    @Override
-    public CharSequence getInputRoot() {
-        return null;
-    }
-
-    @Override
-    public CharSequence getBackupRoot() {
-        return null;
-    }
-
-    @Override
-    public DateFormat getBackupDirTimestampFormat() {
-        return null;
-    }
-
-    @Override
-    public CharSequence getBackupTempDirName() {
-        return "tmp";
-    }
-
-    @Override
-    public int getBackupMkDirMode() {
-        return 509;
+    public long getMiscAppendPageSize() {
+        return getFilesFacade().getPageSize();
     }
 
     @Override
     public long getSpinLockTimeoutUs() {
         return 5000000;
+    }
+
+    @Override
+    public int getSqlAnalyticRowIdMaxPages() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
+    public int getSqlAnalyticRowIdPageSize() {
+        return 1024;
+    }
+
+    @Override
+    public int getSqlAnalyticStoreMaxPages() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
+    public int getSqlAnalyticStorePageSize() {
+        return 4 * 1024;
+    }
+
+    @Override
+    public int getSqlAnalyticTreeKeyMaxPages() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
+    public int getSqlAnalyticTreeKeyPageSize() {
+        return 4 * 1024;
     }
 
     @Override
@@ -256,33 +416,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlExpressionPoolCapacity() {
-        return 8192;
-    }
-
-    @Override
-    public double getSqlFastMapLoadFactor() {
-        return 0.5;
-    }
-
-    @Override
-    public int getSqlJoinContextPoolCapacity() {
-        return 64;
-    }
-
-    @Override
-    public int getSqlLexerPoolCapacity() {
-        return 2048;
-    }
-
-    @Override
-    public int getSqlMapKeyCapacity() {
-        return 128;
-    }
-
-    @Override
-    public int getSqlMapPageSize() {
-        return 16 * Numbers.SIZE_1MB;
+    public int getSqlCopyBufferSize() {
+        return 1024 * 1024;
     }
 
     @Override
@@ -296,37 +431,27 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlMapMaxPages() {
+    public int getSqlExpressionPoolCapacity() {
+        return 8192;
+    }
+
+    @Override
+    public double getSqlFastMapLoadFactor() {
+        return 0.5;
+    }
+
+    @Override
+    public int getSqlHashJoinLightValueMaxPages() {
         return 1024;
     }
 
     @Override
-    public int getSqlMapMaxResizes() {
-        return 64;
+    public int getSqlHashJoinLightValuePageSize() {
+        return Numbers.SIZE_1MB;
     }
 
     @Override
-    public int getSqlModelPoolCapacity() {
-        return 1024;
-    }
-
-    @Override
-    public long getSqlSortKeyPageSize() {
-        return 4 * Numbers.SIZE_1MB;
-    }
-
-    @Override
-    public int getSqlSortKeyMaxPages() {
-        return 128;
-    }
-
-    @Override
-    public long getSqlSortLightValuePageSize() {
-        return 8 * Numbers.SIZE_1MB;
-    }
-
-    @Override
-    public int getSqlSortLightValueMaxPages() {
+    public int getSqlHashJoinValueMaxPages() {
         return 1024;
     }
 
@@ -336,103 +461,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlHashJoinValueMaxPages() {
-        return 1024;
-    }
-
-    @Override
-    public int getSqlAnalyticStorePageSize() {
-        return 4 * 1024;
-    }
-
-    @Override
-    public int getSqlAnalyticStoreMaxPages() {
-        return Integer.MAX_VALUE;
-    }
-
-    @Override
-    public int getSqlAnalyticRowIdPageSize() {
-        return 1024;
-    }
-
-    @Override
-    public int getSqlAnalyticRowIdMaxPages() {
-        return Integer.MAX_VALUE;
-    }
-
-    @Override
-    public int getSqlAnalyticTreeKeyPageSize() {
-        return 4 * 1024;
-    }
-
-    @Override
-    public int getSqlAnalyticTreeKeyMaxPages() {
-        return Integer.MAX_VALUE;
-    }
-
-    @Override
-    public long getSqlLatestByRowCount() {
-        return 1000;
-    }
-
-    @Override
-    public int getSqlHashJoinLightValuePageSize() {
-        return Numbers.SIZE_1MB;
-    }
-
-    @Override
-    public int getSqlHashJoinLightValueMaxPages() {
-        return 1024;
-    }
-
-    @Override
-    public int getSqlSortValuePageSize() {
-        return Numbers.SIZE_1MB * 16;
-    }
-
-    @Override
-    public int getSqlSortValueMaxPages() {
-        return 1024;
-    }
-
-    @Override
-    public TextConfiguration getTextConfiguration() {
-        return textConfiguration;
-    }
-
-    @Override
-    public long getWorkStealTimeoutNanos() {
-        return 10000;
-    }
-
-    @Override
-    public long getWriterAsyncCommandBusyWaitTimeout() {
-        return 500_000L;
-    }
-
-    @Override
-    public long getWriterAsyncCommandMaxTimeout() {
-        return 30_000_000L;
-    }
-
-    @Override
-    public int getWriterCommandQueueCapacity() {
-        return 4;
-    }
-
-    @Override
-    public int getWriterTickRowsCountMod() {
-        return 1024 - 1;
-    }
-
-    @Override
-    public boolean isParallelIndexingEnabled() {
-        return true;
-    }
-
-    @Override
-    public int getSqlJoinMetadataPageSize() {
-        return 16 * 1024;
+    public int getSqlJoinContextPoolCapacity() {
+        return 64;
     }
 
     @Override
@@ -441,168 +471,78 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getAnalyticColumnPoolCapacity() {
-        return 64;
+    public int getSqlJoinMetadataPageSize() {
+        return 16 * 1024;
     }
 
     @Override
-    public int getCreateTableModelPoolCapacity() {
-        return 32;
-    }
-
-    @Override
-    public int getColumnCastModelPoolCapacity() {
-        return 32;
-    }
-
-    @Override
-    public int getRenameTableModelPoolCapacity() {
-        return 8;
-    }
-
-    @Override
-    public int getWithClauseModelPoolCapacity() {
-        return 128;
-    }
-
-    @Override
-    public int getInsertPoolCapacity() {
-        return 8;
-    }
-
-    @Override
-    public int getCommitMode() {
-        return CommitMode.NOSYNC;
-    }
-
-    @Override
-    public DateLocale getDefaultDateLocale() {
-        return DateFormatUtils.enLocale;
-    }
-
-    @Override
-    public int getGroupByPoolCapacity() {
-        return 1024;
-    }
-
-    @Override
-    public int getMaxSymbolNotEqualsCount() {
-        return 100;
-    }
-
-    @Override
-    public int getGroupByMapCapacity() {
-        return 1024;
-    }
-
-    @Override
-    public boolean enableTestFactories() {
-        return true;
-    }
-
-    @Override
-    public TelemetryConfiguration getTelemetryConfiguration() {
-        return telemetryConfiguration;
-    }
-
-    @Override
-    public long getDataAppendPageSize() {
-        return getFilesFacade().getMapPageSize();
-    }
-
-    @Override
-    public long getMiscAppendPageSize() {
-        return getFilesFacade().getPageSize();
-    }
-
-    @Override
-    public int getTableBlockWriterQueueCapacity() {
-        return 4;
-    }
-
-    @Override
-    public int getColumnIndexerQueueCapacity() {
-        return 1024;
-    }
-
-    @Override
-    public int getVectorAggregateQueueCapacity() {
-        return 1024;
-    }
-
-    @Override
-    public int getO3CallbackQueueCapacity() {
-        return 1024;
-    }
-
-    @Override
-    public int getO3PartitionQueueCapacity() {
-        return 1024;
-    }
-
-    @Override
-    public int getO3OpenColumnQueueCapacity() {
-        return 1024;
-    }
-
-    @Override
-    public int getO3CopyQueueCapacity() {
-        return 1024;
-    }
-
-    @Override
-    public int getO3PartitionUpdateQueueCapacity() {
-        return 1024;
-    }
-
-    @Override
-    public BuildInformation getBuildInformation() {
-        return buildInformation;
-    }
-
-    @Override
-    public long getDatabaseIdHi() {
-        return databaseIdHi;
-    }
-
-    @Override
-    public long getDatabaseIdLo() {
-        return databaseIdLo;
-    }
-
-    @Override
-    public int getTxnScoreboardEntryCount() {
-        return 8192;
-    }
-
-    @Override
-    public int getMaxUncommittedRows() {
+    public long getSqlLatestByRowCount() {
         return 1000;
     }
 
     @Override
-    public long getCommitLag() {
-        return 0;
+    public int getSqlLexerPoolCapacity() {
+        return 2048;
     }
 
     @Override
-    public boolean isO3QuickSortEnabled() {
+    public int getSqlMapKeyCapacity() {
+        return 128;
+    }
+
+    @Override
+    public int getSqlMapMaxPages() {
+        return 1024;
+    }
+
+    @Override
+    public boolean enableDevelopmentUpdates() {
         return false;
     }
 
     @Override
-    public int getLatestByQueueCapacity() {
-        return 32;
+    public int getSqlMapMaxResizes() {
+        return 64;
     }
 
     @Override
-    public int getBinaryEncodingMaxLength() {
-        return 32768;
-    }
-
-    @Override
-    public int getO3ColumnMemorySize() {
+    public int getSqlMapPageSize() {
         return 16 * Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public int getSqlModelPoolCapacity() {
+        return 1024;
+    }
+
+    @Override
+    public int getSqlSortKeyMaxPages() {
+        return 128;
+    }
+
+    @Override
+    public long getSqlSortKeyPageSize() {
+        return 4 * Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public int getSqlSortLightValueMaxPages() {
+        return 1024;
+    }
+
+    @Override
+    public long getSqlSortLightValuePageSize() {
+        return 8 * Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public int getSqlSortValueMaxPages() {
+        return 1024;
+    }
+
+    @Override
+    public int getSqlSortValuePageSize() {
+        return Numbers.SIZE_1MB * 16;
     }
 
     @Override
@@ -648,5 +588,65 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isSqlJitDebugEnabled() {
         return false;
+    }
+
+    @Override
+    public TelemetryConfiguration getTelemetryConfiguration() {
+        return telemetryConfiguration;
+    }
+
+    @Override
+    public TextConfiguration getTextConfiguration() {
+        return textConfiguration;
+    }
+
+    @Override
+    public int getTxnScoreboardEntryCount() {
+        return 8192;
+    }
+
+    @Override
+    public int getVectorAggregateQueueCapacity() {
+        return 1024;
+    }
+
+    @Override
+    public int getWithClauseModelPoolCapacity() {
+        return 128;
+    }
+
+    @Override
+    public long getWorkStealTimeoutNanos() {
+        return 10000;
+    }
+
+    @Override
+    public long getWriterAsyncCommandBusyWaitTimeout() {
+        return 500_000L;
+    }
+
+    @Override
+    public long getWriterAsyncCommandMaxTimeout() {
+        return 30_000_000L;
+    }
+
+    @Override
+    public int getWriterCommandQueueCapacity() {
+        return 4;
+    }
+
+    @Override
+    public int getWriterTickRowsCountMod() {
+        return 1024 - 1;
+    }
+
+    @Override
+    public boolean isO3QuickSortEnabled() {
+        return false;
+    }
+
+    @Override
+    public boolean isParallelIndexingEnabled() {
+        return true;
     }
 }

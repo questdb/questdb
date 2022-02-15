@@ -22,55 +22,49 @@
  *
  ******************************************************************************/
 
-package io.questdb.tasks;
+package io.questdb.griffin.update;
 
-import io.questdb.cairo.TxnScoreboard;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Misc;
 
-public class O3PurgeTask {
-    private CharSequence tableName;
-    private int partitionBy;
-    private TxnScoreboard txnScoreboard;
-    private long timestamp;
-    private long nameTxnToRemove;
-    private long minTxnToExpect;
+import java.io.Closeable;
 
-    public long getMinTxnToExpect() {
-        return minTxnToExpect;
+public class UpdateStatement implements Closeable {
+    private final String tableName;
+    private final int tableId;
+    private final long tableVersion;
+    private RecordCursorFactory updateToDataCursorFactory;
+
+    public UpdateStatement(
+            String tableName,
+            int tableId,
+            long tableVersion,
+            RecordCursorFactory updateToCursorFactory
+    ) {
+        this.tableName = tableName;
+        this.tableId = tableId;
+        this.tableVersion = tableVersion;
+        this.updateToDataCursorFactory = updateToCursorFactory;
     }
 
-    public long getNameTxnToRemove() {
-        return nameTxnToRemove;
+    @Override
+    public void close() {
+        updateToDataCursorFactory = Misc.free(updateToDataCursorFactory);
     }
 
-    public int getPartitionBy() {
-        return partitionBy;
+    public int getTableId() {
+        return tableId;
     }
 
     public CharSequence getTableName() {
         return tableName;
     }
 
-    public long getTimestamp() {
-        return timestamp;
+    public long getTableVersion() {
+        return tableVersion;
     }
 
-    public TxnScoreboard getTxnScoreboard() {
-        return txnScoreboard;
-    }
-
-    public void of(
-            CharSequence tableName,
-            int partitionBy,
-            TxnScoreboard txnScoreboard,
-            long timestamp,
-            long nameTxnToRemove,
-            long minTxnToExpect
-    ) {
-        this.tableName = tableName;
-        this.partitionBy = partitionBy;
-        this.txnScoreboard = txnScoreboard;
-        this.timestamp = timestamp;
-        this.nameTxnToRemove = nameTxnToRemove;
-        this.minTxnToExpect = minTxnToExpect;
+    public RecordCursorFactory getUpdateToDataCursorFactory() {
+        return updateToDataCursorFactory;
     }
 }

@@ -73,6 +73,11 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
+    public int configureLinger(long fd, int seconds) {
+        return Net.configureLinger(fd, seconds);
+    }
+
+    @Override
     public int configureNonBlocking(long fd) {
         return Net.configureNonBlocking(fd);
     }

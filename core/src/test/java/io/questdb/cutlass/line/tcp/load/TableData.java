@@ -56,12 +56,18 @@ public class TableData {
         readyLatch.countDown();
     }
 
-    public boolean await(long seconds) {
-        return readyLatch.await(TimeUnit.SECONDS.toNanos(seconds));
+    public boolean await(long micros) {
+        return readyLatch.await(TimeUnit.MICROSECONDS.toNanos(micros));
     }
 
     public synchronized int size() {
-        return rows.size();
+        int count = 0;
+        for (int i = 0, n = rows.size(); i < n; i++) {
+            if (rows.get(i).isValid()) {
+                count++;
+            }
+        }
+        return count;
     }
 
     public synchronized void addLine(LineData line) {
@@ -81,7 +87,10 @@ public class TableData {
             sb.append(column).append( i == n-1 ? "\n" : "\t");
         }
         for (int i = 0, n = rows.size(); i < n; i++) {
-            sb.append(rows.get(index.popIndex()).getRow(columns, defaults));
+            final LineData line = rows.get(index.popIndex());
+            if (line.isValid()) {
+                sb.append(line.getRow(columns, defaults));
+            }
             index.popValue();
         }
         return sb.toString();

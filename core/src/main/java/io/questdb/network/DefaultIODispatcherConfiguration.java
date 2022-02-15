@@ -30,7 +30,7 @@ import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 public class DefaultIODispatcherConfiguration implements IODispatcherConfiguration {
 
     @Override
-    public int getActiveConnectionLimit() {
+    public int getLimit() {
         return 128;
     }
 
@@ -50,28 +50,8 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     }
 
     @Override
-    public int getEventCapacity() {
-        return 256;
-    }
-
-    @Override
-    public int getIOQueueCapacity() {
-        return 256;
-    }
-
-    @Override
-    public long getIdleConnectionTimeout() {
+    public long getTimeout() {
         return 5 * 60 * 1000L;
-    }
-
-    @Override
-    public int getInterestQueueCapacity() {
-        return 1024;
-    }
-
-    @Override
-    public int getListenBacklog() {
-        return 128;
     }
 
     @Override
@@ -105,12 +85,12 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     }
 
     @Override
-    public long getQueuedConnectionTimeout() {
+    public long getQueueTimeout() {
         return 300_000;
     }
 
     @Override
     public boolean getPeerNoLinger() {
-        return true;
+        return false;
     }
 }

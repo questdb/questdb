@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp.load;
 
+import io.questdb.std.BoolList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -32,43 +33,69 @@ import io.questdb.std.str.StringSink;
 public class LineData {
     private final long timestampNanos;
 
-    // colName/value pairs for each line
-    // colName can be different to real colName (dupes, uppercase...)
-    private final ObjList<CharSequence> colNames = new ObjList<>();
-    private final ObjList<CharSequence> colValues = new ObjList<>();
+    // column/tag name and value pairs for each line
+    // column/tag name can be different to real name (dupes, uppercase...)
+    private final ObjList<CharSequence> names = new ObjList<>();
+    private final ObjList<CharSequence> values = new ObjList<>();
+    private final BoolList tagFlags = new BoolList();
 
-    private final LowerCaseCharSequenceIntHashMap colNameToIndex = new LowerCaseCharSequenceIntHashMap();
+    private final LowerCaseCharSequenceIntHashMap nameToIndex = new LowerCaseCharSequenceIntHashMap();
 
     public LineData(long timestampMicros) {
         timestampNanos = timestampMicros * 1000;
         final StringSink timestampSink = new StringSink();
         TimestampFormatUtils.appendDateTimeUSec(timestampSink, timestampMicros);
-        add("timestamp", timestampSink);
+        addColumn("timestamp", timestampSink);
     }
 
     public long getTimestamp() {
         return timestampNanos;
     }
 
-    public void add(CharSequence colName, CharSequence colValue) {
-        colNames.add(colName);
-        colValues.add(colValue);
-        colNameToIndex.putIfAbsent(colName, colNames.size() -1);
+    public void addTag(CharSequence tagName, CharSequence tagValue) {
+        add(tagName, tagValue, true);
+    }
+
+    public void addColumn(CharSequence colName, CharSequence colValue) {
+        add(colName, colValue, false);
+    }
+
+    private void add(CharSequence name, CharSequence value, boolean isTag) {
+        names.add(name);
+        values.add(value);
+        tagFlags.add(isTag);
+        nameToIndex.putIfAbsent(name, names.size() -1);
     }
 
     public String toLine(final CharSequence tableName) {
         final StringBuilder sb = new StringBuilder();
-        sb.append(tableName).append(" ");
+        sb.append(tableName);
         return toString(sb).append("\n").toString();
     }
 
     StringBuilder toString(final StringBuilder sb) {
-        for (int i = 0, n = colNames.size(); i < n; i++) {
-            final CharSequence colName = colNames.get(i);
-            if (colName.equals("timestamp")) {
-                continue;
+        for (int i = 0, n = names.size(); i < n; i++) {
+            if (tagFlags.get(i)) {
+                sb.append(",").append(names.get(i)).append("=").append(values.get(i));
             }
-            sb.append(colName).append("=").append(colValues.get(i)).append(i == n - 1 ? "" : ",");
+        }
+
+        boolean firstColumn = true;
+        for (int i = 0, n = names.size(); i < n; i++) {
+            if (!tagFlags.get(i)) {
+                final CharSequence colName = names.get(i);
+                if (colName.equals("timestamp")) {
+                    continue;
+                }
+                if (firstColumn) {
+                    sb.append(" ");
+                    firstColumn = false;
+                }
+                sb.append(colName).append("=").append(values.get(i)).append(",");
+            }
+        }
+        if (!firstColumn) {
+            sb.setLength(sb.length() - 1);
         }
         return sb.append(" ").append(timestampNanos);
     }
@@ -77,10 +104,26 @@ public class LineData {
         final StringBuilder sb = new StringBuilder();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final CharSequence colName = columns.get(i);
-            final int index = colNameToIndex.get(colName);
-            sb.append(index < 0 ? defaults.get(i) : colValues.get(index)).append(i == n - 1 ? "\n" : "\t");
+            final int index = nameToIndex.get(colName);
+            sb.append(index < 0 ? defaults.get(i) : getValue(values.get(index))).append(i == n - 1 ? "\n" : "\t");
         }
         return sb.toString();
+    }
+
+    private CharSequence getValue(CharSequence original) {
+        if (original.charAt(0) != '"') {
+            return original;
+        }
+        return original.toString().substring(1, original.length() - 1);
+    }
+
+    boolean isValid() {
+        for (int i = 0, n = values.size(); i < n; i++) {
+            if (tagFlags.get(i) && values.get(i).toString().contains(" ")) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override

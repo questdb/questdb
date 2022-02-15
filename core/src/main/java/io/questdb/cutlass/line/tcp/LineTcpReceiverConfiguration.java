@@ -52,6 +52,10 @@ public interface LineTcpReceiverConfiguration {
      */
     long getMaintenanceInterval();
 
+    double getCommitIntervalFraction();
+
+    long getCommitIntervalDefault();
+
     int getMaxMeasurementSize();
 
     MicrosecondClock getMicrosecondClock();
@@ -60,7 +64,7 @@ public interface LineTcpReceiverConfiguration {
 
     long getWriterIdleTimeout();
 
-    IODispatcherConfiguration getNetDispatcherConfiguration();
+    IODispatcherConfiguration getDispatcherConfiguration();
 
     int getNetMsgBufferSize();
 
@@ -74,7 +78,7 @@ public interface LineTcpReceiverConfiguration {
 
     boolean isEnabled();
 
-    int getAggressiveReadRetryCount();
+    boolean getDisconnectOnError();
 
     long getSymbolCacheWaitUsBeforeReload();
 }

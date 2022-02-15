@@ -30,6 +30,7 @@ import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -72,7 +73,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                         if (i == 1) {
                             barrier.await();
                         } else {
-                            LockSupport.parkNanos(1L);
+                            Os.pause();
                         }
                     }
                 } catch (Exception e) {
@@ -89,7 +90,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
                     for (int i = 0; i < 1000; i++) {
                         pool.releaseInactive();
-                        LockSupport.parkNanos(1L);
+                        Os.pause();
                     }
 
                 } catch (Exception e) {
@@ -199,7 +200,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             // check that we can't create standalone writer either
             try {
-                new TableWriter(configuration, "z");
+                new TableWriter(configuration, "z", metrics);
                 Assert.fail();
             } catch (CairoException ignored) {
             }
@@ -207,7 +208,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             pool.unlock("z");
 
             // check if we can create standalone writer after pool unlocked it
-            writer = new TableWriter(configuration, "z");
+            writer = new TableWriter(configuration, "z", metrics);
             Assert.assertNotNull(writer);
             writer.close();
 
@@ -594,7 +595,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             Assert.assertEquals(WriterPool.OWNERSHIP_REASON_NONE, pool.lock("x", "testing"));
 
-            TableWriter writer = new TableWriter(configuration, "x", messageBus, false, DefaultLifecycleManager.INSTANCE);
+            TableWriter writer = new TableWriter(configuration, "x", messageBus, false, DefaultLifecycleManager.INSTANCE, metrics);
             for (int i = 0; i < 100; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putDate(0, i);
@@ -731,7 +732,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                         try {
                             barrier.await();
                             if (pool.lock("z", "testing") == WriterPool.OWNERSHIP_REASON_NONE) {
-                                LockSupport.parkNanos(1);
+                                Os.pause();
                                 pool.unlock("z");
                             } else {
                                 Thread.yield();
@@ -820,7 +821,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             pool.close();
 
-            TableWriter writer = new TableWriter(configuration, "z");
+            TableWriter writer = new TableWriter(configuration, "z", metrics);
             Assert.assertNotNull(writer);
             writer.close();
         });
@@ -904,7 +905,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     private void assertWithPool(PoolAwareCode code, CairoConfiguration configuration) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (WriterPool pool = new WriterPool(configuration, messageBus)) {
+            try (WriterPool pool = new WriterPool(configuration, messageBus, metrics)) {
                 code.run(pool);
             }
         });

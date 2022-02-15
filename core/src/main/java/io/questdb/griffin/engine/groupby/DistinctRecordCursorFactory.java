@@ -43,11 +43,11 @@ import org.jetbrains.annotations.NotNull;
 
 public class DistinctRecordCursorFactory implements RecordCursorFactory {
 
-    protected final RecordCursorFactory base;
+    private final RecordCursorFactory base;
     private final Map dataMap;
     private final DistinctRecordCursor cursor;
-    private final RecordSink mapSink;
     // this sink is used to copy recordKeyMap keys to dataMap
+    private final RecordSink mapSink;
     private final RecordMetadata metadata;
 
     public DistinctRecordCursorFactory(

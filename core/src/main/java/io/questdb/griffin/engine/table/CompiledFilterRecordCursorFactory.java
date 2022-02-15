@@ -62,7 +62,7 @@ public class CompiledFilterRecordCursorFactory implements RecordCursorFactory {
         this.factory = factory;
         this.filter = filter;
         this.compiledFilter = compiledFilter;
-        this.cursor = new CompiledFilterRecordCursor(configuration);
+        this.cursor = new CompiledFilterRecordCursor(configuration, hasDescendingOrder());
         this.bindVarFunctions = bindVarFunctions;
         this.bindVarMemory = Vm.getCARWInstance(configuration.getSqlJitBindVarsMemoryPageSize(),
                 configuration.getSqlJitBindVarsMemoryMaxPages(), MemoryTag.NATIVE_JIT);
@@ -97,7 +97,16 @@ public class CompiledFilterRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
+    public boolean supportsUpdateRowId(CharSequence tableName) {
+        return factory.supportsUpdateRowId(tableName);
+    }
+
+    @Override
     public boolean usesCompiledFilter() {
         return true;
+    }
+
+    public boolean hasDescendingOrder() {
+        return factory.hasDescendingOrder();
     }
 }

@@ -31,6 +31,9 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class CairoException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
+    public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
+    public static final int METADATA_VALIDATION = -100;
+
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     protected final StringSink message = new StringSink();
@@ -65,7 +68,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     @Override
     public StackTraceElement[] getStackTrace() {
-        return EMPTY_STACK_TRACE;
+        StackTraceElement[] result = EMPTY_STACK_TRACE;
+        // This is to have correct stack trace reported in CI 
+        assert (result = super.getStackTrace()) != null;
+        return result;
     }
 
     public boolean isCacheable() {

@@ -58,7 +58,6 @@ import org.junit.Test;
 
 import java.security.PrivateKey;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.LockSupport;
 
 public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     private final static Log LOG = LogFactory.getLog(LineTcpReceiverTest.class);
@@ -363,12 +362,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     // flapping test
     public void testUnauthenticated() throws Exception {
-        test(null, null, 200, 1_000, false);
-    }
-
-    @Test
-    public void testUnauthenticatedAggressive() throws Exception {
-        aggressiveReadRetryCount = 1;
         test(null, null, 200, 1_000, false);
     }
 
@@ -957,11 +950,11 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     private void send(LineTcpReceiver receiver, String lineData, String tableName, int wait) {
-        send(receiver, tableName, wait, () -> sendToSocket(lineData, true));
+        send(receiver, tableName, wait, () -> sendToSocket(lineData));
     }
 
     private void sendLinger(LineTcpReceiver receiver, String lineData, String tableName) {
-        send(receiver, tableName, LineTcpReceiverTest.WAIT_ENGINE_TABLE_RELEASE, () -> sendToSocket(lineData, false));
+        send(receiver, tableName, LineTcpReceiverTest.WAIT_ENGINE_TABLE_RELEASE, () -> sendToSocket(lineData));
     }
 
     private void send(LineTcpReceiver receiver, String lineData, String tableName) {
@@ -1014,7 +1007,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             });
 
             minIdleMsBeforeWriterRelease = 100;
-            try (LineTcpReceiver ignored = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine)) {
+            try (LineTcpReceiver ignored = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine, metrics)) {
                 long startEpochMs = System.currentTimeMillis();
                 sharedWorkerPool.assignCleaner(Path.CLEANER);
                 sharedWorkerPool.start(LOG);
@@ -1102,7 +1095,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                                     break;
                                 } catch (EntryLockedException ex) {
                                     LOG.info().$("retrying read for ").$(tableName).$();
-                                    LockSupport.parkNanos(1);
+                                    Os.pause();
                                 }
                             }
                         }

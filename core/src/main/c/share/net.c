@@ -200,11 +200,11 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureNonBlocking
     return 0;
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureNoLinger
-        (JNIEnv *e, jclass cl, jlong fd) {
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureLinger
+        (JNIEnv *e, jclass cl, jlong fd, jint seconds) {
     struct linger sl;
     sl.l_onoff = 1;
-    sl.l_linger = 0;
+    sl.l_linger = seconds;
     return setsockopt((int) fd, SOL_SOCKET, SO_LINGER, &sl, sizeof(sl));
 }
 
