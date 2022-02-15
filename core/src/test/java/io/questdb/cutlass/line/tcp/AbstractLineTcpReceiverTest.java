@@ -191,7 +191,7 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                     try {
                         r.run(receiver);
                     } catch (Throwable err) {
-                        LOG.error().$("Stopping ILP worker pool because of an error").$();
+                        LOG.error().$("Stopping ILP worker pool because of an error").$(err).$();
                         throw err;
                     } finally {
                         sharedWorkerPool.halt();
@@ -200,7 +200,7 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                     }
                 }
             } catch (Throwable err) {
-                LOG.error().$("Stopping ILP receiver because of an error").$();
+                LOG.error().$("Stopping ILP receiver because of an error").$(err).$();
                 throw err;
             } finally {
                 Misc.free(path);

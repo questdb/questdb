@@ -269,6 +269,7 @@ public class TableUpdateDetails implements Closeable {
         private final ObjList<SymbolCache> unusedSymbolCaches;
         // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)
         private final IntList columnTypeMeta = new IntList();
+        private final IntList columnTypes = new IntList();
         private final StringSink tempSink = new StringSink();
         // tracking of processed columns by their index, duplicates will be ignored
         private final BoolList processedCols = new BoolList();
@@ -326,6 +327,7 @@ public class TableUpdateDetails implements Closeable {
                 }
             }
             symbolCacheByColumnIndex.clear();
+            columnTypes.clear();
             columnTypeMeta.clear();
             columnTypeMeta.add(0);
         }
@@ -385,9 +387,14 @@ public class TableUpdateDetails implements Closeable {
             }
             columnCount = metadata.getColumnCount();
             final int colType = metadata.getColumnType(colIndex);
+            columnTypes.extendAndSet(colIndex, colType);
             final int geoHashBits = ColumnType.getGeoHashBits(colType);
             columnTypeMeta.extendAndSet(colIndex + 1,
                     geoHashBits == 0 ? 0 : Numbers.encodeLowHighShorts((short) geoHashBits, ColumnType.tagOf(colType)));
+        }
+
+        int getColumnType(int colIndex) {
+            return columnTypes.getQuick(colIndex);
         }
 
         int getColumnTypeMeta(int colIndex) {

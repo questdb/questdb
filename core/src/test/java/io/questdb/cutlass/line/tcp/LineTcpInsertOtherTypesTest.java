@@ -570,6 +570,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "A\t1970-01-01T00:00:07.000000Z\n" +
                         "@plant2\t1970-01-01T00:00:08.000000Z\n" +
                         "@plant\t1970-01-01T00:00:09.000000Z\n" +
+                        "@plant\t1970-01-01T00:00:10.000000Z\n" +
                         "\t1970-01-01T00:00:11.000000Z\n",
                 new CharSequence[]{
                         "e", // valid

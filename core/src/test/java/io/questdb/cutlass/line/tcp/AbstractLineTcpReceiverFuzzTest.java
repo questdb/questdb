@@ -153,8 +153,8 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     }
 
     void assertTable(TableData table) {
-        // timeout is 120 seconds
-        long timeoutMicros = 120_000_000;
+        // timeout is 180 seconds
+        long timeoutMicros = 180_000_000;
         long prev = testMicrosClock.getTicks();
         boolean checked = false;
         while (!checked) {

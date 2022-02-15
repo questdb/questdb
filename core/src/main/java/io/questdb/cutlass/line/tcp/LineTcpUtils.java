@@ -27,10 +27,10 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cairo.CairoException;
 import io.questdb.std.Chars;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.MutableCharSink;
 
 final class LineTcpUtils {
-    static CharSequence utf8ToUtf16(DirectByteCharSequence utf8CharSeq, StringSink tempSink, boolean hasNonAsciiChars) {
+    static CharSequence utf8ToUtf16(DirectByteCharSequence utf8CharSeq, MutableCharSink tempSink, boolean hasNonAsciiChars) {
         if (hasNonAsciiChars) {
             tempSink.clear();
             if (!Chars.utf8Decode(utf8CharSeq.getLo(), utf8CharSeq.getHi(), tempSink)) {
@@ -41,7 +41,7 @@ final class LineTcpUtils {
         return utf8CharSeq;
     }
 
-    static CharSequence utf8BytesToString(DirectByteCharSequence utf8CharSeq, StringSink tempSink) {
+    static CharSequence utf8BytesToString(DirectByteCharSequence utf8CharSeq, MutableCharSink tempSink) {
         tempSink.clear();
         for (int i = 0, n = utf8CharSeq.length(); i < n; i++) {
             tempSink.put(utf8CharSeq.charAt(i));
