@@ -119,7 +119,7 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
                 Assert.assertEquals(0, reader.getTxn());
             }
 
-            try (TableWriter w = new TableWriter(configuration, "x")) {
+            try (TableWriter w = new TableWriter(configuration, "x", metrics)) {
                 addRow(w);
 
                 final TxnScoreboard txnScoreboard = w.getTxnScoreboard();

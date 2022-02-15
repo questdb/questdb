@@ -27,44 +27,44 @@ package io.questdb.cutlass.http;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
 import io.questdb.cutlass.http.processors.QueryCache;
+import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.metrics.Scrapable;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.Os;
 import org.junit.rules.TemporaryFolder;
 
 import java.util.Arrays;
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
-public class HttpMinTestBuilder {
+public class HttpHealthCheckTestBuilder {
 
-    private static final Log LOG = LogFactory.getLog(HttpMinTestBuilder.class);
+    private static final Log LOG = LogFactory.getLog(HttpHealthCheckTestBuilder.class);
+
+    private Metrics metrics;
     private TemporaryFolder temp;
-    private Scrapable scrapable;
+    private boolean injectUnhandledError;
 
-    public HttpMinTestBuilder withTempFolder(TemporaryFolder temp) {
-        this.temp = temp;
-        return this;
-    }
-
-    public HttpMinTestBuilder withScrapable(Scrapable scrapable) {
-        this.scrapable = scrapable;
-        return this;
-    }
-
-    public void run(HttpQueryTestBuilder.HttpClientCode code) throws Exception {
-        final int[] workerAffinity = new int[1];
+    public void run(HttpClientCode code) throws Exception {
+        final int workerCount = 1;
+        final int[] workerAffinity = new int[workerCount];
         Arrays.fill(workerAffinity, -1);
 
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
-                    .withBaseDir(temp.getRoot().getAbsolutePath())
+                    .withBaseDir(baseDir)
                     .build();
+            QueryCache.configure(httpConfiguration);
+
+            if (metrics == null) {
+                metrics = Metrics.enabled();
+            }
 
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
@@ -74,36 +74,40 @@ public class HttpMinTestBuilder {
 
                 @Override
                 public int getWorkerCount() {
-                    return workerAffinity.length;
+                    return workerCount;
                 }
 
                 @Override
                 public boolean haltOnError() {
                     return false;
                 }
-            }, Metrics.disabled());
+            }, metrics);
+
+            if (injectUnhandledError) {
+                final AtomicBoolean alreadyErrored = new AtomicBoolean();
+                workerPool.assign(workerId -> {
+                    if (!alreadyErrored.getAndSet(true)) {
+                        throw new NullPointerException("you'd better not handle me");
+                    }
+                    return false;
+                });
+            }
 
             DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
-
             try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
-                    HttpServer httpServer = new HttpServer(httpConfiguration, Metrics.disabled(), workerPool, false)
+                    CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
+                    HttpServer ignored = HttpServer.createMin(httpConfiguration, workerPool, LOG, engine, null, metrics)
             ) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new PrometheusMetricsProcessor(scrapable);
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/metrics";
-                    }
-                });
-
-                QueryCache.configure(httpConfiguration);
-
                 workerPool.start(LOG);
+
+                if (injectUnhandledError && metrics.isEnabled()) {
+                    for (int i = 0; i < 40; i++) {
+                        if (metrics.healthCheck().unhandledErrorsCount() > 0) {
+                            break;
+                        }
+                        Os.sleep(50);
+                    }
+                }
 
                 try {
                     code.run(engine);
@@ -112,5 +116,25 @@ public class HttpMinTestBuilder {
                 }
             }
         });
+    }
+
+    public HttpHealthCheckTestBuilder withMetrics(Metrics metrics) {
+        this.metrics = metrics;
+        return this;
+    }
+
+    public HttpHealthCheckTestBuilder withInjectedUnhandledError() {
+        this.injectUnhandledError = true;
+        return this;
+    }
+
+    public HttpHealthCheckTestBuilder withTempFolder(TemporaryFolder temp) {
+        this.temp = temp;
+        return this;
+    }
+
+    @FunctionalInterface
+    public interface HttpClientCode {
+        void run(CairoEngine engine) throws InterruptedException, SqlException, BrokenBarrierException;
     }
 }

@@ -160,7 +160,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
             ) {
                 CairoTestUtils.create(model);
                 try (
-                        TableWriter writer = new TableWriter(configuration, tableName);
+                        TableWriter writer = new TableWriter(configuration, tableName, metrics);
                         MemoryMR txMem = Vm.getMRInstance()
                 ) {
                     int symColIndex1 = writer.getColumnIndex("symCol1");

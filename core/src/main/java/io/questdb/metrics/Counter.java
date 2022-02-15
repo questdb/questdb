@@ -28,7 +28,11 @@ import org.jetbrains.annotations.TestOnly;
 
 public interface Counter extends Scrapable {
 
-    void inc();
+    default void inc() {
+        add(1);
+    }
+
+    void add(long value);
 
     @TestOnly
     long get();
