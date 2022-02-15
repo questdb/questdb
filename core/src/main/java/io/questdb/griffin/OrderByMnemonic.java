@@ -25,7 +25,13 @@
 package io.questdb.griffin;
 
 public class OrderByMnemonic {
+
+    //Order is unknown at this stage and needs to be checked. It might be optional .    
     public static final int ORDER_BY_UNKNOWN = 0;
+
+    //Order is required by current stage/nested model (even though it might still be unknown) 
     public static final int ORDER_BY_REQUIRED = 1;
+
+    //Order is known and needs to be maintained at current stage/nested model 
     public static final int ORDER_BY_INVARIANT = 2;
 }
