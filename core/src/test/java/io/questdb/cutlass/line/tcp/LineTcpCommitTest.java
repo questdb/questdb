@@ -26,10 +26,19 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.line.tcp.load.TableData;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Os;
 import org.junit.Test;
 
 public class LineTcpCommitTest extends AbstractLineTcpReceiverFuzzTest {
+
+    private static final Log LOG = LogFactory.getLog(LineTcpCommitTest.class);
+
+    @Override
+    protected Log getLog() {
+        return LOG;
+    }
 
     @Test
     public void testCommitIntervalBasedFraction() throws Exception {
