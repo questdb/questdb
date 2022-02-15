@@ -216,8 +216,7 @@ public class TxReader implements Closeable, Mutable {
 
             unsafeLoadPartitions(
                     prevPartitionTableVersion,
-                    partitionSegmentSize,
-                    false
+                    partitionSegmentSize
             );
 
             Unsafe.getUnsafe().loadFence();
@@ -229,8 +228,6 @@ public class TxReader implements Closeable, Mutable {
 
         }
 
-        // dirty read
-//        LOG.infoW().$("read __dirty__ txn record ").$(version).$();
         clearData();
         return false;
     }
@@ -359,11 +356,11 @@ public class TxReader implements Closeable, Mutable {
         return this.size + this.baseOffset;
     }
 
-    private void unsafeLoadPartitions(long prevPartitionTableVersion, int partitionTableSize, boolean forceClean) {
+    private void unsafeLoadPartitions(long prevPartitionTableVersion, int partitionTableSize) {
         if (PartitionBy.isPartitioned(partitionBy)) {
             int txAttachedPartitionsSize = partitionTableSize / Long.BYTES;
             if (txAttachedPartitionsSize > 0) {
-                if (prevPartitionTableVersion != partitionTableVersion || forceClean) {
+                if (prevPartitionTableVersion != partitionTableVersion) {
                     attachedPartitions.clear();
                     unsafeLoadPartitions0(txAttachedPartitionsSize, 0);
                 } else {

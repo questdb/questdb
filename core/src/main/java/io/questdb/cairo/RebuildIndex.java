@@ -193,12 +193,12 @@ public class RebuildIndex implements Closeable, Mutable {
 
         if (ff.exists(path.$())) {
             try (final MemoryMR roMem = indexMem) {
-                removeIndexFiles(columnName, ff);
-                TableUtils.dFile(path.trimTo(plen), columnName);
+//                removeIndexFiles(columnName, ff);
+//                TableUtils.dFile(path.trimTo(plen), columnName);
 
-                if (ff.exists(path.$())) {
-                    LOG.info().$("indexing [path=").utf8(path).I$();
-                    throw new UnsupportedOperationException();
+//                if (ff.exists(path.$())) {
+//                    LOG.info().$("indexing [path=").utf8(path).I$();
+                throw new UnsupportedOperationException();
 //                    final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, false);
 //                    createIndexFiles(columnName, indexValueBlockCapacity, plen, ff);
 //
@@ -209,53 +209,53 @@ public class RebuildIndex implements Closeable, Mutable {
 //                        indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnTop);
 //                        indexer.index(roMem, columnTop, partitionSize);
 //                    }
-                }
+//                }
             }
         }
     }
 
-    private void createIndexFiles(CharSequence columnName, int indexValueBlockCapacity, int plen, FilesFacade ff) {
-        try {
-            BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
-            try {
-                LOG.info().$("writing ").utf8(path).$();
-                ddlMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WRITER);
-                BitmapIndexWriter.initKeyMemory(ddlMem, indexValueBlockCapacity);
-            } catch (CairoException e) {
-                // looks like we could not create key file properly
-                // lets not leave half-baked file sitting around
-                LOG.error()
-                        .$("could not create index [name=").utf8(path)
-                        .$(", errno=").$(e.getErrno())
-                        .$(']').$();
-                if (!ff.remove(path)) {
-                    LOG.error()
-                            .$("could not remove '").utf8(path).$("'. Please remove MANUALLY.")
-                            .$("[errno=").$(ff.errno())
-                            .$(']').$();
-                }
-                throw e;
-            } finally {
-                ddlMem.close();
-            }
-            if (!ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName))) {
-                LOG.error().$("could not create index [name=").utf8(path).$(']').$();
-                throw CairoException.instance(ff.errno()).put("could not create index [name=").put(path).put(']');
-            }
-            LOG.info().$("writing ").utf8(path).$();
-        } finally {
-            path.trimTo(plen);
-        }
-    }
+//    private void createIndexFiles(CharSequence columnName, int indexValueBlockCapacity, int plen, FilesFacade ff) {
+//        try {
+//            BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
+//            try {
+//                LOG.info().$("writing ").utf8(path).$();
+//                ddlMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WRITER);
+//                BitmapIndexWriter.initKeyMemory(ddlMem, indexValueBlockCapacity);
+//            } catch (CairoException e) {
+//                // looks like we could not create key file properly
+//                // lets not leave half-baked file sitting around
+//                LOG.error()
+//                        .$("could not create index [name=").utf8(path)
+//                        .$(", errno=").$(e.getErrno())
+//                        .$(']').$();
+//                if (!ff.remove(path)) {
+//                    LOG.error()
+//                            .$("could not remove '").utf8(path).$("'. Please remove MANUALLY.")
+//                            .$("[errno=").$(ff.errno())
+//                            .$(']').$();
+//                }
+//                throw e;
+//            } finally {
+//                ddlMem.close();
+//            }
+//            if (!ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName))) {
+//                LOG.error().$("could not create index [name=").utf8(path).$(']').$();
+//                throw CairoException.instance(ff.errno()).put("could not create index [name=").put(path).put(']');
+//            }
+//            LOG.info().$("writing ").utf8(path).$();
+//        } finally {
+//            path.trimTo(plen);
+//        }
+//    }
 
-    private void removeIndexFiles(CharSequence columnName, FilesFacade ff) {
-        final int plen = path.length();
-        BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
-        removeFile(path, ff);
-
-        BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName);
-        removeFile(path, ff);
-    }
+//    private void removeIndexFiles(CharSequence columnName, FilesFacade ff) {
+//        final int plen = path.length();
+//        BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
+//        removeFile(path, ff);
+//
+//        BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName);
+//        removeFile(path, ff);
+//    }
 
     private void removeFile(Path path, FilesFacade ff) {
         LOG.info().$("deleting ").utf8(path).$();

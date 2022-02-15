@@ -37,6 +37,8 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
+import static io.questdb.cairo.TableUtils.*;
+
 final class Mig607 {
     private static final String TXN_FILE_NAME = "_txn";
     private static final String META_FILE_NAME = "_meta";
@@ -77,7 +79,7 @@ final class Mig607 {
                     );
                     final long columnRowCount = rowCount - columnTop;
                     long offset = columnRowCount * 8L;
-                    TableUtils.iFile(path.trimTo(plen2), columnName);
+                    iFile(path.trimTo(plen2), columnName);
                     long fd = TableUtils.openRW(ff, path, MigrationActions.LOG);
                     try {
                         long fileLen = ff.length(fd);
@@ -88,7 +90,7 @@ final class Mig607 {
 
                         TableUtils.allocateDiskSpace(ff, fd, offset + 8);
                         long dataOffset = TableUtils.readLongOrFail(ff, fd, offset - 8L, mem, path);
-                        TableUtils.dFile(path.trimTo(plen2), columnName);
+                        dFile(path.trimTo(plen2), columnName);
                         final long fd2 = TableUtils.openRO(ff, path, MigrationActions.LOG);
                         try {
                             if (columnType == ColumnType.BINARY) {
@@ -117,10 +119,6 @@ final class Mig607 {
                 }
             }
         }
-    }
-
-    public static void txnPartition(CharSink path, long txn) {
-        path.put('.').put(txn);
     }
 
     /**
@@ -161,6 +159,15 @@ final class Mig607 {
         } finally {
             path.trimTo(plen);
         }
+    }
+
+    public static void txnPartition(CharSink path, long txn) {
+        path.put('.').put(txn);
+    }
+
+    private static void dFile(Path path, CharSequence columnName) {
+        path.concat(columnName).put(FILE_SUFFIX_D);
+        path.$();
     }
 
     static LPSZ topFile(Path path, CharSequence columnName) {
@@ -256,7 +263,7 @@ final class Mig607 {
                         final int symbolCount = txMem.getInt(MigrationActions.TX_OFFSET_MAP_WRITER_COUNT_505 + 8 + denseSymbolCount * 8L);
                         final long offset = MigrationActions.prefixedBlockOffset(SymbolMapWriter.HEADER_SIZE, symbolCount, 8L);
 
-                        SymbolMapWriter.offsetFileName(path.trimTo(plen), columnName);
+                        offsetFileName(path.trimTo(plen), columnName);
                         long fd = TableUtils.openRW(ff, path, MigrationActions.LOG);
                         try {
                             long fileLen = ff.length(fd);
@@ -267,7 +274,7 @@ final class Mig607 {
                                     TableUtils.allocateDiskSpace(ff, fd, offset + 8);
                                     long dataOffset = TableUtils.readLongOrFail(ff, fd, offset - 8L, tmpMem, path);
                                     // string length
-                                    SymbolMapWriter.charFileName(path.trimTo(plen), columnName);
+                                    charFileName(path.trimTo(plen), columnName);
                                     long fd2 = TableUtils.openRO(ff, path, MigrationActions.LOG);
                                     try {
                                         long len = TableUtils.readIntOrFail(ff, fd2, dataOffset, tmpMem, path);
@@ -301,5 +308,18 @@ final class Mig607 {
 
         path.trimTo(plen).concat(TXN_FILE_NAME).$();
         trimFile(ff, path, txFileSize);
+    }
+
+    private static void offsetFileName(Path path, CharSequence columnName) {
+        path.concat(columnName).put(".o").$();
+    }
+
+    private static void charFileName(Path path, CharSequence columnName) {
+        path.concat(columnName).put(".c").$();
+    }
+
+
+    private static void iFile(Path path, CharSequence columnName) {
+        path.concat(columnName).put(FILE_SUFFIX_I).$();
     }
 }

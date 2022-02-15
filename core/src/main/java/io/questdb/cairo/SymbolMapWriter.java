@@ -38,6 +38,8 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
+import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
+
 public class SymbolMapWriter implements Closeable, SymbolCountProvider {
     public static final int HEADER_SIZE = 64;
     public static final int HEADER_CAPACITY = 0;
@@ -57,6 +59,7 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
             CairoConfiguration configuration,
             Path path,
             CharSequence name,
+            long columnNameTxn,
             int symbolCount,
             int symbolIndexInTxWriter,
             @NotNull SymbolValueCountCollector valueCountCollector
@@ -68,7 +71,7 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
 
             // this constructor does not create index. Index must exist,
             // and we use "offset" file to store "header"
-            offsetFileName(path.trimTo(plen), name);
+            offsetFileName(path.trimTo(plen), name, columnNameTxn);
             if (!ff.exists(path)) {
                 LOG.error().$(path).$(" is not found").$();
                 throw CairoException.instance(0).put("SymbolMap does not exist: ").put(path);
@@ -96,12 +99,13 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
                     configuration,
                     path.trimTo(plen),
                     name,
+                    columnNameTxn,
                     configuration.getDataIndexKeyAppendPageSize(),
                     configuration.getDataIndexKeyAppendPageSize() * 2
             );
 
             // this is the place where symbol values are stored
-            this.charMem = Vm.getWholeMARWInstance(ff, charFileName(path.trimTo(plen), name), mapPageSize, MemoryTag.MMAP_INDEX_WRITER);
+            this.charMem = Vm.getWholeMARWInstance(ff, charFileName(path.trimTo(plen), name, columnNameTxn), mapPageSize, MemoryTag.MMAP_INDEX_WRITER);
 
             // move append pointer for symbol values in the correct place
             jumpCharMemToSymbolCount(symbolCount);
@@ -133,8 +137,12 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
         }
     }
 
-    public static Path charFileName(Path path, CharSequence columnName) {
-        return path.concat(columnName).put(".c").$();
+    public static Path charFileName(Path path, CharSequence columnName, long columnNameTxn) {
+        path.concat(columnName).put(".c");
+        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.concat('.').concat(columnNameTxn);
+        }
+        return path.$();
     }
 
     public static void createSymbolMapFiles(
@@ -142,33 +150,38 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
             MemoryMA mem,
             Path path,
             CharSequence columnName,
+            long columnNameTxn,
             int symbolCapacity,
             boolean symbolCacheFlag
     ) {
         int plen = path.length();
         try {
-            mem.wholeFile(ff, offsetFileName(path.trimTo(plen), columnName), MemoryTag.MMAP_INDEX_WRITER);
+            mem.wholeFile(ff, offsetFileName(path.trimTo(plen), columnName, columnNameTxn), MemoryTag.MMAP_INDEX_WRITER);
             mem.jumpTo(0);
             mem.putInt(symbolCapacity);
             mem.putBool(symbolCacheFlag);
             mem.jumpTo(HEADER_SIZE);
             mem.close();
 
-            if (!ff.touch(charFileName(path.trimTo(plen), columnName))) {
+            if (!ff.touch(charFileName(path.trimTo(plen), columnName, columnNameTxn))) {
                 throw CairoException.instance(ff.errno()).put("Cannot create ").put(path);
             }
 
-            mem.smallFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName), MemoryTag.MMAP_INDEX_WRITER);
+            mem.smallFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn), MemoryTag.MMAP_INDEX_WRITER);
             BitmapIndexWriter.initKeyMemory(mem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
-            ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName));
+            ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn));
         } finally {
             mem.close();
             path.trimTo(plen);
         }
     }
 
-    public static Path offsetFileName(Path path, CharSequence columnName) {
-        return path.concat(columnName).put(".o").$();
+    public static Path offsetFileName(Path path, CharSequence columnName, long columnNameTxn) {
+        path.concat(columnName).put(".o");
+        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.concat('.').concat(columnNameTxn);
+        }
+        return path.$();
     }
 
     public void appendSymbolCharsBlock(long blockSize, long sourceAddress) {

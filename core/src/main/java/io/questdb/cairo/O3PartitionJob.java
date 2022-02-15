@@ -182,7 +182,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     // we need to read "low" and "high" boundaries of the partition. "low" being oldest timestamp
                     // and "high" being newest
 
-                    dFile(path.trimTo(plen), metadata.getColumnName(timestampIndex));
+                    dFile(path.trimTo(plen), metadata.getColumnName(timestampIndex), COLUMN_NAME_TXN_NONE);
 
                     // also track the fd that we need to eventually close
                     srcTimestampFd = openRW(ff, path, LOG);

@@ -218,10 +218,12 @@ public class InplaceUpdateExecution implements Closeable {
             int pathTrimToLen = path.length();
 
             for (int i = 0, n = columnMap.size(); i < n; i++) {
-                CharSequence name = metadata.getColumnName(columnMap.get(i));
+                int columnIndex = columnMap.get(i);
+                CharSequence name = metadata.getColumnName(columnIndex);
                 MemoryCMARW colMem = updateMemory.get(i);
                 colMem.close(false);
-                colMem.of(ff, dFile(path.trimTo(pathTrimToLen), name), dataAppendPageSize, -1, MemoryTag.MMAP_TABLE_WRITER);
+                long columnNameTxn = tableWriter.getColumnTxnName(partitionTimestamp, columnIndex);
+                colMem.of(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), dataAppendPageSize, -1, MemoryTag.MMAP_TABLE_WRITER);
             }
         } finally {
             path.trimTo(rootLen);

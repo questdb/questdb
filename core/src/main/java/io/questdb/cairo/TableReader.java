@@ -632,7 +632,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void createNewColumnList(int columnCount, long pTransitionIndex, int columnCountShl) {
         int capacity = partitionCount << columnCountShl;
-        final ObjList<MemoryMR> columns = new ObjList<>(capacity);
+        final ObjList<MemoryMR> columns = new ObjList<>(capacity + 2);
         final LongList columnTops = new LongList(capacity / 2);
         final ObjList<BitmapIndexReader> indexReaders = new ObjList<>(capacity);
         columns.setPos(capacity + 2);
@@ -641,29 +641,32 @@ public class TableReader implements Closeable, SymbolTableSource {
         columnTops.setPos(capacity / 2);
         indexReaders.setPos(capacity + 2);
         final long pIndexBase = pTransitionIndex + 8;
+        int iterateCount = Math.max(columnCount, this.columnCount);
 
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
             final int base = partitionIndex << columnCountShl;
             final int oldBase = partitionIndex << this.columnCountShl;
+
             try {
                 final Path path = pathGenPartitioned(partitionIndex).$();
                 long partitionRowCount = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
-                for (int i = 0; i < columnCount; i++) {
-                    final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L) - 1;
+                for (int i = 0; i < iterateCount; i++) {
+                    final int action = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4);
+                    final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4);
+
+                    if (action == -1) {
+                        final int index = getPrimaryColumnIndex(oldBase, i);
+                        Misc.free(this.columns.getQuick(index));
+                        Misc.free(this.columns.getQuick(index + 1));
+                    }
+
                     if (copyFrom > -1) {
                         fetchColumnsFrom(oldBase, copyFrom);
                         copyColumnsTo(partitionIndex, columns, columnTops, indexReaders, base, i, partitionRowCount);
-                    } else {
+                    } else if (copyFrom != Integer.MIN_VALUE) {
                         // new instance
                         reloadColumnAt(partitionIndex, path, columns, columnTops, indexReaders, base, i, partitionRowCount);
                     }
-                }
-
-                // free remaining columns
-                for (int i = 0; i < this.columnCount; i++) {
-                    final int index = getPrimaryColumnIndex(oldBase, i);
-                    Misc.free(this.columns.getQuick(index));
-                    Misc.free(this.columns.getQuick(index + 1));
                 }
             } finally {
                 path.trimTo(rootLen);
@@ -917,7 +920,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         symbolMapReaders.setPos(columnCount);
         for (int i = 0; i < columnCount; i++) {
             if (ColumnType.isSymbol(metadata.getColumnType(i))) {
-                SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl(configuration, path, metadata.getColumnName(i), txFile.getSymbolValueCount(symbolColumnIndex++));
+                long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(metadata.getWriterIndex(i));
+                SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl(configuration, path, metadata.getColumnName(i), columnNameTxn, txFile.getSymbolValueCount(symbolColumnIndex++));
                 symbolMapReaders.extendAndSet(i, symbolMapReader);
             }
         }
@@ -1032,44 +1036,50 @@ public class TableReader implements Closeable, SymbolTableSource {
             MemoryMR mem2 = columns.getQuick(secondaryIndex);
 
             final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
-            final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnIndex);
-            if (columnTop != 0) {
-                int asdf = 0;
+            int writerIndex = metadata.getWriterIndex(columnIndex);
+            final int versionRecordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, writerIndex);
+            final long columnTop = versionRecordIndex > -1L ? columnVersionReader.getColumnTop(versionRecordIndex) : 0L;
+            long columnTxn = versionRecordIndex > -1L ? columnVersionReader.getColumnNameTxn(versionRecordIndex) : -1L;
+            if (columnTxn == -1L) {
+                // When column is added, column version will have txn number for the partition
+                // where it's added. It will also have the txn number in the [default] partition
+                columnTxn = columnVersionReader.getDefaultColumnNameTxn(columnIndex);
             }
             final long columnRowCount = partitionRowCount - columnTop;
 
-            // When column is added mid-table existence the .top file is only
+            // When column is added mid-table existence the top record is only
             // created in the current partition. Older partitions would simply have no
             // column file. This makes it necessary to check for .d file existence
-            if (partitionRowCount > 0 && ff.exists(TableUtils.dFile(path.trimTo(plen), name))) {
+            if (partitionRowCount > 0 && ff.exists(TableUtils.dFile(path.trimTo(plen), name, columnTxn))) {
                 final int columnType = metadata.getColumnType(columnIndex);
 
                 if (ColumnType.isVariableLength(columnType)) {
                     long columnSize = columnRowCount * 8L + 8L;
-                    TableUtils.iFile(path.trimTo(plen), name);
+                    TableUtils.iFile(path.trimTo(plen), name, columnTxn);
                     mem2 = openOrCreateMemory(path, columns, secondaryIndex, mem2, columnSize);
                     columnSize = mem2.getLong(columnRowCount * 8L);
-                    TableUtils.dFile(path.trimTo(plen), name);
+                    TableUtils.dFile(path.trimTo(plen), name, columnTxn);
                     openOrCreateMemory(path, columns, primaryIndex, mem1, columnSize);
                 } else {
                     long columnSize = columnRowCount << ColumnType.pow2SizeOf(columnType);
-                    TableUtils.dFile(path.trimTo(plen), name);
+                    TableUtils.dFile(path.trimTo(plen), name, columnTxn);
                     openOrCreateMemory(path, columns, primaryIndex, mem1, columnSize);
                     Misc.free(columns.getAndSetQuick(secondaryIndex, null));
                 }
 
                 columnTops.setQuick(columnBase / 2 + columnIndex, columnTop);
 
+                // TODO: use columnTxn in indexes
                 if (metadata.isColumnIndexed(columnIndex)) {
                     BitmapIndexReader indexReader = indexReaders.getQuick(primaryIndex);
                     if (indexReader instanceof BitmapIndexBwdReader) {
                         // name txn is -1 because the parent call sets up partition name for us
-                        ((BitmapIndexBwdReader) indexReader).of(configuration, path.trimTo(plen), name, columnTop, -1);
+                        ((BitmapIndexBwdReader) indexReader).of(configuration, path.trimTo(plen), name, columnTxn, columnTop, -1);
                     }
 
                     indexReader = indexReaders.getQuick(secondaryIndex);
                     if (indexReader instanceof BitmapIndexFwdReader) {
-                        ((BitmapIndexFwdReader) indexReader).of(configuration, path.trimTo(plen), name, columnTop, -1);
+                        ((BitmapIndexFwdReader) indexReader).of(configuration, path.trimTo(plen), name, columnTxn, columnTop, -1);
                     }
 
                 } else {
@@ -1108,14 +1118,14 @@ public class TableReader implements Closeable, SymbolTableSource {
                 try {
                     metadata.applyTransitionIndex();
                     if (reshuffleColumns) {
-                        final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
+                        final int columnCount = metadata.getColumnCount();
 
                         int columnCountShl = getColumnBits(columnCount);
                         // when a column is added we cannot easily reshuffle columns in-place
                         // the reason is that we'd have to create gaps in columns list between
                         // partitions. It is possible in theory, but this could be an algo for
                         // another day.
-                        if (columnCountShl > this.columnCountShl) {
+                        if (columnCountShl != this.columnCountShl) {
                             createNewColumnList(columnCount, pTransitionIndex, columnCountShl);
                         } else {
                             reshuffleColumns(columnCount, pTransitionIndex);
@@ -1153,11 +1163,13 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private SymbolMapReader reloadSymbolMapReader(int columnIndex, SymbolMapReader reader) {
         if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
+            int writerColumnIndex = metadata.getWriterIndex(columnIndex);
+            long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerColumnIndex);
             if (reader instanceof SymbolMapReaderImpl) {
-                ((SymbolMapReaderImpl) reader).of(configuration, path, metadata.getColumnName(columnIndex), 0);
+                ((SymbolMapReaderImpl) reader).of(configuration, path, metadata.getColumnName(columnIndex), columnNameTxn, 0);
                 return reader;
             }
-            return new SymbolMapReaderImpl(configuration, path, metadata.getColumnName(columnIndex), 0);
+            return new SymbolMapReaderImpl(configuration, path, metadata.getColumnName(columnIndex), columnNameTxn, 0);
         } else {
             return reader;
         }
@@ -1228,58 +1240,37 @@ public class TableReader implements Closeable, SymbolTableSource {
 
         final long pIndexBase = pTransitionIndex + 8;
         final long pState = pIndexBase + columnCount * 8L;
+        int iterateCount = Math.max(columnCount, this.columnCount);
 
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
             int base = getColumnBase(partitionIndex);
             try {
                 final Path path = pathGenPartitioned(partitionIndex).$();
                 final long partitionRowCount = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
+                for (int i = 0; i < iterateCount; i++) {
+                    final int action = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L);
+                    final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4);
 
-                Vect.memset(pState, columnCount, 0);
+                    if (action == -1) {
+                        // This column is deleted (not moved).
+                        // Close all files
+                        int index = getPrimaryColumnIndex(base, i);
+                        Misc.free(columns.getAndSetQuick(index, NullColumn.INSTANCE));
+                        Misc.free(columns.getAndSetQuick(index + 1, NullColumn.INSTANCE));
+                        Misc.free(bitmapIndexes.getAndSetQuick(index, null));
+                        Misc.free(bitmapIndexes.getAndSetQuick(index + 1, null));
+                    }
 
-                for (int i = 0; i < columnCount; i++) {
-
-                    if (TableUtils.isEntryToBeProcessed(pState, i)) {
-                        final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L) - 1;
-
-                        if (copyFrom == i) {
-                            // It appears that column hasn't changed its position. There are three possibilities here:
-                            // 1. Column has been deleted and re-added by the same name. We must check if file
-                            //    descriptor is still valid. If it isn't, reload the column from disk
-                            // 2. Column has been forced out of the reader via closeColumnForRemove(). This is required
-                            //    on Windows before column can be deleted. In this case we must check for marker
-                            //    instance and the column from disk
-                            // 3. Column hasn't been altered and we can skip to next column.
-                            MemoryMR col = columns.getQuick(getPrimaryColumnIndex(base, i));
-                            if ((col instanceof MemoryCMRImpl && col.isDeleted()) || col instanceof NullColumn) {
-                                reloadColumnAt(
-                                        partitionIndex,
-                                        path,
-                                        columns,
-                                        columnTops,
-                                        bitmapIndexes,
-                                        base,
-                                        i,
-                                        partitionRowCount
-                                );
-                            }
-                            continue;
-                        }
-
-                        if (copyFrom > -1) {
-                            fetchColumnsFrom(base, copyFrom);
-                            copyColumnsTo(partitionIndex, this.columns, this.columnTops, this.bitmapIndexes, base, i, partitionRowCount);
-                            int copyTo = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4) - 1;
-                            while (copyTo > -1 && TableUtils.isEntryToBeProcessed(pState, copyTo)) {
-                                copyColumnsTo(partitionIndex, this.columns, this.columnTops, this.bitmapIndexes, base, copyTo, partitionRowCount);
-                                copyTo = Unsafe.getUnsafe().getInt(pIndexBase + (copyTo - 1) * 8L + 4);
-                            }
-                            Misc.free(tempCopyStruct.mem1);
-                            Misc.free(tempCopyStruct.mem2);
-                            Misc.free(tempCopyStruct.backwardReader);
-                            Misc.free(tempCopyStruct.forwardReader);
-                        } else {
-                            // new instance
+                    if (copyFrom == i) {
+                        // It appears that column hasn't changed its position. There are three possibilities here:
+                        // 1. Column has been deleted and re-added by the same name. We must check if file
+                        //    descriptor is still valid. If it isn't, reload the column from disk
+                        // 2. Column has been forced out of the reader via closeColumnForRemove(). This is required
+                        //    on Windows before column can be deleted. In this case we must check for marker
+                        //    instance and the column from disk
+                        // 3. Column hasn't been altered and we can skip to next column.
+                        MemoryMR col = columns.getQuick(getPrimaryColumnIndex(base, i));
+                        if ((col instanceof MemoryCMRImpl && col.isDeleted()) || col instanceof NullColumn) {
                             reloadColumnAt(
                                     partitionIndex,
                                     path,
@@ -1291,12 +1282,22 @@ public class TableReader implements Closeable, SymbolTableSource {
                                     partitionRowCount
                             );
                         }
+                    } else if (copyFrom > -1) {
+                        fetchColumnsFrom(base, copyFrom);
+                        copyColumnsTo(partitionIndex, this.columns, this.columnTops, this.bitmapIndexes, base, i, partitionRowCount);
+                    } else if (copyFrom != Integer.MIN_VALUE) {
+                        // new instance
+                        reloadColumnAt(
+                                partitionIndex,
+                                path,
+                                columns,
+                                columnTops,
+                                bitmapIndexes,
+                                base,
+                                i,
+                                partitionRowCount
+                        );
                     }
-                }
-                for (int i = columnCount; i < this.columnCount; i++) {
-                    int index = getPrimaryColumnIndex(base, i);
-                    Misc.free(columns.getQuick(index));
-                    Misc.free(columns.getQuick(index + 1));
                 }
             } finally {
                 path.trimTo(rootLen);
@@ -1305,72 +1306,34 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void reshuffleSymbolMapReaders(long pTransitionIndex, int columnCount) {
-        final long index = pTransitionIndex + 8;
-        final long stateAddress = index + columnCount * 8L;
-
+        final long pIndexBase = pTransitionIndex + 8;
         if (columnCount > this.columnCount) {
             symbolMapReaders.setPos(columnCount);
         }
 
-        Vect.memset(stateAddress, columnCount, 0);
-
         // this is a silly exercise in walking the index
-        for (int i = 0; i < columnCount; i++) {
+        for (int i = 0, n = Math.max(columnCount, this.columnCount); i < columnCount; i++) {
+            final int action = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L);
+            final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4);
 
-            // prevent writing same entry more than once
-            if (Unsafe.getUnsafe().getByte(stateAddress + i) == -1) {
-                continue;
+            if (action == -1) {
+                // deleted
+                Misc.free(symbolMapReaders.getAndSetQuick(i, reloadSymbolMapReader(i, null)));
             }
 
-            Unsafe.getUnsafe().putByte(stateAddress + i, (byte) -1);
-
-            int copyFrom = Unsafe.getUnsafe().getInt(index + i * 8L);
-
             // don't copy entries to themselves, unless symbol map was deleted
-            if (copyFrom == i + 1 && copyFrom < columnCount) {
+            if (copyFrom == i) {
                 SymbolMapReader reader = symbolMapReaders.getQuick(copyFrom);
                 if (reader != null && reader.isDeleted()) {
                     symbolMapReaders.setQuick(copyFrom, reloadSymbolMapReader(copyFrom, reader));
                 }
-                continue;
+            } else if (copyFrom > -1) {
+                SymbolMapReader tmp = symbolMapReaders.getQuick(copyFrom);
+                copyOrRenewSymbolMapReader(tmp, i);
+            } else if (copyFrom != Integer.MIN_VALUE) {
+                // New instance
+                symbolMapReaders.getAndSetQuick(i, reloadSymbolMapReader(i, null));
             }
-
-            // check where we source entry:
-            // 1. from another entry
-            // 2. create new instance
-            SymbolMapReader tmp;
-            if (copyFrom > 0) {
-                tmp = copyOrRenewSymbolMapReader(symbolMapReaders.getAndSetQuick(copyFrom - 1, null), i);
-
-                int copyTo = Unsafe.getUnsafe().getInt(index + i * 8L + 4);
-
-                // now we copied entry, what do we do with value that was already there?
-                // do we copy it somewhere else?
-                while (copyTo > 0) {
-                    // Yeah, we do. This can get recursive!
-                    // prevent writing same entry twice
-                    if (Unsafe.getUnsafe().getByte(stateAddress + copyTo - 1) == -1) {
-                        break;
-                    }
-                    Unsafe.getUnsafe().putByte(stateAddress + copyTo - 1, (byte) -1);
-
-                    tmp = copyOrRenewSymbolMapReader(tmp, copyTo - 1);
-                    copyTo = Unsafe.getUnsafe().getInt(index + (copyTo - 1) * 8L + 4);
-                }
-                Misc.free(tmp);
-            } else {
-                // new instance
-                Misc.free(symbolMapReaders.getAndSetQuick(i, reloadSymbolMapReader(i, null)));
-            }
-        }
-
-        // ended up with fewer columns than before?
-        // free resources for the "extra" symbol map readers and contract the list
-        if (columnCount < this.columnCount) {
-            for (int i = columnCount; i < this.columnCount; i++) {
-                Misc.free(symbolMapReaders.getQuick(i));
-            }
-            symbolMapReaders.setPos(columnCount);
         }
     }
 

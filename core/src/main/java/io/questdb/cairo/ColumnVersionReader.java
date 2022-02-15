@@ -35,8 +35,6 @@ import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.ColumnVersionWriter.*;
-
 public class ColumnVersionReader implements Closeable {
     public static final int OFFSET_VERSION_64 = 0;
     public static final int OFFSET_OFFSET_A_64 = OFFSET_VERSION_64 + 8;
@@ -47,6 +45,7 @@ public class ColumnVersionReader implements Closeable {
     public static final int BLOCK_SIZE = 4;
     public static final int BLOCK_SIZE_BYTES = BLOCK_SIZE * Long.BYTES;
     public static final int BLOCK_SIZE_MSB = Numbers.msb(BLOCK_SIZE);
+    public static final long COL_TOP_DEFAULT_PARTITION = Long.MIN_VALUE;
 
     private final static Log LOG = LogFactory.getLog(ColumnVersionReader.class);
     private MemoryCMR mem;
@@ -61,7 +60,30 @@ public class ColumnVersionReader implements Closeable {
         }
     }
 
+    public long getColumnNameTxn(long partitionTimestamp, int columnIndex) {
+        int versionRecordIndex = getRecordIndex(partitionTimestamp, columnIndex);
+        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + 2) : getDefaultColumnNameTxn(columnIndex);
+    }
+
+    public long getColumnNameTxn(int versionRecordIndex) {
+        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + 2) : -1L;
+    }
+
+    public long getColumnTop(int versionRecordIndex) {
+        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + 3) : 0L;
+    }
+
     public long getColumnTop(long partitionTimestamp, int columnIndex) {
+        int index = getRecordIndex(partitionTimestamp, columnIndex);
+        return getColumnTop(index);
+    }
+
+    public long getDefaultColumnNameTxn(int columnIndex) {
+        int index = getRecordIndex(COL_TOP_DEFAULT_PARTITION, columnIndex);
+        return index > -1 ? getColumnNameTxn(index) : -1L;
+    }
+
+    public int getRecordIndex(long partitionTimestamp, int columnIndex) {
         int index = cachedList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
         if (index > -1) {
             final int sz = cachedList.size();
@@ -69,7 +91,7 @@ public class ColumnVersionReader implements Closeable {
                 final long thisIndex = cachedList.getQuick(index + 1);
 
                 if (thisIndex == columnIndex) {
-                    return cachedList.getQuick(index + 3);
+                    return index;
                 }
 
                 if (thisIndex > columnIndex) {
@@ -77,7 +99,7 @@ public class ColumnVersionReader implements Closeable {
                 }
             }
         }
-        return 0L;
+        return -1;
     }
 
     public ColumnVersionReader ofRO(FilesFacade ff, LPSZ fileName) {

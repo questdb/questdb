@@ -59,6 +59,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 import java.util.ServiceLoader;
 
+import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.griffin.SqlKeywords.*;
 
 
@@ -3178,7 +3179,7 @@ public class SqlCompiler implements Closeable {
                 for (int i = 0, sz = sourceMetaData.getColumnCount(); i < sz; i++) {
                     if (ColumnType.isSymbol(sourceMetaData.getColumnType(i))) {
                         SymbolMapReader mapReader = reader.getSymbolMapReader(i);
-                        SymbolMapWriter.createSymbolMapFiles(ff, mem, srcPath, sourceMetaData.getColumnName(i), mapReader.getSymbolCapacity(), mapReader.isCached());
+                        SymbolMapWriter.createSymbolMapFiles(ff, mem, srcPath, sourceMetaData.getColumnName(i), COLUMN_NAME_TXN_NONE, mapReader.getSymbolCapacity(), mapReader.isCached());
                         symbolMapCount++;
                     }
                 }

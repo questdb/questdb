@@ -1258,88 +1258,88 @@ public class TableReaderTest extends AbstractCairoTest {
     };
     private static final FieldGenerator BATCH8_GENERATOR = (r, rnd, ts, blob) -> {
         if (rnd.nextBoolean()) {
-            r.putByte(1, rnd.nextByte());
+            r.putByte(2, rnd.nextByte());
         }
 
         if (rnd.nextBoolean()) {
-            r.putBool(7, rnd.nextBoolean());
+            r.putBool(8, rnd.nextBoolean());
         }
 
         if (rnd.nextBoolean()) {
-            r.putShort(0, rnd.nextShort());
+            r.putShort(1, rnd.nextShort());
         }
 
         if (rnd.nextBoolean()) {
-            r.putDouble(2, rnd.nextDouble());
+            r.putDouble(3, rnd.nextDouble());
         }
 
         if (rnd.nextBoolean()) {
-            r.putFloat(3, rnd.nextFloat());
+            r.putFloat(4, rnd.nextFloat());
         }
 
         if (rnd.nextBoolean()) {
-            r.putLong(4, rnd.nextLong());
+            r.putLong(5, rnd.nextLong());
         }
 
         if (rnd.nextBoolean()) {
-            r.putDate(9, ts);
+            r.putDate(10, ts);
         }
 
         if (rnd.nextBoolean()) {
             rnd.nextChars(blob, blobLen / 2);
-            r.putBin(8, blob, blobLen);
+            r.putBin(9, blob, blobLen);
         }
 
         if (rnd.nextBoolean()) {
-            r.putStr(5, rnd.nextChars(10));
+            r.putStr(6, rnd.nextChars(10));
         }
 
         if (rnd.nextBoolean()) {
-            r.putSym(6, rnd.nextChars(7));
+            r.putSym(7, rnd.nextChars(7));
         }
 
         if ((rnd.nextPositiveInt() & 3) == 0) {
-            r.putStr(10, rnd.nextChars(15));
+            r.putStr(11, rnd.nextChars(15));
         }
 
         if ((rnd.nextPositiveInt() & 3) == 0) {
-            r.putInt(11, rnd.nextInt());
+            r.putInt(12, rnd.nextInt());
         }
 
         if (rnd.nextBoolean()) {
-            r.putShort(12, rnd.nextShort());
+            r.putShort(13, rnd.nextShort());
         }
 
         if (rnd.nextBoolean()) {
-            r.putBool(13, rnd.nextBoolean());
+            r.putBool(14, rnd.nextBoolean());
         }
 
         if (rnd.nextBoolean()) {
-            r.putByte(14, rnd.nextByte());
+            r.putByte(15, rnd.nextByte());
         }
 
         if (rnd.nextBoolean()) {
-            r.putFloat(15, rnd.nextFloat());
+            r.putFloat(16, rnd.nextFloat());
         }
 
         if (rnd.nextBoolean()) {
-            r.putDouble(16, rnd.nextDouble());
+            r.putDouble(17, rnd.nextDouble());
         }
 
         if (rnd.nextBoolean()) {
-            r.putSym(17, rnd.nextChars(10));
+            r.putSym(18, rnd.nextChars(10));
         }
 
         if (rnd.nextBoolean()) {
-            r.putLong(18, rnd.nextLong());
+            r.putLong(19, rnd.nextLong());
         }
 
         if (rnd.nextBoolean()) {
-            r.putDate(19, rnd.nextLong());
+            r.putDate(20, rnd.nextLong());
         }
 
         if (rnd.nextBoolean()) {
-            r.putInt(20, rnd.nextInt());
+            r.putInt(21, rnd.nextInt());
         }
     };
 

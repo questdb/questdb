@@ -100,6 +100,8 @@ public final class TableUtils {
     public static final long TX_OFFSET_MAP_WRITER_COUNT_32 = 128;
     public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
 
+    public static final long COLUMN_NAME_TXN_NONE = -1L;
+
     /**
      * TXN file structure
      * struct {
@@ -225,6 +227,7 @@ public final class TableUtils {
                             mem,
                             path.trimTo(rootLen),
                             structure.getColumnName(i),
+                            COLUMN_NAME_TXN_NONE,
                             structure.getSymbolCapacity(i),
                             structure.getSymbolCacheFlag(i)
                     );
@@ -270,7 +273,7 @@ public final class TableUtils {
         int slaveColumnCount = slaveMeta.columnCount;
         int masterColumnCount = masterMeta.getInt(META_OFFSET_COUNT);
         final long pTransitionIndex;
-        final int size = masterColumnCount * 16;
+        final int size = 8 + masterColumnCount * 8;
 
         long index = pTransitionIndex = Unsafe.calloc(size, MemoryTag.NATIVE_DEFAULT);
         Unsafe.getUnsafe().putInt(index, size);
@@ -282,6 +285,7 @@ public final class TableUtils {
         // delete: if -1 then current column in slave is deleted, else it's reused
         // "copy from" >= 0 indicates that column is to be copied from slave position
         // "copy from" < 0  indicates that column is new and should be taken from updated metadata position
+        // "copy from" == Integer.MIN_VALUE  indicates that column is deleted and should not be re-added from any source
 
 
         long offset = getColumnNameOffset(masterColumnCount);
@@ -305,7 +309,10 @@ public final class TableUtils {
             int outIndex = slaveIndex - shiftLeft;
             if (masterColumnType < 0) {
                 shiftLeft++; // Deleted in master
-                Unsafe.getUnsafe().putInt(index + outIndex * 8L, -1);
+                if (slaveIndex < slaveColumnCount) {
+                    Unsafe.getUnsafe().putInt(index + slaveIndex * 8L, -1);
+                    Unsafe.getUnsafe().putInt(index + slaveIndex * 8L + 4, Integer.MIN_VALUE);
+                }
             } else {
                 if (
                         slaveIndex < slaveColumnCount
@@ -323,8 +330,12 @@ public final class TableUtils {
         return pTransitionIndex;
     }
 
-    public static LPSZ dFile(Path path, CharSequence columnName) {
-        return path.concat(columnName).put(FILE_SUFFIX_D).$();
+    public static LPSZ dFile(Path path, CharSequence columnName, long columnTxn) {
+        path.concat(columnName).put(FILE_SUFFIX_D);
+        if (columnTxn > COLUMN_NAME_TXN_NONE) {
+            path.concat('.').concat(columnTxn);
+        }
+        return path.$();
     }
 
     public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name) {
@@ -384,8 +395,12 @@ public final class TableUtils {
         return getSymbolWriterIndexOffset(index) + Integer.BYTES;
     }
 
-    public static LPSZ iFile(Path path, CharSequence columnName) {
-        return path.concat(columnName).put(FILE_SUFFIX_I).$();
+    public static LPSZ iFile(Path path, CharSequence columnName, long columnTxn) {
+        path.concat(columnName).put(FILE_SUFFIX_I);
+        if (columnTxn > COLUMN_NAME_TXN_NONE) {
+            path.concat('.').concat(columnTxn);
+        }
+        return path.$();
     }
 
     public static boolean isValidColumnName(CharSequence seq) {

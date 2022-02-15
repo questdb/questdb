@@ -88,16 +88,17 @@ class SymbolCache implements Closeable {
     }
 
     void of(CairoConfiguration configuration, Path path, CharSequence columnName, int symbolIndexInTxFile) {
-        this.symbolIndexInTxFile = symbolIndexInTxFile;
-        final int plen = path.length();
-        if (txReader == null) {
-            txReader = new TxReader(configuration.getFilesFacade());
-        }
-        txReader.ofRO(path, PartitionBy.NONE); // Partition is not important, TxReader needed to read symbol count
-        int symCount = safeReadUnsafeSymbolCount(symbolIndexInTxFile, false);
-        path.trimTo(plen);
-        symbolMapReader.of(configuration, path, columnName, symCount);
-        symbolValueToKeyMap.clear(symCount);
+        throw new UnsupportedOperationException();
+//        this.symbolIndexInTxFile = symbolIndexInTxFile;
+//        final int plen = path.length();
+//        if (txReader == null) {
+//            txReader = new TxReader(configuration.getFilesFacade());
+//        }
+//        txReader.ofRO(path, PartitionBy.NONE); // Partition is not important, TxReader needed to read symbol count
+//        int symCount = safeReadUnsafeSymbolCount(symbolIndexInTxFile, false);
+//        path.trimTo(plen);
+//        symbolMapReader.of(configuration, path, columnName, symCount);
+//        symbolValueToKeyMap.clear(symCount);
     }
 
     private int safeReadUnsafeSymbolCount(int symbolIndexInTxFile, boolean initialStateOk) {
