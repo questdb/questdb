@@ -27,11 +27,14 @@ const path = require("path")
 const monacoConfig = require("./monaco.config")
 
 const removeLine = (filePath) => {
-  const content = fs.readFileSync(filePath, "utf8").split("\n")
-  const contentWithoutSourceMap = content
-    .filter((line) => !line.startsWith("//# sourceMappingURL="))
-    .join("\n")
-  fs.writeFileSync(filePath, contentWithoutSourceMap, "utf8")
+  // only interested in css and javascript files. Other files, like images or fonts are ignored
+  if (filePath.endsWith(".js") || filePath.endsWith(".css")) {
+    const content = fs.readFileSync(filePath, "utf8").split("\n")
+    const contentWithoutSourceMap = content
+      .filter((line) => !line.startsWith("//# sourceMappingURL="))
+      .join("\n")
+    fs.writeFileSync(filePath, contentWithoutSourceMap, "utf8")
+  }
 }
 
 const isFile = (filePath) => {
