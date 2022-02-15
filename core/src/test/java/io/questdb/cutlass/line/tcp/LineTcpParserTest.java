@@ -31,8 +31,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.nio.charset.StandardCharsets;
-
 public class LineTcpParserTest extends BaseLineTcpContextTest {
     private final static LineTcpParser lineTcpParser = new LineTcpParser();
 
