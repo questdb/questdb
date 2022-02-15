@@ -186,9 +186,9 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                         } else {
                             int position = (int) (parser.getBufferAddress() - recvBufStartOfMeasurement);
                             assert position >= 0;
-                            LOG.error().$('[').$(fd).$("] could not parse measurement, code ").$(parser.getErrorCode()).$(" at ").$(position)
-                                    .$(" line (may be mangled due to partial parsing) is ")
-                                    .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress())).$();
+                            LOG.error().$('[').$(fd).$("] could not parse measurement, ").$(parser.getErrorCode()).$(" at ").$(position)
+                                    .$(", line (may be mangled due to partial parsing): '")
+                                    .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress())).$("'").$();
                             goodMeasurement = true;
                         }
 

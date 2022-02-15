@@ -84,7 +84,6 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
         assertType(LineTcpParser.ENTITY_TYPE_FLOAT, "1.0");
         assertType(LineTcpParser.ENTITY_TYPE_FLOAT, "1");
 
-        assertType(LineTcpParser.ENTITY_TYPE_SYMBOL, "aaa\"");
         assertError(LineTcpParser.ENTITY_TYPE_NONE, "\"aaa");
 
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "123a4i");

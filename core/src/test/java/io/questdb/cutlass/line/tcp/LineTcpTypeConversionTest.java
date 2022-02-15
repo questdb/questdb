@@ -47,7 +47,6 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
     public void testConversionToSymbol() throws Exception {
         testConversionToType("SYMBOL", "testCol\ttime\n" +
                 "questdb\t2016-06-13T17:43:50.100401Z\n" +
-                "\"questdbb\"\t2016-06-13T17:43:50.100402Z\n" +
                 "100i\t2016-06-13T17:43:50.100403Z\n" +
                 "-100i\t2016-06-13T17:43:50.100404Z\n" +
                 "0x100i\t2016-06-13T17:43:50.100405Z\n" +
@@ -56,35 +55,14 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
                 "23.3\t2016-06-13T17:43:50.100408Z\n" +
                 "T\t2016-06-13T17:43:50.100409Z\n" +
                 "false\t2016-06-13T17:43:50.100410Z\n" +
-                "1465839830101500200t\t2016-06-13T17:43:50.100411Z\n" +
-                "questdb\t2016-06-13T17:43:50.100412Z\n" +
-                "questdbb\t2016-06-13T17:43:50.100413Z\n" +
-                "100\t2016-06-13T17:43:50.100414Z\n" +
-                "-100\t2016-06-13T17:43:50.100415Z\n" +
-                "0x0150\t2016-06-13T17:43:50.100416Z\n" +
-                "123\t2016-06-13T17:43:50.100417Z\n" +
-                "-54\t2016-06-13T17:43:50.100418Z\n" +
-                "23.3\t2016-06-13T17:43:50.100419Z\n" +
-                "T\t2016-06-13T17:43:50.100420Z\n" +
-                "false\t2016-06-13T17:43:50.100421Z\n" +
-                "1465839830101500\t2016-06-13T17:43:50.100422Z\n"
+                "1465839830101500200t\t2016-06-13T17:43:50.100411Z\n"
         );
     }
 
     @Test
     public void testConversionToString() throws Exception {
         testConversionToType("STRING", "testCol\ttime\n" +
-//                "questdb\t2016-06-13T17:43:50.100412Z\n" +
-                "questdbb\t2016-06-13T17:43:50.100413Z\n" +
-                "100\t2016-06-13T17:43:50.100414Z\n" +
-                "-100\t2016-06-13T17:43:50.100415Z\n" +
-                "0x0150\t2016-06-13T17:43:50.100416Z\n" +
-                "123\t2016-06-13T17:43:50.100417Z\n" +
-                "-54\t2016-06-13T17:43:50.100418Z\n" +
-                "23.3\t2016-06-13T17:43:50.100419Z\n" +
-                "T\t2016-06-13T17:43:50.100420Z\n" +
-                "false\t2016-06-13T17:43:50.100421Z\n" +
-                "1465839830101500\t2016-06-13T17:43:50.100422Z\n"
+                "questdbb\t2016-06-13T17:43:50.100413Z\n"
         );
     }
 
@@ -201,9 +179,7 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
     @Test
     public void testConversionToGeoHash() throws Exception {
         testConversionToType("GEOHASH(7c)", "testCol\ttime\n" +
-                "questdb\t2016-06-13T17:43:50.100412Z\n" +
-                "questdb\t2016-06-13T17:43:50.100413Z\n" +
-                "\t2016-06-13T17:43:50.100416Z\n");
+                "questdb\t2016-06-13T17:43:50.100413Z\n");
     }
 
     private void testConversionToType(String type, String expected) throws Exception {

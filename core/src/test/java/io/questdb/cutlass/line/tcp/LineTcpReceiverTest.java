@@ -460,19 +460,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testFieldWithUnquotedString() throws Exception {
-        runInContext((receiver) -> {
-            sendLinger(receiver,  "tab raw\\ msg=____ 1619509249714000000\n", "tab");
-            sendLinger(receiver,  "tab raw\\ msg=__\"_ 1619509249714000000\n", "tab");
-
-            String expected = "raw msg\ttimestamp\n" +
-                    "____\t2021-04-27T07:40:49.714000Z\n" +
-                    "__\"_\t2021-04-27T07:40:49.714000Z\n";
-            assertTable(expected, "tab");
-        });
-    }
-
-    @Test
     public void testUnicodeTableName() throws Exception {
         byte[] utf8Bytes = "ल".getBytes(Files.UTF_8);
         Assert.assertEquals(3, utf8Bytes.length);
@@ -500,10 +487,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testUnicodeTableNameExistingTable() throws Exception {
         runInContext((receiver) -> {
-            String lineData = "लаблअца поле=значение 1619509249714000000\n";
+            String lineData = "लаблअца поле=\"значение\" 1619509249714000000\n";
             sendLinger(receiver, lineData, "लаблअца");
 
-            String lineData2 = "लаблअца,символ=значение2  1619509249714000000\n";
+            String lineData2 = "लаблअца,символ=значение2 1619509249714000000\n";
             sendLinger(receiver, lineData2, "लаблअца");
 
             String expected = "поле\ttimestamp\tсимвол\n" +
@@ -862,25 +849,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             String expected = "tag1\ttag=2\tполе=3\ttimestamp\n" +
                     "value 1\tзначение 2\t{\"ключ\": \"число\"}\t1970-01-01T00:00:00.000000Z\n" +
                     "value 2\t\t\t1970-01-01T00:00:00.000000Z\n";
-            assertTable(expected, "table");
-        });
-    }
-
-    @Test
-    public void testTcpSenderQuotedTagValue() throws Exception {
-        runInContext((receiver) -> {
-            send(receiver,  "table", WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
-                    lineTcpSender
-                            .metric("table")
-                            .tag("tag1", "\"value 1\"")
-                            .$(0);
-                    lineTcpSender.flush();
-                }
-            });
-
-            String expected = "tag1\ttimestamp\n" +
-                    "\"value 1\"\t1970-01-01T00:00:00.000000Z\n";
             assertTable(expected, "table");
         });
     }

@@ -42,7 +42,7 @@ public class LineTcpParser implements Closeable {
     public static final byte ENTITY_TYPE_FLOAT = 2;
     public static final byte ENTITY_TYPE_INTEGER = 3;
     public static final byte ENTITY_TYPE_STRING = 4;
-    public static final byte ENTITY_TYPE_SYMBOL = 5;
+    public static final byte ENTITY_TYPE_DOUBLE = 5;
     public static final byte ENTITY_TYPE_BOOLEAN = 6;
     public static final byte ENTITY_TYPE_LONG256 = 7;
     public static final byte ENTITY_TYPE_CACHED_TAG = 8;
@@ -52,12 +52,11 @@ public class LineTcpParser implements Closeable {
     public static final byte ENTITY_TYPE_GEOLONG = 12;
     public static final byte ENTITY_TYPE_TIMESTAMP = 13;
     public static final byte ENTITY_TYPE_LONG = 14;
-    public static final byte ENTITY_TYPE_DOUBLE = 15;
-    public static final int N_ENTITY_TYPES = ENTITY_TYPE_DOUBLE + 1;
-    public static final byte ENTITY_TYPE_SHORT = 16;
-    public static final byte ENTITY_TYPE_BYTE = 17;
-    public static final byte ENTITY_TYPE_DATE = 18;
-    public static final byte ENTITY_TYPE_CHAR = 19;
+    public static final int N_ENTITY_TYPES = ENTITY_TYPE_LONG + 1;
+    public static final byte ENTITY_TYPE_SHORT = 15;
+    public static final byte ENTITY_TYPE_BYTE = 16;
+    public static final byte ENTITY_TYPE_DATE = 17;
+    public static final byte ENTITY_TYPE_CHAR = 18;
     static final byte ENTITY_TYPE_NONE = (byte) 0xff; // visible for testing
     private static final Log LOG = LogFactory.getLog(LineTcpParser.class);
     private final DirectByteCharSequence measurementName = new DirectByteCharSequence();
@@ -393,7 +392,7 @@ public class LineTcpParser implements Closeable {
                 return true;
             }
 
-            errorCode = ErrorCode.INVALID_FIELD_VALUE;
+            errorCode = tagsComplete ? ErrorCode.INVALID_FIELD_VALUE : ErrorCode.INVALID_TAG_VALUE;
             return false;
         }
 
@@ -505,6 +504,7 @@ public class LineTcpParser implements Closeable {
         INCOMPLETE_FIELD,
         INVALID_FIELD_SEPARATOR,
         INVALID_TIMESTAMP,
+        INVALID_TAG_VALUE,
         INVALID_FIELD_VALUE,
         INVALID_FIELD_VALUE_STR_UNDERFLOW,
         INVALID_TABLE_NAME,
@@ -569,8 +569,7 @@ public class LineTcpParser implements Closeable {
                         type = ENTITY_TYPE_LONG256;
                         return true;
                     }
-                    type = ENTITY_TYPE_SYMBOL;
-                    return true;
+                    return false;
                 case 't':
                     if (valueLen > 1) {
                         return parseLong(ENTITY_TYPE_TIMESTAMP);
@@ -592,7 +591,7 @@ public class LineTcpParser implements Closeable {
                             booleanValue = (last | 32) == 't';
                             type = ENTITY_TYPE_BOOLEAN;
                         } else {
-                            type = ENTITY_TYPE_SYMBOL;
+                            return false;
                         }
                     } else {
                         charSeq.of(value.getLo(), value.getHi());
@@ -603,7 +602,7 @@ public class LineTcpParser implements Closeable {
                             booleanValue = false;
                             type = ENTITY_TYPE_BOOLEAN;
                         } else {
-                            type = ENTITY_TYPE_SYMBOL;
+                            return false;
                         }
                     }
                     return true;
@@ -614,15 +613,14 @@ public class LineTcpParser implements Closeable {
                         type = ENTITY_TYPE_STRING;
                         return true;
                     }
-                    type = ENTITY_TYPE_SYMBOL;
-                    return true;
+                    return false;
                 }
                 default:
                     try {
                         floatValue = Numbers.parseDouble(value);
                         type = ENTITY_TYPE_FLOAT;
                     } catch (NumericException ex) {
-                        type = ENTITY_TYPE_SYMBOL;
+                        return false;
                     }
                     return true;
             }
@@ -635,7 +633,7 @@ public class LineTcpParser implements Closeable {
                 value.decHi(); // remove 'i'
                 type = entityType;
             } catch (NumericException notANumber) {
-                type = ENTITY_TYPE_SYMBOL;
+                return false;
             }
             return true;
         }
@@ -659,6 +657,11 @@ public class LineTcpParser implements Closeable {
                 }
             }
             type = ENTITY_TYPE_TAG;
+            if (valueLen > 1) {
+                byte firstByte = value.byteAt(0);
+                byte lastByte = value.byteAt(valueLen - 1);
+                return firstByte != '"' || lastByte != '"';
+            }
             return true;
         }
     }
