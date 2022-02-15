@@ -36,6 +36,7 @@
             </includes>
             <excludes>
                 <exclude>**/*.woff</exclude>
+                <exclude>**/*.ttf</exclude>
             </excludes>
             <outputDirectory>.</outputDirectory>
             <fileMode>755</fileMode>
@@ -46,6 +47,7 @@
             <directory>../ui/dist</directory>
             <includes>
                 <include>**/*.woff</include>
+                <include>**/*.ttf</include>
             </includes>
             <outputDirectory>.</outputDirectory>
             <fileMode>755</fileMode>

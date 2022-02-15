@@ -81,4 +81,9 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
     }
+
+    @Override
+    public boolean hasDescendingOrder() {
+        return base.hasDescendingOrder();
+    }
 }

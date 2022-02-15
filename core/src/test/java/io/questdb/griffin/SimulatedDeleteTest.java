@@ -33,7 +33,7 @@ public class SimulatedDeleteTest extends AbstractGriffinTest {
     @Test
     public void testNotSelectDeleted() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table balances (cust_id int, balance_ccy symbol, balance double, inactive boolean, timestamp timestamp);", sqlExecutionContext);
+            compiler.compile("create table balances (cust_id int, balance_ccy symbol, balance double, inactive boolean, timestamp timestamp) timestamp(timestamp);", sqlExecutionContext);
             execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, balance, timestamp) values (1, 'USD', 1500.00, 6000000001);", sqlExecutionContext).getInsertStatement());
             execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, balance, timestamp) values (1, 'EUR', 650.50, 6000000002);", sqlExecutionContext).getInsertStatement());
             execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, balance, timestamp) values (2, 'USD', 900.75, 6000000003);", sqlExecutionContext).getInsertStatement());
@@ -51,7 +51,7 @@ public class SimulatedDeleteTest extends AbstractGriffinTest {
     @Test
     public void testNotSelectDeletedByLimit() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table state_table(time timestamp, id int, state symbol);", sqlExecutionContext);
+            compiler.compile("create table state_table(time timestamp, id int, state symbol) timestamp(time);", sqlExecutionContext);
             execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'OFF');", sqlExecutionContext).getInsertStatement());
             execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'OFF');", sqlExecutionContext).getInsertStatement());
             execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'OFF');", sqlExecutionContext).getInsertStatement());

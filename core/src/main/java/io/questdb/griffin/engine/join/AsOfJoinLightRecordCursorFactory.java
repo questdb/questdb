@@ -85,11 +85,17 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(
-                masterFactory.getCursor(executionContext),
-                slaveFactory.getCursor(executionContext)
-        );
-        return cursor;
+        RecordCursor master = masterFactory.getCursor(executionContext);
+        RecordCursor slave = null;
+        try {
+            slave = slaveFactory.getCursor(executionContext);
+            this.cursor.of(master, slave);
+        } catch (Throwable ex) {
+            Misc.free(master);
+            Misc.free(slave);
+            throw ex;
+        }
+        return this.cursor;
     }
 
     @Override
@@ -141,11 +147,6 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
                 return masterCursor.getSymbolTable(columnIndex);
             }
             return slaveCursor.getSymbolTable(columnIndex - columnSplit);
-        }
-
-        @Override
-        public long size() {
-            return masterCursor.size();
         }
 
         @Override
@@ -205,6 +206,11 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
             lastSlaveRowID = Long.MIN_VALUE;
             masterCursor.toTop();
             slaveCursor.toTop();
+        }
+
+        @Override
+        public long size() {
+            return masterCursor.size();
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor) {

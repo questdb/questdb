@@ -561,7 +561,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "1826239903\t0.5716129058692643\t1970-01-12T08:13:20.000000Z\n" +
                         "-1165635863\t0.05094182589333662\t1970-01-12T11:00:00.000000Z\n",
                 "tst",
-                "create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000000l) t from long_sequence(100)) timestamp(t)) partition by DAY",
+                "create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000000l) t from long_sequence(100)) timestamp(t)) timestamp(t) partition by DAY",
                 "t",
                 true,
                 true,
@@ -1594,9 +1594,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     " long_sequence(20)" +
                     ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
 
-            try (
-                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
-            ) {
+            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor(
                         "a\tb\tk\n" +
                                 "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
@@ -1644,21 +1642,20 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     "(" +
                     "select" +
                     " rnd_double(0)*100 a," +
-                    " rnd_symbol(5,4,4,0) b," +
+                    " rnd_symbol(5,4,4,1) b," +
                     " timestamp_sequence(0, 100000000000) k" +
                     " from" +
                     " long_sequence(5)" +
                     ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
 
-            try (
-                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
-            ) {
+            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor(
                         "a\tb\tk\n" +
-                                "55.99161804800813\tRXGZ\t1970-01-02T03:46:40.000000Z\n" +
-                                "62.76954028373309\tPEHN\t1970-01-03T07:33:20.000000Z\n" +
-                                "31.00545983862456\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
-                                "0.35983672154330515\tCPSW\t1970-01-05T15:06:40.000000Z\n",
+                                "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                                "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
+                                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                                "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                                "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n",
                         factory,
                         true,
                         true,
@@ -3468,23 +3465,16 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestByIsApplicableToSubQueriesInFilterNoDesignatedTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table tab(" +
-                    "    id symbol, " +
-                    "    name symbol, " +
-                    "    value double, " +
-                    "    other_ts timestamp, " +
-                    "    ts timestamp" +
-                    ")", sqlExecutionContext);
-            executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-15T11:31:35.878Z', '2021-10-05T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-16T17:31:35.878Z', '2021-10-06T15:31:35.878Z')");
-            assertSql(
-                    "tab where name in (select distinct name from tab where name != 'c2') latest on other_ts partition by id",
-                    "id\tname\tvalue\tother_ts\tts\n" +
-                            "d1\tc1\t101.2\t2021-10-15T11:31:35.878000Z\t2021-10-05T11:31:35.878000Z\n" +
-                            "d2\tc1\t111.7\t2021-10-16T17:31:35.878000Z\t2021-10-06T15:31:35.878000Z\n");
-        });
+    public void testLatestByFailsOnNonDesignatedTimestamp() throws Exception {
+        assertFailure("tab latest on ts partition by id",
+                "create table tab(" +
+                        "    id symbol, " +
+                        "    name symbol, " +
+                        "    value double, " +
+                        "    ts timestamp" +
+                        ")",
+                14,
+                "latest by over a table requires designated TIMESTAMP");
     }
 
     @Test
@@ -4217,7 +4207,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "    name symbol, " +
                 "    value double, " +
                 "    ts timestamp" +
-                ")");
+                ") timestamp(ts)");
     }
 
     @Test
@@ -4267,7 +4257,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "    name symbol index, " +
                 "    value double, " +
                 "    ts timestamp" +
-                ")");
+                ") timestamp(ts)");
     }
 
     @Test
@@ -4277,7 +4267,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "    name symbol index, " +
                 "    value double, " +
                 "    ts timestamp" +
-                ")");
+                ") timestamp(ts)");
     }
 
     @Test
@@ -4287,7 +4277,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "    name symbol, " +
                 "    value double, " +
                 "    ts timestamp" +
-                ")");
+                ") timestamp(ts)");
     }
 
     @Test
@@ -4748,7 +4738,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "    string string, " +
                         "    symbol symbol, " +
                         "    ts timestamp" +
-                        ")",
+                        ") timestamp(ts)",
                 "ts");
     }
 
@@ -4782,7 +4772,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "    string string, " +
                         "    symbol symbol index, " +
                         "    ts timestamp" +
-                        ")",
+                        ") timestamp(ts)",
                 "ts");
     }
 
@@ -5562,7 +5552,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_str(5,16,2) n" +
                         " from" +
                         " long_sequence(20)" +
-                        ") partition by NONE",
+                        ") timestamp(k) partition by NONE",
                 null,
                 "insert into x(a,d,c,k) select * from (" +
                         "select" +
@@ -5917,7 +5907,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_str(5,16,2) n" +
                         " from" +
                         " long_sequence(20)" +
-                        ") partition by NONE",
+                        ") timestamp(k) partition by NONE",
                 null,
                 "insert into x select * from (" +
                         "select" +
@@ -6108,7 +6098,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_str(5,16,2) n" +
                         " from" +
                         " long_sequence(20)" +
-                        ") partition by NONE",
+                        ") timestamp(k) partition by NONE",
                 null,
                 "insert into x select * from (" +
                         "select" +
@@ -6168,7 +6158,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_str(5,16,2) n" +
                         " from" +
                         " long_sequence(20)" +
-                        ") partition by NONE",
+                        ") timestamp(k) partition by NONE",
                 13, "unsupported column type: BINARY"
         );
 
@@ -6204,7 +6194,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_char() a" +
                         " from" +
                         " long_sequence(20)" +
-                        ") partition by NONE",
+                        ")",
                 null,
                 "insert into x select * from (" +
                         "select" +
@@ -7001,7 +6991,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testSumDoubleColumnWithKahanMethodVectorised1() throws Exception {
-        String ddl = "create table x (ds double) partition by NONE";
+        String ddl = "create table x (ds double)";
         compiler.compile(ddl, sqlExecutionContext);
 
         executeInsertStatement(1.0);
@@ -7014,7 +7004,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testSumDoubleColumnWithKahanMethodVectorised2() throws Exception {
-        String ddl = "create table x (ds double) partition by NONE";
+        String ddl = "create table x (ds double)";
         compiler.compile(ddl, sqlExecutionContext);
 
         executeInsertStatement(1.0);
@@ -7036,7 +7026,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testSumDoubleColumnWithKahanMethodVectorised3() throws Exception {
-        String ddl = "create table x (ds double) partition by NONE";
+        String ddl = "create table x (ds double)";
         compiler.compile(ddl, sqlExecutionContext);
 
         executeInsertStatement(1.0);
@@ -7583,21 +7573,22 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compiler.compile(ddl, sqlExecutionContext);
             executeInsert("insert into tab values ('d1', 'c1', 101.1, '2021-10-05T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.3, '2021-10-05T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c1', 101.4, '2021-10-05T14:31:35.878Z')");
             executeInsert("insert into tab values ('d1', 'c2', 102.1, '2021-10-05T11:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.2, '2021-10-05T12:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.3, '2021-10-05T13:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.4, '2021-10-05T14:31:35.878Z')");
-            executeInsert("insert into tab values ('d1', 'c2', 102.5, '2021-10-05T15:31:35.878Z')");
             executeInsert("insert into tab values ('d2', 'c1', 201.1, '2021-10-05T11:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.2, '2021-10-05T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.2, '2021-10-05T12:31:35.878Z')");
             executeInsert("insert into tab values ('d2', 'c1', 201.2, '2021-10-05T12:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.3, '2021-10-05T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.3, '2021-10-05T13:31:35.878Z')");
             executeInsert("insert into tab values ('d2', 'c1', 201.3, '2021-10-05T13:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c1', 101.4, '2021-10-05T14:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.4, '2021-10-05T14:31:35.878Z')");
             executeInsert("insert into tab values ('d2', 'c1', 201.4, '2021-10-05T14:31:35.878Z')");
+            executeInsert("insert into tab values ('d1', 'c2', 102.5, '2021-10-05T15:31:35.878Z')");
             executeInsert("insert into tab values ('d2', 'c2', 401.1, '2021-10-06T11:31:35.878Z')");
             executeInsert("insert into tab values ('d2', 'c1', 401.2, '2021-10-06T12:31:35.878Z')");
             executeInsert("insert into tab values ('d2', 'c1', 111.7, '2021-10-06T15:31:35.878Z')");
+
             assertSql(
                     "tab where id = 'd1' latest on ts partition by id, name",
                     "id\tname\tvalue\tts\n" +

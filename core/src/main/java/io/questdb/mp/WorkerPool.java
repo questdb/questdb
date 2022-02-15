@@ -24,6 +24,7 @@
 
 package io.questdb.mp;
 
+import io.questdb.Metrics;
 import io.questdb.log.Log;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
@@ -48,8 +49,9 @@ public class WorkerPool {
     private final long yieldThreshold;
     private final long sleepThreshold;
     private final long sleepMs;
+    private final Metrics metrics;
 
-    public WorkerPool(WorkerPoolConfiguration configuration) {
+    public WorkerPool(WorkerPoolConfiguration configuration, Metrics metrics) {
         this.workerCount = configuration.getWorkerCount();
         this.workerAffinity = configuration.getWorkerAffinity();
         this.halted = new SOCountDownLatch(workerCount);
@@ -59,6 +61,7 @@ public class WorkerPool {
         this.yieldThreshold = configuration.getYieldThreshold();
         this.sleepThreshold = configuration.getSleepThreshold();
         this.sleepMs = configuration.getSleepMs();
+        this.metrics = metrics;
 
         assert workerAffinity.length == workerCount;
 
@@ -144,7 +147,8 @@ public class WorkerPool {
                         poolName,
                         yieldThreshold,
                         sleepThreshold,
-                        sleepMs
+                        sleepMs,
+                        metrics
                 );
                 worker.setDaemon(daemons);
                 workers.add(worker);

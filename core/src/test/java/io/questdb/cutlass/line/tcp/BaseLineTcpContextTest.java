@@ -91,6 +91,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected WorkerPool workerPool;
     protected int nWriterThreads;
     protected long microSecondTicks;
+    protected boolean disconnectOnError;
 
     @Before
     public void before() {
@@ -99,6 +100,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         recvBuffer = null;
         disconnected = true;
         netMsgBufferSize.set(512);
+        disconnectOnError = false;
         lineTcpConfiguration = createNoAuthReceiverConfiguration(provideLineTcpNetworkFacade());
     }
 
@@ -129,7 +131,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 affinityByThread = new int[workerCount];
                 Arrays.fill(affinityByThread, -1);
             }
-        });
+        }, metrics);
     }
 
     protected void assertTable(CharSequence expected, CharSequence tableName) {
@@ -171,6 +173,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             @Override
             public NetworkFacade getNetworkFacade() {
                 return nf;
+            }
+
+            @Override
+            public boolean getDisconnectOnError() {
+                return disconnectOnError;
             }
 
             @Override
@@ -275,9 +282,9 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
         };
         if (authDb == null) {
-            context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler);
+            context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler, metrics);
         } else {
-            context = new LineTcpAuthConnectionContext(lineTcpConfiguration, authDb, scheduler);
+            context = new LineTcpAuthConnectionContext(lineTcpConfiguration, authDb, scheduler, metrics);
         }
         Assert.assertNull(context.getDispatcher());
         context.of(FD, new IODispatcher<LineTcpConnectionContext>() {
