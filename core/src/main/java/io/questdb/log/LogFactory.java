@@ -24,6 +24,7 @@
 
 package io.questdb.log;
 
+import io.questdb.Metrics;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -313,7 +314,7 @@ public class LogFactory implements Closeable {
             public boolean isDaemonPool() {
                 return true;
             }
-        });
+        }, Metrics.disabled());
         assign(workerPool);
         workerPool.start(null);
     }

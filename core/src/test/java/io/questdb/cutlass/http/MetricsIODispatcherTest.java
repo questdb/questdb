@@ -31,9 +31,9 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
-public class MetricsIODispatcher {
+public class MetricsIODispatcherTest {
 
-    private static final String PrometheusRequest = "GET /metrics HTTP/1.1\r\n" +
+    private static final String prometheusRequest = "GET /metrics HTTP/1.1\r\n" +
             "Host: localhost:9003\r\n" +
             "User-Agent: Prometheus/2.22.0\r\n" +
             "Accept: application/openmetrics-text; version=0.0.1,text/plain;version=0.0.4;q=0.5,*/*;q=0.1\r\n" +
@@ -50,7 +50,7 @@ public class MetricsIODispatcher {
 
         new HttpMinTestBuilder()
                 .withTempFolder(temp)
-                .withMetrics(metrics)
+                .withScrapable(metrics)
                 .run(engine -> {
                     metrics.markQueryStart();
                     metrics.markSyntaxError();
@@ -62,22 +62,22 @@ public class MetricsIODispatcher {
                             "Transfer-Encoding: chunked\r\n" +
                             "Content-Type: text/plain; version=0.0.4; charset=utf-8\r\n" +
                             "\r\n" +
-                            "02b4\r\n" +
-                            "# TYPE questdb_json_queries_total counter\n" +
-                            "questdb_json_queries_total 1\n" +
+                            "02f0\r\n" +
+                            "# TYPE questdb_test_json_queries_total counter\n" +
+                            "questdb_test_json_queries_total 1\n" +
                             "\n" +
-                            "# TYPE questdb_json_queries_failed_total counter\n" +
-                            "questdb_json_queries_failed_total{reason=\"cancelled\"} 0\n" +
-                            "questdb_json_queries_failed_total{reason=\"syntax_error\"} 1\n" +
+                            "# TYPE questdb_test_json_queries_failed_total counter\n" +
+                            "questdb_test_json_queries_failed_total{reason=\"cancelled\"} 0\n" +
+                            "questdb_test_json_queries_failed_total{reason=\"syntax_error\"} 1\n" +
                             "\n" +
-                            "# TYPE questdb_compiled_json_queries_failed_total counter\n" +
-                            "questdb_compiled_json_queries_failed_total{type=\"insert\",reason=\"cancelled\"} 1\n" +
-                            "questdb_compiled_json_queries_failed_total{type=\"insert\",reason=\"syntax_error\"} 0\n" +
-                            "questdb_compiled_json_queries_failed_total{type=\"select\",reason=\"cancelled\"} 0\n" +
-                            "questdb_compiled_json_queries_failed_total{type=\"select\",reason=\"syntax_error\"} 0\n" +
+                            "# TYPE questdb_test_compiled_json_queries_failed_total counter\n" +
+                            "questdb_test_compiled_json_queries_failed_total{type=\"insert\",reason=\"cancelled\"} 1\n" +
+                            "questdb_test_compiled_json_queries_failed_total{type=\"insert\",reason=\"syntax_error\"} 0\n" +
+                            "questdb_test_compiled_json_queries_failed_total{type=\"select\",reason=\"cancelled\"} 0\n" +
+                            "questdb_test_compiled_json_queries_failed_total{type=\"select\",reason=\"syntax_error\"} 0\n" +
                             "\n" +
-                            "# TYPE questdb_json_queries_running gauge\n" +
-                            "questdb_json_queries_running 1\n" +
+                            "# TYPE questdb_test_json_queries_running gauge\n" +
+                            "questdb_test_json_queries_running 1\n" +
                             "\n" +
                             "\r\n" +
                             "00\r\n" +
@@ -89,7 +89,7 @@ public class MetricsIODispatcher {
                             .withPrintOnly(false)
                             .withRequestCount(1)
                             .withPauseBetweenSendAndReceive(0)
-                            .execute(PrometheusRequest, expectedResponse);
+                            .execute(prometheusRequest, expectedResponse);
                 });
     }
 
@@ -107,13 +107,13 @@ public class MetricsIODispatcher {
         private final MetricsRegistry metricsRegistry;
 
         public TestMetrics(MetricsRegistry metricsRegistry) {
-            this.queriesCounter = metricsRegistry.newCounter("json_queries");
-            this.failedQueriesCounter = metricsRegistry.newCounter("json_queries_failed", "reason", REASON_ID_TO_NAME);
-            this.failedCompiledQueriesCounter = metricsRegistry.newCounter("compiled_json_queries_failed",
+            this.queriesCounter = metricsRegistry.newCounter("test_json_queries");
+            this.failedQueriesCounter = metricsRegistry.newCounter("test_json_queries_failed", "reason", REASON_ID_TO_NAME);
+            this.failedCompiledQueriesCounter = metricsRegistry.newCounter("test_compiled_json_queries_failed",
                     "type", QUERY_TYPE_ID_TO_NAME,
                     "reason", REASON_ID_TO_NAME
             );
-            this.runningQueries = metricsRegistry.newGauge("json_queries_running");
+            this.runningQueries = metricsRegistry.newGauge("test_json_queries_running");
             this.metricsRegistry = metricsRegistry;
         }
 

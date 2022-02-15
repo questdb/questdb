@@ -77,8 +77,7 @@ public class EmbeddedApiTest {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
-
+            }, Metrics.disabled());
 
             Rnd rnd = new Rnd();
             try (

@@ -238,12 +238,8 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
                     "blue\tx square\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n";
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
-
-
                 try (AbstractLineProtoUdpReceiver receiver = factory.create(receiverCfg, engine, null, false, null, metrics)) {
-
                     // create table
-
                     try (TableModel model = new TableModel(configuration, "tab", PartitionBy.NONE)
                             .col("colour", ColumnType.SYMBOL)
                             .col("shape", ColumnType.SYMBOL)

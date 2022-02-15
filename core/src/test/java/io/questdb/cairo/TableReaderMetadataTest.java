@@ -334,7 +334,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
                     tableId = metadata.getId();
                     long structVersion;
-                    try (TableWriter writer = new TableWriter(configuration, "all")) {
+                    try (TableWriter writer = new TableWriter(configuration, "all", metrics)) {
                         manipulator.restructure(writer);
                         structVersion = writer.getStructureVersion();
                     }
