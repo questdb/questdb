@@ -55,14 +55,14 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
         public boolean isEnabled() {
             return true;
         }
-
     };
 
     static WorkerPool configureWorkerPool(
             WorkerPoolAwareConfiguration configuration,
-            WorkerPool sharedPool
+            WorkerPool sharedPool,
+            Metrics metrics
     ) {
-        return configuration.getWorkerCount() > 0 ? new WorkerPool(configuration) : sharedPool;
+        return configuration.getWorkerCount() > 0 ? new WorkerPool(configuration, metrics) : sharedPool;
     }
 
     @Nullable
@@ -77,8 +77,7 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
     ) {
         final T server;
         if (configuration.isEnabled()) {
-
-            final WorkerPool localPool = configureWorkerPool(configuration, sharedWorkerPool);
+            final WorkerPool localPool = configureWorkerPool(configuration, sharedWorkerPool, metrics);
             final boolean local = localPool != sharedWorkerPool;
             server = factory.create(configuration, cairoEngine, localPool, local, functionFactoryCache, metrics);
 

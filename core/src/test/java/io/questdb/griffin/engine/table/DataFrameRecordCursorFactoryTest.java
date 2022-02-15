@@ -67,7 +67,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = new TableWriter(configuration, "x")) {
+            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
                     row.putStr(0, rnd.nextChars(20));
@@ -147,7 +147,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = new TableWriter(configuration, "x")) {
+            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
                 int iIndex = writer.getColumnIndex("i");
                 int jIndex = -1;
                 int sIndex = -1;

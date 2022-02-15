@@ -22,38 +22,24 @@
  *
  ******************************************************************************/
 
-package io.questdb.metrics;
+package io.questdb.cutlass.http.processors;
 
-import io.questdb.std.str.CharSink;
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.MetricsRegistry;
 
-class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwoLabels {
-    static final NullCounter INSTANCE = new NullCounter();
+public class HealthCheckMetrics {
 
-    private NullCounter() {
+    private final Counter unhandledErrorCounter;
+
+    public HealthCheckMetrics(MetricsRegistry metricsRegistry) {
+        this.unhandledErrorCounter = metricsRegistry.newCounter("unhandled_errors");
     }
 
-    @Override
-    public void inc() {
+    public void incrementUnhandledErrors() {
+        unhandledErrorCounter.inc();
     }
 
-    @Override
-    public void add(long value) {
-    }
-
-    @Override
-    public long get() {
-        return 0;
-    }
-
-    @Override
-    public void inc(short label0) {
-    }
-
-    @Override
-    public void inc(short label0, short label1) {
-    }
-
-    @Override
-    public void scrapeIntoPrometheus(CharSink sink) {
+    public long unhandledErrorsCount() {
+        return unhandledErrorCounter.get();
     }
 }

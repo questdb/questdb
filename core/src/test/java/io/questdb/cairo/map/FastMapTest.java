@@ -293,7 +293,7 @@ public class FastMapTest extends AbstractCairoTest {
                 CairoTestUtils.create(model);
             }
 
-            try (TableWriter writer = new TableWriter(configuration, "x")) {
+            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < N; i++) {
                     TableWriter.Row row = writer.newRow();
                     long rndGeohash = GeoHashes.fromCoordinatesDeg(rnd.nextDouble() * 180 - 90, rnd.nextDouble() * 360 - 180, precisionBits);
@@ -980,7 +980,7 @@ public class FastMapTest extends AbstractCairoTest {
             CairoTestUtils.create(model);
         }
 
-        try (TableWriter writer = new TableWriter(configuration, "x")) {
+        try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
             for (int i = 0; i < n; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putByte(0, rnd.nextByte());

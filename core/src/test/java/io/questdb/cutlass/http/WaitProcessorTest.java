@@ -29,7 +29,7 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class WaitProcessorTests {
+public class WaitProcessorTest {
     private long currentTimeMs;
     private int job1Attempts = 0;
     private final HttpRequestProcessorSelector emptySelector = createEmptySelector();
