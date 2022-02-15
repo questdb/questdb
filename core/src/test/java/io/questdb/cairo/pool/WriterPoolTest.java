@@ -200,7 +200,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             // check that we can't create standalone writer either
             try {
-                new TableWriter(configuration, "z");
+                new TableWriter(configuration, "z", metrics);
                 Assert.fail();
             } catch (CairoException ignored) {
             }
@@ -208,7 +208,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             pool.unlock("z");
 
             // check if we can create standalone writer after pool unlocked it
-            writer = new TableWriter(configuration, "z");
+            writer = new TableWriter(configuration, "z", metrics);
             Assert.assertNotNull(writer);
             writer.close();
 
@@ -595,7 +595,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             Assert.assertEquals(WriterPool.OWNERSHIP_REASON_NONE, pool.lock("x", "testing"));
 
-            TableWriter writer = new TableWriter(configuration, "x", messageBus, false, DefaultLifecycleManager.INSTANCE);
+            TableWriter writer = new TableWriter(configuration, "x", messageBus, false, DefaultLifecycleManager.INSTANCE, metrics);
             for (int i = 0; i < 100; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putDate(0, i);
@@ -821,7 +821,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             pool.close();
 
-            TableWriter writer = new TableWriter(configuration, "z");
+            TableWriter writer = new TableWriter(configuration, "z", metrics);
             Assert.assertNotNull(writer);
             writer.close();
         });
@@ -905,7 +905,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     private void assertWithPool(PoolAwareCode code, CairoConfiguration configuration) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (WriterPool pool = new WriterPool(configuration, messageBus)) {
+            try (WriterPool pool = new WriterPool(configuration, messageBus, metrics)) {
                 code.run(pool);
             }
         });
