@@ -282,7 +282,7 @@ public final class TableUtils {
         // index structure is
         // [delete: int, copy from:int]
 
-        // delete: if -1 then current column in slave is deleted, else it's reused
+        // delete: if -1 then current column in slave is deleted or renamed, else it's reused
         // "copy from" >= 0 indicates that column is to be copied from slave position
         // "copy from" < 0  indicates that column is new and should be taken from updated metadata position
         // "copy from" == Integer.MIN_VALUE  indicates that column is deleted and should not be re-added from any source
@@ -319,8 +319,14 @@ public final class TableUtils {
                                 && isColumnIndexed(masterMeta, masterIndex) == slaveMeta.isColumnIndexed(slaveIndex)
                                 && Chars.equals(name, slaveMeta.getColumnName(slaveIndex))
                 ) {
+                    // reuse
                     Unsafe.getUnsafe().putInt(index + outIndex * 8L + 4, slaveIndex);
                 } else {
+                    // new
+                    if (slaveIndex < slaveColumnCount) {
+                        // free
+                        Unsafe.getUnsafe().putInt(index + slaveIndex * 8L, -1);
+                    }
                     Unsafe.getUnsafe().putInt(index + outIndex * 8L + 4, -masterIndex - 1);
                 }
             }
@@ -333,7 +339,7 @@ public final class TableUtils {
     public static LPSZ dFile(Path path, CharSequence columnName, long columnTxn) {
         path.concat(columnName).put(FILE_SUFFIX_D);
         if (columnTxn > COLUMN_NAME_TXN_NONE) {
-            path.concat('.').concat(columnTxn);
+            path.put('.').put(columnTxn);
         }
         return path.$();
     }
@@ -398,7 +404,7 @@ public final class TableUtils {
     public static LPSZ iFile(Path path, CharSequence columnName, long columnTxn) {
         path.concat(columnName).put(FILE_SUFFIX_I);
         if (columnTxn > COLUMN_NAME_TXN_NONE) {
-            path.concat('.').concat(columnTxn);
+            path.put('.').put(columnTxn);
         }
         return path.$();
     }

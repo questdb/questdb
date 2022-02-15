@@ -389,9 +389,10 @@ public class TableWriter implements Closeable {
             throw CairoException.instance(0).put("Duplicate column name: ").put(name);
         }
 
-        LOG.info().$("adding column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
-
         commit();
+
+        long columnNameTxn = getTxn();
+        LOG.info().$("adding column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], name txn ").$(columnNameTxn).$(" to ").$(path).$();
 
         // create new _meta.swp
         this.metaSwapIndex = addColumnToMeta(name, type, isIndexed, indexValueBlockCapacity, isSequential);
@@ -414,7 +415,7 @@ public class TableWriter implements Closeable {
 
         if (ColumnType.isSymbol(type)) {
             try {
-                createSymbolMapWriter(name, getTxn(), symbolCapacity, symbolCacheFlag);
+                createSymbolMapWriter(name, columnNameTxn, symbolCapacity, symbolCacheFlag);
             } catch (CairoException e) {
                 runFragile(RECOVER_FROM_SYMBOL_MAP_WRITER_FAILURE, name, e);
             }
@@ -435,6 +436,9 @@ public class TableWriter implements Closeable {
         // extend columnTop list to make sure row cancel can work
         // need for setting correct top is hard to test without being able to read from table
         columnTops.extendAndSet(columnCount - 1, txWriter.getTransientRowCount());
+
+        // Set txn number in the column version file to mark the transaction where the column is added
+        columnVersionWriter.upsertDefaultTxnName(columnCount - 1, columnNameTxn);
 
         // create column files
         if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
@@ -460,7 +464,7 @@ public class TableWriter implements Closeable {
 
         metadata.addColumn(name, configuration.getRandom().nextLong(), type, isIndexed, indexValueBlockCapacity);
 
-        LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
+        LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], name txn ").$(columnNameTxn).$(" to ").$(path).$();
     }
 
     public void addIndex(CharSequence columnName, int indexValueBlockSize) {
@@ -3915,15 +3919,10 @@ public class TableWriter implements Closeable {
             for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
                 long partitionTimestamp = txWriter.getPartitionTimestamp(i);
                 long partitionNameTxn = txWriter.getPartitionNameTxn(i);
-                setPathForPartition(path, partitionBy, partitionTimestamp, false);
-                txnPartitionConditionally(path, partitionNameTxn);
-                int plen = path.length();
-                long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-                removeLambda.remove(ff, dFile(path, columnName, columnNameTxn));
-                removeLambda.remove(ff, iFile(path.trimTo(plen), columnName, columnNameTxn));
-                removeLambda.remove(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn));
-                removeLambda.remove(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn));
-                path.trimTo(rootLen);
+                removeColumnFilesInPartition(columnName, columnIndex, removeLambda, partitionTimestamp, partitionNameTxn);
+            }
+            if (!PartitionBy.isPartitioned(partitionBy)) {
+                removeColumnFilesInPartition(columnName, columnIndex, removeLambda, txWriter.getLastPartitionTimestamp(), -1L);
             }
 
             long columnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(columnIndex);
@@ -3936,6 +3935,18 @@ public class TableWriter implements Closeable {
         } finally {
             path.trimTo(rootLen);
         }
+    }
+
+    private void removeColumnFilesInPartition(CharSequence columnName, int columnIndex, RemoveFileLambda removeLambda, long partitionTimestamp, long partitionNameTxn) {
+        setPathForPartition(path, partitionBy, partitionTimestamp, false);
+        txnPartitionConditionally(path, partitionNameTxn);
+        int plen = path.length();
+        long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+        removeLambda.remove(ff, dFile(path, columnName, columnNameTxn));
+        removeLambda.remove(ff, iFile(path.trimTo(plen), columnName, columnNameTxn));
+        removeLambda.remove(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn));
+        removeLambda.remove(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn));
+        path.trimTo(rootLen);
     }
 
     private int removeColumnFromMeta(int index) {
@@ -4134,15 +4145,10 @@ public class TableWriter implements Closeable {
             for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
                 long partitionTimestamp = txWriter.getPartitionTimestamp(i);
                 long partitionNameTxn = txWriter.getPartitionNameTxn(i);
-                setPathForPartition(path, partitionBy, partitionTimestamp, false);
-                txnPartitionConditionally(path, partitionNameTxn);
-                int plen = path.length();
-                long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-                renameFileOrLog(ff, dFile(path.trimTo(plen), columnName, columnNameTxn), dFile(other.trimTo(plen), newName, columnNameTxn));
-                renameFileOrLog(ff, iFile(path.trimTo(plen), columnName, columnNameTxn), iFile(other.trimTo(plen), newName, columnNameTxn));
-                renameFileOrLog(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn), BitmapIndexUtils.keyFileName(other.trimTo(plen), newName, columnNameTxn));
-                renameFileOrLog(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn), BitmapIndexUtils.valueFileName(other.trimTo(plen), newName, columnNameTxn));
-                path.trimTo(rootLen);
+                renameColumnFiles(columnName, columnIndex, newName, partitionTimestamp, partitionNameTxn);
+            }
+            if (!PartitionBy.isPartitioned(partitionBy)) {
+                renameColumnFiles(columnName, columnIndex, newName, txWriter.getLastPartitionTimestamp(), -1L);
             }
 
             long columnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(columnIndex);
@@ -4156,6 +4162,18 @@ public class TableWriter implements Closeable {
             path.trimTo(rootLen);
             other.trimTo(rootLen);
         }
+    }
+
+    private void renameColumnFiles(CharSequence columnName, int columnIndex, CharSequence newName, long partitionTimestamp, long partitionNameTxn) {
+        setPathForPartition(path, partitionBy, partitionTimestamp, false);
+        txnPartitionConditionally(path, partitionNameTxn);
+        int plen = path.length();
+        long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+        renameFileOrLog(ff, dFile(path.trimTo(plen), columnName, columnNameTxn), dFile(other.trimTo(plen), newName, columnNameTxn));
+        renameFileOrLog(ff, iFile(path.trimTo(plen), columnName, columnNameTxn), iFile(other.trimTo(plen), newName, columnNameTxn));
+        renameFileOrLog(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn), BitmapIndexUtils.keyFileName(other.trimTo(plen), newName, columnNameTxn));
+        renameFileOrLog(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn), BitmapIndexUtils.valueFileName(other.trimTo(plen), newName, columnNameTxn));
+        path.trimTo(rootLen);
     }
 
     private int renameColumnFromMeta(int index, CharSequence newName) {

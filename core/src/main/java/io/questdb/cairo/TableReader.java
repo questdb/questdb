@@ -651,13 +651,13 @@ public class TableReader implements Closeable, SymbolTableSource {
                 final Path path = pathGenPartitioned(partitionIndex).$();
                 long partitionRowCount = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
                 for (int i = 0; i < iterateCount; i++) {
-                    final int action = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4);
+                    final int action = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L);
                     final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4);
 
                     if (action == -1) {
                         final int index = getPrimaryColumnIndex(oldBase, i);
-                        Misc.free(this.columns.getQuick(index));
-                        Misc.free(this.columns.getQuick(index + 1));
+                        Misc.free(this.columns.getAndSetQuick(index, null));
+                        Misc.free(this.columns.getAndSetQuick(index + 1, null));
                     }
 
                     if (copyFrom > -1) {
@@ -984,7 +984,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
                         final long txPartitionDataTxn = txFile.getPartitionDataTxn(partitionIndex);
 
-                        if (openPartitionNameTxn == txPartitionNameTxn && openPartitionDataTxn == txPartitionDataTxn) {
+                        if (openPartitionNameTxn == txPartitionNameTxn) { // TODO: find out why  && openPartitionDataTxn == txPartitionDataTxn was here
                             if (openPartitionSize != txPartitionSize) {
                                 reloadPartition(partitionIndex, txPartitionSize, txPartitionNameTxn);
                                 this.openPartitionInfo.setQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
@@ -1043,7 +1043,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             if (columnTxn == -1L) {
                 // When column is added, column version will have txn number for the partition
                 // where it's added. It will also have the txn number in the [default] partition
-                columnTxn = columnVersionReader.getDefaultColumnNameTxn(columnIndex);
+                columnTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
             }
             final long columnRowCount = partitionRowCount - columnTop;
 
@@ -1069,7 +1069,6 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                 columnTops.setQuick(columnBase / 2 + columnIndex, columnTop);
 
-                // TODO: use columnTxn in indexes
                 if (metadata.isColumnIndexed(columnIndex)) {
                     BitmapIndexReader indexReader = indexReaders.getQuick(primaryIndex);
                     if (indexReader instanceof BitmapIndexBwdReader) {
@@ -1163,8 +1162,8 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private SymbolMapReader reloadSymbolMapReader(int columnIndex, SymbolMapReader reader) {
         if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
-            int writerColumnIndex = metadata.getWriterIndex(columnIndex);
-            long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerColumnIndex);
+            final int writerColumnIndex = metadata.getWriterIndex(columnIndex);
+            final long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerColumnIndex);
             if (reader instanceof SymbolMapReaderImpl) {
                 ((SymbolMapReaderImpl) reader).of(configuration, path, metadata.getColumnName(columnIndex), columnNameTxn, 0);
                 return reader;
@@ -1237,9 +1236,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void reshuffleColumns(int columnCount, long pTransitionIndex) {
-
         final long pIndexBase = pTransitionIndex + 8;
-        final long pState = pIndexBase + columnCount * 8L;
         int iterateCount = Math.max(columnCount, this.columnCount);
 
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
@@ -1312,13 +1309,13 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
 
         // this is a silly exercise in walking the index
-        for (int i = 0, n = Math.max(columnCount, this.columnCount); i < columnCount; i++) {
+        for (int i = 0, n = Math.max(columnCount, this.columnCount); i < n; i++) {
             final int action = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L);
             final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4);
 
             if (action == -1) {
                 // deleted
-                Misc.free(symbolMapReaders.getAndSetQuick(i, reloadSymbolMapReader(i, null)));
+                Misc.free(symbolMapReaders.getAndSetQuick(i, null));
             }
 
             // don't copy entries to themselves, unless symbol map was deleted

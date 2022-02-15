@@ -53,7 +53,7 @@ public final class BitmapIndexUtils {
     public static Path keyFileName(Path path, CharSequence name, long columnNameTxn) {
         path.concat(name).put(".k");
         if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
-            path.concat('.').concat(columnNameTxn);
+            path.put('.').put(columnNameTxn);
         }
         return path.$();
     }
@@ -61,7 +61,7 @@ public final class BitmapIndexUtils {
     public static Path valueFileName(Path path, CharSequence name, long columnNameTxn) {
         path.concat(name).put(".v");
         if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
-            path.concat('.').concat(columnNameTxn);
+            path.put('.').put(columnNameTxn);
         }
         return path.$();
     }

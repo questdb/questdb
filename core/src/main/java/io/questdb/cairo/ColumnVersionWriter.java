@@ -138,6 +138,16 @@ public class ColumnVersionWriter extends ColumnVersionReader implements Closeabl
         hasChanges = true;
     }
 
+    public void upsertDefaultTxnName(int columnIndex, long columnNameTxn) {
+        // In case of non-partitioned table this record may already exist with column top set
+        int recordIndex = getRecordIndex(COL_TOP_DEFAULT_PARTITION, columnIndex);
+        if (recordIndex > 0) {
+            getCachedList().setQuick(recordIndex + 2, columnNameTxn);
+        } else {
+            upsert(COL_TOP_DEFAULT_PARTITION, columnIndex, columnNameTxn, 0);
+        }
+    }
+
     private void bumpFileSize(long size) {
         mem.setSize(size);
         this.size = size;

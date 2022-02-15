@@ -1339,95 +1339,95 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            r.putInt(21, rnd.nextInt());
+            r.putInt(22, rnd.nextInt());
         }
     };
 
     private static final FieldGenerator BATCH9_GENERATOR = (r, rnd, ts, blob) -> {
         if (rnd.nextBoolean()) {
-            r.putByte(1, rnd.nextByte());
+            r.putByte(2, rnd.nextByte());
         }
 
         if (rnd.nextBoolean()) {
-            r.putBool(6, rnd.nextBoolean());
+            r.putBool(8, rnd.nextBoolean());
         }
 
         if (rnd.nextBoolean()) {
-            r.putShort(0, rnd.nextShort());
+            r.putShort(1, rnd.nextShort());
         }
 
         if (rnd.nextBoolean()) {
-            r.putDouble(2, rnd.nextDouble());
+            r.putDouble(3, rnd.nextDouble());
         }
 
         if (rnd.nextBoolean()) {
-            r.putFloat(3, rnd.nextFloat());
+            r.putFloat(4, rnd.nextFloat());
         }
 
         if (rnd.nextBoolean()) {
-            r.putLong(4, rnd.nextLong());
+            r.putLong(5, rnd.nextLong());
         }
 
         if (rnd.nextBoolean()) {
-            r.putDate(8, ts);
+            r.putDate(10, ts);
         }
 
         if (rnd.nextBoolean()) {
             rnd.nextChars(blob, blobLen / 2);
-            r.putBin(7, blob, blobLen);
+            r.putBin(9, blob, blobLen);
         }
 
         if (rnd.nextBoolean()) {
-            r.putStr(5, rnd.nextChars(10));
+            r.putStr(6, rnd.nextChars(10));
         }
 
 
         if ((rnd.nextPositiveInt() & 3) == 0) {
-            r.putStr(9, rnd.nextChars(15));
+            r.putStr(11, rnd.nextChars(15));
         }
 
         if ((rnd.nextPositiveInt() & 3) == 0) {
-            r.putInt(10, rnd.nextInt());
+            r.putInt(12, rnd.nextInt());
         }
 
         if (rnd.nextBoolean()) {
-            r.putShort(11, rnd.nextShort());
+            r.putShort(13, rnd.nextShort());
         }
 
         if (rnd.nextBoolean()) {
-            r.putBool(12, rnd.nextBoolean());
+            r.putBool(14, rnd.nextBoolean());
         }
 
         if (rnd.nextBoolean()) {
-            r.putByte(13, rnd.nextByte());
+            r.putByte(15, rnd.nextByte());
         }
 
         if (rnd.nextBoolean()) {
-            r.putFloat(14, rnd.nextFloat());
+            r.putFloat(16, rnd.nextFloat());
         }
 
         if (rnd.nextBoolean()) {
-            r.putDouble(15, rnd.nextDouble());
+            r.putDouble(17, rnd.nextDouble());
         }
 
         if (rnd.nextBoolean()) {
-            r.putSym(16, rnd.nextChars(10));
+            r.putSym(18, rnd.nextChars(10));
         }
 
         if (rnd.nextBoolean()) {
-            r.putLong(17, rnd.nextLong());
+            r.putLong(19, rnd.nextLong());
         }
 
         if (rnd.nextBoolean()) {
-            r.putDate(18, rnd.nextLong());
+            r.putDate(20, rnd.nextLong());
         }
 
         if (rnd.nextBoolean()) {
-            r.putInt(19, rnd.nextInt());
+            r.putInt(22, rnd.nextInt());
         }
 
         if (rnd.nextBoolean()) {
-            r.putSym(20, rnd.nextChars(8));
+            r.putSym(23, rnd.nextChars(8));
         }
     };
 
@@ -2908,13 +2908,9 @@ public class TableReaderTest extends AbstractCairoTest {
                     // file delete failures
                     writer.removeColumn("b");
 
-                    // this must fail because we cannot delete foreign files
-                    try {
-                        writer.addColumn("b", ColumnType.STRING);
-                        Assert.fail();
-                    } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "Cannot remove");
-                    }
+                    // It used to be: this must fail because we cannot delete foreign files
+                    // but with column version file we can handle it.
+                    writer.addColumn("b", ColumnType.STRING);
 
                     // now assert what reader sees
                     Assert.assertTrue(reader.reload());
@@ -3021,7 +3017,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     for (int i = 0; i < N; i++) {
                         TableWriter.Row row = writer.newRow();
                         row.putSym(0, rnd.nextChars(10));
-                        row.putStr(1, rnd.nextChars(15));
+                        row.putStr(2, rnd.nextChars(15));
                         row.append();
                     }
                     writer.commit();
@@ -3127,13 +3123,9 @@ public class TableReaderTest extends AbstractCairoTest {
                     // file delete failures
                     writer.renameColumn("b", "bb");
 
-                    // this must fail because we cannot delete foreign files
-                    try {
-                        writer.addColumn("b", ColumnType.STRING);
-                        Assert.fail();
-                    } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "Cannot remove");
-                    }
+                    // It used to be: this must fail because we cannot delete foreign files
+                    // but with column version file we can handle it.
+                    writer.addColumn("b", ColumnType.STRING);
 
                     // now assert what reader sees
                     Assert.assertTrue(reader.reload());
@@ -3204,7 +3196,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // populate table and delete column
             try (TableWriter writer = new TableWriter(configuration, "x")) {
-                appendTwoSymbols(writer, rnd);
+                appendTwoSymbols(writer, rnd, 0, 1);
                 writer.commit();
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
@@ -3235,7 +3227,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     writer.addColumn("b", ColumnType.SYMBOL);
 
                     // SymbolMap must be cleared when we try to do add values to new column
-                    appendTwoSymbols(writer, rnd);
+                    appendTwoSymbols(writer, rnd, 0, 2);
                     writer.commit();
 
                     // now assert what reader sees
@@ -3313,7 +3305,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // populate table and delete column
             try (TableWriter writer = new TableWriter(configuration, "x")) {
-                appendTwoSymbols(writer, rnd);
+                appendTwoSymbols(writer, rnd, 0, 1);
                 writer.commit();
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
@@ -3340,7 +3332,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     writer.addColumn("b", ColumnType.SYMBOL);
 
                     // SymbolMap must be cleared when we try to do add values to new column
-                    appendTwoSymbols(writer, rnd);
+                    appendTwoSymbols(writer, rnd, 0, 2);
                     writer.commit();
 
                     // now assert what reader sees
@@ -3418,7 +3410,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // populate table and delete column
             try (TableWriter writer = new TableWriter(configuration, "x")) {
-                appendTwoSymbols(writer, rnd);
+                appendTwoSymbols(writer, rnd, 0, 1);
                 writer.commit();
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
@@ -3445,7 +3437,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     writer.addColumn("b", ColumnType.SYMBOL);
 
                     // SymbolMap must be cleared when we try to do add values to new column
-                    appendTwoSymbols(writer, rnd);
+                    appendTwoSymbols(writer, rnd, 0, 2);
                     writer.commit();
 
                     // now assert what reader sees
@@ -3523,7 +3515,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // populate table and delete column
             try (TableWriter writer = new TableWriter(configuration, "x")) {
-                appendTwoSymbols(writer, rnd);
+                appendTwoSymbols(writer, rnd, 0, 1);
                 writer.commit();
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
@@ -3629,11 +3621,11 @@ public class TableReaderTest extends AbstractCairoTest {
         return "0" + s;
     }
 
-    private void appendTwoSymbols(TableWriter writer, Rnd rnd) {
+    private void appendTwoSymbols(TableWriter writer, Rnd rnd, int index1, int index2) {
         for (int i = 0; i < 1000; i++) {
             TableWriter.Row row = writer.newRow();
-            row.putSym(0, rnd.nextChars(10));
-            row.putSym(1, rnd.nextChars(15));
+            row.putSym(index1, rnd.nextChars(10));
+            row.putSym(index2, rnd.nextChars(15));
             row.append();
         }
     }

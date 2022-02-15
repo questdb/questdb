@@ -94,7 +94,7 @@ public class TableColumnMetadata {
     }
 
     public void markDeleted() {
-        type = Math.abs(type);
+        type = -Math.abs(type);
     }
 
     public void setIndexValueBlockCapacity(int indexValueBlockCapacity) {

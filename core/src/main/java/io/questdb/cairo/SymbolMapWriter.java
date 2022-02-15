@@ -140,7 +140,7 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
     public static Path charFileName(Path path, CharSequence columnName, long columnNameTxn) {
         path.concat(columnName).put(".c");
         if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
-            path.concat('.').concat(columnNameTxn);
+            path.put('.').put(columnNameTxn);
         }
         return path.$();
     }
@@ -179,7 +179,7 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
     public static Path offsetFileName(Path path, CharSequence columnName, long columnNameTxn) {
         path.concat(columnName).put(".o");
         if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
-            path.concat('.').concat(columnNameTxn);
+            path.put('.').put(columnNameTxn);
         }
         return path.$();
     }
