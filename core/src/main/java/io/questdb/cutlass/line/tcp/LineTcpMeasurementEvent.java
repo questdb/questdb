@@ -270,7 +270,7 @@ class LineTcpMeasurementEvent implements Closeable {
             } else if (colIndex == COLUMN_NOT_FOUND) {
                 // send column by name
                 CharSequence colName = localDetails.getColName();
-                if (TableUtils.isValidInfluxColumnName(colName)) {
+                if (TableUtils.isValidColumnName(colName)) {
                     buffer.putUtf16CharSequence(colName);
                     colType = DefaultColumnTypes.DEFAULT_COLUMN_TYPES[entityType];
                 } else {
@@ -375,7 +375,12 @@ class LineTcpMeasurementEvent implements Closeable {
                                 break;
 
                             case ColumnType.CHAR:
-                                handleChar(entity.getValue().charAt(0));
+                                CharSequence entityValue = entity.getValue();
+                                if (entityValue.length() == 1) {
+                                    handleChar(entityValue.charAt(0));
+                                } else {
+                                    throw castError("char", colIndex, colType);
+                                }
                                 break;
 
                             default:

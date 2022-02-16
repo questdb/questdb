@@ -413,17 +413,16 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
     public void testInsertCharTableExists() throws Exception {
         assertType(ColumnType.CHAR,
                 "value\ttimestamp\n" +
-                        "1\t1970-01-01T00:00:01.000000Z\n" +
                         "1\t1970-01-01T00:00:02.000000Z\n" +
-                        "\t1970-01-01T00:00:03.000000Z\n" +
-                        "N\t1970-01-01T00:00:05.000000Z\n" +
-                        "N\t1970-01-01T00:00:07.000000Z\n",
+                        "\t1970-01-01T00:00:04.000000Z\n" +
+                        "N\t1970-01-01T00:00:08.000000Z\n",
                 new CharSequence[]{
-                        "\"1630933921000\"", // valid
-                        "\"1970-01-01T00:00:05.000000Z\"", // valid
+                        "\"1630933921000\"", // discarded too long
+                        "\"1\"", // valid
+                        "\"1970-01-01T00:00:05.000000Z\"", // discarded too long
                         "", // valid null
                         "-0i", // discarded bad type long
-                        "\"NaN\"", // valid
+                        "\"NaN\"", // discarded too long
                         "null", // discarded bad type symbol
                         "\"N\"", // valid
                         "0", // discarded bad type double
