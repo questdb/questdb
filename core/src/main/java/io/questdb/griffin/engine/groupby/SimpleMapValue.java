@@ -34,6 +34,11 @@ public class SimpleMapValue implements MapValue {
         this.values = new long[columnCount];
     }
 
+    public void copy(SimpleMapValue other) {
+        assert values.length >= other.values.length;
+        System.arraycopy(other.values, 0, values, 0, other.values.length);
+    }
+
     @Override
     public long getAddress() {
         throw new UnsupportedOperationException();
