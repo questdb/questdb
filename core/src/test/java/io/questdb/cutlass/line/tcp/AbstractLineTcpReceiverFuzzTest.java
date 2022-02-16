@@ -359,8 +359,8 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
 
     void runTest() throws Exception {
         runTest((factoryType, thread, name, event, segment, position) -> {
-            if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_LOCK_SUCCESS) {
-                handleWriterLockSuccessEvent(name);
+            if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_UNLOCKED) {
+                handleWriterUnlockEvent(name);
             }
             if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
                 handleWriterReturnEvent(name);
@@ -368,7 +368,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         }, 250);
     }
 
-    void handleWriterLockSuccessEvent(CharSequence name) {
+    void handleWriterUnlockEvent(CharSequence name) {
         final String tableName = name.toString();
         tableNames.putIfAbsent(tableName.toLowerCase(), tableName);
     }
