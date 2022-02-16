@@ -31,11 +31,24 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 
 public class HealthCheckProcessor implements HttpRequestProcessor {
+
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
+        final HealthCheckMetrics metrics = context.getMetrics().healthCheck();
+        final long unhandledErrors = metrics.unhandledErrorsCount();
+        if (unhandledErrors > 0) {
+            r.status(500, "text/plain");
+            r.sendHeader();
+            r.put("Status: Unhealthy\nUnhandled errors: ");
+            r.put(unhandledErrors);
+            r.sendChunk(true);
+            return;
+        }
+
         r.status(200, "text/plain");
         r.sendHeader();
-        r.done();
+        r.put("Status: Healthy");
+        r.sendChunk(true);
     }
 }

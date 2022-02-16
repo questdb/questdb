@@ -24,16 +24,22 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class JoinTest extends AbstractGriffinTest {
 
@@ -128,22 +134,6 @@ public class JoinTest extends AbstractGriffinTest {
     @Test
     public void testAsOfFullFat() throws Exception {
         testFullFat(this::testAsOfJoin);
-    }
-
-    @Test
-    public void testJoinAliasBug() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table x (xid int, a int, b int)", sqlExecutionContext);
-            compiler.compile("create table y (yid int, a int, b int)", sqlExecutionContext);
-            compiler.compile(
-                    "select tx.a, tx.b from x as tx left join y as ty on xid = yid where tx.a = 1 or tx.b=2",
-                    sqlExecutionContext
-            ).getRecordCursorFactory().close();
-            compiler.compile(
-                    "select tx.a, tx.b from x as tx left join y as ty on xid = yid where ty.a = 1 or ty.b=2",
-                    sqlExecutionContext
-            ).getRecordCursorFactory().close();
-        });
     }
 
     @Test
@@ -1800,6 +1790,21 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAsOfJoinNoKeyNoLeaks() throws Exception {
+        testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select xx.x from xx asof join crj");
+    }
+
+    @Test
+    public void testUnionAllCursorLeaks() throws Exception {
+        testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select x from xx union all select x from crj");
+    }
+
+    @Test
+    public void testUnionCursorLeaks() throws Exception {
+        testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select x from xx union select x from crj");
+    }
+
+    @Test
     public void testCrossJoinAllTypes() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tkk1\ta1\tb1\tc1\td1\te1\tf1\tg1\ti1\tj1\tk1\tl1\tm1\tn1\n" +
@@ -1913,25 +1918,6 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCrossTripleOverflow() throws Exception {
-        assertMemoryLeak(() -> {
-            final CompiledQuery cq = compiler.compile("select * from long_sequence(1000000000) a cross join long_sequence(1000000000) b cross join long_sequence(1000000000) c", sqlExecutionContext);
-            final RecordCursorFactory factory = cq.getRecordCursorFactory();
-            try {
-                Assert.assertNotNull(factory);
-                sink.clear();
-                printer.printHeader(factory.getMetadata(), sink);
-                TestUtils.assertEquals("x\tx1\tx2\n", sink);
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    Assert.assertEquals(Long.MAX_VALUE, cursor.size());
-                }
-            } finally {
-                Misc.free(factory);
-            }
-        });
-    }
-
-    @Test
     public void testCrossJoinTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tkk1\ta1\tb1\tc1\td1\te1\tf1\tg1\ti1\tj1\tk1\tl1\tm1\tn1\n" +
@@ -1987,6 +1973,20 @@ public class JoinTest extends AbstractGriffinTest {
             // filter is applied to final join result
             assertQuery(expected, "select * from x cross join y", "k", false, true);
         });
+    }
+
+    @Test
+    public void testAsOfJoinRecordNoLeaks() throws Exception {
+        testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select xx.x from xx asof join crj on xx.x = crj.x ");
+    }
+
+    @Test
+    public void testAsOfJoinRecordNoLeaks2() throws Exception {
+        try {
+            testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select xx.x from xx asof join crj on xx.x = crj.x ");
+        } finally {
+            compiler.setFullFatJoins(false);
+        }
     }
 
     @Test
@@ -2689,159 +2689,77 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testJoinOnLong256() throws Exception {
-        testFullFat(() -> assertMemoryLeak(() -> {
-            final String query = "select x.i, y.i, x.hash from x join x y on y.hash = x.hash";
+    public void testAsofJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table trips as (" +
+                    "  select rnd_double() fare_amount, " +
+                    "    CAST(x as Timestamp) pickup_datetime " +
+                    "  from long_sequence(5)) " +
+                    "timestamp(pickup_datetime)", sqlExecutionContext);
 
-            final String expected = "i\ti1\thash\n" +
-                    "1\t1\t0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\n" +
-                    "2\t2\t0xb5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa65572a215ba0462ad15\n" +
-                    "3\t3\t0x322a2198864beb14797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fa\n";
+            compiler.compile("create table weather as (" +
+                    "  select rnd_double() tempF, " +
+                    "    rnd_int() windDir, " +
+                    "    cast(x as TIMESTAMP) timestamp " +
+                    "  from long_sequence(5)) " +
+                    "timestamp(timestamp)", sqlExecutionContext);
 
-            compiler.compile(
-                    "create table x as (" +
-                            "select" +
-                            " cast(x as int) i," +
-                            " rnd_long256() hash" +
-                            " from long_sequence(3)" +
-                            ")",
-                    sqlExecutionContext
-            );
-
-            assertQueryAndCache(expected, query, null, false);
-        }));
+            assertQuery("pickup_datetime\tfare_amount\ttempF\twindDir\n" +
+                            "1970-01-01T00:00:00.000001Z\t0.6607777894187332\t0.6508594025855301\t-1436881714\n" +
+                            "1970-01-01T00:00:00.000002Z\t0.2246301342497259\t0.7905675319675964\t1545253512\n" +
+                            "1970-01-01T00:00:00.000003Z\t0.08486964232560668\t0.22452340856088226\t-409854405\n" +
+                            "1970-01-01T00:00:00.000004Z\t0.299199045961845\t0.3491070363730514\t1904508147\n" +
+                            "1970-01-01T00:00:00.000005Z\t0.20447441837877756\t0.7611029514995744\t1125579207\n",
+                    "SELECT pickup_datetime, fare_amount, tempF, windDir \n" +
+                            "FROM (trips WHERE pickup_datetime IN '1970-01-01') \n" +
+                            "ASOF JOIN weather",
+                    "pickup_datetime", false, false, true);
+        });
     }
 
     @Test
-    public void testJoinOfTablesWithReservedWordsColNames() throws SqlException {
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " x as i, " +
-                        " x*2 as \"in\", " +
-                        " x*3 as \"from\" " +
-                        " from long_sequence(3)" +
-                        ")",
-                sqlExecutionContext
-        );
-
-        assertSql("select \"in\", \"from\" from x",
-                "in\tfrom\n" +
-                "2\t3\n" +
-                "4\t6\n" +
-                "6\t9\n");
-
-        assertSql("select x.\"in\", x.\"from\", x1.\"in\", x1.\"from\" " +
-                "from x " +
-                "join x as x1 on x.i = x1.i",
-                "in\tfrom\tin1\tfrom1\n" +
-                "2\t3\t2\t3\n" +
-                "4\t6\t4\t6\n" +
-                "6\t9\t6\t9\n");
-
-        assertSql("select *, x.\"in\" + x1.\"from\" " +
-                        "from x " +
-                        "join x as x1 on x.i = x1.i",
-                "i\tin\tfrom\ti1\tin1\tfrom1\tcolumn\n" +
-                        "1\t2\t3\t1\t2\t3\t5\n" +
-                        "2\t4\t6\t2\t4\t6\t10\n" +
-                        "3\t6\t9\t3\t6\t9\t15\n");
+    public void testCrossTripleOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            final CompiledQuery cq = compiler.compile("select * from long_sequence(1000000000) a cross join long_sequence(1000000000) b cross join long_sequence(1000000000) c", sqlExecutionContext);
+            final RecordCursorFactory factory = cq.getRecordCursorFactory();
+            try {
+                Assert.assertNotNull(factory);
+                sink.clear();
+                printer.printHeader(factory.getMetadata(), sink);
+                TestUtils.assertEquals("x\tx1\tx2\n", sink);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertEquals(Long.MAX_VALUE, cursor.size());
+                }
+            } finally {
+                Misc.free(factory);
+            }
+        });
     }
 
-    private void testJoinWithGeoHash() throws Exception {
-        testFullFat(() -> assertMemoryLeak(() -> {
-            final String query = "with x1 as (select distinct * from x)," +
-                    "y1 as (select distinct * from y) " +
-                    "select g1, gg1, gg2, gg4, gg8, x1.k " +
-                    "from x1 " +
-                    "join y1 on y1.kk = x1.k";
-
-            final String expected = "g1\tgg1\tgg2\tgg4\tgg8\tk\n" +
-                    "9v1s\t1\twh4\ts2z2\t10011100111100101000010010010000010001010\t1\n" +
-                    "46sw\tq\t71f\tfsnj\t11010111111011100000110010000111111101101\t2\n" +
-                    "jnw9\tb\tjj5\tksu7\t11101100011100010000100111000111100000001\t3\n" +
-                    "zfuq\ts\t76u\tq0s5\t11110001011010001010010100000110110100010\t4\n" +
-                    "hp4m\ty\tp1d\tp2n3\t10111100100011101101110001110010111011001\t5\n";
-
-
-            compiler.compile(
-                    "create table x as (select" +
-                            " cast(x as int) k, " +
-                            " rnd_geohash(20) g1" +
-                            " from long_sequence(5))",
-                    sqlExecutionContext
-            );
-
-            compiler.compile(
-                    "create table y as (select" +
-                            " cast(x as int) kk," +
-                            " rnd_geohash(15) gg2," +
-                            " rnd_geohash(20) gg4," +
-                            " rnd_geohash(5) gg1," +
-                            " rnd_geohash(41) gg8" +
-                            " from long_sequence(20))",
-                    sqlExecutionContext
-            );
-
-            sink.clear();
-            TestUtils.printSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "y",
-                    sink
-            );
-
-            System.out.println(sink);
-
-            compiler.setFullFatJoins(true);
-            assertSql(query, expected);
-            compiler.setFullFatJoins(false);
-            assertSql(query, expected);
-        }));
+    @Test
+    public void testHashJoinLightdNoLeaks() throws Exception {
+        testJoinForCursorLeaks("with crj as (select * from xx latest by x) select xx.x from xx join crj on xx.x = crj.x ");
     }
 
-    private void testJoinWithGeohash2() throws Exception {
-        testFullFat(() -> assertMemoryLeak(() -> {
-            final String query = "with x1 as (select distinct * from x)," +
-                    "y1 as (select distinct * from y) " +
-                    "select g1, gg1, gg2, gg4, gg8, x1.k " +
-                    "from x1 " +
-                    "lt join y1 on x1.l = y1.l";
+    @Test
+    public void testHashJoinRecordNoLeaks() throws Exception {
+        testJoinForCursorLeaks("with crj as (select first(x) x, first(ts) ts from xx latest by x) select xx.x from xx join crj on xx.x = crj.x ");
+    }
 
-            final String expected = "g1\tgg1\tgg2\tgg4\tgg8\tk\n" +
-                    "9v1s\t\t\t\t\t1970-01-01T00:00:00.000001Z\n" +
-                    "46sw\t1\twh4\ts2z2\t10011100111100101000010010010000010001010\t1970-01-01T00:00:00.000002Z\n" +
-                    "jnw9\tq\t71f\tfsnj\t11010111111011100000110010000111111101101\t1970-01-01T00:00:00.000003Z\n" +
-                    "zfuq\tb\tjj5\tksu7\t11101100011100010000100111000111100000001\t1970-01-01T00:00:00.000004Z\n" +
-                    "hp4m\ts\t76u\tq0s5\t11110001011010001010010100000110110100010\t1970-01-01T00:00:00.000005Z\n";
-
-
+    @Test
+    public void testJoinAliasBug() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x (xid int, a int, b int)", sqlExecutionContext);
+            compiler.compile("create table y (yid int, a int, b int)", sqlExecutionContext);
             compiler.compile(
-                    "create table x as (select" +
-                            " 1 as l, " +
-                            " cast(x as timestamp) k, " +
-                            " rnd_geohash(20) g1" +
-                            " from long_sequence(5)) timestamp(k)",
+                    "select tx.a, tx.b from x as tx left join y as ty on xid = yid where tx.a = 1 or tx.b=2",
                     sqlExecutionContext
-            );
-
+            ).getRecordCursorFactory().close();
             compiler.compile(
-                    "create table y as (select" +
-                            " 1 as l, " +
-                            " cast(x as timestamp) kk," +
-                            " rnd_geohash(15) gg2," +
-                            " rnd_geohash(20) gg4," +
-                            " rnd_geohash(5) gg1," +
-                            " rnd_geohash(41) gg8" +
-                            " from long_sequence(20))  timestamp(kk)",
+                    "select tx.a, tx.b from x as tx left join y as ty on xid = yid where ty.a = 1 or ty.b=2",
                     sqlExecutionContext
-            );
-
-            compiler.setFullFatJoins(true);
-            assertSql(query, expected);
-            compiler.setFullFatJoins(false);
-            assertSql(query, expected);
-        }));
+            ).getRecordCursorFactory().close();
+        });
     }
 
     @Test
@@ -3102,6 +3020,187 @@ public class JoinTest extends AbstractGriffinTest {
                     "ts"
             );
         });
+    }
+
+    @Test
+    public void testJoinOfTablesWithReservedWordsColNames() throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " x as i, " +
+                        " x*2 as \"in\", " +
+                        " x*3 as \"from\" " +
+                        " from long_sequence(3)" +
+                        ")",
+                sqlExecutionContext
+        );
+
+        assertSql("select \"in\", \"from\" from x",
+                "in\tfrom\n" +
+                        "2\t3\n" +
+                        "4\t6\n" +
+                        "6\t9\n");
+
+        assertSql("select x.\"in\", x.\"from\", x1.\"in\", x1.\"from\" " +
+                        "from x " +
+                        "join x as x1 on x.i = x1.i",
+                "in\tfrom\tin1\tfrom1\n" +
+                        "2\t3\t2\t3\n" +
+                        "4\t6\t4\t6\n" +
+                        "6\t9\t6\t9\n");
+
+        assertSql("select *, x.\"in\" + x1.\"from\" " +
+                        "from x " +
+                        "join x as x1 on x.i = x1.i",
+                "i\tin\tfrom\ti1\tin1\tfrom1\tcolumn\n" +
+                        "1\t2\t3\t1\t2\t3\t5\n" +
+                        "2\t4\t6\t2\t4\t6\t10\n" +
+                        "3\t6\t9\t3\t6\t9\t15\n");
+    }
+
+    @Test
+    public void testJoinOnGeohashCompactMap() throws Exception {
+        defaultMapType = "compact";
+        testJoinOnGeohash();
+    }
+
+    @Test
+    public void testJoinOnGeohashFastMap() throws Exception {
+        defaultMapType = "fast";
+        testJoinOnGeohash();
+    }
+
+    @Test
+    public void testJoinOnGeohashNonExactPrecisionNotAllowed() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table t1 as (select " +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(1c)) geo1," +
+                    "x," +
+                    "timestamp_sequence(0, 1000000) ts " +
+                    "from long_sequence(10)) timestamp(ts)", sqlExecutionContext);
+            compiler.compile("create table t2 as (select " +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(1c)) geo1," +
+                    "x," +
+                    "timestamp_sequence(0, 1000000) ts " +
+                    "from long_sequence(2)) timestamp(ts)", sqlExecutionContext);
+
+            String sql = "with g1 as (select distinct * from t1)," +
+                    "g2 as (select distinct * from t2)" +
+                    "select * from g1 lt join g2 on g1.geo4 = g2.geo1";
+
+            try {
+                assertSql(sql, "");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "join column type mismatch");
+            }
+        });
+    }
+
+    @Test
+    public void testJoinOnLong256() throws Exception {
+        testFullFat(() -> assertMemoryLeak(() -> {
+            final String query = "select x.i, y.i, x.hash from x join x y on y.hash = x.hash";
+
+            final String expected = "i\ti1\thash\n" +
+                    "1\t1\t0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\n" +
+                    "2\t2\t0xb5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa65572a215ba0462ad15\n" +
+                    "3\t3\t0x322a2198864beb14797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fa\n";
+
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_long256() hash" +
+                            " from long_sequence(3)" +
+                            ")",
+                    sqlExecutionContext
+            );
+
+            assertQueryAndCache(expected, query, null, false);
+        }));
+    }
+
+    @Test
+    public void testJoinWithGeohashCompactMap() throws Exception {
+        defaultMapType = "compact";
+        testJoinWithGeoHash();
+    }
+
+    @Test
+    public void testJoinWithGeohashCompactMap2() throws Exception {
+        defaultMapType = "compact";
+        testJoinWithGeohash2();
+    }
+
+    @Test
+    public void testJoinWithGeohashFastMap() throws Exception {
+        defaultMapType = "fast";
+        testJoinWithGeoHash();
+    }
+
+    @Test
+    public void testJoinWithGeohashFastMap2() throws Exception {
+        defaultMapType = "fast";
+        testJoinWithGeohash2();
+    }
+
+    @Test
+    public void testLtJoinNoKeyNoLeaks() throws Exception {
+        testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select xx.x from xx lt join crj ");
+    }
+
+    @Test
+    public void testLtJoinRecordNoLeaks() throws Exception {
+        testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select xx.x from xx lt join crj on xx.x = crj.x ");
+    }
+
+    @Test
+    public void testLtJoinRecordNoLeaks2() throws Exception {
+        compiler.setFullFatJoins(true);
+        try {
+            testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select xx.x from xx lt join crj on xx.x = crj.x ");
+        } finally {
+            compiler.setFullFatJoins(false);
+        }
+    }
+
+    @Test
+    public void testSelectAliasTest() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table contact_events as (" +
+                    "  select rnd_symbol(4,4,4,2) _id, " +
+                    "    rnd_symbol(4,4,4,2) contactid, " +
+                    "    CAST(x as Timestamp) timestamp, " +
+                    "    rnd_symbol(4,4,4,2) groupId " +
+                    "  from long_sequence(50)) " +
+                    "timestamp(timestamp)", sqlExecutionContext);
+            compiler.compile("create table contacts as (" +
+                    "  select rnd_symbol(4,4,4,2) _id, " +
+                    "    CAST(x as Timestamp) timestamp, " +
+                    "    rnd_symbol(4,4,4,2) notRealType " +
+                    "  from long_sequence(50)) " +
+                    "timestamp(timestamp)", sqlExecutionContext);
+
+            assertQuery("id\n",
+                    "with\n" +
+                            "eventlist as (select * from contact_events latest on timestamp partition by _id order by timestamp)\n" +
+                            ",contactlist as (select * from contacts latest on timestamp partition by _id order by timestamp)\n" +
+                            ",c as (select distinct contactid from eventlist where groupId = 'ykom80aRN5AwUcuRp4LJ' except select distinct _id as contactId from contactlist where notRealType = 'bot')\n" +
+                            "select\n" +
+                            "c.contactId as id\n" +
+                            "from\n" +
+                            "c\n" +
+                            "join contactlist on c.contactid = contactlist._id\n",
+                    null, false, false, true);
+        });
+    }
+
+    @Test
+    public void testSpliceJoinRecordNoLeaks() throws Exception {
+        testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select xx.x from xx splice join crj on xx.x = crj.x ");
     }
 
     @Test
@@ -3663,75 +3762,46 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectAliasTest() throws Exception {
+    public void testTypeMismatchFF() throws Exception {
+        testFullFat(this::testTypeMismatch);
+    }
+
+    private void testFullFat(TestMethod method) throws Exception {
+        compiler.setFullFatJoins(true);
+        try {
+            method.run();
+        } finally {
+            compiler.setFullFatJoins(false);
+        }
+    }
+
+    private void testJoinForCursorLeaks(String sql) throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table contact_events as (" +
-                    "  select rnd_symbol(4,4,4,2) _id, " +
-                    "    rnd_symbol(4,4,4,2) contactid, " +
-                    "    CAST(x as Timestamp) timestamp, " +
-                    "    rnd_symbol(4,4,4,2) groupId " +
-                    "  from long_sequence(50)) " +
-                    "timestamp(timestamp)", sqlExecutionContext);
-            compiler.compile("create table contacts as (" +
-                    "  select rnd_symbol(4,4,4,2) _id, " +
-                    "    CAST(x as Timestamp) timestamp, " +
-                    "    rnd_symbol(4,4,4,2) notRealType " +
-                    "  from long_sequence(50)) " +
-                    "timestamp(timestamp)", sqlExecutionContext);
+            AtomicInteger counter = new AtomicInteger();
+            ff = new FilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    if (Chars.endsWith(name, Files.SEPARATOR + "ts.d") && counter.incrementAndGet() == 1) {
+                        return -1;
+                    }
+                    return Files.openRO(name);
+                }
+            };
 
-            assertQuery("id\n",
-                    "with\n" +
-                            "eventlist as (select * from contact_events latest on timestamp partition by _id order by timestamp)\n" +
-                            ",contactlist as (select * from contacts latest on timestamp partition by _id order by timestamp)\n" +
-                            ",c as (select distinct contactid from eventlist where groupId = 'ykom80aRN5AwUcuRp4LJ' except select distinct _id as contactId from contactlist where notRealType = 'bot')\n" +
-                            "select\n" +
-                            "c.contactId as id\n" +
-                            "from\n" +
-                            "c\n" +
-                            "join contactlist on c.contactid = contactlist._id\n",
-                    null, false, false, true);
+            compile("create table xx as (" +
+                    "select x," +
+                    " timestamp_sequence(0, 1000) ts" +
+                    " from long_sequence(100000)) timestamp (ts)");
+
+            try {
+                assertSql(
+                        sql, "");
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-only");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "ts.d");
+            }
         });
-    }
-
-    @Test
-    public void testAsofJoin() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table trips as (" +
-                    "  select rnd_double() fare_amount, " +
-                    "    CAST(x as Timestamp) pickup_datetime " +
-                    "  from long_sequence(5)) " +
-                    "timestamp(pickup_datetime)", sqlExecutionContext);
-
-            compiler.compile("create table weather as (" +
-                    "  select rnd_double() tempF, " +
-                    "    rnd_int() windDir, " +
-                    "    cast(x as TIMESTAMP) timestamp " +
-                    "  from long_sequence(5)) " +
-                    "timestamp(timestamp)", sqlExecutionContext);
-
-            assertQuery("pickup_datetime\tfare_amount\ttempF\twindDir\n" +
-                            "1970-01-01T00:00:00.000001Z\t0.6607777894187332\t0.6508594025855301\t-1436881714\n" +
-                            "1970-01-01T00:00:00.000002Z\t0.2246301342497259\t0.7905675319675964\t1545253512\n" +
-                            "1970-01-01T00:00:00.000003Z\t0.08486964232560668\t0.22452340856088226\t-409854405\n" +
-                            "1970-01-01T00:00:00.000004Z\t0.299199045961845\t0.3491070363730514\t1904508147\n" +
-                            "1970-01-01T00:00:00.000005Z\t0.20447441837877756\t0.7611029514995744\t1125579207\n",
-                    "SELECT pickup_datetime, fare_amount, tempF, windDir \n" +
-                            "FROM (trips WHERE pickup_datetime IN '1970-01-01') \n" +
-                            "ASOF JOIN weather",
-                    "pickup_datetime", false, false, true);
-        });
-    }
-
-    @Test
-    public void testJoinOnGeohashCompactMap() throws Exception {
-        defaultMapType = "compact";
-        testJoinOnGeohash();
-    }
-
-    @Test
-    public void testJoinOnGeohashFastMap() throws Exception {
-        defaultMapType = "fast";
-        testJoinOnGeohash();
     }
 
     private void testJoinOnGeohash() throws Exception {
@@ -3777,71 +3847,100 @@ public class JoinTest extends AbstractGriffinTest {
         });
     }
 
-    @Test
-    public void testJoinWithGeohashCompactMap() throws Exception {
-        defaultMapType = "compact";
-        testJoinWithGeoHash();
-    }
+    private void testJoinWithGeoHash() throws Exception {
+        testFullFat(() -> assertMemoryLeak(() -> {
+            final String query = "with x1 as (select distinct * from x)," +
+                    "y1 as (select distinct * from y) " +
+                    "select g1, gg1, gg2, gg4, gg8, x1.k " +
+                    "from x1 " +
+                    "join y1 on y1.kk = x1.k";
 
-    @Test
-    public void testJoinWithGeohashCompactMap2() throws Exception {
-        defaultMapType = "compact";
-        testJoinWithGeohash2();
-    }
+            final String expected = "g1\tgg1\tgg2\tgg4\tgg8\tk\n" +
+                    "9v1s\t1\twh4\ts2z2\t10011100111100101000010010010000010001010\t1\n" +
+                    "46sw\tq\t71f\tfsnj\t11010111111011100000110010000111111101101\t2\n" +
+                    "jnw9\tb\tjj5\tksu7\t11101100011100010000100111000111100000001\t3\n" +
+                    "zfuq\ts\t76u\tq0s5\t11110001011010001010010100000110110100010\t4\n" +
+                    "hp4m\ty\tp1d\tp2n3\t10111100100011101101110001110010111011001\t5\n";
 
-    @Test
-    public void testJoinWithGeohashFastMap() throws Exception {
-        defaultMapType = "fast";
-        testJoinWithGeoHash();
-    }
 
-    @Test
-    public void testJoinWithGeohashFastMap2() throws Exception {
-        defaultMapType = "fast";
-        testJoinWithGeohash2();
-    }
+            compiler.compile(
+                    "create table x as (select" +
+                            " cast(x as int) k, " +
+                            " rnd_geohash(20) g1" +
+                            " from long_sequence(5))",
+                    sqlExecutionContext
+            );
 
-    @Test
-    public void testJoinOnGeohashNonExactPrecisionNotAllowed() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table t1 as (select " +
-                    "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
-                    "cast(rnd_str('quest', '1234', '3456') as geohash(1c)) geo1," +
-                    "x," +
-                    "timestamp_sequence(0, 1000000) ts " +
-                    "from long_sequence(10)) timestamp(ts)", sqlExecutionContext);
-            compiler.compile("create table t2 as (select " +
-                    "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
-                    "cast(rnd_str('quest', '1234', '3456') as geohash(1c)) geo1," +
-                    "x," +
-                    "timestamp_sequence(0, 1000000) ts " +
-                    "from long_sequence(2)) timestamp(ts)", sqlExecutionContext);
+            compiler.compile(
+                    "create table y as (select" +
+                            " cast(x as int) kk," +
+                            " rnd_geohash(15) gg2," +
+                            " rnd_geohash(20) gg4," +
+                            " rnd_geohash(5) gg1," +
+                            " rnd_geohash(41) gg8" +
+                            " from long_sequence(20))",
+                    sqlExecutionContext
+            );
 
-            String sql = "with g1 as (select distinct * from t1)," +
-                    "g2 as (select distinct * from t2)" +
-                    "select * from g1 lt join g2 on g1.geo4 = g2.geo1";
+            sink.clear();
+            TestUtils.printSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "y",
+                    sink
+            );
 
-            try {
-                assertSql(sql, "");
-                Assert.fail();
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "join column type mismatch");
-            }
-        });
-    }
+            System.out.println(sink);
 
-    @Test
-    public void testTypeMismatchFF() throws Exception {
-        testFullFat(this::testTypeMismatch);
-    }
-
-    private void testFullFat(TestMethod method) throws Exception {
-        compiler.setFullFatJoins(true);
-        try {
-            method.run();
-        } finally {
+            compiler.setFullFatJoins(true);
+            assertSql(query, expected);
             compiler.setFullFatJoins(false);
-        }
+            assertSql(query, expected);
+        }));
+    }
+
+    private void testJoinWithGeohash2() throws Exception {
+        testFullFat(() -> assertMemoryLeak(() -> {
+            final String query = "with x1 as (select distinct * from x)," +
+                    "y1 as (select distinct * from y) " +
+                    "select g1, gg1, gg2, gg4, gg8, x1.k " +
+                    "from x1 " +
+                    "lt join y1 on x1.l = y1.l";
+
+            final String expected = "g1\tgg1\tgg2\tgg4\tgg8\tk\n" +
+                    "9v1s\t\t\t\t\t1970-01-01T00:00:00.000001Z\n" +
+                    "46sw\t1\twh4\ts2z2\t10011100111100101000010010010000010001010\t1970-01-01T00:00:00.000002Z\n" +
+                    "jnw9\tq\t71f\tfsnj\t11010111111011100000110010000111111101101\t1970-01-01T00:00:00.000003Z\n" +
+                    "zfuq\tb\tjj5\tksu7\t11101100011100010000100111000111100000001\t1970-01-01T00:00:00.000004Z\n" +
+                    "hp4m\ts\t76u\tq0s5\t11110001011010001010010100000110110100010\t1970-01-01T00:00:00.000005Z\n";
+
+
+            compiler.compile(
+                    "create table x as (select" +
+                            " 1 as l, " +
+                            " cast(x as timestamp) k, " +
+                            " rnd_geohash(20) g1" +
+                            " from long_sequence(5)) timestamp(k)",
+                    sqlExecutionContext
+            );
+
+            compiler.compile(
+                    "create table y as (select" +
+                            " 1 as l, " +
+                            " cast(x as timestamp) kk," +
+                            " rnd_geohash(15) gg2," +
+                            " rnd_geohash(20) gg4," +
+                            " rnd_geohash(5) gg1," +
+                            " rnd_geohash(41) gg8" +
+                            " from long_sequence(20))  timestamp(kk)",
+                    sqlExecutionContext
+            );
+
+            compiler.setFullFatJoins(true);
+            assertSql(query, expected);
+            compiler.setFullFatJoins(false);
+            assertSql(query, expected);
+        }));
     }
 
     @FunctionalInterface

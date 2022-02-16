@@ -81,14 +81,17 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
+        RecordCursor masterCursor = null;
         try {
             buildMapOfSlaveRecords(slaveCursor, executionContext.getCircuitBreaker());
+            masterCursor = masterFactory.getCursor(executionContext);
+            this.cursor.of(masterCursor, slaveCursor);
+            return this.cursor;
         } catch (Throwable e) {
-            slaveCursor.close();
+            Misc.free(slaveCursor);
+            Misc.free(masterCursor);
             throw e;
         }
-        cursor.of(masterFactory.getCursor(executionContext), slaveCursor);
-        return cursor;
     }
 
     @Override

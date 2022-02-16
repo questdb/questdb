@@ -24,6 +24,7 @@
 
 package org.questdb;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.SqlCompiler;
@@ -78,9 +79,9 @@ public class TableWriteBenchmark {
 
         LogFactory.INSTANCE.haltThread();
 
-        writer = new TableWriter(configuration, "test1");
-        writer2 = new TableWriter(configuration, "test2");
-        writer3 = new TableWriter(configuration, "test3");
+        writer = new TableWriter(configuration, "test1", Metrics.disabled());
+        writer2 = new TableWriter(configuration, "test2", Metrics.disabled());
+        writer3 = new TableWriter(configuration, "test3", Metrics.disabled());
         rnd.reset();
     }
 

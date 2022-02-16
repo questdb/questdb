@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
@@ -43,15 +44,15 @@ public class HttpMinTestBuilder {
 
     private static final Log LOG = LogFactory.getLog(HttpMinTestBuilder.class);
     private TemporaryFolder temp;
-    private Scrapable metrics;
+    private Scrapable scrapable;
 
     public HttpMinTestBuilder withTempFolder(TemporaryFolder temp) {
         this.temp = temp;
         return this;
     }
 
-    public HttpMinTestBuilder withMetrics(Scrapable metrics) {
-        this.metrics = metrics;
+    public HttpMinTestBuilder withScrapable(Scrapable scrapable) {
+        this.scrapable = scrapable;
         return this;
     }
 
@@ -80,18 +81,18 @@ public class HttpMinTestBuilder {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
+            }, Metrics.disabled());
 
             DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
 
             try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+                    CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
+                    HttpServer httpServer = new HttpServer(httpConfiguration, Metrics.disabled(), workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new PrometheusMetricsProcessor(metrics);
+                        return new PrometheusMetricsProcessor(scrapable);
                     }
 
                     @Override

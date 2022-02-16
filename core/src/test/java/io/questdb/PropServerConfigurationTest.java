@@ -265,6 +265,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getSleepThreshold());
         Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().haltOnError());
         Assert.assertEquals(30_000, configuration.getLineTcpReceiverConfiguration().getMaintenanceInterval());
+        Assert.assertEquals(PropServerConfiguration.COMMIT_INTERVAL_DEFAULT, configuration.getLineTcpReceiverConfiguration().getCommitIntervalDefault());
         Assert.assertEquals(PartitionBy.DAY, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
         Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getWriterIdleTimeout());
         Assert.assertEquals(0, configuration.getCairoConfiguration().getSampleByIndexSearchPageSize());
@@ -447,6 +448,22 @@ public class PropServerConfigurationTest {
         properties.setProperty("line.udp.timestamp", "h");
         configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
         Assert.assertSame(LineProtoHourTimestampAdapter.INSTANCE, configuration.getLineUdpReceiverConfiguration().getTimestampAdapter());
+    }
+
+    @Test
+    public void testCommitIntervalDefault() throws ServerConfigurationException, JsonException {
+        Properties properties = new Properties();
+        properties.setProperty("line.tcp.commit.interval.default", "0");
+        PropServerConfiguration configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(PropServerConfiguration.COMMIT_INTERVAL_DEFAULT, configuration.getLineTcpReceiverConfiguration().getCommitIntervalDefault());
+
+        properties.setProperty("line.tcp.commit.interval.default", "-1");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(PropServerConfiguration.COMMIT_INTERVAL_DEFAULT, configuration.getLineTcpReceiverConfiguration().getCommitIntervalDefault());
+
+        properties.setProperty("line.tcp.commit.interval.default", "1000");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getCommitIntervalDefault());
     }
 
     @Test

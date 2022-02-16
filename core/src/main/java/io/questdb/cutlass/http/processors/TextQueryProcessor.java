@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.Metrics;
 import io.questdb.Telemetry;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
@@ -66,6 +67,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private final MillisecondClock clock;
     private final int doubleScale;
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
+    private final Metrics metrics;
 
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
@@ -88,6 +90,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount);
         this.doubleScale = configuration.getDoubleScale();
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration());
+        this.metrics = engine.getMetrics();
     }
 
     @Override
@@ -230,7 +233,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                                     state.count++;
 
                                     if (state.countRows && state.count > state.stop) {
-//                                        state.cancellationHandler.check();
                                         continue;
                                     }
 
@@ -345,6 +347,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         error(state).$("Server error executing query ").utf8(state.query).$(e).$();
+        // This is a critical error, so we treat it as an unhandled one.
+        metrics.healthCheck().incrementUnhandledErrors();
         sendException(socket, 0, e.getMessage(), state);
     }
 

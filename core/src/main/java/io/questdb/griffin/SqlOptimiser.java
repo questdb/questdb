@@ -2173,11 +2173,17 @@ class SqlOptimiser {
         }
     }
 
-    // removes redundant order by clauses from sub-queries
-    private void optimiseOrderBy(QueryModel model, final int topLevelOrderByMnemonic) {
+    // removes redundant order by clauses from sub-queries (only those that don't force materialization of other order by clauses )
+    private void optimiseOrderBy(QueryModel model, int topLevelOrderByMnemonic) {
         ObjList<QueryColumn> columns = model.getBottomUpColumns();
         int orderByMnemonic;
         int n = columns.size();
+
+        //limit x,y forces order materialization; we can't push order by past it and need to discover actual nested ordering 
+        if (model.getLimitLo() != null) {
+            topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
+        }
+
         // determine if ordering is required
         switch (topLevelOrderByMnemonic) {
             case OrderByMnemonic.ORDER_BY_UNKNOWN:
@@ -2600,12 +2606,16 @@ class SqlOptimiser {
         QueryModel base = model;
         QueryModel baseParent = model;
         QueryModel wrapper = null;
+        QueryModel limitModel = model;//bottom-most model which contains limit, order by can't be moved past it  
         final int modelColumnCount = model.getBottomUpColumns().size();
         boolean groupByOrDistinct = false;
 
         while (base.getBottomUpColumns().size() > 0 && !base.isNestedModelIsSubQuery()) {
             baseParent = base;
             base = base.getNestedModel();
+            if (base.getLimitLo() != null) {
+                limitModel = base;
+            }
             final int selectModelType = baseParent.getSelectModelType();
             groupByOrDistinct = groupByOrDistinct
                     || selectModelType == QueryModel.SELECT_MODEL_GROUP_BY
@@ -2712,12 +2722,13 @@ class SqlOptimiser {
                         }
                     }
                 }
-                if (base != baseParent) {
-                    model.addOrderBy(orderBy, base.getOrderByDirection().getQuick(i));
+                //order by can't be pushed through limit clause because it'll produce bad results 
+                if (base != baseParent && base != limitModel) {
+                    limitModel.addOrderBy(orderBy, base.getOrderByDirection().getQuick(i));
                 }
             }
 
-            if (base != model) {
+            if (base != model && base != limitModel) {
                 base.clearOrderBy();
             }
         }
@@ -3171,6 +3182,7 @@ class SqlOptimiser {
 
         if (useDistinctModel) {
             distinctModel.setNestedModel(root);
+            distinctModel.moveLimitFrom(root);
             root = distinctModel;
         }
 

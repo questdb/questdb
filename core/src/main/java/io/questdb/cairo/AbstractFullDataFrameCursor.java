@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.std.Misc;
 
 public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
     protected final FullTableDataFrame frame = new FullTableDataFrame();
@@ -35,10 +36,7 @@ public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
 
     @Override
     public void close() {
-        if (reader != null) {
-            reader.close();
-            reader = null;
-        }
+        reader = Misc.free(reader);
     }
 
     @Override

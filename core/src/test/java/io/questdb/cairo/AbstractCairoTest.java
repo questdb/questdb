@@ -61,7 +61,7 @@ public class AbstractCairoTest {
     protected static CairoEngine engine;
     protected static String inputRoot = null;
     protected static FilesFacade ff;
-    protected static long configOverrideCommitLag = -1;
+    protected static long configOverrideCommitLagMicros = -1;
     protected static int configOverrideCommitMode = -1;
     protected static int configOverrideMaxUncommittedRows = -1;
     protected static Metrics metrics = Metrics.enabled();
@@ -115,8 +115,7 @@ public class AbstractCairoTest {
 
             @Override
             public long getCommitLag() {
-                if (configOverrideCommitLag >= 0) return configOverrideCommitLag;
-                return super.getCommitLag();
+                return configOverrideCommitLagMicros >= 0 ? configOverrideCommitLagMicros : super.getCommitLag();
             }
 
             @Override
@@ -191,7 +190,7 @@ public class AbstractCairoTest {
                 return 512;
             }
         };
-        engine = new CairoEngine(configuration);
+        engine = new CairoEngine(configuration, metrics);
         messageBus = engine.getMessageBus();
     }
 
@@ -217,7 +216,7 @@ public class AbstractCairoTest {
         engine.clear();
         TestUtils.removeTestPath(root);
         configOverrideMaxUncommittedRows = -1;
-        configOverrideCommitLag = -1;
+        configOverrideCommitLagMicros = -1;
         configOverrideCommitMode = -1;
         currentMicros = -1;
         sampleByIndexSearchPageSize = -1;

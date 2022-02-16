@@ -52,12 +52,9 @@ public interface LineTcpReceiverConfiguration {
      */
     long getMaintenanceInterval();
 
-    /**
-     * After this timeout elapsed all uncommitted rows will be committed
-     *
-     * @return timeout in milliseconds
-     */
-    long getCommitTimeout();
+    double getCommitIntervalFraction();
+
+    long getCommitIntervalDefault();
 
     int getMaxMeasurementSize();
 
@@ -80,6 +77,8 @@ public interface LineTcpReceiverConfiguration {
     WorkerPoolAwareConfiguration getWriterWorkerPoolConfiguration();
 
     boolean isEnabled();
+
+    boolean getDisconnectOnError();
 
     long getSymbolCacheWaitUsBeforeReload();
 }
