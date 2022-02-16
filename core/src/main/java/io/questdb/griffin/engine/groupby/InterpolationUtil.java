@@ -148,7 +148,7 @@ public class InterpolationUtil {
         );
     }
 
-    private static double interpolate(long x, long x1, double y1, long x2, double y2) {
+    public static double interpolate(long x, long x1, double y1, long x2, double y2) {
         return (y1 * (x2 - x) + y2 * (x - x1)) / (x2 - x1);
     }
 
