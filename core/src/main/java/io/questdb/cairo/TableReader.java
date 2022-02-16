@@ -225,7 +225,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     public BitmapIndexReader getBitmapIndexReader(int partitionIndex, int columnBase, int columnIndex, int direction) {
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
         BitmapIndexReader reader = bitmapIndexes.getQuick(direction == BitmapIndexReader.DIR_BACKWARD ? index : index + 1);
-        return reader == null ? createBitmapIndexReaderAt(index, columnBase, columnIndex, direction, txFile.getPartitionNameTxn(partitionIndex)) : reader;
+        long partitionTimestamp = txFile.getPartitionTimestamp(partitionIndex);
+        long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex));
+        return reader == null ? createBitmapIndexReaderAt(index, columnBase, columnIndex, columnNameTxn, direction, txFile.getPartitionNameTxn(partitionIndex)) : reader;
     }
 
     public MemoryR getColumn(int absoluteIndex) {
@@ -234,6 +236,10 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public int getColumnBase(int partitionIndex) {
         return partitionIndex << columnCountShl;
+    }
+
+    public long getColumnNameTxn(int columnIndex) {
+        return 0;
     }
 
     public long getColumnTop(int base, int columnIndex) {
@@ -586,7 +592,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         return symbolMapReaders.getAndSetQuick(columnIndex, reader);
     }
 
-    private BitmapIndexReader createBitmapIndexReaderAt(int globalIndex, int columnBase, int columnIndex, int direction, long txn) {
+    private BitmapIndexReader createBitmapIndexReaderAt(int globalIndex, int columnBase, int columnIndex, long columnNameTxn, int direction, long txn) {
         BitmapIndexReader reader;
         if (!metadata.isColumnIndexed(columnIndex)) {
             throw CairoException.instance(0).put("Not indexed: ").put(metadata.getColumnName(columnIndex));
@@ -609,6 +615,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                             configuration,
                             path,
                             metadata.getColumnName(columnIndex),
+                            columnNameTxn,
                             getColumnTop(columnBase, columnIndex),
                             txn
                     );
@@ -618,6 +625,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                             configuration,
                             path,
                             metadata.getColumnName(columnIndex),
+                            columnNameTxn,
                             getColumnTop(columnBase, columnIndex),
                             txn
                     );

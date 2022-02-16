@@ -3878,6 +3878,7 @@ public class TableWriter implements Closeable {
         final int index = columnCount - 1;
         removeMetaFile();
         removeLastColumn();
+        columnCount--;
         recoverFromSwapRenameFailure(columnName);
         removeSymbolMapWriter(index);
     }
@@ -4166,7 +4167,9 @@ public class TableWriter implements Closeable {
 
     private void renameColumnFiles(CharSequence columnName, int columnIndex, CharSequence newName, long partitionTimestamp, long partitionNameTxn) {
         setPathForPartition(path, partitionBy, partitionTimestamp, false);
+        setPathForPartition(other, partitionBy, partitionTimestamp, false);
         txnPartitionConditionally(path, partitionNameTxn);
+        txnPartitionConditionally(other, partitionNameTxn);
         int plen = path.length();
         long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
         renameFileOrLog(ff, dFile(path.trimTo(plen), columnName, columnNameTxn), dFile(other.trimTo(plen), newName, columnNameTxn));
@@ -4174,6 +4177,7 @@ public class TableWriter implements Closeable {
         renameFileOrLog(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn), BitmapIndexUtils.keyFileName(other.trimTo(plen), newName, columnNameTxn));
         renameFileOrLog(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn), BitmapIndexUtils.valueFileName(other.trimTo(plen), newName, columnNameTxn));
         path.trimTo(rootLen);
+        other.trimTo(rootLen);
     }
 
     private int renameColumnFromMeta(int index, CharSequence newName) {
@@ -4624,36 +4628,38 @@ public class TableWriter implements Closeable {
         MemoryMA mem1 = getPrimaryColumn(columnIndex);
         MemoryMA mem2 = getSecondaryColumn(columnIndex);
         int type = getColumnType(metaMem, columnIndex);
-        final long pos = size - columnTops.getQuick(columnIndex);
-        if (pos > 0) {
-            // subtract column top
-            final long m1pos;
-            switch (ColumnType.tagOf(type)) {
-                case ColumnType.BINARY:
-                case ColumnType.STRING:
-                    assert mem2 != null;
-                    if (doubleAllocate) {
-                        mem2.allocate(pos * Long.BYTES + Long.BYTES);
-                    }
-                    // Jump to the number of records written to read length of var column correctly
-                    mem2.jumpTo(pos * Long.BYTES);
-                    m1pos = Unsafe.getUnsafe().getLong(mem2.getAppendAddress());
-                    // Jump to the end of file to correctly trim the file
-                    mem2.jumpTo((pos + 1) * Long.BYTES);
-                    break;
-                default:
-                    m1pos = pos << ColumnType.pow2SizeOf(type);
-                    break;
-            }
-            if (doubleAllocate) {
-                mem1.allocate(m1pos);
-            }
-            mem1.jumpTo(m1pos);
-        } else {
-            mem1.jumpTo(0);
-            if (mem2 != null) {
-                mem2.jumpTo(0);
-                mem2.putLong(0);
+        if (type > 0) { // Not deleted
+            final long pos = size - columnTops.getQuick(columnIndex);
+            if (pos > 0) {
+                // subtract column top
+                final long m1pos;
+                switch (ColumnType.tagOf(type)) {
+                    case ColumnType.BINARY:
+                    case ColumnType.STRING:
+                        assert mem2 != null;
+                        if (doubleAllocate) {
+                            mem2.allocate(pos * Long.BYTES + Long.BYTES);
+                        }
+                        // Jump to the number of records written to read length of var column correctly
+                        mem2.jumpTo(pos * Long.BYTES);
+                        m1pos = Unsafe.getUnsafe().getLong(mem2.getAppendAddress());
+                        // Jump to the end of file to correctly trim the file
+                        mem2.jumpTo((pos + 1) * Long.BYTES);
+                        break;
+                    default:
+                        m1pos = pos << ColumnType.pow2SizeOf(type);
+                        break;
+                }
+                if (doubleAllocate) {
+                    mem1.allocate(m1pos);
+                }
+                mem1.jumpTo(m1pos);
+            } else {
+                mem1.jumpTo(0);
+                if (mem2 != null) {
+                    mem2.jumpTo(0);
+                    mem2.putLong(0);
+                }
             }
         }
     }
