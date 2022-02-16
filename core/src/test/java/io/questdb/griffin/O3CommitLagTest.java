@@ -277,7 +277,7 @@ public class O3CommitLagTest extends AbstractO3Test {
 
                         Assert.assertEquals(i + 1, writer.size());
                         if (writer.getMetadata().getMaxUncommittedRows() < writer.getUncommittedRowCount()) {
-                            writer.commitWithLag(CommitMode.NOSYNC);
+                            writer.commitWithLag();
                         }
                         Assert.assertEquals(i + 1, writer.size());
                     }
