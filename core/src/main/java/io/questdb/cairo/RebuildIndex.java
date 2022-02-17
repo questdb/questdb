@@ -34,6 +34,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
@@ -112,31 +113,50 @@ public class RebuildIndex implements Closeable, Mutable {
                 txReader.unsafeLoadAll();
                 path.trimTo(rootLen);
 
-                if (PartitionBy.isPartitioned(partitionBy)) {
-                    // Resolve partition timestamp if partition name specified
-                    long rebuildPartitionTs = ALL;
-                    if (rebuildPartitionName != null) {
-                        rebuildPartitionTs = PartitionBy.parsePartitionDirName(rebuildPartitionName, partitionBy);
-                    }
 
-                    for (int partitionIndex = txReader.getPartitionCount() - 1; partitionIndex > -1; partitionIndex--) {
-                        long partitionTimestamp = txReader.getPartitionTimestamp(partitionIndex);
-                        if (rebuildPartitionTs == ALL || partitionTimestamp == rebuildPartitionTs) {
-                            long partitionSize = txReader.getPartitionSize(partitionIndex);
-                            rebuildIndex(
-                                    rebuildColumnIndex,
-                                    ff,
-                                    indexer,
-                                    metadata,
-                                    partitionDirFormatMethod,
-                                    tempStringSink,
-                                    partitionTimestamp,
-                                    partitionSize);
+                path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                try (ColumnVersionReader columnVersionReader = new ColumnVersionReader().ofRO(ff, path)) {
+                    final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
+                    columnVersionReader.readSafe(configuration.getMicrosecondClock(), deadline);
+                    path.trimTo(rootLen);
+
+                    if (PartitionBy.isPartitioned(partitionBy)) {
+                        // Resolve partition timestamp if partition name specified
+                        long rebuildPartitionTs = ALL;
+                        if (rebuildPartitionName != null) {
+                            rebuildPartitionTs = PartitionBy.parsePartitionDirName(rebuildPartitionName, partitionBy);
                         }
+
+                        for (int partitionIndex = txReader.getPartitionCount() - 1; partitionIndex > -1; partitionIndex--) {
+                            long partitionTimestamp = txReader.getPartitionTimestamp(partitionIndex);
+                            if (rebuildPartitionTs == ALL || partitionTimestamp == rebuildPartitionTs) {
+                                long partitionSize = txReader.getPartitionSize(partitionIndex);
+                                rebuildIndex(
+                                        rebuildColumnIndex,
+                                        ff,
+                                        indexer,
+                                        metadata,
+                                        partitionDirFormatMethod,
+                                        tempStringSink,
+                                        partitionTimestamp,
+                                        partitionSize,
+                                        columnVersionReader);
+                            }
+                        }
+                    } else {
+                        long partitionSize = txReader.getTransientRowCount();
+                        rebuildIndex(
+                                rebuildColumnIndex,
+                                ff,
+                                indexer,
+                                metadata,
+                                partitionDirFormatMethod,
+                                tempStringSink,
+                                Long.MIN_VALUE,
+                                partitionSize,
+                                columnVersionReader
+                        );
                     }
-                } else {
-                    long partitionSize = txReader.getTransientRowCount();
-                    rebuildIndex(rebuildColumnIndex, ff, indexer, metadata, partitionDirFormatMethod, tempStringSink, 0, partitionSize);
                 }
             }
         } finally {
@@ -148,35 +168,37 @@ public class RebuildIndex implements Closeable, Mutable {
         }
     }
 
-    private void rebuildIndex(
-            int rebuildColumnIndex,
-            FilesFacade ff,
-            SymbolColumnIndexer indexer,
-            TableReaderMetadata metadata,
-            DateFormat partitionDirFormatMethod,
-            StringSink sink,
-            long partitionTimestamp,
-            long partitionSize
-    ) {
-        sink.clear();
-        partitionDirFormatMethod.format(partitionTimestamp, null, null, sink);
-
-        if (rebuildColumnIndex == ALL) {
-            for (int columnIndex = metadata.getColumnCount() - 1; columnIndex > -1; columnIndex--) {
-                if (metadata.isColumnIndexed(columnIndex)) {
-                    CharSequence columnName = metadata.getColumnName(columnIndex);
-                    int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
-                    rebuildIndex(indexer, columnName, sink, indexValueBlockCapacity, partitionSize, ff);
+    private void createIndexFiles(CharSequence columnName, int indexValueBlockCapacity, int plen, FilesFacade ff, long columnNameTxn) {
+        try {
+            BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn);
+            try {
+                LOG.info().$("writing ").utf8(path).$();
+                ddlMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WRITER);
+                BitmapIndexWriter.initKeyMemory(ddlMem, indexValueBlockCapacity);
+            } catch (CairoException e) {
+                // looks like we could not create key file properly
+                // lets not leave half-baked file sitting around
+                LOG.error()
+                        .$("could not create index [name=").utf8(path)
+                        .$(", errno=").$(e.getErrno())
+                        .$(']').$();
+                if (!ff.remove(path)) {
+                    LOG.error()
+                            .$("could not remove '").utf8(path).$("'. Please remove MANUALLY.")
+                            .$("[errno=").$(ff.errno())
+                            .$(']').$();
                 }
+                throw e;
+            } finally {
+                ddlMem.close();
             }
-        } else {
-            if (metadata.isColumnIndexed(rebuildColumnIndex)) {
-                CharSequence columnName = metadata.getColumnName(rebuildColumnIndex);
-                int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(rebuildColumnIndex);
-                rebuildIndex(indexer, columnName, sink, indexValueBlockCapacity, partitionSize, ff);
-            } else {
-                throw CairoException.instance(0).put("Column is not indexed");
+            if (!ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn))) {
+                LOG.error().$("could not create index [name=").utf8(path).$(']').$();
+                throw CairoException.instance(ff.errno()).put("could not create index [name=").put(path).put(']');
             }
+            LOG.info().$("writing ").utf8(path).$();
+        } finally {
+            path.trimTo(plen);
         }
     }
 
@@ -186,76 +208,81 @@ public class RebuildIndex implements Closeable, Mutable {
             CharSequence partitionName,
             int indexValueBlockCapacity,
             long partitionSize,
-            FilesFacade ff
+            FilesFacade ff,
+            ColumnVersionReader columnVersionReader,
+            int columnIndex,
+            long partitionTimestamp
     ) {
         path.trimTo(rootLen).concat(partitionName);
         final int plen = path.length();
 
         if (ff.exists(path.$())) {
             try (final MemoryMR roMem = indexMem) {
-//                removeIndexFiles(columnName, ff);
-//                TableUtils.dFile(path.trimTo(plen), columnName);
+                long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnIndex);
+                removeIndexFiles(columnName, ff, columnNameTxn);
+                TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
 
-//                if (ff.exists(path.$())) {
-//                    LOG.info().$("indexing [path=").utf8(path).I$();
-                throw new UnsupportedOperationException();
-//                    final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, false);
-//                    createIndexFiles(columnName, indexValueBlockCapacity, plen, ff);
-//
-//                    if (partitionSize > columnTop) {
-//                        TableUtils.dFile(path.trimTo(plen), columnName);
-//                        final long columnSize = (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT);
-//                        roMem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_WRITER);
-//                        indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnTop);
-//                        indexer.index(roMem, columnTop, partitionSize);
-//                    }
-//                }
+                if (columnVersionReader.getColumnTopPartitionTimestamp(columnIndex) <= partitionTimestamp) {
+                    LOG.info().$("indexing [path=").utf8(path).I$();
+                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnIndex);
+                    createIndexFiles(columnName, indexValueBlockCapacity, plen, ff, columnNameTxn);
+
+                    if (partitionSize > columnTop) {
+                        TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
+                        final long columnSize = (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT);
+                        roMem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_WRITER);
+                        indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnNameTxn, columnTop);
+                        indexer.index(roMem, columnTop, partitionSize);
+                    }
+                }
             }
         }
     }
 
-//    private void createIndexFiles(CharSequence columnName, int indexValueBlockCapacity, int plen, FilesFacade ff) {
-//        try {
-//            BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
-//            try {
-//                LOG.info().$("writing ").utf8(path).$();
-//                ddlMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WRITER);
-//                BitmapIndexWriter.initKeyMemory(ddlMem, indexValueBlockCapacity);
-//            } catch (CairoException e) {
-//                // looks like we could not create key file properly
-//                // lets not leave half-baked file sitting around
-//                LOG.error()
-//                        .$("could not create index [name=").utf8(path)
-//                        .$(", errno=").$(e.getErrno())
-//                        .$(']').$();
-//                if (!ff.remove(path)) {
-//                    LOG.error()
-//                            .$("could not remove '").utf8(path).$("'. Please remove MANUALLY.")
-//                            .$("[errno=").$(ff.errno())
-//                            .$(']').$();
-//                }
-//                throw e;
-//            } finally {
-//                ddlMem.close();
-//            }
-//            if (!ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName))) {
-//                LOG.error().$("could not create index [name=").utf8(path).$(']').$();
-//                throw CairoException.instance(ff.errno()).put("could not create index [name=").put(path).put(']');
-//            }
-//            LOG.info().$("writing ").utf8(path).$();
-//        } finally {
-//            path.trimTo(plen);
-//        }
-//    }
+    private void rebuildIndex(
+            int rebuildColumnIndex,
+            FilesFacade ff,
+            SymbolColumnIndexer indexer,
+            TableReaderMetadata metadata,
+            DateFormat partitionDirFormatMethod,
+            StringSink sink,
+            long partitionTimestamp,
+            long partitionSize,
+            ColumnVersionReader columnVersionReader
+    ) {
+        sink.clear();
+        partitionDirFormatMethod.format(partitionTimestamp, null, null, sink);
 
-//    private void removeIndexFiles(CharSequence columnName, FilesFacade ff) {
-//        final int plen = path.length();
-//        BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
-//        removeFile(path, ff);
-//
-//        BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName);
-//        removeFile(path, ff);
-//    }
+        if (rebuildColumnIndex == ALL) {
+            for (int columnIndex = metadata.getColumnCount() - 1; columnIndex > -1; columnIndex--) {
+                if (metadata.isColumnIndexed(columnIndex)) {
+                    rebuildIndexForColumn(metadata, columnIndex, indexer, sink, partitionSize, ff, columnVersionReader, partitionTimestamp);
+                }
+            }
+        } else {
+            if (metadata.isColumnIndexed(rebuildColumnIndex)) {
+                rebuildIndexForColumn(metadata, rebuildColumnIndex, indexer, sink, partitionSize, ff, columnVersionReader, partitionTimestamp);
+            } else {
+                throw CairoException.instance(0).put("Column is not indexed");
+            }
+        }
+    }
+
+    private void rebuildIndexForColumn(TableReaderMetadata metadata, int columnIndex, SymbolColumnIndexer indexer, StringSink sink, long partitionSize, FilesFacade ff, ColumnVersionReader columnVersionReader, long partitionTimestamp) {
+        CharSequence columnName = metadata.getColumnName(columnIndex);
+        int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
+        int writerIndex = metadata.getWriterIndex(columnIndex);
+        rebuildIndex(indexer, columnName, sink, indexValueBlockCapacity, partitionSize, ff, columnVersionReader, writerIndex, partitionTimestamp);
+    }
+
+    private void removeIndexFiles(CharSequence columnName, FilesFacade ff, long columnNameTxn) {
+        final int plen = path.length();
+        BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn);
+        removeFile(path, ff);
+
+        BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn);
+        removeFile(path, ff);
+    }
 
     private void removeFile(Path path, FilesFacade ff) {
         LOG.info().$("deleting ").utf8(path).$();

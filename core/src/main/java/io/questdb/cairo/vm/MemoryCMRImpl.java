@@ -95,7 +95,8 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
             this.pageAddress = 0;
         }
 
-        LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
+        // ---------------V leave a space here for alignment with open log message
+        LOG.debug().$("map  [file=").$(name).$(", fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
     }
 
     private void openFile(FilesFacade ff, LPSZ name) {

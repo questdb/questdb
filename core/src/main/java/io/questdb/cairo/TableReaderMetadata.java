@@ -200,10 +200,11 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
             this.columnNameIndexMap.clear();
             TableUtils.validate(metaMem, this.columnNameIndexMap, expectedVersion);
             int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
-            this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
+            int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             this.id = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
             this.columnMetadata.clear();
             long offset = TableUtils.getColumnNameOffset(columnCount);
+            this.timestampIndex = -1;
 
             // don't create strings in this loop, we already have them in columnNameIndexMap
             for (int i = 0; i < columnCount; i++) {
@@ -223,6 +224,9 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
                                     i
                             )
                     );
+                    if (i == timestampIndex) {
+                        this.timestampIndex = columnMetadata.size() - 1;
+                    }
                 }
                 offset += Vm.getStorageLength(name);
             }

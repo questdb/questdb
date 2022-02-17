@@ -40,6 +40,8 @@ import io.questdb.std.str.Path;
 import io.questdb.tasks.O3PurgeDiscoveryTask;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
+
 public final class TableUtils {
     public static final int TABLE_EXISTS = 0;
     public static final int TABLE_DOES_NOT_EXIST = 1;
@@ -159,6 +161,14 @@ public final class TableUtils {
         mem.zero();
     }
 
+    public static Path charFileName(Path path, CharSequence columnName, long columnNameTxn) {
+        path.concat(columnName).put(".c");
+        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnNameTxn);
+        }
+        return path.$();
+    }
+
     public static void createTable(
             CairoConfiguration configuration,
             MemoryMARW memory,
@@ -222,7 +232,7 @@ public final class TableUtils {
             int symbolMapCount = 0;
             for (int i = 0; i < count; i++) {
                 if (ColumnType.isSymbol(structure.getColumnType(i))) {
-                    SymbolMapWriter.createSymbolMapFiles(
+                    createSymbolMapFiles(
                             ff,
                             mem,
                             path.trimTo(rootLen),
@@ -256,14 +266,6 @@ public final class TableUtils {
                 ff.close(dirFd);
             }
         }
-    }
-
-    public static void createTxn(MemoryMW txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion, long structureVersion) {
-        txMem.putInt(TX_BASE_OFFSET_A_32, TX_BASE_HEADER_SIZE);
-        txMem.putInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32, symbolMapCount * 8);
-        txMem.putInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32, 0);
-        resetTxn(txMem, TX_BASE_HEADER_SIZE, symbolMapCount, txn, dataVersion, partitionTableVersion, structureVersion);
-        txMem.setTruncateSize(TX_BASE_HEADER_SIZE + TX_RECORD_HEADER_SIZE);
     }
 
     public static long createTransitionIndex(
@@ -321,6 +323,10 @@ public final class TableUtils {
                 ) {
                     // reuse
                     Unsafe.getUnsafe().putInt(index + outIndex * 8L + 4, slaveIndex);
+                    if (slaveIndex > outIndex) {
+                        // do nothing with existing column, this may be overwritten later
+                        Unsafe.getUnsafe().putInt(index + slaveIndex * 8L + 4, Integer.MIN_VALUE);
+                    }
                 } else {
                     // new
                     if (slaveIndex < slaveColumnCount) {
@@ -336,10 +342,26 @@ public final class TableUtils {
         return pTransitionIndex;
     }
 
+    public static void createTxn(MemoryMW txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion, long structureVersion) {
+        txMem.putInt(TX_BASE_OFFSET_A_32, TX_BASE_HEADER_SIZE);
+        txMem.putInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32, symbolMapCount * 8);
+        txMem.putInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32, 0);
+        resetTxn(txMem, TX_BASE_HEADER_SIZE, symbolMapCount, txn, dataVersion, partitionTableVersion, structureVersion);
+        txMem.setTruncateSize(TX_BASE_HEADER_SIZE + TX_RECORD_HEADER_SIZE);
+    }
+
     public static LPSZ dFile(Path path, CharSequence columnName, long columnTxn) {
         path.concat(columnName).put(FILE_SUFFIX_D);
         if (columnTxn > COLUMN_NAME_TXN_NONE) {
             path.put('.').put(columnTxn);
+        }
+        return path.$();
+    }
+
+    public static Path offsetFileName(Path path, CharSequence columnName, long columnNameTxn) {
+        path.concat(columnName).put(".o");
+        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnNameTxn);
         }
         return path.$();
     }
@@ -813,6 +835,7 @@ public final class TableUtils {
             }
 
             // validate column names
+            int denseCount = 0;
             for (int i = 0; i < columnCount; i++) {
                 if (offset + 4 >= memSize) {
                     throw validationException(metaMem).put("File is too small, column length for column ").put(i).put(" is missing");
@@ -831,7 +854,7 @@ public final class TableUtils {
 
                 CharSequence name = metaMem.getStr(offset);
 
-                if (getColumnType(metaMem, i) < 0 || nameIndex.put(name, i)) {
+                if (getColumnType(metaMem, i) < 0 || nameIndex.put(name, denseCount++)) {
                     offset += Vm.getStorageLength(name);
                 } else {
                     throw validationException(metaMem).put("Duplicate column: ").put(name).put(" at [").put(i).put(']');

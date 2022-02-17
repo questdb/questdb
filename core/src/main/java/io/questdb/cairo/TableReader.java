@@ -104,7 +104,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     .I$();
             this.txFile = new TxReader(ff).ofRO(path, partitionBy);
             path.trimTo(rootLen);
-            reloadSlow(metadata.getStructureVersion(), -1, false);
+            reloadSlow(metadata.getStructureVersion(), columnVersionReader.getVersion(), false);
             openSymbolMaps();
             partitionCount = txFile.getPartitionCount();
             partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
@@ -236,10 +236,6 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public int getColumnBase(int partitionIndex) {
         return partitionIndex << columnCountShl;
-    }
-
-    public long getColumnNameTxn(int columnIndex) {
-        return 0;
     }
 
     public long getColumnTop(int base, int columnIndex) {
@@ -666,6 +662,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                         final int index = getPrimaryColumnIndex(oldBase, i);
                         Misc.free(this.columns.getAndSetQuick(index, null));
                         Misc.free(this.columns.getAndSetQuick(index + 1, null));
+                        Misc.free(bitmapIndexes.getAndSetQuick(index, null));
+                        Misc.free(bitmapIndexes.getAndSetQuick(index + 1, null));
                     }
 
                     if (copyFrom > -1) {
@@ -987,10 +985,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                     // partition that is not yet in memory
                     if (openPartitionSize > -1) {
                         final long openPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
-                        final long openPartitionDataTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_DATA_TXN);
+//                        final long openPartitionDataTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_DATA_TXN);
                         final long txPartitionSize = txFile.getPartitionSize(partitionIndex);
                         final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
-                        final long txPartitionDataTxn = txFile.getPartitionDataTxn(partitionIndex);
+//                        final long txPartitionDataTxn = txFile.getPartitionDataTxn(partitionIndex);
 
                         if (openPartitionNameTxn == txPartitionNameTxn) { // TODO: find out why  && openPartitionDataTxn == txPartitionDataTxn was here
                             if (openPartitionSize != txPartitionSize) {
@@ -1046,8 +1044,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
             int writerIndex = metadata.getWriterIndex(columnIndex);
             final int versionRecordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, writerIndex);
-            final long columnTop = versionRecordIndex > -1L ? columnVersionReader.getColumnTop(versionRecordIndex) : 0L;
-            long columnTxn = versionRecordIndex > -1L ? columnVersionReader.getColumnNameTxn(versionRecordIndex) : -1L;
+            final long columnTop = versionRecordIndex > -1L ? columnVersionReader.getColumnTopByIndex(versionRecordIndex) : 0L;
+            long columnTxn = versionRecordIndex > -1L ? columnVersionReader.getColumnNameTxnByIndex(versionRecordIndex) : -1L;
             if (columnTxn == -1L) {
                 // When column is added, column version will have txn number for the partition
                 // where it's added. It will also have the txn number in the [default] partition
@@ -1057,8 +1055,9 @@ public class TableReader implements Closeable, SymbolTableSource {
 
             // When column is added mid-table existence the top record is only
             // created in the current partition. Older partitions would simply have no
-            // column file. This makes it necessary to check for .d file existence
-            if (partitionRowCount > 0 && ff.exists(TableUtils.dFile(path.trimTo(plen), name, columnTxn))) {
+            // column file. This makes it necessary to check the partition timestamp in Column Version file
+            // of when the column was added.
+            if (partitionRowCount > 0 && (versionRecordIndex > -1L || columnVersionReader.getColumnTopPartitionTimestamp(writerIndex) <= partitionTimestamp)) {
                 final int columnType = metadata.getColumnType(columnIndex);
 
                 if (ColumnType.isVariableLength(columnType)) {
@@ -1113,8 +1112,9 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
 
         while (true) {
+            long pTransitionIndex;
             try {
-                long pTransitionIndex = metadata.createTransitionIndex(txnStructureVersion);
+                pTransitionIndex = metadata.createTransitionIndex(txnStructureVersion);
                 if (pTransitionIndex < 0) {
                     if (configuration.getMicrosecondClock().getTicks() < deadline) {
                         return false;
@@ -1122,33 +1122,35 @@ public class TableReader implements Closeable, SymbolTableSource {
                     LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeoutUs()).utf8("μs]").$();
                     throw CairoException.instance(0).put("Metadata read timeout");
                 }
-                try {
-                    metadata.applyTransitionIndex();
-                    if (reshuffleColumns) {
-                        final int columnCount = metadata.getColumnCount();
-
-                        int columnCountShl = getColumnBits(columnCount);
-                        // when a column is added we cannot easily reshuffle columns in-place
-                        // the reason is that we'd have to create gaps in columns list between
-                        // partitions. It is possible in theory, but this could be an algo for
-                        // another day.
-                        if (columnCountShl != this.columnCountShl) {
-                            createNewColumnList(columnCount, pTransitionIndex, columnCountShl);
-                        } else {
-                            reshuffleColumns(columnCount, pTransitionIndex);
-                        }
-                        // rearrange symbol map reader list
-                        reshuffleSymbolMapReaders(pTransitionIndex, columnCount);
-                        this.columnCount = columnCount;
-                        reloadSymbolMapCounts();
-                    }
-                    return true;
-                } finally {
-                    TableUtils.freeTransitionIndex(pTransitionIndex);
-                }
             } catch (CairoException ex) {
                 // This is temporary solution until we can get multiple version of metadata not overwriting each other
                 handleMetadataLoadException(deadline, ex);
+                continue;
+            }
+
+            try {
+                metadata.applyTransitionIndex();
+                if (reshuffleColumns) {
+                    final int columnCount = metadata.getColumnCount();
+
+                    int columnCountShl = getColumnBits(columnCount);
+                    // when a column is added we cannot easily reshuffle columns in-place
+                    // the reason is that we'd have to create gaps in columns list between
+                    // partitions. It is possible in theory, but this could be an algo for
+                    // another day.
+                    if (columnCountShl != this.columnCountShl) {
+                        createNewColumnList(columnCount, pTransitionIndex, columnCountShl);
+                    } else {
+                        reshuffleColumns(columnCount, pTransitionIndex);
+                    }
+                    // rearrange symbol map reader list
+                    reshuffleSymbolMapReaders(pTransitionIndex, columnCount);
+                    this.columnCount = columnCount;
+                    reloadSymbolMapCounts();
+                }
+                return true;
+            } finally {
+                TableUtils.freeTransitionIndex(pTransitionIndex);
             }
         }
     }
@@ -1316,7 +1318,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             symbolMapReaders.setPos(columnCount);
         }
 
-        // this is a silly exercise in walking the index
         for (int i = 0, n = Math.max(columnCount, this.columnCount); i < n; i++) {
             final int action = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L);
             final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4);

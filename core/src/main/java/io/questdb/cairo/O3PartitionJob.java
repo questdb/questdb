@@ -654,7 +654,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long colTopSinkAddr,
-            int columnIndex
+            int columnIndex,
+            long columnNameTxn
     ) {
         final O3OpenColumnTask openColumnTask = tableWriter.getO3OpenColumnQueue().get(cursor);
         openColumnTask.of(
@@ -698,7 +699,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 tableWriter,
                 indexWriter,
                 colTopSinkAddr,
-                columnIndex
+                columnIndex,
+                columnNameTxn
         );
         tableWriter.getO3OpenColumnPubSeq().done(cursor);
     }
@@ -755,9 +757,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             timestampMergeIndexAddr = 0;
         }
 
-        final RecordMetadata metadata = tableWriter.getMetadata();
+        final TableWriterMetadata metadata = tableWriter.getMetadata();
         final int columnCount = metadata.getColumnCount();
-        columnCounter.set(columnCount);
+        columnCounter.set(metadata.getDenseColumnCounter());
         int columnsInFlight = columnCount;
         if (openColumnMode == OPEN_LAST_PARTITION_FOR_MERGE || openColumnMode == OPEN_MID_PARTITION_FOR_MERGE) {
             // Partition will be re-written. Jobs will set new column top values but by default they are 0
@@ -766,9 +768,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         try {
             for (int i = 0; i < columnCount; i++) {
+                final int columnType = metadata.getColumnType(i);
+                if (columnType < 0) {
+                    continue;
+                }
                 final int colOffset = TableWriter.getPrimaryColumnIndex(i);
                 final boolean notTheTimestamp = i != timestampIndex;
-                final int columnType = metadata.getColumnType(i);
                 final MemoryARW oooMem1 = oooColumns.getQuick(colOffset);
                 final MemoryARW oooMem2 = oooColumns.getQuick(colOffset + 1);
                 final MemoryMA mem1 = columns.getQuick(colOffset);
@@ -808,6 +813,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 try {
                     final long cursor = tableWriter.getO3OpenColumnPubSeq().next();
+                    final long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, i);
                     if (cursor > -1) {
                         publishOpenColumnTaskHarmonized(
                                 cursor,
@@ -851,7 +857,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 tableWriter,
                                 indexWriter,
                                 colTopSinkAddr + (long) i * Long.BYTES,
-                                i
+                                i,
+                                columnNameTxn
                         );
                     } else {
                         publishOpenColumnTaskContended(
@@ -896,7 +903,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 tableWriter,
                                 indexWriter,
                                 colTopSinkAddr + (long) i * Long.BYTES,
-                                i
+                                i,
+                                columnNameTxn
                         );
                     }
                 } catch (Throwable e) {
@@ -965,7 +973,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter,
             long colTopSinkAddr,
-            int columnIndex
+            int columnIndex,
+            long columnNameTxn
     ) {
         while (cursor == -2) {
             cursor = tableWriter.getO3OpenColumnPubSeq().next();
@@ -1014,7 +1023,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     tableWriter,
                     indexWriter,
                     colTopSinkAddr,
-                    columnIndex
+                    columnIndex,
+                    columnNameTxn
             );
         } else {
             O3OpenColumnJob.openColumn(
@@ -1058,7 +1068,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     tableWriter,
                     indexWriter,
                     colTopSinkAddr,
-                    columnIndex
+                    columnIndex,
+                    columnNameTxn
             );
         }
     }

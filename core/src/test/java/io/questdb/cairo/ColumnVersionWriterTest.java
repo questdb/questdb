@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Test;
@@ -65,6 +66,46 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
             }
 
             assertEqual(w.getCachedList(), r.getCachedList());
+        }
+    }
+
+    @Test
+    public void testColumnAddRemove() {
+        try (
+                Path path = new Path();
+                ColumnVersionWriter w = new ColumnVersionWriter(FilesFacadeImpl.INSTANCE, path.of(root).concat("_cv").$(), 0);
+                ColumnVersionReader r = new ColumnVersionReader().ofRO(FilesFacadeImpl.INSTANCE, path)
+        ) {
+            long partitionTimestamp = Timestamps.DAY_MICROS * 2;
+            int columnIndex = 3;
+
+            // Add column
+            w.upsert(partitionTimestamp, columnIndex, 123, 987);
+            w.upsertDefaultTxnName(columnIndex, 123, partitionTimestamp);
+
+            // Verify
+            Assert.assertEquals(0, w.getColumnTop(partitionTimestamp, columnIndex + 1));
+            Assert.assertEquals(partitionTimestamp, w.getColumnTopPartitionTimestamp(columnIndex));
+            Assert.assertEquals(123, w.getColumnNameTxn(partitionTimestamp, columnIndex));
+            Assert.assertEquals(987, w.getColumnTop(partitionTimestamp, columnIndex));
+            int recordIndex = w.getRecordIndex(partitionTimestamp, columnIndex);
+            Assert.assertEquals(123, w.getColumnNameTxnByIndex(recordIndex));
+            Assert.assertEquals(987, w.getColumnTopByIndex(recordIndex));
+
+            // Remove non-existing column top
+            w.removeColumnTop(partitionTimestamp, columnIndex + 1);
+            Assert.assertEquals(0, w.getColumnTop(partitionTimestamp, columnIndex + 1));
+
+            Assert.assertEquals(partitionTimestamp, w.getColumnTopPartitionTimestamp(columnIndex));
+            Assert.assertEquals(123, w.getColumnNameTxn(partitionTimestamp, columnIndex));
+            Assert.assertEquals(987, w.getColumnTop(partitionTimestamp, columnIndex));
+
+            // Remove existing column top
+            w.removeColumnTop(partitionTimestamp, columnIndex);
+
+            Assert.assertEquals(partitionTimestamp, w.getColumnTopPartitionTimestamp(columnIndex));
+            Assert.assertEquals(123, w.getColumnNameTxn(partitionTimestamp, columnIndex));
+            Assert.assertEquals(0, w.getColumnTop(partitionTimestamp, columnIndex));
         }
     }
 

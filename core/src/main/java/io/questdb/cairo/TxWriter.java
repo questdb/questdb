@@ -174,7 +174,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         writeTransientSymbolCount(symbolIndexInTxWriter, count);
     }
 
-    public void reset(long fixedRowCount, long transientRowCount, long maxTimestamp, int commitMode, ObjList<SymbolMapWriter> symbolCountProviders) {
+    public void reset(long fixedRowCount, long transientRowCount, long maxTimestamp, int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
         this.fixedRowCount = fixedRowCount;
         this.maxTimestamp = maxTimestamp;
         this.transientRowCount = transientRowCount;

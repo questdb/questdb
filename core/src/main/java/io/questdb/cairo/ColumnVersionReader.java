@@ -45,12 +45,13 @@ public class ColumnVersionReader implements Closeable {
     public static final int BLOCK_SIZE = 4;
     public static final int BLOCK_SIZE_BYTES = BLOCK_SIZE * Long.BYTES;
     public static final int BLOCK_SIZE_MSB = Numbers.msb(BLOCK_SIZE);
-    public static final long COL_TOP_DEFAULT_PARTITION = Long.MIN_VALUE;
+
+    public static final long COL_TOP_DEFAULT_PARTITION = Long.MIN_VALUE + 1; // Away from Long.MIN_VALUE, it's non-partitioned table default partition timestamp
 
     private final static Log LOG = LogFactory.getLog(ColumnVersionReader.class);
+    private final LongList cachedList = new LongList();
     private MemoryCMR mem;
     private boolean ownMem;
-    private final LongList cachedList = new LongList();
     private long version;
 
     @Override
@@ -60,27 +61,37 @@ public class ColumnVersionReader implements Closeable {
         }
     }
 
+    public LongList getCachedList() {
+        return cachedList;
+    }
+
     public long getColumnNameTxn(long partitionTimestamp, int columnIndex) {
         int versionRecordIndex = getRecordIndex(partitionTimestamp, columnIndex);
         return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + 2) : getDefaultColumnNameTxn(columnIndex);
     }
 
-    public long getColumnNameTxn(int versionRecordIndex) {
+    public long getColumnNameTxnByIndex(int versionRecordIndex) {
         return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + 2) : -1L;
-    }
-
-    public long getColumnTop(int versionRecordIndex) {
-        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + 3) : 0L;
     }
 
     public long getColumnTop(long partitionTimestamp, int columnIndex) {
         int index = getRecordIndex(partitionTimestamp, columnIndex);
-        return getColumnTop(index);
+        return getColumnTopByIndex(index);
+    }
+
+    public long getColumnTopByIndex(int versionRecordIndex) {
+        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + 3) : 0L;
+    }
+
+    public long getColumnTopPartitionTimestamp(int columnIndex) {
+        int index = getRecordIndex(COL_TOP_DEFAULT_PARTITION, columnIndex);
+        // Column top place is used to store partition timestamp when column is added in COL_TOP_DEFAULT_PARTITION record
+        return index > -1 ? getColumnTopByIndex(index) : Long.MIN_VALUE;
     }
 
     public long getDefaultColumnNameTxn(int columnIndex) {
         int index = getRecordIndex(COL_TOP_DEFAULT_PARTITION, columnIndex);
-        return index > -1 ? getColumnNameTxn(index) : -1L;
+        return index > -1 ? getColumnNameTxnByIndex(index) : -1L;
     }
 
     public int getRecordIndex(long partitionTimestamp, int columnIndex) {
@@ -102,6 +113,10 @@ public class ColumnVersionReader implements Closeable {
         return -1;
     }
 
+    public long getVersion() {
+        return version;
+    }
+
     public ColumnVersionReader ofRO(FilesFacade ff, LPSZ fileName) {
         version = -1;
         if (this.mem == null || !ownMem) {
@@ -110,14 +125,6 @@ public class ColumnVersionReader implements Closeable {
         this.mem.of(ff, fileName, 0, HEADER_SIZE, MemoryTag.MMAP_TABLE_READER);
         ownMem = true;
         return this;
-    }
-
-    public LongList getCachedList() {
-        return cachedList;
-    }
-
-    public long getVersion() {
-        return version;
     }
 
     public void readSafe(MicrosecondClock microsecondClock, long spinLockTimeoutUs) {
@@ -175,14 +182,13 @@ public class ColumnVersionReader implements Closeable {
         }
     }
 
-    ColumnVersionReader ofRO(MemoryCMR mem) {
+    void ofRO(MemoryCMR mem) {
         if (this.mem != null && ownMem) {
             this.mem.close();
         }
         this.mem = mem;
         ownMem = false;
         version = -1;
-        return this;
     }
 
     long readUnsafe() {

@@ -222,7 +222,7 @@ public class InplaceUpdateExecution implements Closeable {
                 CharSequence name = metadata.getColumnName(columnIndex);
                 MemoryCMARW colMem = updateMemory.get(i);
                 colMem.close(false);
-                long columnNameTxn = tableWriter.getColumnTxnName(partitionTimestamp, columnIndex);
+                long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
                 colMem.of(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), dataAppendPageSize, -1, MemoryTag.MMAP_TABLE_WRITER);
             }
         } finally {

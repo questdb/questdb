@@ -1689,9 +1689,9 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     // To make sure writer is ok we add more rows
                     for (int i = 0; i < M; i++) {
                         TableWriter.Row row = writer.newRow(timestamp += increment);
-                        row.putSym(0, symbols[rnd.nextPositiveInt() % N]);
-                        row.putInt(1, rnd.nextInt());
-                        row.putSym(2, symbols[rnd.nextPositiveInt() % N]);
+                        row.putSym(1, symbols[rnd.nextPositiveInt() % N]);
+                        row.putInt(2, rnd.nextInt());
+                        row.putSym(3, symbols[rnd.nextPositiveInt() % N]);
                         row.append();
                     }
                     writer.commit();
@@ -1838,7 +1838,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                         TableWriter.Row row = writer.newRow(timestamp += increment);
                         row.putStr(0, rnd.nextChars(20));
                         row.putSym(1, symbols[rnd.nextPositiveInt() % N]);
-                        row.putSym(2, symbols[rnd.nextPositiveInt() % N]);
+                        row.putSym(3, symbols[rnd.nextPositiveInt() % N]);
                         row.append();
                     }
                     writer.commit();

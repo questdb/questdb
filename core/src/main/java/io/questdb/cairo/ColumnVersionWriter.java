@@ -85,6 +85,14 @@ public class ColumnVersionWriter extends ColumnVersionReader implements Closeabl
         return version;
     }
 
+    public void removeColumnTop(long partitionTimestamp, int columnIndex) {
+        int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);
+        if (recordIndex >= 0) {
+            getCachedList().setQuick(recordIndex + 3, 0);
+            hasChanges = true;
+        }
+    }
+
     /**
      * Adds or updates column version entry in the cached list. Entries from the cache are committed to disk via
      * commit() call. In cache and on disk entries are maintained in ascending chronological order of partition
@@ -138,14 +146,27 @@ public class ColumnVersionWriter extends ColumnVersionReader implements Closeabl
         hasChanges = true;
     }
 
-    public void upsertDefaultTxnName(int columnIndex, long columnNameTxn) {
-        // In case of non-partitioned table this record may already exist with column top set
-        int recordIndex = getRecordIndex(COL_TOP_DEFAULT_PARTITION, columnIndex);
-        if (recordIndex > 0) {
-            getCachedList().setQuick(recordIndex + 2, columnNameTxn);
-        } else {
-            upsert(COL_TOP_DEFAULT_PARTITION, columnIndex, columnNameTxn, 0);
+    public void upsertColumnTop(long partitionTimestamp, int columnIndex, long colTop) {
+        if (colTop > 0) {
+            upsert(partitionTimestamp, columnIndex, -1, colTop);
+        } else if (colTop == 0) {
+            int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);
+            if (recordIndex > -1L) {
+                getCachedList().setQuick(recordIndex + 3, colTop);
+                hasChanges = true;
+            } else {
+                // This is a 0 column top record, we only need to store it
+                // to mark that the column is written in O3
+                if (getColumnTopPartitionTimestamp(columnIndex) > partitionTimestamp) {
+                    upsert(partitionTimestamp, columnIndex, -1, colTop);
+                }
+            }
         }
+    }
+
+    public void upsertDefaultTxnName(int columnIndex, long columnNameTxn, long partitionTimestamp) {
+        // When table is partitioned, use columnTop place to store the timestamp of the partition where the column added
+        upsert(COL_TOP_DEFAULT_PARTITION, columnIndex, columnNameTxn, partitionTimestamp);
     }
 
     private void bumpFileSize(long size) {

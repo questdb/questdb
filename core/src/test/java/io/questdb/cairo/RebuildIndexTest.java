@@ -114,7 +114,7 @@ public class RebuildIndexTest extends AbstractCairoTest {
                 "from long_sequence(5000)";
 
         checkRebuildIndexes(createAlterInsertSql,
-                tablePath -> removeFileAtPartition("sym2.k", PartitionBy.NONE, tablePath, 0),
+                tablePath -> removeFileAtPartition("sym2.k.1", PartitionBy.NONE, tablePath, 0),
                 rebuildIndex -> rebuildIndex.rebuildColumn("sym2"));
     }
 
@@ -262,7 +262,7 @@ public class RebuildIndexTest extends AbstractCairoTest {
                 "from long_sequence(5000)";
 
         checkRebuildIndexes(createAlterInsertSql,
-                tablePath -> removeFileAtPartition("sym2.k", PartitionBy.DAY, tablePath, Timestamps.DAY_MICROS * 11),
+                tablePath -> removeFileAtPartition("sym2.k.1", PartitionBy.DAY, tablePath, Timestamps.DAY_MICROS * 11),
                 rebuildIndex -> rebuildIndex.rebuildColumn("sym2"));
     }
 

@@ -139,57 +139,11 @@ public class O3FailureTest extends AbstractO3Test {
         }
     };
 
-    private static final FilesFacade ffWriteTop = new FilesFacadeImpl() {
-        long theFd;
-
-        @Override
-        public long openRW(LPSZ name) {
-            long fd = super.openRW(name);
-            if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "v.top") && counter.decrementAndGet() == 0) {
-                theFd = fd;
-            }
-            return fd;
-        }
-
-        @Override
-        public long write(long fd, long address, long len, long offset) {
-            if (fd == theFd) {
-                theFd = 0;
-                return 5;
-            }
-            return super.write(fd, address, len, offset);
-        }
-    };
-
-    private static final FilesFacade ffWriteAndRemoveTop = new FilesFacadeImpl() {
-        long theFd;
-
-        @Override
-        public long openRW(LPSZ name) {
-            long fd = super.openRW(name);
-            if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "v.top") && counter.decrementAndGet() == 0) {
-                theFd = fd;
-            }
-            return fd;
-        }
-
-        @Override
-        public boolean remove(LPSZ name) {
-            if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "v.top")) {
-                return false;
-            }
-            return super.remove(name);
-        }
-
-        @Override
-        public long write(long fd, long address, long len, long offset) {
-            if (fd == theFd) {
-                theFd = 0;
-                return 5;
-            }
-            return super.write(fd, address, len, offset);
-        }
-    };
+    @Test
+    public void testAllocateFailsAtO3OpenColumn() throws Exception {
+        counter.set(46);
+        executeWithPool(0, O3FailureTest::testAllocateFailsAtO3OpenColumn0, ffAllocateFailure);
+    }
 
     private static final FilesFacade ffWriteTop19700107 = new FilesFacadeImpl() {
         long theFd;
@@ -288,21 +242,9 @@ public class O3FailureTest extends AbstractO3Test {
     private static final Log LOG = LogFactory.getLog(O3FailureTest.class);
 
     @Test
-    public void testAllocateFailsAtO3OpenColumn() throws Exception {
-        counter.set(40);
-        executeWithPool(0, O3FailureTest::testAllocateFailsAtO3OpenColumn0, ffAllocateFailure);
-    }
-
-    @Test
     public void testAllocateToResizeLastPartition() throws Exception {
         counter.set(39);
         executeWithPool(0, O3FailureTest::testAllocateToResizeLastPartition0, ffAllocateFailure);
-    }
-
-    @Test
-    public void testColumnTopFailToWriteFollowedByFailToRemove() throws Exception {
-        counter.set(1);
-        executeWithoutPool(O3FailureTest::testColumnTopMidAppendBlankColumnFailRetry0, ffWriteAndRemoveTop);
     }
 
     @Test
@@ -336,7 +278,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public long openRW(LPSZ name) {
                 long fd = super.openRW(name);
-                if (Chars.endsWith(name, "1970-01-07" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
+                if (Chars.contains(name, "1970-01-07" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
                     theFd = fd;
                 }
                 return fd;
@@ -363,7 +305,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public long openRW(LPSZ name) {
                 long fd = super.openRW(name);
-                if (Chars.endsWith(name, "1970-01-07" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
+                if (Chars.contains(name, "1970-01-07" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
                     theFd = fd;
                 }
                 return fd;
@@ -377,7 +319,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithoutPool(O3FailureTest::testColumnTopMidAppendColumnFailRetry0, new FilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, "1970-01-07" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
+                if (Chars.contains(name, "1970-01-07" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.openRW(name);
@@ -388,13 +330,20 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testColumnTopMidAppendBlank() throws Exception {
         counter.set(1);
-        executeWithoutPool(O3FailureTest::testColumnTopMidAppendBlankColumnFailRetry0, ffWriteTop);
+        executeWithoutPool(
+                O3FailureTest::testColumnTopMidAppendBlankColumnFailRetry0,
+                failOnOpeRW("v.d.1", 2)
+        );
     }
 
     @Test
     public void testColumnTopMidAppendBlankContended() throws Exception {
         counter.set(1);
-        executeWithPool(0, O3FailureTest::testColumnTopMidAppendBlankColumnFailRetry0, ffWriteTop);
+        executeWithPool(
+                0,
+                O3FailureTest::testColumnTopMidAppendBlankColumnFailRetry0,
+                failOnOpeRW("v.d.1", 2)
+        );
     }
 
     @Test
@@ -403,7 +352,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testColumnTopMidAppendColumnFailRetry0, new FilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, "1970-01-07" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
+                if (Chars.contains(name, "1970-01-07" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.openRW(name);
@@ -414,57 +363,13 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testColumnTopMidDataMergeDataFailRetryReadTop() throws Exception {
         counter.set(13);
-        executeWithoutPool(O3FailureTest::testColumnTopMidDataMergeDataFailRetry0, new FilesFacadeImpl() {
-            long theFd;
-
-            @Override
-            public long openRO(LPSZ name) {
-                long fd = super.openRO(name);
-                if (Chars.endsWith(name, "1970-01-07" + Files.SEPARATOR + "v2.top")) {
-                    if (counter.decrementAndGet() == 0) {
-                        theFd = fd;
-                    }
-                }
-                return fd;
-            }
-
-            @Override
-            public long readULong(long fd, long offset) {
-                if (fd == theFd) {
-                    theFd = 0;
-                    return -5;
-                }
-                return super.readULong(fd, offset);
-            }
-        });
+        executeWithoutPool(O3FailureTest::testColumnTopMidDataMergeDataFailRetry0, failOnOpeRW("v2.d.3", 3));
     }
 
     @Test
     public void testColumnTopMidDataMergeDataFailRetryReadTopContended() throws Exception {
         counter.set(13);
-        executeWithPool(0, O3FailureTest::testColumnTopMidDataMergeDataFailRetry0, new FilesFacadeImpl() {
-            long theFd;
-
-            @Override
-            public long openRO(LPSZ name) {
-                long fd = super.openRO(name);
-                if (Chars.endsWith(name, "1970-01-07" + Files.SEPARATOR + "v2.top")) {
-                    if (counter.decrementAndGet() == 0) {
-                        theFd = fd;
-                    }
-                }
-                return fd;
-            }
-
-            @Override
-            public long readULong(long fd, long offset) {
-                if (fd == theFd) {
-                    theFd = 0;
-                    return -5;
-                }
-                return super.readULong(fd, offset);
-            }
-        });
+        executeWithPool(0, O3FailureTest::testColumnTopMidDataMergeDataFailRetry0, failOnOpeRW("v2.d.3", 3));
     }
 
     @Test
@@ -499,7 +404,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public long openRW(LPSZ name) {
                 long fd = super.openRW(name);
-                if (Chars.endsWith(name, "1970-01-06.14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
+                if (Chars.contains(name, "1970-01-06.14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
                     theFd = fd;
                 }
                 return fd;
@@ -527,12 +432,25 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public long openRW(LPSZ name) {
                 long fd = super.openRW(name);
-                if (Chars.endsWith(name, "1970-01-06.14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
+                if (Chars.contains(name, "1970-01-06.14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
                     theFd = fd;
                 }
                 return fd;
             }
         });
+    }
+
+    private static FilesFacade failOnOpeRW(String fileName, int count) {
+        AtomicInteger counter = new AtomicInteger(count);
+        return new FilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, fileName) && counter.decrementAndGet() == 0) {
+                    return -1;
+                }
+                return super.openRW(name);
+            }
+        };
     }
 
     @Test
