@@ -56,7 +56,12 @@ public final class Vect {
 
     public static native void flattenIndex(long pIndex, long count);
 
-    public static native void freeMergedIndex(long pIndex);
+    private static native void freeMergedIndex(long pIndex);
+
+    public static void freeMergedIndexOuter(long pIndex, long indexSize) {
+        freeMergedIndex(pIndex);
+        Unsafe.recordMemAlloc(-indexSize, MemoryTag.NATIVE_O3);
+    }
 
     public static native long getPerformanceCounter(int index);
 
@@ -115,6 +120,7 @@ public final class Vect {
 
     public static native void memset(long dst, long len, int value);
 
+    //caller must call freeMergedIndex !!!
     public static native long mergeLongIndexesAsc(long pIndexStructArray, int count);
 
     public static native void mergeShuffle16Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
@@ -127,7 +133,15 @@ public final class Vect {
 
     public static native void mergeShuffle8Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
-    public static native long mergeTwoLongIndexesAsc(long pIndex1, long index1Count, long pIndex2, long index2Count);
+    //caller must call freeMergedIndexes !!!
+    private static native long mergeTwoLongIndexesAsc(long pIndex1, long index1Count, long pIndex2, long index2Count);
+
+    public static long mergeTwoLongIndexesAscOuter(long pIndex1, long index1Count, long pIndex2, long index2Count) {
+        long ptr = mergeTwoLongIndexesAsc(pIndex1, index1Count, pIndex2, index2Count);
+        //counts data allocated inside mergeTwoLongIndexesAsc 
+        Unsafe.recordMemAlloc((index1Count + index2Count) * 16 /*sizeof(index_t)*/, MemoryTag.NATIVE_O3);
+        return ptr;
+    }
 
     public static native double minDouble(long pDouble, long count);
 

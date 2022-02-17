@@ -62,7 +62,7 @@ public class VectTest {
             try {
                 long merged = Vect.mergeLongIndexesAsc(struct, 4);
                 assertIndexAsc(count * 4, merged);
-                Vect.freeMergedIndex(merged);
+                Vect.freeMergedIndexOuter(merged, 1); //TODO: fix!
             } finally {
                 Unsafe.free(indexPtr1, count * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(indexPtr2, count * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -102,7 +102,7 @@ public class VectTest {
         try {
             long merged = Vect.mergeLongIndexesAsc(struct, 3);
             assertIndexAsc(count1 + count2 + count3, merged);
-            Vect.freeMergedIndex(merged);
+            Vect.freeMergedIndexOuter(merged, 1); //TODO: fix!
         } finally {
             Unsafe.free(indexPtr1, count1 * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(indexPtr2, count2 * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -126,7 +126,7 @@ public class VectTest {
         try {
             long merged = Vect.mergeLongIndexesAsc(struct, 2);
             assertIndexAsc(count1 + count2, merged);
-            Vect.freeMergedIndex(merged);
+            Vect.freeMergedIndexOuter(merged, 1);  //TODO: fix!
         } finally {
             Unsafe.free(indexPtr1, count1 * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(indexPtr2, count2 * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -149,7 +149,7 @@ public class VectTest {
         try {
             long merged = Vect.mergeLongIndexesAsc(struct, 2);
             assertIndexAsc(count1 + count2, merged);
-            Vect.freeMergedIndex(merged);
+            Vect.freeMergedIndexOuter(merged, 1);  //TODO: fix!
         } finally {
             Unsafe.free(indexPtr1, count1 * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(indexPtr2, count2 * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -171,7 +171,7 @@ public class VectTest {
         try {
             long merged = Vect.mergeLongIndexesAsc(struct, 2);
             assertIndexAsc(count * 2, merged);
-            Vect.freeMergedIndex(merged);
+            Vect.freeMergedIndexOuter(merged, 1); //TODO: fix!
         } finally {
             Unsafe.free(indexPtr1, count * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(indexPtr2, count * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
