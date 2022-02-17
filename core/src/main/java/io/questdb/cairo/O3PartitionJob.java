@@ -589,35 +589,28 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         );
     }
 
-    //returns size of index allocated in cpp code inside createMergeIndex()
-    private static long getMergeIndexSize(long mergeDataLo,
-                                          long mergeDataHi,
-                                          long mergeOOOLo,
-                                          long mergeOOOHi) {
-        return (mergeDataHi - mergeDataLo + 1 + mergeOOOHi - mergeOOOLo + 1) * 16;
-    }
-
     private static long createMergeIndex(
             long srcDataTimestampAddr,
             long sortedTimestampsAddr,
             long mergeDataLo,
             long mergeDataHi,
             long mergeOOOLo,
-            long mergeOOOHi
+            long mergeOOOHi,
+            long indexSize
     ) {
         // Create "index" for existing timestamp column. When we reshuffle timestamps during merge we will
         // have to go back and find data rows we need to move accordingly
-        final long indexSize = (mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES;
-        assert indexSize > 0; // avoid SIGSEGV
         final long index = Unsafe.malloc(indexSize, MemoryTag.NATIVE_O3);
         try {
             Vect.makeTimestampIndex(srcDataTimestampAddr, mergeDataLo, mergeDataHi, index);
-            return Vect.mergeTwoLongIndexesAscOuter(
+            long ptr = Vect.mergeTwoLongIndexesAsc(
                     index,
                     mergeDataHi - mergeDataLo + 1,
                     sortedTimestampsAddr + mergeOOOLo * 16,
                     mergeOOOHi - mergeOOOLo + 1
             );
+            Unsafe.recordMemAlloc(indexSize, MemoryTag.NATIVE_O3);
+            return ptr;
         } finally {
             Unsafe.free(index, indexSize, MemoryTag.NATIVE_O3);
         }
@@ -750,21 +743,21 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     ) {
         LOG.debug().$("partition [ts=").$ts(oooTimestampLo).$(']').$();
 
-        final long timestampMergeIndexAddr, timestampMergeIndexSize;
+        final long timestampMergeIndexAddr;
+        final long timestampMergeIndexSize;
         if (mergeType == O3_BLOCK_MERGE) {
+            timestampMergeIndexSize = (mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES;
+            assert timestampMergeIndexSize > 0; // avoid SIGSEGV
+
             timestampMergeIndexAddr = createMergeIndex(
                     srcTimestampAddr,
                     sortedTimestampsAddr,
                     mergeDataLo,
                     mergeDataHi,
                     mergeOOOLo,
-                    mergeOOOHi
+                    mergeOOOHi,
+                    timestampMergeIndexSize
             );
-            timestampMergeIndexSize = getMergeIndexSize(
-                    mergeDataLo,
-                    mergeDataHi,
-                    mergeOOOLo,
-                    mergeOOOHi);
         } else {
             timestampMergeIndexAddr = 0;
             timestampMergeIndexSize = 0;

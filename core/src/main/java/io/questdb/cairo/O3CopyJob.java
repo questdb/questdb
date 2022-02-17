@@ -29,10 +29,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Sequence;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 import io.questdb.tasks.O3CopyTask;
 import io.questdb.tasks.O3PartitionUpdateTask;
 import org.jetbrains.annotations.Nullable;
@@ -452,7 +449,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             }
         } finally {
             if (timestampMergeIndexAddr != 0) {
-                Vect.freeMergedIndexOuter(timestampMergeIndexAddr, timestampMergeIndexSize);
+                Vect.freeMergedIndex(timestampMergeIndexAddr, timestampMergeIndexSize);
             }
             tableWriter.o3CountDownDoneLatch();
         }
@@ -667,7 +664,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
             O3Utils.close(ff, srcTimestampFd);
             if (timestampMergeIndexAddr != 0) {
-                Vect.freeMergedIndexOuter(timestampMergeIndexAddr, timestampMergeIndexSize);
+                Vect.freeMergedIndex(timestampMergeIndexAddr, timestampMergeIndexSize);
             }
         } finally {
             tableWriter.o3ClockDownPartitionUpdateCount();
