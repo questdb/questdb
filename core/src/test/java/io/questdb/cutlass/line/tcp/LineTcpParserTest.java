@@ -32,7 +32,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class LineTcpParserTest extends BaseLineTcpContextTest {
-    private final static LineTcpParser lineTcpParser = new LineTcpParser();
 
     @Test
     public void testGetValueType() throws Exception {
@@ -54,6 +53,11 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "aFFF");
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "e");
 
+        assertError(LineTcpParser.ENTITY_TYPE_TAG, "\"errt\"");
+        assertType(LineTcpParser.ENTITY_TYPE_TAG, "\"errt\"", true, false);
+        assertError(LineTcpParser.ENTITY_TYPE_SYMBOL, "errt");
+        assertType(LineTcpParser.ENTITY_TYPE_SYMBOL, "errt", false, true);
+
         assertType(LineTcpParser.ENTITY_TYPE_BOOLEAN, "t");
         assertType(LineTcpParser.ENTITY_TYPE_BOOLEAN, "T");
         assertType(LineTcpParser.ENTITY_TYPE_BOOLEAN, "f");
@@ -64,12 +68,10 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
         assertType(LineTcpParser.ENTITY_TYPE_BOOLEAN, "tRuE");
 
         assertType(LineTcpParser.ENTITY_TYPE_STRING, "\"0x123a4\"");
-        assertType(LineTcpParser.ENTITY_TYPE_STRING, "\"0x123a4 looks \\\" like=long256,\\\n but tis not!\"", "\"0x123a4 looks \" like=long256,\n but tis not!\"", LineTcpParser.ParseResult.MEASUREMENT_COMPLETE);
+        assertType(LineTcpParser.ENTITY_TYPE_STRING, "\"0x123a4 looks \\\" like=long256,\\\n but tis not!\"", "\"0x123a4 looks \" like=long256,\n but tis not!\"", LineTcpParser.ParseResult.MEASUREMENT_COMPLETE, false, false);
         assertType(LineTcpParser.ENTITY_TYPE_STRING, "\"0x123a4 looks like=long256, but tis not!\"");
-        assertError(LineTcpParser.ENTITY_TYPE_NONE, "\"0x123a4 looks \\\" like=long256,\\\n but tis not!"
-        ); // missing closing '"'
-        assertError(LineTcpParser.ENTITY_TYPE_TAG, "0x123a4 looks \\\" like=long256,\\\n but tis not!\""
-        ); // wanted to be a string, missing opening '"'
+        assertError(LineTcpParser.ENTITY_TYPE_NONE, "\"0x123a4 looks \\\" like=long256,\\\n but tis not!"); // missing closing '"'
+        assertError(LineTcpParser.ENTITY_TYPE_TAG, "0x123a4 looks \\\" like=long256,\\\n but tis not!\""); // wanted to be a string, missing opening '"'
 
         assertType(LineTcpParser.ENTITY_TYPE_LONG256, "0x123i");
         assertType(LineTcpParser.ENTITY_TYPE_LONG256, "0x1i");
@@ -100,17 +102,24 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
     }
 
     private static void assertType(int type, String value) throws Exception {
-        assertType(type, value, value, LineTcpParser.ParseResult.MEASUREMENT_COMPLETE);
+        assertType(type, value, value, LineTcpParser.ParseResult.MEASUREMENT_COMPLETE, false, false);
     }
 
     private static void assertError(int type, String value) throws Exception {
-        assertType(type, value, value, LineTcpParser.ParseResult.ERROR);
+        assertType(type, value, value, LineTcpParser.ParseResult.ERROR, false, false);
+    }
+
+    private static void assertType(int type, String value, boolean stringAsTagSupported, boolean symbolAsFieldSupported) throws Exception {
+        assertType(type, value, value, LineTcpParser.ParseResult.MEASUREMENT_COMPLETE, stringAsTagSupported, symbolAsFieldSupported);
     }
 
     private static void assertType(int type,
                                    String value,
                                    String expectedValue,
-                                   LineTcpParser.ParseResult expectedParseResult) throws Exception {
+                                   LineTcpParser.ParseResult expectedParseResult,
+                                   boolean stringAsTagSupported,
+                                   boolean symbolAsFieldSupported) throws Exception {
+        final LineTcpParser lineTcpParser = new LineTcpParser(stringAsTagSupported, symbolAsFieldSupported);
         TestUtils.assertMemoryLeak(() -> {
             sink.clear();
             sink.put(type == LineTcpParser.ENTITY_TYPE_TAG ? "t,v=" : "t v=").put(value).put('\n'); // SYMBOLS are in tag set, not field set

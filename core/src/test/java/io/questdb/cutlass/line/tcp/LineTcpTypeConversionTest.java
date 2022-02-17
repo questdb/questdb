@@ -76,6 +76,15 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
     }
 
     @Test
+    public void testConversionToCharStringToCharCastAllowed() throws Exception {
+        stringToCharCastAllowed = true;
+        testConversionToType("CHAR", "testCol\ttime\n" +
+                "q\t2016-06-13T17:43:50.100416Z\n" +
+                "q\t2016-06-13T17:43:50.100417Z\n"
+        );
+    }
+
+    @Test
     public void testConversionToLong256() throws Exception {
         testConversionToType("LONG256", "testCol\ttime\n" +
                 "0x0150\t2016-06-13T17:43:50.100420Z\n"
@@ -204,7 +213,7 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
                         table + ",testCol=false " + nextTime() + "\n" +
                         table + ",testCol=1465839830101500200t " + nextTime() + "\n" +
                         table + " testCol=questdb " + nextTime() + "\n" +
-                        table + " testCol=q" + nextTime() + "\n" +
+                        table + " testCol=q " + nextTime() + "\n" +
                         table + " testCol=\"questdbb\" " + nextTime() + "\n" +
                         table + " testCol=\"q\" " + nextTime() + "\n" +
                         table + " testCol=100i " + nextTime() + "\n" +

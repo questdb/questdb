@@ -100,7 +100,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                         address,
                         addressSize,
                         lineConfiguration.getMicrosecondClock(),
-                        lineConfiguration.getTimestampAdapter()
+                        lineConfiguration.getTimestampAdapter(),
+                        lineConfiguration.isStringToCharCastAllowed(),
+                        lineConfiguration.isSymbolAsFieldSupported()
                 ),
                 getEventSlotSize(maxMeasurementSize),
                 queueSize,

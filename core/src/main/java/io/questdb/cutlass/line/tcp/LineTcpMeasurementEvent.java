@@ -46,6 +46,8 @@ class LineTcpMeasurementEvent implements Closeable {
     private final MicrosecondClock clock;
     private final LineProtoTimestampAdapter timestampAdapter;
     private final LineTcpEventBuffer buffer;
+    private final boolean stringToCharCastAllowed;
+    private final boolean symbolAsFieldSupported;
     private int writerWorkerId;
     private TableUpdateDetails tableUpdateDetails;
     private boolean commitOnWriterClose;
@@ -54,11 +56,15 @@ class LineTcpMeasurementEvent implements Closeable {
             long bufLo,
             long bufSize,
             MicrosecondClock clock,
-            LineProtoTimestampAdapter timestampAdapter
+            LineProtoTimestampAdapter timestampAdapter,
+            boolean stringToCharCastAllowed,
+            boolean symbolAsFieldSupported
     ) {
         this.buffer = new LineTcpEventBuffer(bufLo, bufSize);
         this.clock = clock;
         this.timestampAdapter = timestampAdapter;
+        this.stringToCharCastAllowed = stringToCharCastAllowed;
+        this.symbolAsFieldSupported = symbolAsFieldSupported;
     }
 
     @Override
@@ -345,7 +351,11 @@ class LineTcpMeasurementEvent implements Closeable {
                             break;
 
                         default:
-                            throw castError("integer", colIndex, colType);
+                            if (symbolAsFieldSupported && entityType == ColumnType.SYMBOL) {
+                                handleSymbol(entity.getValue(), parser, floatingCharSink, localDetails, colIndex);
+                            } else {
+                                throw castError("integer", colIndex, colType);
+                            }
                     }
                     break;
                 }
@@ -360,7 +370,11 @@ class LineTcpMeasurementEvent implements Closeable {
                             break;
 
                         default:
-                            throw castError("float", colIndex, colType);
+                            if (symbolAsFieldSupported && entityType == ColumnType.SYMBOL) {
+                                handleSymbol(entity.getValue(), parser, floatingCharSink, localDetails, colIndex);
+                            } else {
+                                throw castError("float", colIndex, colType);
+                            }
                     }
                     break;
                 }
@@ -376,15 +390,19 @@ class LineTcpMeasurementEvent implements Closeable {
 
                             case ColumnType.CHAR:
                                 CharSequence entityValue = entity.getValue();
-                                if (entityValue.length() == 1) {
+                                if (stringToCharCastAllowed || entityValue.length() == 1) {
                                     handleChar(entityValue.charAt(0));
                                 } else {
-                                    throw castError("char", colIndex, colType);
+                                    throw castError("string", colIndex, colType);
                                 }
                                 break;
 
                             default:
-                                throw castError("string", colIndex, colType);
+                                if (symbolAsFieldSupported && entityType == ColumnType.SYMBOL) {
+                                    handleSymbol(entity.getValue(), parser, floatingCharSink, localDetails, colIndex);
+                                } else {
+                                    throw castError("string", colIndex, colType);
+                                }
                         }
                     }
                     break;
@@ -392,6 +410,8 @@ class LineTcpMeasurementEvent implements Closeable {
                 case LineTcpParser.ENTITY_TYPE_LONG256: {
                     if (ColumnType.tagOf(colType) == ColumnType.LONG256) {
                         handleLong256(entity.getValue(), parser, floatingCharSink);
+                    } else if (symbolAsFieldSupported && entityType == ColumnType.SYMBOL) {
+                        handleSymbol(entity.getValue(), parser, floatingCharSink, localDetails, colIndex);
                     } else {
                         throw castError("long256", colIndex, colType);
                     }
@@ -429,15 +449,34 @@ class LineTcpMeasurementEvent implements Closeable {
                             break;
 
                         default:
-                            throw castError("boolean", colIndex, colType);
+                            if (symbolAsFieldSupported && entityType == ColumnType.SYMBOL) {
+                                handleSymbol(entity.getValue(), parser, floatingCharSink, localDetails, colIndex);
+                            } else {
+                                throw castError("boolean", colIndex, colType);
+                            }
                     }
                     break;
                 }
                 case LineTcpParser.ENTITY_TYPE_TIMESTAMP: {
                     if (ColumnType.tagOf(colType) == ColumnType.TIMESTAMP) {
                         handleTimestamp(entity.getLongValue());
+                    } else if (symbolAsFieldSupported && entityType == ColumnType.SYMBOL) {
+                        handleSymbol(entity.getValue(), parser, floatingCharSink, localDetails, colIndex);
                     } else {
                         throw castError("timestamp", colIndex, colType);
+                    }
+                    break;
+                }
+                case LineTcpParser.ENTITY_TYPE_SYMBOL: {
+                    final int colTypeMeta = localDetails.getColumnTypeMeta(colIndex);
+                    if (colTypeMeta != 0) { // geohash
+                        handleGeoHash(entity.getValue(), colTypeMeta);
+                    } else {
+                        if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {
+                            handleSymbol(entity.getValue(), parser, floatingCharSink, localDetails, colIndex);
+                        } else {
+                            throw castError("symbol", colIndex, colType);
+                        }
                     }
                     break;
                 }
