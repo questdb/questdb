@@ -46,6 +46,34 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
+    public void testAddCastFieldColumnNoTable() throws Exception {
+        String tableName = "addCastColumn";
+        symbolAsFieldSupported = true;
+        runInContext(() -> {
+            recvBuffer = tableName + ",location=us-midwest temperature=82 1465839830100400200\n" +
+                         tableName + ",location=us-eastcoast cast=cast,temperature=81,humidity=23 1465839830101400200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\tcast\thumidity\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t\tNaN\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\tcast\t23.0\n";
+            try (TableReader reader = new TableReader(configuration, tableName)) {
+                TableReaderMetadata meta = reader.getMetadata();
+                assertCursorTwoPass(expected, reader.getCursor(), meta);
+                Assert.assertEquals(5, meta.getColumnCount());
+                Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("location"));
+                Assert.assertEquals(ColumnType.DOUBLE, meta.getColumnType("temperature"));
+                Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("cast"));
+                Assert.assertEquals(ColumnType.TIMESTAMP, meta.getColumnType("timestamp"));
+                Assert.assertEquals(ColumnType.DOUBLE, meta.getColumnType("humidity"));
+            }
+        });
+    }
+
+    @Test
     public void testAddFieldColumn() throws Exception {
         String table = "addField";
         runInContext(() -> {

@@ -91,6 +91,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     private int newColumnFactor = -1;
     private boolean diffCasesInColNames = false;
     private boolean exerciseTags = true;
+    private boolean sendStringsAsSymbols = false;
     private boolean sendSymbolsWithSpace = false;
 
     private volatile String errorMsg = null;
@@ -272,7 +273,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                 return valueBase + postfix;
             case STRING:
                 postfix = Character.toString(shouldFuzz(nonAsciiValueFactor) ? nonAsciiChars[random.nextInt(nonAsciiChars.length)] : random.nextChar());
-                return "\"" + valueBase + postfix + "\"";
+                return sendStringsAsSymbols ? valueBase + postfix : "\"" + valueBase + postfix + "\"";
             default:
                 return valueBase;
         }
@@ -323,7 +324,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     }
 
     void initFuzzParameters(int duplicatesFactor, int columnReorderingFactor, int columnSkipFactor, int newColumnFactor, int nonAsciiValueFactor,
-                            boolean diffCasesInColNames, boolean exerciseTags, boolean sendSymbolsWithSpace) {
+                            boolean diffCasesInColNames, boolean exerciseTags, boolean sendStringsAsSymbols, boolean sendSymbolsWithSpace) {
         this.duplicatesFactor = duplicatesFactor;
         this.columnReorderingFactor = columnReorderingFactor;
         this.columnSkipFactor = columnSkipFactor;
@@ -331,7 +332,10 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         this.newColumnFactor = newColumnFactor;
         this.diffCasesInColNames = diffCasesInColNames;
         this.exerciseTags = exerciseTags;
+        this.sendStringsAsSymbols = sendStringsAsSymbols;
         this.sendSymbolsWithSpace = sendSymbolsWithSpace;
+
+        symbolAsFieldSupported = sendStringsAsSymbols;
     }
 
     void initLoadParameters(int numOfLines, int numOfIterations, int numOfThreads, int numOfTables, long waitBetweenIterationsMillis) {
