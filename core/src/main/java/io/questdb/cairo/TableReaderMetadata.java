@@ -37,7 +37,13 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
     private MemoryMR metaMem;
-    private int id;
+    private int partitionBy;
+    private int version;
+    private int tableId;
+    private int maxUncommittedRows;
+    private long commitLag;
+    private long structureVersion;
+
     private MemoryMR transitionMeta;
 
     public TableReaderMetadata(FilesFacade ff) {
@@ -149,6 +155,39 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         }
     }
 
+    public void dumpTo(MemoryMA mem) {
+        mem.jumpTo(0);
+        mem.putInt(columnCount);
+        mem.putInt(partitionBy);
+        mem.putInt(timestampIndex);
+        mem.putInt(version);
+        mem.putInt(tableId);
+        mem.putInt(maxUncommittedRows);
+        mem.putLong(commitLag);
+        mem.putLong(structureVersion);
+
+        mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
+        for (int i = 0; i < columnCount; i++) {
+            TableColumnMetadata col = columnMetadata.getQuick(i);
+            mem.putInt(col.getType());
+            long flags = 0;
+            if (col.isIndexed()) {
+                flags |= TableUtils.META_FLAG_BIT_INDEXED;
+            }
+            // ignore META_FLAG_BIT_SEQUENTIAL flag for now
+
+            mem.putLong(flags);
+            mem.putInt(col.getIndexValueBlockCapacity());
+            mem.putLong(col.getHash());
+            mem.skip(8);
+        }
+
+        for (int i = 0; i < columnCount; i++) {
+            TableColumnMetadata col = columnMetadata.getQuick(i);
+            mem.putStr(col.getName());
+        }
+    }
+
     @Override
     public void close() {
         // TableReaderMetadata is re-usable after close, don't assign nulls
@@ -180,27 +219,27 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     }
 
     public long getCommitLag() {
-        return metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
+        return commitLag;
     }
 
     public int getId() {
-        return id;
+        return tableId;
     }
 
     public int getMaxUncommittedRows() {
-        return metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
+        return maxUncommittedRows;
     }
 
     public int getPartitionBy() {
-        return metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
+        return partitionBy;
     }
 
     public long getStructureVersion() {
-        return metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
+        return structureVersion;
     }
 
     public int getVersion() {
-        return metaMem.getInt(TableUtils.META_OFFSET_VERSION);
+        return version;
     }
 
     public TableReaderMetadata of(Path path, int expectedVersion) {
@@ -209,9 +248,16 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
             this.metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
             this.columnNameIndexMap.clear();
             TableUtils.validate(metaMem, this.columnNameIndexMap, expectedVersion);
-            this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
-            this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
-            this.id = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
+
+            this.columnCount        = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+            this.partitionBy        = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
+            this.timestampIndex     = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
+            this.version            = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
+            this.tableId            = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
+            this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
+            this.commitLag          = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
+            this.structureVersion   = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
+
             this.columnMetadata.clear();
             long offset = TableUtils.getColumnNameOffset(columnCount);
 
@@ -227,8 +273,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
                                 TableUtils.isColumnIndexed(metaMem, i),
                                 TableUtils.getIndexBlockCapacity(metaMem, i),
                                 true,
-                                null
-                        )
+                                null)
                 );
                 offset += Vm.getStorageLength(name);
             }
@@ -258,7 +303,6 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
                 TableUtils.isColumnIndexed(metaMem, index),
                 TableUtils.getIndexBlockCapacity(metaMem, index),
                 true,
-                null
-        );
+                null);
     }
 }

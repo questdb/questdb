@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
@@ -326,4 +327,35 @@ public class TxReader implements Closeable, Mutable {
     long unsafeReadTxnCheck() {
         return roTxMem.getLong(TableUtils.TX_OFFSET_TXN_CHECK);
     }
+
+    public void dumpTo(MemoryCMARW mem) {
+        mem.putLong(TX_OFFSET_TXN, txn);
+        mem.putLong(TX_OFFSET_TRANSIENT_ROW_COUNT, transientRowCount);
+        mem.putLong(TX_OFFSET_FIXED_ROW_COUNT, fixedRowCount);
+        mem.putLong(TX_OFFSET_MIN_TIMESTAMP, minTimestamp);
+        mem.putLong(TX_OFFSET_MAX_TIMESTAMP, maxTimestamp);
+        mem.putLong(TX_OFFSET_STRUCT_VERSION, structureVersion);
+        mem.putLong(TX_OFFSET_DATA_VERSION, dataVersion);
+        mem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, partitionTableVersion);
+        mem.putLong(TX_OFFSET_TXN_CHECK, txn);
+
+        int symbolMapCount = symbolCountSnapshot.size();
+        mem.putInt(TX_OFFSET_MAP_WRITER_COUNT, symbolMapCount);
+        for (int i = 0; i < symbolMapCount; i++) {
+            long offset = getSymbolWriterIndexOffset(i);
+            mem.putInt(offset, symbolCountSnapshot.getQuick(i));
+            offset += Integer.BYTES;
+            mem.putInt(offset, 0);
+        }
+
+        final int size = attachedPartitions.size();
+        final long partitionTableOffset = getPartitionTableSizeOffset(symbolMapCount);
+        mem.putInt(partitionTableOffset, size * Long.BYTES);
+        for (int i = 0; i < size; i++) {
+            mem.putLong(getPartitionTableIndexOffset(partitionTableOffset, i), attachedPartitions.getQuick(i));
+        }
+
+        mem.jumpTo(getTxEofOffset());
+    }
+
 }

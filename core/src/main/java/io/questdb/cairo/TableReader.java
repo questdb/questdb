@@ -262,6 +262,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         return metadata;
     }
 
+    public TxReader getTxFile() {
+        return txFile;
+    }
+
     public long getMinTimestamp() {
         return txFile.getMinTimestamp();
     }
