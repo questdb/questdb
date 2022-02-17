@@ -119,7 +119,12 @@ public final class Vect {
     public static native void memset(long dst, long len, int value);
 
     //caller must call freeMergedIndex !!!
-    public static native long mergeLongIndexesAsc(long pIndexStructArray, int count);
+    private static native long mergeLongIndexesAsc(long pIndexStructArray, int count);
+
+    public static long mergeLongIndexesAsc(long pIndexStructArray, int count, long indexSize) {
+        Unsafe.recordMemAlloc(indexSize, MemoryTag.NATIVE_O3);
+        return mergeLongIndexesAsc(pIndexStructArray, count);
+    }
 
     public static native void mergeShuffle16Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
