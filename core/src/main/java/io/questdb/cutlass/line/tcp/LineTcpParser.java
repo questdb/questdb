@@ -667,12 +667,7 @@ public class LineTcpParser implements Closeable {
                 }
             }
             type = ENTITY_TYPE_TAG;
-            if (valueLen > 1) {
-                byte firstByte = value.byteAt(0);
-                byte lastByte = value.byteAt(valueLen - 1);
-                return stringAsTagSupported || firstByte != '"' || lastByte != '"';
-            }
-            return true;
+            return value.byteAt(0) != '"' || valueLen < 2 || value.byteAt(valueLen - 1) != '"' || stringAsTagSupported;
         }
     }
 }
