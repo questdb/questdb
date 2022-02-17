@@ -48,42 +48,33 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
         MemoryAR strMem = Vm.getARInstance(1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
         MemoryAR idxMem = Vm.getARInstance(1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
 
+        final int count = args.getQuick(0).getInt(null);
         final int lo = args.getQuick(1).getInt(null);
         final int hi = args.getQuick(2).getInt(null);
+        final int nullRate = args.getQuick(3).getInt(null);
 
         if (lo == hi) {
-            return new FixedFunc(
-                    strMem,
-                    idxMem,
-                    lo,
-                    args.getQuick(0).getInt(null),
-                    args.getQuick(3).getInt(null)
-            );
+            return new FixedFunc(strMem, idxMem, lo, count, nullRate);
         }
-        return new Func(
-                strMem,
-                idxMem,
-                args.getQuick(1).getInt(null),
-                args.getQuick(2).getInt(null),
-                args.getQuick(0).getInt(null),
-                args.getQuick(3).getInt(null)
-        );
+        return new Func(strMem, idxMem, lo, hi, count, nullRate);
     }
 
     private static final class Func extends StrFunction implements Function {
         private final int count;
         private final MemoryAR strMem;
         private final MemoryAR idxMem;
-        private final int strLo;
-        private final int strHi;
+        private final int lo;
+        private final int hi;
+        private final int nullRate;
         private Rnd rnd;
 
-        public Func(MemoryAR strMem, MemoryAR idxMem, int strLo, int strHi, int strCount, int nullRate) {
-            this.count = strCount;
+        public Func(MemoryAR strMem, MemoryAR idxMem, int lo, int hi, int count, int nullRate) {
+            this.count = count;
             this.strMem = strMem;
             this.idxMem = idxMem;
-            this.strLo = strLo;
-            this.strHi = strHi;
+            this.lo = lo;
+            this.hi = hi;
+            this.nullRate = nullRate;
         }
 
         @Override
@@ -94,12 +85,18 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStr(Record rec) {
+            if (nullRate > 0 && (rnd.nextInt() % nullRate) == 1) {
+                return null;
+            }
             long o = idxMem.getLong((rnd.nextPositiveInt() % count) * 8L);
             return strMem.getStr(o);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
+            if (nullRate > 0 && (rnd.nextInt() % nullRate) == 1) {
+                return null;
+            }
             long o = idxMem.getLong((rnd.nextPositiveInt() % count) * 8L);
             return strMem.getStr2(o);
         }
@@ -111,8 +108,9 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
             strMem.jumpTo(0);
             idxMem.jumpTo(0);
             for (int i = 0; i < count; i++) {
-                final long o = strMem.putStr(rnd.nextChars(strLo + rnd.nextPositiveInt() % (strHi - strLo)));
-                idxMem.putLong(o);
+                final int len = lo + rnd.nextPositiveInt() % (hi - lo);
+                final long o = strMem.putStr(rnd.nextChars(len));
+                idxMem.putLong(o - Vm.getStorageLength(len));
             }
         }
     }
@@ -121,14 +119,16 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
         private final int count;
         private final MemoryAR strMem;
         private final MemoryAR idxMem;
-        private final int strLen;
+        private final int len;
+        private final int nullRate;
         private Rnd rnd;
 
-        public FixedFunc(MemoryAR strMem, MemoryAR idxMem, int strLen, int strCount, int nullRate) {
+        public FixedFunc(MemoryAR strMem, MemoryAR idxMem, int len, int strCount, int nullRate) {
             this.count = strCount;
             this.strMem = strMem;
             this.idxMem = idxMem;
-            this.strLen = strLen;
+            this.len = len;
+            this.nullRate = nullRate;
         }
 
         @Override
@@ -139,12 +139,18 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStr(Record rec) {
+            if (nullRate > 0 && (rnd.nextInt() % nullRate) == 1) {
+                return null;
+            }
             long o = idxMem.getLong((rnd.nextPositiveInt() % count) * 8L);
             return strMem.getStr(o);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
+            if (nullRate > 0 && (rnd.nextInt() % nullRate) == 1) {
+                return null;
+            }
             long o = idxMem.getLong((rnd.nextPositiveInt() % count) * 8L);
             return strMem.getStr2(o);
         }
@@ -156,8 +162,8 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
             strMem.jumpTo(0);
             idxMem.jumpTo(0);
             for (int i = 0; i < count; i++) {
-                final long o = strMem.putStr(rnd.nextChars(strLen));
-                idxMem.putLong(o);
+                final long o = strMem.putStr(rnd.nextChars(len));
+                idxMem.putLong(o - Vm.getStorageLength(len));
             }
         }
     }
