@@ -2892,6 +2892,7 @@ public class TableWriter implements Closeable {
                     O3CopyJob.closeColumnIdle(
                             openColumnTask.getColumnCounter(),
                             openColumnTask.getTimestampMergeIndexAddr(),
+                            openColumnTask.getTimestampMergeIndexSize(),
                             openColumnTask.getSrcTimestampFd(),
                             openColumnTask.getSrcTimestampAddr(),
                             openColumnTask.getSrcTimestampSize(),
@@ -2912,6 +2913,7 @@ public class TableWriter implements Closeable {
                             copyTask.getColumnCounter(),
                             copyTask.getPartCounter(),
                             copyTask.getTimestampMergeIndexAddr(),
+                            copyTask.getTimestampMergeIndexSize(),
                             copyTask.getSrcDataFixFd(),
                             copyTask.getSrcDataFixAddr(),
                             copyTask.getSrcDataFixSize(),

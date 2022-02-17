@@ -595,22 +595,25 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long mergeDataLo,
             long mergeDataHi,
             long mergeOOOLo,
-            long mergeOOOHi
+            long mergeOOOHi,
+            long indexSize
     ) {
         // Create "index" for existing timestamp column. When we reshuffle timestamps during merge we will
         // have to go back and find data rows we need to move accordingly
-        final long indexSize = (mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES;
-        assert indexSize > 0; // avoid SIGSEGV
         final long index = Unsafe.malloc(indexSize, MemoryTag.NATIVE_O3);
-        Vect.makeTimestampIndex(srcDataTimestampAddr, mergeDataLo, mergeDataHi, index);
-        final long result = Vect.mergeTwoLongIndexesAsc(
-                index,
-                mergeDataHi - mergeDataLo + 1,
-                sortedTimestampsAddr + mergeOOOLo * 16,
-                mergeOOOHi - mergeOOOLo + 1
-        );
-        Unsafe.free(index, indexSize, MemoryTag.NATIVE_O3);
-        return result;
+        try {
+            Vect.makeTimestampIndex(srcDataTimestampAddr, mergeDataLo, mergeDataHi, index);
+            long ptr = Vect.mergeTwoLongIndexesAsc(
+                    index,
+                    mergeDataHi - mergeDataLo + 1,
+                    sortedTimestampsAddr + mergeOOOLo * 16,
+                    mergeOOOHi - mergeOOOLo + 1
+            );
+            Unsafe.recordMemAlloc(indexSize, MemoryTag.NATIVE_O3);
+            return ptr;
+        } finally {
+            Unsafe.free(index, indexSize, MemoryTag.NATIVE_O3);
+        }
     }
 
     private static void publishOpenColumnTaskHarmonized(
@@ -622,6 +625,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             AtomicInteger partCounter,
             int columnType,
             long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
             long srcOooFixAddr,
             long srcOooVarAddr,
             long srcOooLo,
@@ -664,6 +668,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 partCounter,
                 columnType,
                 timestampMergeIndexAddr,
+                timestampMergeIndexSize,
                 srcOooFixAddr,
                 srcOooVarAddr,
                 srcOooLo,
@@ -739,17 +744,23 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         LOG.debug().$("partition [ts=").$ts(oooTimestampLo).$(']').$();
 
         final long timestampMergeIndexAddr;
+        final long timestampMergeIndexSize;
         if (mergeType == O3_BLOCK_MERGE) {
+            timestampMergeIndexSize = (mergeDataHi - mergeDataLo + 1) * TIMESTAMP_MERGE_ENTRY_BYTES;
+            assert timestampMergeIndexSize > 0; // avoid SIGSEGV
+
             timestampMergeIndexAddr = createMergeIndex(
                     srcTimestampAddr,
                     sortedTimestampsAddr,
                     mergeDataLo,
                     mergeDataHi,
                     mergeOOOLo,
-                    mergeOOOHi
+                    mergeOOOHi,
+                    timestampMergeIndexSize
             );
         } else {
             timestampMergeIndexAddr = 0;
+            timestampMergeIndexSize = 0;
         }
 
         final RecordMetadata metadata = tableWriter.getMetadata();
@@ -810,6 +821,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 o3Basket.nextPartCounter(),
                                 notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
                                 timestampMergeIndexAddr,
+                                timestampMergeIndexSize,
                                 srcOooFixAddr,
                                 srcOooVarAddr,
                                 srcOooLo,
@@ -854,6 +866,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 o3Basket.nextPartCounter(),
                                 notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
                                 timestampMergeIndexAddr,
+                                timestampMergeIndexSize,
                                 srcOooFixAddr,
                                 srcOooVarAddr,
                                 srcOooLo,
@@ -903,6 +916,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             if (delta < 0 && columnCounter.addAndGet(delta) == 0) {
                 O3CopyJob.closeColumnIdleQuick(
                         timestampMergeIndexAddr,
+                        timestampMergeIndexSize,
                         srcTimestampFd,
                         srcTimestampAddr,
                         srcTimestampSize,
@@ -922,6 +936,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             AtomicInteger partCounter,
             int columnType,
             long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
             long srcOooFixAddr,
             long srcOooVarAddr,
             long srcOooLo,
@@ -969,6 +984,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     partCounter,
                     columnType,
                     timestampMergeIndexAddr,
+                    timestampMergeIndexSize,
                     srcOooFixAddr,
                     srcOooVarAddr,
                     srcOooLo,
@@ -1011,6 +1027,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     partCounter,
                     columnType,
                     timestampMergeIndexAddr,
+                    timestampMergeIndexSize,
                     srcOooFixAddr,
                     srcOooVarAddr,
                     srcOooLo,
