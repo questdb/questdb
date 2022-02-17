@@ -1,25 +1,23 @@
-## Contributing to QuestDB
+# Contributing to QuestDB
 
-## Raise an Issue
+Hi, glad to know that you're interested in contributing to QuestDB.
+Here are some topics that can help you to get started:
 
-Raising **[issues](https://github.com/questdb/questdb/issues)** is welcome. We
-aim to respond quickly and thoughtfully. This is a good place to start before
-deep diving into the code base.
+- 💡 [Bugs and features](#bugs-and-features) 
+- 🧭 [Navigation](#navigation)
+- 🔧 [Environment setup](#environment-setup)
+- ✅ [Before you submit](#before-you-submit)
+- 📢 [For maintainers](#for-maintainers) 
 
-## Contribute a PR
+# Bugs and features
 
-### Requirements
+Whether it's a bug report or feature request, you're welcome to raise **[issues](https://github.com/questdb/questdb/issues)** using respective templates. 
 
-- Operating system - **x86-64**: Windows, Linux, FreeBSD and OSX
-- Java 11 64-bit
-- Maven 3 (from your package manager on Linux / OSX
-  ([Homebrew](https://github.com/Homebrew/brew)) or
-  [from the jar](https://maven.apache.org/install.html) for any OS)
-- Node.js 12 / npm 6 (to manage your Node.js versions we recommend
-  [nvm](https://github.com/nvm-sh/nvm) for OSX/Linux/windows WSL, and
-  [nvm-windows](https://github.com/coreybutler/nvm-windows) for Windows) -
-  OPTIONAL
-- C-compiler, CMake - to contribute to C libraries - OPTIONAL
+If you're not sure whether you should raise an issue, you can also join our community **[Slack channel](https://slack.questdb.io/)** and post your questions there. 
+
+We aim to respond to your issues and questions soonest. If you wish to receive a faster response, we recommend you to always describe your steps and provide information about your environment in your bug reports. And if you're proposing a new feature, it'll help us to evaluate the priority if you explain why you need a specific feature. 
+
+# Navigation
 
 ## Repository overview
 
@@ -39,9 +37,31 @@ deep diving into the code base.
 Compiled binaries (for C libraries and Windows service wrapper) are committed to
 git to make build of development process Java-centric and simplified.
 
-# Local setup
+## Find suitable Sissues 
 
-## Setup Java and JAVA_HOME
+Our maintainers will labell issues with relevant categories so you can use that to search for issues you'd like to work on. 
+If you don't know where to start, try search for issues labelled with `good first issue` or `help wanted`. 
+To understand how our maintainer works, you can refer to [this section](#for-maintainers).
+
+
+# Environment setup
+
+## Requirements
+
+- Operating system - **x86-64**: Windows, Linux, FreeBSD and OSX
+- Java 11 64-bit
+- Maven 3 (from your package manager on Linux / OSX
+  ([Homebrew](https://github.com/Homebrew/brew)) or
+  [from the jar](https://maven.apache.org/install.html) for any OS)
+- Node.js 12 / npm 6 (to manage your Node.js versions we recommend
+  [nvm](https://github.com/nvm-sh/nvm) for OSX/Linux/windows WSL, and
+  [nvm-windows](https://github.com/coreybutler/nvm-windows) for Windows) -
+  OPTIONAL
+- C-compiler, CMake - to contribute to C libraries - OPTIONAL
+
+## Local environment 
+
+### Setup Java and JAVA_HOME
 
 JAVA*HOME is required by Maven. It is possible to have multiple version of Java
 on the same platform. Please set up JAVA_HOME to point to Java 11. Other
@@ -61,7 +81,7 @@ Windows
 set JAVA_HOME="c:\path\to\java directory"
 ```
 
-## Compiling Java and frontend code
+### Compiling Java and frontend code
 
 Compiling the database + the web console can be done with:
 
@@ -77,7 +97,7 @@ java -p core/target/questdb-<version>-SNAPSHOT.jar -m io.questdb/io.questdb.Serv
 
 The web console will available at [localhost:9000](http://localhost:9000).
 
-## Compiling C-libraries
+### Compiling C-libraries
 
 C-libraries will have to be compiled for each platform separately. Cmake will
 also need JAVA_HOME to be set. The following commands will compile on Linux/OSX.
@@ -96,9 +116,9 @@ The build will copy artifacts as follows:
 core/src/main/c -> core/src/main/resources/io/questdb/bin
 ```
 
-# Local setup for frontend development
+## Local setup for frontend development
 
-## Development server
+### Development server
 
 This is useful when you want to work on the web console without having to
 rebuild the artifacts and restart QuestDB. Instead, we use `webpack-dev-server`:
@@ -115,7 +135,7 @@ Development server running on port 9999 will monitor for web console file
 changes and will rebuild/deploy on the fly. The web console front end will be
 connecting to QuestDB REST API on port 9000. Keep QuestDB server running.
 
-## Building web console bundle into questdb.jar
+### Building web console bundle into questdb.jar
 
 Run the command:
 
@@ -129,35 +149,37 @@ The build will copy artifacts as follows:
 ui -> core/src/main/resources/io/questdb/site/public.zip
 ```
 
-# Testing
+# Before you submit
+
+## Testing
 
 We have a lot of unit tests, most of which are of "integration" type, e.g. test
 starts a server, interacts with it and asserts the outcome. We expect all
-contributors to submit PRs with tests. Please reach out to us via slack if you
-uncertain on how to test, or you think existing test is inadequate and should be
+contributors to submit PRs with tests. Please reach out to us via slack if you're
+uncertain on how to test, or you think an existing test is inadequate and should be
 removed.
 
-# Dependencies
+## Dependencies
 
 QuestDB does not have dependencies. This may sound unorthodox but in reality we
 try not to reinvent the wheel but rather than using libraries we implement
 algorithms on first principles to ensure perfect fit with existing code. With
 that in mind we expect contributions that do not add third-party dependencies.
 
-# Allocations, "new" operator and garbage collection
+## Allocations, "new" operator and garbage collection
 
 QuestDB is zero-GC along data pipelines. We expect contributions not to allocate
 if possible. That said we would like to help you to contribute zero-GC code, do
 not hesitate to reach out!
 
-# Committing
+## Committing
 
 We use [Conventional commits](https://www.conventionalcommits.org/en/v1.0.0/) to
 auto-generate release notes. We require all commit comments to conform. To that
 end, commits have to be granular enough to be successfully described using this
 method.
 
-# Squashing commits
+## Squashing commits
 
 When submitting a pull request to QuestDB, we ask that you squash your commits
 before we merge.
@@ -226,3 +248,35 @@ In case of ESET products, the following steps may resolve the issue:
 - Add `127.0.0.1` to "Excluded IP addresses" list in the **advanced settings**
   menu because disabling all top-level mechanisms doesn't turn protocol
   filtering off.
+
+# For maintainers
+
+We have an [engineering project board](https://github.com/orgs/questdb/projects/2/views/8) to help us organize pending GitHub issues among engineers across different timezones. And there are configured views for bug reports and feature requests respectively. 
+
+| Stage     | Description                                              |
+| ---             | ---                                                |
+| New | When users reported a bug, await for someone to reproduce to confirm |
+| More info needed  | When more communication with OP is required before we can begin triage |
+| To do    | Once issues are confirmed and engineers can pick up. Oder of To-do items should imply priority  |
+| In progress  | If an engineer pick up an issue, self-assign and move to In-progress  |
+| Done    | Once the linked pull request is merged, the issue is closed and moved to Done automatically |
+
+Apart from that, we also use labels to help us categorize the nature of GitHub issues. 
+
+The current labels can probably be categorized like this
+
+| Categories     | Labels                                              |
+| ---             | ---                                                |
+| Type | `Bug`, `New features`, `Enhancement`, `Test` (or flaky test lol), `Tidy up`, `Question`, `Performance` |
+| Component   | `ILP`, `Rest API`, `Postgres wire`, `SQL`, `Core`(for storage, data type etc.), `UI`                |
+| Priority    | `Immediate`, `Minor`, `Won't fix`, `Later`              |
+| Difficulty    | `Good first issue`           |
+
+
+And here are some tips to reduce communication overhead:
+- Add new issues to project board
+- Always assign yourself when you pick up an issue
+- Label the issues correctly after you assess them
+- Close the issue when no further actions is required
+
+
