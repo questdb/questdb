@@ -63,6 +63,9 @@ public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
             final LogRecord record = LOG.advisory();
 
             record.$("\n\tTOTAL: ").$(Unsafe.getMemUsed());
+            record.$("\n\tMALLOC_COUNT: ").$(Unsafe.getMallocCount());
+            record.$("\n\tREALLOC_COUNT: ").$(Unsafe.getReallocCount());
+            record.$("\n\tFREE_COUNT: ").$(Unsafe.getFreeCount());
             for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
                 record.$('\n').$('\t').$(MemoryTag.nameOf(i)).$(": ").$(Unsafe.getMemUsedByTag(i));
             }
