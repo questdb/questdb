@@ -59,6 +59,7 @@ public class Metrics implements Scrapable {
         metricsRegistry.newVirtualGauge("memory_free_count", Unsafe::getFreeCount);
         metricsRegistry.newVirtualGauge("memory_mem_used", Unsafe::getMemUsed);
         metricsRegistry.newVirtualGauge("memory_malloc_count", Unsafe::getMallocCount);
+        metricsRegistry.newVirtualGauge("memory_realloc_count", Unsafe::getReallocCount);
     }
 
     public static Metrics enabled() {
