@@ -253,30 +253,32 @@ In case of ESET products, the following steps may resolve the issue:
 
 We have an [engineering project board](https://github.com/orgs/questdb/projects/2/views/8) to help us organize pending GitHub issues among engineers across different timezones. And there are configured views for bug reports and feature requests respectively. 
 
+This is what you can do to organize open issues: 
+- Add new issues to project board
+- Always assign yourself when you pick up an issue
+- Label the issues correctly after you assess them
+- Close the issue when no further actions is required
+
+Stages of our project board: 
 | Stage     | Description                                              |
 | ---             | ---                                                |
-| New | When users reported a bug, await for someone to reproduce to confirm |
+| New | When users reported a bug, await for someone to reproduce or follow up |
 | More info needed  | When more communication with OP is required before we can begin triage |
 | To do    | Once issues are confirmed and engineers can pick up. Oder of To-do items should imply priority  |
 | In progress  | If an engineer pick up an issue, self-assign and move to In-progress  |
 | Done    | Once the linked pull request is merged, the issue is closed and moved to Done automatically |
 
-Apart from that, we also use labels to help us categorize the nature of GitHub issues. 
-
-The current labels can probably be categorized like this
+We also use labels to help us categorize GitHub issues. 
+The current labels can be roughly categorized like this:
 
 | Categories     | Labels                                              |
 | ---             | ---                                                |
-| Type | `Bug`, `New features`, `Enhancement`, `Test` (or flaky test lol), `Tidy up`, `Question`, `Performance` |
+| Type | `Bug`, `New features`, `Enhancement`, `Test`, `Tidy up`, `Question`, `Performance`, `Java` |
 | Component   | `ILP`, `Rest API`, `Postgres wire`, `SQL`, `Core`(for storage, data type etc.), `UI`                |
 | Priority    | `Immediate`, `Minor`, `Won't fix`, `Later`              |
 | Difficulty    | `Good first issue`           |
 
 
-And here are some tips to reduce communication overhead:
-- Add new issues to project board
-- Always assign yourself when you pick up an issue
-- Label the issues correctly after you assess them
-- Close the issue when no further actions is required
+
 
 
