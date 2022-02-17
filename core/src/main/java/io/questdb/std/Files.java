@@ -398,6 +398,7 @@ public final class Files {
 
     private native static long openAppend(long lpszName);
 
+    //caller must call findClose to free allocated struct 
     private native static long findFirst(long lpszName);
 
     private native static boolean setLastModified(long lpszName, long millis);

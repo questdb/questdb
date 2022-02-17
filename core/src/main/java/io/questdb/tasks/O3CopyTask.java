@@ -36,6 +36,7 @@ public class O3CopyTask extends AbstractLockable {
     private int columnType;
     private int blockType;
     private long timestampMergeIndexAddr;
+    private long timestampMergeIndexSize;
     private long srcDataFixFd;
     private long srcDataFixAddr;
     private long srcDataFixOffset;
@@ -265,6 +266,10 @@ public class O3CopyTask extends AbstractLockable {
         return timestampMergeIndexAddr;
     }
 
+    public long getTimestampMergeIndexSize() {
+        return timestampMergeIndexSize;
+    }
+
     public long getTimestampMin() {
         return timestampMin;
     }
@@ -283,6 +288,7 @@ public class O3CopyTask extends AbstractLockable {
             int columnType,
             int blockType,
             long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
             long srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixOffset,
@@ -333,6 +339,7 @@ public class O3CopyTask extends AbstractLockable {
         this.columnType = columnType;
         this.blockType = blockType;
         this.timestampMergeIndexAddr = timestampMergeIndexAddr;
+        this.timestampMergeIndexSize = timestampMergeIndexSize;
         this.srcDataFixFd = srcDataFixFd;
         this.srcDataFixAddr = srcDataFixAddr;
         this.srcDataFixOffset = srcDataFixOffset;

@@ -43,6 +43,7 @@ public class O3OpenColumnTask {
     private long srcTimestampAddr;
     private long srcTimestampSize;
     private long timestampMergeIndexAddr;
+    private long timestampMergeIndexSize;
     private long srcOooFixAddr;
     private long srcOooVarAddr;
     private long srcDataTop;
@@ -215,6 +216,10 @@ public class O3OpenColumnTask {
         return timestampMergeIndexAddr;
     }
 
+    public long getTimestampMergeIndexSize() {
+        return timestampMergeIndexSize;
+    }
+
     public long getTimestampMin() {
         return timestampMin;
     }
@@ -235,6 +240,7 @@ public class O3OpenColumnTask {
             AtomicInteger partCounter,
             int columnType,
             long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
             long srcOooFixAddr,
             long srcOooVarAddr,
             long srcOooLo,
@@ -275,6 +281,7 @@ public class O3OpenColumnTask {
         this.columnName = columnName;
         this.columnType = columnType;
         this.timestampMergeIndexAddr = timestampMergeIndexAddr;
+        this.timestampMergeIndexSize = timestampMergeIndexSize;
         this.srcOooFixAddr = srcOooFixAddr;
         this.srcOooVarAddr = srcOooVarAddr;
         this.srcOooLo = srcOooLo;
