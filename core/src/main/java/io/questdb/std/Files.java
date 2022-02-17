@@ -129,6 +129,8 @@ public final class Files {
 
     public static native int fsync(long fd);
 
+    public static native int sync();
+
     public static long getLastModified(LPSZ lpsz) {
         return getLastModified(lpsz.address());
     }
