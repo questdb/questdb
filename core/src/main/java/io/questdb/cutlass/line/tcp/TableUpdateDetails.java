@@ -282,6 +282,8 @@ public class TableUpdateDetails implements Closeable {
         private final LineTcpReceiverConfiguration configuration;
         private int columnCount;
         private String colName;
+        private TxReader txReader;
+        private ColumnVersionReader columnVersionReader;
 
         ThreadLocalDetails(LineTcpReceiverConfiguration configuration, ObjList<SymbolCache> unusedSymbolCaches, int columnCount) {
             this.configuration = configuration;
@@ -297,11 +299,15 @@ public class TableUpdateDetails implements Closeable {
         public void close() {
             Misc.freeObjList(symbolCacheByColumnIndex);
             Misc.free(path);
+            columnVersionReader = Misc.free(columnVersionReader);
+            txReader = Misc.free(txReader);
         }
 
         private SymbolCache addSymbolCache(int colIndex) {
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16)) {
                 path.of(engine.getConfiguration().getRoot()).concat(tableNameUtf16);
+                int pathLen = path.length();
+
                 SymbolCache symCache;
                 final int lastUnusedSymbolCacheIndex = unusedSymbolCaches.size() - 1;
                 if (lastUnusedSymbolCacheIndex > -1) {
@@ -311,7 +317,16 @@ public class TableUpdateDetails implements Closeable {
                     symCache = new SymbolCache(configuration);
                 }
                 int symIndex = resolveSymbolIndex(reader.getMetadata(), colIndex);
-                symCache.of(engine.getConfiguration(), path, reader.getMetadata().getColumnName(colIndex), symIndex);
+                int writerIndex = reader.getMetadata().getWriterIndex(colIndex);
+                if (this.columnVersionReader == null) {
+                    FilesFacade filesFacade = engine.getConfiguration().getFilesFacade();
+                    this.txReader = new TxReader(filesFacade).ofRO(path, reader.getPartitionedBy());
+                    path.trimTo(pathLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                    this.columnVersionReader = new ColumnVersionReader().ofRO(filesFacade, path);
+                    path.trimTo(pathLen);
+                }
+
+                symCache.of(engine.getConfiguration(), path, reader.getMetadata().getColumnName(colIndex), symIndex, this.txReader, this.columnVersionReader, writerIndex);
                 symbolCacheByColumnIndex.extendAndSet(colIndex, symCache);
                 return symCache;
             }

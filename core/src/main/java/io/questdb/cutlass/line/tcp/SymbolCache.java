@@ -87,18 +87,18 @@ class SymbolCache implements Closeable {
         return symbolKey;
     }
 
-    void of(CairoConfiguration configuration, Path path, CharSequence columnName, int symbolIndexInTxFile) {
-        throw new UnsupportedOperationException();
-//        this.symbolIndexInTxFile = symbolIndexInTxFile;
-//        final int plen = path.length();
-//        if (txReader == null) {
-//            txReader = new TxReader(configuration.getFilesFacade());
-//        }
-//        txReader.ofRO(path, PartitionBy.NONE); // Partition is not important, TxReader needed to read symbol count
-//        int symCount = safeReadUnsafeSymbolCount(symbolIndexInTxFile, false);
-//        path.trimTo(plen);
-//        symbolMapReader.of(configuration, path, columnName, symCount);
-//        symbolValueToKeyMap.clear(symCount);
+    void of(CairoConfiguration configuration, Path path, CharSequence columnName, int symbolIndexInTxFile, TxReader txReader, ColumnVersionReader columnVersionReader, int writerIndex) {
+        this.symbolIndexInTxFile = symbolIndexInTxFile;
+        final int plen = path.length();
+        this.txReader = txReader;
+        int symCount = safeReadUnsafeSymbolCount(symbolIndexInTxFile, false);
+        path.trimTo(plen);
+        if (columnVersionReader.getVersion() < txReader.getColumnVersion()) {
+            columnVersionReader.readSafe(configuration.getMicrosecondClock(), configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs());
+        }
+        long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
+        symbolMapReader.of(configuration, path, columnName, columnNameTxn, symCount);
+        symbolValueToKeyMap.clear(symCount);
     }
 
     private int safeReadUnsafeSymbolCount(int symbolIndexInTxFile, boolean initialStateOk) {
