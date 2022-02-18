@@ -26,7 +26,6 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -172,13 +171,6 @@ public class TableUpdateDetails implements Closeable {
                 .$(", tableName=").$(tableNameUtf16)
                 .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
                 .I$();
-    }
-
-    int getSymbolIndex(ThreadLocalDetails localDetails, int colIndex, CharSequence symValue) {
-        if (colIndex >= 0) {
-            return localDetails.getSymbolIndex(colIndex, symValue);
-        }
-        return SymbolTable.VALUE_NOT_FOUND;
     }
 
     ThreadLocalDetails getThreadLocalDetails(int workerId) {
