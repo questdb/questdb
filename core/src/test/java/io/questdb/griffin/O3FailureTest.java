@@ -46,6 +46,7 @@ import java.net.URL;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class O3FailureTest extends AbstractO3Test {
 
@@ -138,13 +139,6 @@ public class O3FailureTest extends AbstractO3Test {
             return super.mkdirs(path, mode);
         }
     };
-
-    @Test
-    public void testAllocateFailsAtO3OpenColumn() throws Exception {
-        counter.set(46);
-        executeWithPool(0, O3FailureTest::testAllocateFailsAtO3OpenColumn0, ffAllocateFailure);
-    }
-
     private static final FilesFacade ffWriteTop19700107 = new FilesFacadeImpl() {
         long theFd;
 
@@ -166,7 +160,6 @@ public class O3FailureTest extends AbstractO3Test {
             return super.write(fd, address, len, offset);
         }
     };
-
     private static final FilesFacade ffMapRW = new FilesFacadeImpl() {
 
         private long theFd = 0;
@@ -189,7 +182,6 @@ public class O3FailureTest extends AbstractO3Test {
             return fd;
         }
     };
-
     private static final FilesFacade ffOpenRW = new FilesFacadeImpl() {
         @Override
         public long openRW(LPSZ name) {
@@ -199,7 +191,6 @@ public class O3FailureTest extends AbstractO3Test {
             return super.openRW(name);
         }
     };
-
     private static final FilesFacade ffFailToAllocateIndex = new FilesFacadeImpl() {
         long theFd;
         boolean failNextAlloc = false;
@@ -242,21 +233,34 @@ public class O3FailureTest extends AbstractO3Test {
     private static final Log LOG = LogFactory.getLog(O3FailureTest.class);
 
     @Test
+    public void testAllocateFailsAtO3OpenColumn() throws Exception {
+        counter.set(46);
+        executeWithPool(0, O3FailureTest::testAllocateFailsAtO3OpenColumn0, ffAllocateFailure);
+    }
+
+    @Test
     public void testAllocateToResizeLastPartition() throws Exception {
-        counter.set(39);
+        counter.set(40);
         executeWithPool(0, O3FailureTest::testAllocateToResizeLastPartition0, ffAllocateFailure);
     }
 
     @Test
     public void testColumnTopLastDataOOODataFailRetryCantWriteTop() throws Exception {
         counter.set(1);
-        executeWithoutPool(O3FailureTest::testColumnTopLastDataOOODataFailRetry0, ffWriteTop19700107);
+        executeWithoutPool(
+                O3FailureTest::testColumnTopLastDataOOODataFailRetry0,
+                failToMmap("1970-01-07" + Files.SEPARATOR + "v.d.1", 2)
+        );
     }
 
     @Test
     public void testColumnTopLastDataOOODataFailRetryCantWriteTopContended() throws Exception {
         counter.set(1);
-        executeWithPool(0, O3FailureTest::testColumnTopLastDataOOODataFailRetry0, ffWriteTop19700107);
+        executeWithPool(
+                0,
+                O3FailureTest::testColumnTopLastDataOOODataFailRetry0,
+                failToMmap("1970-01-07" + Files.SEPARATOR + "v.d.1", 2)
+        );
     }
 
     @Test
@@ -440,19 +444,6 @@ public class O3FailureTest extends AbstractO3Test {
         });
     }
 
-    private static FilesFacade failOnOpeRW(String fileName, int count) {
-        AtomicInteger counter = new AtomicInteger(count);
-        return new FilesFacadeImpl() {
-            @Override
-            public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, fileName) && counter.decrementAndGet() == 0) {
-                    return -1;
-                }
-                return super.openRW(name);
-            }
-        };
-    }
-
     @Test
     public void testColumnTopMidMergeBlankFailRetryOpenRW() throws Exception {
         counter.set(1);
@@ -532,7 +523,7 @@ public class O3FailureTest extends AbstractO3Test {
     public void testFailOnTruncateKeyIndexContended() throws Exception {
         // different number of calls to "truncate" on Windows and *Nix
         // the number targets truncate of key file in BitmapIndexWriter
-        counter.set(Os.type == Os.WINDOWS ? 100 : 99);
+        counter.set(Os.type == Os.WINDOWS ? 87 : 86);
         executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
 
             @Override
@@ -549,7 +540,7 @@ public class O3FailureTest extends AbstractO3Test {
     public void testFailOnTruncateKeyValueContended() throws Exception {
         // different number of calls to "truncate" on Windows and *Nix
         // the number targets truncate of key file in BitmapIndexWriter
-        counter.set(Os.type == Os.WINDOWS ? 100 : 99);
+        counter.set(Os.type == Os.WINDOWS ? 87 : 86);
         executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new FilesFacadeImpl() {
             @Override
             public boolean truncate(long fd, long size) {
@@ -796,19 +787,19 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOOPrependOODatThenRegularAppend() throws Exception {
-        counter.set(163);
+        counter.set(165);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODatThenRegularAppend0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOOData() throws Exception {
-        counter.set(163);
+        counter.set(165);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataContended() throws Exception {
-        counter.set(163);
+        counter.set(165);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
@@ -874,7 +865,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataParallelNoReopen() throws Exception {
-        counter.set(163);
+        counter.set(165);
         executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetryNoReopen, ffAllocateFailure);
     }
 
@@ -919,6 +910,18 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
+    public void testPartitionedOpenTimestampFail() throws Exception {
+        counter.set(3);
+        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffOpenFailure);
+    }
+
+    @Test
+    public void testPartitionedOpenTimestampFailContended() throws Exception {
+        counter.set(3);
+        executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffOpenFailure);
+    }
+
+    @Test
     public void testPartitionedWithAllocationCallLimit() throws Exception {
         counter.set(0);
         executeWithPool(0, O3FailureTest::testPartitionedWithAllocationCallLimit0, new FilesFacadeImpl() {
@@ -936,18 +939,6 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
-    public void testPartitionedOpenTimestampFail() throws Exception {
-        counter.set(3);
-        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffOpenFailure);
-    }
-
-    @Test
-    public void testPartitionedOpenTimestampFailContended() throws Exception {
-        counter.set(3);
-        executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffOpenFailure);
-    }
-
-    @Test
     public void testSetAppendPositionFails() throws Exception {
         counter.set(169);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
@@ -956,6 +947,19 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testTwoRowsConsistency() throws Exception {
         executeWithPool(0, O3FailureTest::testTwoRowsConsistency0);
+    }
+
+    private static FilesFacade failOnOpeRW(String fileName, int count) {
+        AtomicInteger counter = new AtomicInteger(count);
+        return new FilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, fileName) && counter.decrementAndGet() == 0) {
+                    return -1;
+                }
+                return super.openRW(name);
+            }
+        };
     }
 
     private static void testAllocateFailsAtO3OpenColumn0(
@@ -1524,7 +1528,7 @@ public class O3FailureTest extends AbstractO3Test {
         sink2.clear();
         sink2.put(
                 "count\n" +
-                "502\n"
+                        "502\n"
         );
 
         assertXCount(
@@ -3529,5 +3533,37 @@ public class O3FailureTest extends AbstractO3Test {
             };
             execute(null, runnable, configuration);
         });
+    }
+
+    private FilesFacade failToMmap(String fileName, int count) {
+        AtomicLong targetFd = new AtomicLong();
+        AtomicInteger counter = new AtomicInteger(count);
+
+        return new FilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (fd == targetFd.get() && counter.decrementAndGet() == 0) {
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+
+            @Override
+            public long mmap(long fd, long len, long flags, int mode, long baseAddress, int memoryTag) {
+                if (fd == targetFd.get() && counter.decrementAndGet() == 0) {
+                    return -1;
+                }
+                return super.mmap(fd, len, flags, mode, memoryTag);
+            }
+
+            @Override
+            public long openRW(LPSZ name) {
+                long fd = super.openRW(name);
+                if (Chars.endsWith(name, fileName)) {
+                    targetFd.set(fd);
+                }
+                return fd;
+            }
+        };
     }
 }
