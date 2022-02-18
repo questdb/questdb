@@ -73,7 +73,6 @@ public class TableWriter implements Closeable {
     private static final Runnable NOOP = () -> {
     };
     private final static RemoveFileLambda REMOVE_OR_LOG = TableWriter::removeFileAndOrLog;
-    private final static RemoveFileLambda REMOVE_OR_EXCEPTION = TableWriter::removeOrException;
     final ObjList<MemoryMAR> columns;
     private final ObjList<MemoryMA> logColumns;
     private final ObjList<MapWriter> symbolMapWriters;
@@ -943,7 +942,7 @@ public class TableWriter implements Closeable {
             clearTodoLog();
 
             // remove column files has to be done after _todo is removed
-            removeColumnFiles(name, index, type, REMOVE_OR_LOG);
+            removeColumnFiles(name, index, type);
         } catch (CairoException err) {
             throwDistressException(err);
         }
@@ -3926,38 +3925,38 @@ public class TableWriter implements Closeable {
         freeAndRemoveO3ColumnPair(o3Columns2, pi, si);
     }
 
-    private void removeColumnFiles(CharSequence columnName, int columnIndex, int columnType, RemoveFileLambda removeLambda) {
+    private void removeColumnFiles(CharSequence columnName, int columnIndex, int columnType) {
         try {
             for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
                 long partitionTimestamp = txWriter.getPartitionTimestamp(i);
                 long partitionNameTxn = txWriter.getPartitionNameTxn(i);
-                removeColumnFilesInPartition(columnName, columnIndex, removeLambda, partitionTimestamp, partitionNameTxn);
+                removeColumnFilesInPartition(columnName, columnIndex, partitionTimestamp, partitionNameTxn);
             }
             if (!PartitionBy.isPartitioned(partitionBy)) {
-                removeColumnFilesInPartition(columnName, columnIndex, removeLambda, txWriter.getLastPartitionTimestamp(), -1L);
+                removeColumnFilesInPartition(columnName, columnIndex, txWriter.getLastPartitionTimestamp(), -1L);
             }
 
             long columnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(columnIndex);
             if (ColumnType.isSymbol(columnType)) {
-                removeLambda.remove(ff, offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn));
-                removeLambda.remove(ff, charFileName(path.trimTo(rootLen), columnName, columnNameTxn));
-                removeLambda.remove(ff, BitmapIndexUtils.keyFileName(path.trimTo(rootLen), columnName, columnNameTxn));
-                removeLambda.remove(ff, BitmapIndexUtils.valueFileName(path.trimTo(rootLen), columnName, columnNameTxn));
+                TableWriter.REMOVE_OR_LOG.remove(ff, offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn));
+                TableWriter.REMOVE_OR_LOG.remove(ff, charFileName(path.trimTo(rootLen), columnName, columnNameTxn));
+                TableWriter.REMOVE_OR_LOG.remove(ff, BitmapIndexUtils.keyFileName(path.trimTo(rootLen), columnName, columnNameTxn));
+                TableWriter.REMOVE_OR_LOG.remove(ff, BitmapIndexUtils.valueFileName(path.trimTo(rootLen), columnName, columnNameTxn));
             }
         } finally {
             path.trimTo(rootLen);
         }
     }
 
-    private void removeColumnFilesInPartition(CharSequence columnName, int columnIndex, RemoveFileLambda removeLambda, long partitionTimestamp, long partitionNameTxn) {
+    private void removeColumnFilesInPartition(CharSequence columnName, int columnIndex, long partitionTimestamp, long partitionNameTxn) {
         setPathForPartition(path, partitionBy, partitionTimestamp, false);
         txnPartitionConditionally(path, partitionNameTxn);
         int plen = path.length();
         long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-        removeLambda.remove(ff, dFile(path, columnName, columnNameTxn));
-        removeLambda.remove(ff, iFile(path.trimTo(plen), columnName, columnNameTxn));
-        removeLambda.remove(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn));
-        removeLambda.remove(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn));
+        TableWriter.REMOVE_OR_LOG.remove(ff, dFile(path, columnName, columnNameTxn));
+        TableWriter.REMOVE_OR_LOG.remove(ff, iFile(path.trimTo(plen), columnName, columnNameTxn));
+        TableWriter.REMOVE_OR_LOG.remove(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn));
+        TableWriter.REMOVE_OR_LOG.remove(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn));
         path.trimTo(rootLen);
     }
 
@@ -4879,9 +4878,11 @@ public class TableWriter implements Closeable {
             if (partitionTimestamp > -1) {
                 for (int column = 0; column < columnCount; column++) {
                     long colTop = o3ColumnTopSink.get(partitionOffset + column + 1);
-                    // Upsert even when colTop value is 0.
-                    // TableReader uses the record to determine if the column is supposed to be present for the partition.
-                    columnVersionWriter.upsertColumnTop(partitionTimestamp, column, colTop);
+                    if (colTop > -1L) {
+                        // Upsert even when colTop value is 0.
+                        // TableReader uses the record to determine if the column is supposed to be present for the partition.
+                        columnVersionWriter.upsertColumnTop(partitionTimestamp, column, colTop);
+                    }
                 }
             }
         }

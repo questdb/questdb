@@ -73,8 +73,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     public void testColumnAddRemove() {
         try (
                 Path path = new Path();
-                ColumnVersionWriter w = new ColumnVersionWriter(FilesFacadeImpl.INSTANCE, path.of(root).concat("_cv").$(), 0);
-                ColumnVersionReader r = new ColumnVersionReader().ofRO(FilesFacadeImpl.INSTANCE, path)
+                ColumnVersionWriter w = new ColumnVersionWriter(FilesFacadeImpl.INSTANCE, path.of(root).concat("_cv").$(), 0)
         ) {
             long partitionTimestamp = Timestamps.DAY_MICROS * 2;
             int columnIndex = 3;
@@ -106,6 +105,49 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
             Assert.assertEquals(partitionTimestamp, w.getColumnTopPartitionTimestamp(columnIndex));
             Assert.assertEquals(123, w.getColumnNameTxn(partitionTimestamp, columnIndex));
             Assert.assertEquals(0, w.getColumnTop(partitionTimestamp, columnIndex));
+        }
+    }
+
+
+    @Test
+    public void testColumnTopChangedInO3() {
+        try (
+                Path path = new Path();
+                ColumnVersionWriter w = new ColumnVersionWriter(FilesFacadeImpl.INSTANCE, path.of(root).concat("_cv").$(), 0)
+        ) {
+            long day1 = 0;
+            long day2 = Timestamps.DAY_MICROS;
+            long day3 = Timestamps.DAY_MICROS * 2;
+            int columnIndex = 3;
+            int columnIndex1 = 1;
+
+            // Add column
+            w.upsert(day3, columnIndex, 123, 987);
+            w.upsertDefaultTxnName(columnIndex, 123, day3);
+
+            // Simulate O3 write to day1, day2
+            w.upsertColumnTop(day1, columnIndex, 15);
+            w.upsertColumnTop(day2, columnIndex, 0);
+            w.upsertColumnTop(day1, columnIndex1, 15);
+            w.upsertColumnTop(day2, columnIndex1, 0);
+
+            // Check column top, txn name
+            Assert.assertEquals(123, w.getColumnNameTxn(day1, columnIndex));
+            Assert.assertEquals(123, w.getColumnNameTxn(day2, columnIndex));
+            Assert.assertEquals(123, w.getColumnNameTxn(day3, columnIndex));
+
+            Assert.assertEquals(-1, w.getColumnNameTxn(day1, columnIndex1));
+            Assert.assertEquals(-1, w.getColumnNameTxn(day2, columnIndex1));
+            Assert.assertEquals(-1, w.getColumnNameTxn(day3, columnIndex1));
+
+            // Check column top values
+            Assert.assertEquals(15, w.getColumnTop(day1, columnIndex));
+            Assert.assertEquals(0, w.getColumnTop(day2, columnIndex));
+            Assert.assertEquals(987, w.getColumnTop(day3, columnIndex));
+
+            Assert.assertEquals(15, w.getColumnTop(day1, columnIndex1));
+            Assert.assertEquals(0, w.getColumnTop(day2, columnIndex1));
+            Assert.assertEquals(0, w.getColumnTop(day3, columnIndex1));
         }
     }
 

@@ -147,19 +147,26 @@ public class ColumnVersionWriter extends ColumnVersionReader implements Closeabl
     }
 
     public void upsertColumnTop(long partitionTimestamp, int columnIndex, long colTop) {
-        if (colTop > 0) {
-            upsert(partitionTimestamp, columnIndex, -1, colTop);
-        } else if (colTop == 0) {
-            int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);
-            if (recordIndex > -1L) {
-                getCachedList().setQuick(recordIndex + 3, colTop);
-                hasChanges = true;
-            } else {
-                // This is a 0 column top record, we only need to store it
-                // to mark that the column is written in O3
-                if (getColumnTopPartitionTimestamp(columnIndex) > partitionTimestamp) {
-                    upsert(partitionTimestamp, columnIndex, -1, colTop);
+        int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);
+        LongList cachedList = getCachedList();
+        if (recordIndex > -1L) {
+            cachedList.setQuick(recordIndex + 3, colTop);
+            hasChanges = true;
+        } else {
+            // This is a 0 column top record we need to store it
+            // to mark that the column is written in O3 even before the partition the column was originally added
+            int defaultRecordIndex = getRecordIndex(COL_TOP_DEFAULT_PARTITION, columnIndex);
+            if (defaultRecordIndex >= 0) {
+                long columnNameTxn = cachedList.getQuick(defaultRecordIndex + 2);
+                long defaultPartitionTimestamp = cachedList.getQuick(defaultRecordIndex + 3);
+                // Do not add 0 column top if the default parttion
+                if (defaultPartitionTimestamp > partitionTimestamp || colTop > 0) {
+                    upsert(partitionTimestamp, columnIndex, columnNameTxn, colTop);
                 }
+            } else if (colTop > 0) {
+                // Store non-zero column tops only, zero is default
+                // for columns added on the table creation
+                upsert(partitionTimestamp, columnIndex, -1L, colTop);
             }
         }
     }
