@@ -55,7 +55,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
 
         final int N = 1024;
         final Rnd rnd = new Rnd();
-        try (TableWriter writer = new TableWriter(configuration, "all")) {
+        try (TableWriter writer = new TableWriter(configuration, "all", metrics)) {
 
             for (int i = 0; i < N; i++) {
                 TableWriter.Row row = writer.newRow();
@@ -139,7 +139,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
 
         final int N = 1024;
         final Rnd rnd = new Rnd();
-        try (TableWriter writer = new TableWriter(configuration, "all")) {
+        try (TableWriter writer = new TableWriter(configuration, "all", metrics)) {
 
             for (int i = 0; i < N; i++) {
                 TableWriter.Row row = writer.newRow();

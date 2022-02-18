@@ -24,11 +24,17 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GeoIntFunction;
+import org.jetbrains.annotations.TestOnly;
+
+import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
 public class GeoIntColumn extends GeoIntFunction {
-    private final int columnIndex;
+    private static final GeoIntColumn[] COLUMNS;
+
+    protected final int columnIndex;
 
     public GeoIntColumn(int columnIndex, int columnType) {
         super(columnType);
@@ -38,5 +44,34 @@ public class GeoIntColumn extends GeoIntFunction {
     @Override
     public int getGeoInt(Record rec) {
         return rec.getGeoInt(columnIndex);
+    }
+
+    public static GeoIntColumn newInstance(int columnIndex, int columnType) {
+        assert ColumnType.getGeoHashBits(columnType) >= ColumnType.GEOINT_MIN_BITS &&
+                ColumnType.getGeoHashBits(columnType) <= ColumnType.GEOINT_MAX_BITS;
+
+        final int bits = (ColumnType.GEOINT_MAX_BITS - ColumnType.GEOINT_MIN_BITS + 1);
+
+        if (columnIndex < STATIC_COLUMN_COUNT) {
+            return COLUMNS[columnIndex * bits + ColumnType.getGeoHashBits(columnType) - ColumnType.GEOINT_MIN_BITS];
+        }
+
+        return new GeoIntColumn(columnIndex, columnType);
+    }
+
+    static {
+        int bits = ColumnType.GEOINT_MAX_BITS - ColumnType.GEOINT_MIN_BITS + 1;
+        COLUMNS = new GeoIntColumn[STATIC_COLUMN_COUNT * bits];
+
+        for (int col = 0; col < STATIC_COLUMN_COUNT; col++) {
+            for (int bit = ColumnType.GEOINT_MIN_BITS; bit <= ColumnType.GEOINT_MAX_BITS; bit++) {
+                COLUMNS[col * bits + bit - ColumnType.GEOINT_MIN_BITS] = new GeoIntColumn(col, ColumnType.getGeoHashTypeWithBits(bit));
+            }
+        }
+    }
+
+    @TestOnly
+    int getColumnIndex() {
+        return columnIndex;
     }
 }

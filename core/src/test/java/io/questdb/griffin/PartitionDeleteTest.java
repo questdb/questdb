@@ -39,7 +39,7 @@ public class PartitionDeleteTest extends AbstractGriffinTest {
         compiler.compile("create table events (sequence long, event binary, timestamp timestamp) timestamp(timestamp) partition by DAY", sqlExecutionContext);
         engine.releaseAllWriters();
 
-        try (TableWriter w = new TableWriter(configuration, "events")) {
+        try (TableWriter w = new TableWriter(configuration, "events", metrics)) {
             long ts = TimestampFormatUtils.parseTimestamp("2020-06-30T00:00:00.000000Z");
             for (int i = 0; i < 10; i++) {
                 TableWriter.Row r = w.newRow(ts);
@@ -69,7 +69,7 @@ public class PartitionDeleteTest extends AbstractGriffinTest {
 
             }
 
-            try (TableWriter w = new TableWriter(configuration, "events")) {
+            try (TableWriter w = new TableWriter(configuration, "events", metrics)) {
                 long ts = TimestampFormatUtils.parseTimestamp("2020-07-02T00:00:00.000000Z");
                 for (int i = 0; i < 10; i++) {
                     TableWriter.Row row = w.newRow(ts);

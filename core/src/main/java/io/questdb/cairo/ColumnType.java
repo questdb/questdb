@@ -392,4 +392,14 @@ public final class ColumnType {
         TYPE_SIZE[RECORD] = -1;
         TYPE_SIZE[NULL] = 0;
     }
+
+    //geohash bits <-> backing primitive types bit boundaries
+    public static final int GEOBYTE_MIN_BITS = 1;
+    public static final int GEOBYTE_MAX_BITS = 7;
+    public static final int GEOSHORT_MIN_BITS = 8;
+    public static final int GEOSHORT_MAX_BITS = 15;
+    public static final int GEOINT_MIN_BITS = 16;
+    public static final int GEOINT_MAX_BITS = 31;
+    public static final int GEOLONG_MIN_BITS = 32;
+    public static final int GEOLONG_MAX_BITS = GEO_HASH_MAX_BITS_LENGTH;
 }

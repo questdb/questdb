@@ -248,7 +248,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 CairoTestUtils.create(model);
             }
 
-            try (TableWriter w = new TableWriter(configuration, names[i])) {
+            try (TableWriter w = new TableWriter(configuration, names[i], metrics)) {
                 for (int k = 0; k < 10; k++) {
                     TableWriter.Row r = w.newRow();
                     r.putDate(0, dataRnd.nextLong());
@@ -801,14 +801,12 @@ public class ReaderPoolTest extends AbstractCairoTest {
             Assert.assertEquals(1, pool.getBusyCount());
             reader.close();
             Assert.assertEquals(0, pool.getBusyCount());
-            reader.close();
-
-            reader = pool.get("u");
-            Assert.assertNotNull(reader);
-            Assert.assertTrue(reader.isOpen());
-            reader.close();
-
-            Assert.assertEquals("[10,1,11,1]", listener.events.toString());
+            try {
+                reader.close();
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "double close");
+            }
         });
     }
 

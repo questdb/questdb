@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.cutlass.http.ex.*;
@@ -49,6 +50,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     private final NetworkFacade nf;
     private final long multipartIdleSpinCount;
     private final CairoSecurityContext cairoSecurityContext;
+    private final Metrics metrics;
     private final boolean dumpNetworkTraffic;
     private final boolean allowDeflateBeforeSend;
     private final MultipartParserState multipartParserState = new MultipartParserState();
@@ -67,7 +69,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
     private long totalBytesSent;
     private int receivedBytes;
 
-    public HttpConnectionContext(HttpContextConfiguration configuration) {
+    public HttpConnectionContext(HttpContextConfiguration configuration, Metrics metrics) {
         this.nf = configuration.getNetworkFacade();
         this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, configuration.getConnectionStringPoolCapacity());
         this.headerParser = new HttpHeaderParser(configuration.getRequestHeaderBufferSize(), csPool);
@@ -82,6 +84,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
         this.cairoSecurityContext = new CairoSecurityContextImpl(!configuration.readOnlySecurityContext());
         this.serverKeepAlive = configuration.getServerKeepAlive();
         this.onPeerDisconnect = configuration.onPeerDisconnect();
+        this.metrics = metrics;
     }
 
     @Override
@@ -204,6 +207,10 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable, Retr
 
     public CairoSecurityContext getCairoSecurityContext() {
         return cairoSecurityContext;
+    }
+
+    public Metrics getMetrics() {
+        return metrics;
     }
 
     public HttpChunkedResponseSocket getChunkedResponseSocket() {

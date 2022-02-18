@@ -29,10 +29,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Sequence;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 import io.questdb.tasks.O3CopyTask;
 import io.questdb.tasks.O3PartitionUpdateTask;
 import org.jetbrains.annotations.Nullable;
@@ -54,6 +51,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             int columnType,
             int blockType,
             long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
             long srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixOffset,
@@ -121,6 +119,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 mergeCopy(
                         columnType,
                         timestampMergeIndexAddr,
+                        timestampMergeIndexSize,
                         // this is a hack, when we have column top we can have only of the two:
                         // srcDataFixOffset, when we had to shift data to backfill nulls or
                         // srcDataTopOffset - if we kept the column top
@@ -174,6 +173,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 columnCounter,
                 partCounter,
                 timestampMergeIndexAddr,
+                timestampMergeIndexSize,
                 srcDataFixFd,
                 srcDataFixAddr,
                 srcDataFixSize,
@@ -213,6 +213,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final int columnType = task.getColumnType();
         final int blockType = task.getBlockType();
         final long timestampMergeIndexAddr = task.getTimestampMergeIndexAddr();
+        final long timestampMergeIndexSize = task.getTimestampMergeIndexSize();
         final long srcDataFixFd = task.getSrcDataFixFd();
         final long srcDataFixAddr = task.getSrcDataFixAddr();
         final long srcDataFixOffset = task.getSrcDataFixOffset();
@@ -265,6 +266,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 columnType,
                 blockType,
                 timestampMergeIndexAddr,
+                timestampMergeIndexSize,
                 srcDataFixFd,
                 srcDataFixAddr,
                 srcDataFixOffset,
@@ -315,6 +317,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             AtomicInteger columnCounter,
             @Nullable AtomicInteger partCounter,
             long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
             long srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixSize,
@@ -352,6 +355,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 updateIndex(
                         columnCounter,
                         timestampMergeIndexAddr,
+                        timestampMergeIndexSize,
                         srcDataFixFd,
                         srcDataFixAddr,
                         srcDataFixSize,
@@ -391,6 +395,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             if (columnsRemaining == 0) {
                 updatePartition(
                         timestampMergeIndexAddr,
+                        timestampMergeIndexSize,
                         srcDataMax,
                         srcOooMax,
                         srcOooPartitionLo,
@@ -410,6 +415,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
 
     private static void updatePartition(
             long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
             long srcDataMax,
             long srcOooMax,
             long srcOooPartitionLo,
@@ -443,7 +449,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             }
         } finally {
             if (timestampMergeIndexAddr != 0) {
-                Vect.freeMergedIndex(timestampMergeIndexAddr);
+                Vect.freeMergedIndex(timestampMergeIndexAddr, timestampMergeIndexSize);
             }
             tableWriter.o3CountDownDoneLatch();
         }
@@ -452,6 +458,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     private static void updateIndex(
             AtomicInteger columnCounter,
             long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
             long srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixSize,
@@ -498,6 +505,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             copyIdleQuick(
                     columnCounter,
                     timestampMergeIndexAddr,
+                    timestampMergeIndexSize,
                     srcDataFixFd,
                     srcDataFixAddr,
                     srcDataFixSize,
@@ -525,6 +533,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             AtomicInteger columnCounter,
             AtomicInteger partCounter,
             long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
             long srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixSize,
@@ -549,6 +558,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             copyIdleQuick(
                     columnCounter,
                     timestampMergeIndexAddr,
+                    timestampMergeIndexSize,
                     srcDataFixFd,
                     srcDataFixAddr,
                     srcDataFixSize,
@@ -574,6 +584,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     static void copyIdleQuick(
             AtomicInteger columnCounter,
             long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
             long srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixSize,
@@ -605,6 +616,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             closeColumnIdle(
                     columnCounter,
                     timestampMergeIndexAddr,
+                    timestampMergeIndexSize,
                     srcTimestampFd,
                     srcTimestampAddr,
                     srcTimestampSize,
@@ -616,6 +628,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     static void closeColumnIdle(
             AtomicInteger columnCounter,
             long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
             long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
@@ -629,6 +642,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         if (columnsRemaining == 0) {
             closeColumnIdleQuick(
                     timestampMergeIndexAddr,
+                    timestampMergeIndexSize,
                     srcTimestampFd,
                     srcTimestampAddr,
                     srcTimestampSize,
@@ -639,6 +653,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
 
     static void closeColumnIdleQuick(
             long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
             long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
@@ -649,7 +664,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
             O3Utils.close(ff, srcTimestampFd);
             if (timestampMergeIndexAddr != 0) {
-                Vect.freeMergedIndex(timestampMergeIndexAddr);
+                Vect.freeMergedIndex(timestampMergeIndexAddr, timestampMergeIndexSize);
             }
         } finally {
             tableWriter.o3ClockDownPartitionUpdateCount();
@@ -901,6 +916,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     private static void mergeCopy(
             int columnType,
             long timestampMergeIndexAddr,
+            long timestampMergeIndexSize,
             long srcDataFixAddr,
             long srcDataVarAddr,
             long srcDataLo,

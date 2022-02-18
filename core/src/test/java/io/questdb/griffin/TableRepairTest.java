@@ -58,7 +58,7 @@ public class TableRepairTest extends AbstractGriffinTest {
 
                 // repair by opening and closing writer
 
-                try (TableWriter w = new TableWriter(configuration, "tst")) {
+                try (TableWriter w = new TableWriter(configuration, "tst", metrics)) {
                     Assert.assertTrue(reader.reload());
                     Assert.assertEquals(95040, reader.size());
                     Assert.assertEquals(950390000000L, w.getMaxTimestamp());
@@ -97,7 +97,7 @@ public class TableRepairTest extends AbstractGriffinTest {
 
                 // repair by opening and closing writer
 
-                new TableWriter(configuration, "tst").close();
+                new TableWriter(configuration, "tst", metrics).close();
 
                 Assert.assertTrue(reader.reload());
                 Assert.assertEquals(91360, reader.size());

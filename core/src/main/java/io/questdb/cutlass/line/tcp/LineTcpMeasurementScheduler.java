@@ -109,7 +109,7 @@ class LineTcpMeasurementScheduler implements Closeable {
 
         pubSeq = new MPSequence(queueSize);
 
-        long commitInterval = configuration.getCommitTimeout()/2;
+        long commitIntervalDefault = configuration.getCommitIntervalDefault();
         int nWriterThreads = writerWorkerPool.getWorkerCount();
         if (nWriterThreads > 1) {
             FanOut fanOut = new FanOut();
@@ -121,8 +121,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                         queue,
                         subSeq,
                         milliClock,
-                        commitInterval,
-                        this
+                        commitIntervalDefault,
+                        this,
+                        engine.getMetrics()
                 );
                 writerWorkerPool.assign(i, (Job) lineTcpWriterJob);
                 writerWorkerPool.assign(i, (Closeable) lineTcpWriterJob);
@@ -136,8 +137,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                     queue,
                     subSeq,
                     milliClock,
-                    commitInterval,
-                    this
+                    commitIntervalDefault,
+                    this,
+                    engine.getMetrics()
             );
             writerWorkerPool.assign(0, (Job) lineTcpWriterJob);
             writerWorkerPool.assign(0, (Closeable) lineTcpWriterJob);

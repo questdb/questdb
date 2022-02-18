@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -72,8 +73,8 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
 
     private AuthState authState;
 
-    LineTcpAuthConnectionContext(LineTcpReceiverConfiguration configuration, AuthDb authDb, LineTcpMeasurementScheduler scheduler) {
-        super(configuration, scheduler);
+    LineTcpAuthConnectionContext(LineTcpReceiverConfiguration configuration, AuthDb authDb, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
+        super(configuration, scheduler, metrics);
         if (configuration.getNetMsgBufferSize() < MIN_BUF_SIZE) {
             throw CairoException.instance(0).put("Minimum buffer length is ").put(MIN_BUF_SIZE);
         }

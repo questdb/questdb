@@ -236,11 +236,15 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
                     Rnd rnd = new Rnd();
                     appendRecords(0, n, timestampIncrement, writer, ts, addr, rnd);
                     ts = n * timestampIncrement;
-                    try (
-                            TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "xyz", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION);
-                            TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor()
-                    ) {
-                        cursor.of(reader);
+                    try (TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor()) {
+                        cursor.of(
+                                engine.getReader(
+                                        AllowAllCairoSecurityContext.INSTANCE,
+                                        "xyz",
+                                        TableUtils.ANY_TABLE_ID,
+                                        TableUtils.ANY_TABLE_VERSION
+                                )
+                        );
                         cursor.toBottom();
 
                         Assert.assertFalse(cursor.reload());
@@ -295,11 +299,15 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
                     Rnd rnd = new Rnd();
                     appendRecords(0, n, timestampIncrement, writer, ts, addr, rnd);
                     ts = n * timestampIncrement;
-                    try (
-                            TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "xyz", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION);
-                            TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor()
-                    ) {
-                        cursor.of(reader);
+                    try (TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor()) {
+                        cursor.of(
+                                engine.getReader(
+                                        AllowAllCairoSecurityContext.INSTANCE,
+                                        "xyz",
+                                        TableUtils.ANY_TABLE_ID,
+                                        TableUtils.ANY_TABLE_VERSION
+                                )
+                        );
                         Assert.assertTrue(cursor.reload());
                         int count = 0;
                         Record record = cursor.getRecord();

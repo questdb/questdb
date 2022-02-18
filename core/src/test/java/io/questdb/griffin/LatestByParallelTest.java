@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -275,7 +276,8 @@ public class LatestByParallelTest {
                             public boolean isEnabled() {
                                 return true;
                             }
-                        }
+                        },
+                        Metrics.disabled()
                 );
 
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {

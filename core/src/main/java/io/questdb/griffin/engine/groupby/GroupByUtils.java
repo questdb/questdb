@@ -176,6 +176,18 @@ public class GroupByUtils {
                         case ColumnType.LONG256:
                             fun = Long256Column.newInstance(keyColumnIndex - 1);
                             break;
+                        case ColumnType.GEOBYTE:
+                            fun = GeoByteColumn.newInstance(keyColumnIndex - 1, type);
+                            break;
+                        case ColumnType.GEOSHORT:
+                            fun = GeoShortColumn.newInstance(keyColumnIndex - 1, type);
+                            break;
+                        case ColumnType.GEOINT:
+                            fun = GeoIntColumn.newInstance(keyColumnIndex - 1, type);
+                            break;
+                        case ColumnType.GEOLONG:
+                            fun = GeoLongColumn.newInstance(keyColumnIndex - 1, type);
+                            break;
                         default:
                             fun = BinColumn.newInstance(keyColumnIndex - 1);
                             break;

@@ -406,7 +406,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                     tableId = metadata.getId();
                     for (ColumnManipulator manipulator : manipulators) {
                         long structVersion;
-                        try (TableWriter writer = new TableWriter(configuration, "all")) {
+                        try (TableWriter writer = new TableWriter(configuration, "all", metrics)) {
                             manipulator.restructure(writer);
                             structVersion = writer.getStructureVersion();
                         }
@@ -417,7 +417,6 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                             TableUtils.freeTransitionIndex(pTransitionIndex);
                         }
                     }
-
                     StringSink sink = new StringSink();
                     for (int i = 0; i < metadata.getColumnCount(); i++) {
                         sink.put(metadata.getColumnName(i)).put(':').put(ColumnType.nameOf(metadata.getColumnType(i))).put('\n');

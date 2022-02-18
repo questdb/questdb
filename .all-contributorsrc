@@ -770,6 +770,15 @@
         "userTesting",
         "bug"
       ]
+    },
+    {
+      "login": "enolal826",
+      "name": "Enol",
+      "avatar_url": "https://avatars.githubusercontent.com/u/51820585?v=4",
+      "profile": "https://github.com/enolal826",
+      "contributions": [
+        "code"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",

@@ -144,6 +144,26 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAttachFailsInvalidFormat() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel dst = new TableModel(configuration, "dst", PartitionBy.MONTH)) {
+
+                CairoTestUtils.create(dst.timestamp("ts")
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG));
+
+                String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '202A-01'";
+                try {
+                    compile(alterCommand, sqlExecutionContext);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals("[38] 'YYYY-MM' expected[errno=0]", e.getMessage());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAttachFailsInvalidFormatPartitionsAnnually() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel dst = new TableModel(configuration, "dst", PartitionBy.YEAR)) {
@@ -173,26 +193,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         .col("l", ColumnType.LONG));
 
                 String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '2020-01-01'";
-                try {
-                    compile(alterCommand, sqlExecutionContext);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals("[38] 'YYYY-MM' expected[errno=0]", e.getMessage());
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testAttachFailsInvalidFormat() throws Exception {
-        assertMemoryLeak(() -> {
-            try (TableModel dst = new TableModel(configuration, "dst", PartitionBy.MONTH)) {
-
-                CairoTestUtils.create(dst.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
-
-                String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST '202A-01'";
                 try {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
@@ -640,79 +640,75 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             partitions.append("'");
         }
 
-        try (TableReader tableReader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "dst")) {
-            int rowCount = readAllRows(tableReader);
+        int rowCount = readAllRows();
 
-            String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST " + partitions + ";";
+        String alterCommand = "ALTER TABLE dst ATTACH PARTITION LIST " + partitions + ";";
 
-            StringBuilder partitionsIn = new StringBuilder();
-            for (int i = 0; i < partitionList.length; i++) {
-                if (i > 0) {
-                    partitionsIn.append(" OR ");
-                }
-                partitionsIn.append("ts IN '");
-                partitionsIn.append(partitionList[i]);
-                partitionsIn.append("'");
+        StringBuilder partitionsIn = new StringBuilder();
+        for (int i = 0; i < partitionList.length; i++) {
+            if (i > 0) {
+                partitionsIn.append(" OR ");
             }
-
-            String withClause = ", t1 as (select 1 as id, count() as cnt from src WHERE " + partitionsIn + ")\n";
-
-            if (!skipCopy) {
-                for (String s : partitionList) {
-                    copyPartitionToBackup(src.getName(), s, dst.getName());
-                }
-            }
-
-            // Alter table
-            compile(alterCommand, sqlExecutionContext);
-
-            // Assert existing reader reloads new partition
-            Assert.assertTrue(tableReader.reload());
-            int newRowCount = readAllRows(tableReader);
-            Assert.assertTrue(newRowCount > rowCount);
-
-            TestUtils.assertEquals(
-                    "cnt\n" +
-                            (-countAjdustment) + "\n",
-                    executeSql("with t2 as (select 1 as id, count() as cnt from dst)\n" +
-                            withClause +
-                            "select t1.cnt - t2.cnt as cnt\n" +
-                            "from t2 cross join t1"
-                    )
-            );
-
-            long timestamp = 0;
-            for (String s : partitionList) {
-                long ts = TimestampFormatUtils.parseTimestamp(s
-                        + (src.getPartitionBy() == PartitionBy.YEAR ? "-01-01" : "")
-                        + (src.getPartitionBy() == PartitionBy.MONTH ? "-01" : "")
-                        + "T23:59:59.999z");
-                if (ts > timestamp) {
-                    timestamp = ts;
-                }
-            }
-
-            // Check table is writable after partition attach
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "dst", "testing")) {
-
-                TableWriter.Row row = writer.newRow(timestamp);
-                row.putLong(0, 1L);
-                row.putInt(1, 1);
-                row.append();
-                writer.commit();
-            }
-
-            TestUtils.assertEquals(
-                    "cnt\n" +
-                            (-1 - countAjdustment) + "\n",
-                    executeSql("with " +
-                            "t2 as (select 1 as id, count() as cnt from dst)\n" +
-                            withClause +
-                            "select t1.cnt - t2.cnt as cnt\n" +
-                            "from t2 cross join t1"
-                    )
-            );
+            partitionsIn.append("ts IN '");
+            partitionsIn.append(partitionList[i]);
+            partitionsIn.append("'");
         }
+
+        String withClause = ", t1 as (select 1 as id, count() as cnt from src WHERE " + partitionsIn + ")\n";
+
+        if (!skipCopy) {
+            for (String s : partitionList) {
+                copyPartitionToBackup(src.getName(), s, dst.getName());
+            }
+        }
+
+        // Alter table
+        compile(alterCommand, sqlExecutionContext);
+
+        int newRowCount = readAllRows();
+        Assert.assertTrue(newRowCount > rowCount);
+
+        TestUtils.assertEquals(
+                "cnt\n" +
+                        (-countAjdustment) + "\n",
+                executeSql("with t2 as (select 1 as id, count() as cnt from dst)\n" +
+                        withClause +
+                        "select t1.cnt - t2.cnt as cnt\n" +
+                        "from t2 cross join t1"
+                )
+        );
+
+        long timestamp = 0;
+        for (String s : partitionList) {
+            long ts = TimestampFormatUtils.parseTimestamp(s
+                    + (src.getPartitionBy() == PartitionBy.YEAR ? "-01-01" : "")
+                    + (src.getPartitionBy() == PartitionBy.MONTH ? "-01" : "")
+                    + "T23:59:59.999z");
+            if (ts > timestamp) {
+                timestamp = ts;
+            }
+        }
+
+        // Check table is writable after partition attach
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "dst", "testing")) {
+
+            TableWriter.Row row = writer.newRow(timestamp);
+            row.putLong(0, 1L);
+            row.putInt(1, 1);
+            row.append();
+            writer.commit();
+        }
+
+        TestUtils.assertEquals(
+                "cnt\n" +
+                        (-1 - countAjdustment) + "\n",
+                executeSql("with " +
+                        "t2 as (select 1 as id, count() as cnt from dst)\n" +
+                        withClause +
+                        "select t1.cnt - t2.cnt as cnt\n" +
+                        "from t2 cross join t1"
+                )
+        );
     }
 
     private void copyDirectory(Path from, Path to) throws IOException {
@@ -756,9 +752,9 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         return sink;
     }
 
-    private int readAllRows(TableReader tableReader) {
+    private int readAllRows() {
         try (FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor()) {
-            cursor.of(tableReader);
+            cursor.of(engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "dst"));
             DataFrame frame;
             int count = 0;
             while ((frame = cursor.next()) != null) {

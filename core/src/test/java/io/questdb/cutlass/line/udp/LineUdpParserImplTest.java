@@ -425,7 +425,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         };
 
         // open writer so that pool cannot have it
-        try (TableWriter ignored = new TableWriter(configuration, "x")) {
+        try (TableWriter ignored = new TableWriter(configuration, "x", metrics)) {
             assertThat(expected, lines, "x", configuration);
         }
     }
