@@ -325,7 +325,6 @@ public class TableWriter implements Closeable {
             configureAppendPosition();
             purgeUnusedPartitions();
             clearTodoLog();
-
             this.slaveTxReader = new TxReader(ff);
         } catch (Throwable e) {
             doClose(false);
@@ -2323,15 +2322,16 @@ public class TableWriter implements Closeable {
         return ts;
     }
 
-    private void indexLastPartition(SymbolColumnIndexer indexer, CharSequence columnName, int columnIndex, int indexValueBlockSize) {
+    private void indexLastPartition(SymbolColumnIndexer indexer, CharSequence columnName, long columnNameTxn, int columnIndex, int indexValueBlockSize) {
         final int plen = path.length();
 
-        createIndexFiles(columnName, indexValueBlockSize, plen, true);
+        createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, plen, true);
 
-        final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), columnName, plen, true);
+        final long lastPartitionTs = txWriter.getLastPartitionTimestamp();
+        final long columnTop = columnVersionWriter.getColumnTop(lastPartitionTs, columnIndex);
 
         // set indexer up to continue functioning as normal
-        indexer.configureFollowerAndWriter(configuration, path.trimTo(plen), columnName, getPrimaryColumn(columnIndex), columnTop);
+        indexer.configureFollowerAndWriter(configuration, path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop);
         indexer.refreshSourceAndIndex(0, txWriter.getTransientRowCount());
     }
 

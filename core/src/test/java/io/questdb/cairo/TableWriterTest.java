@@ -3249,7 +3249,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     return ff;
                 }
             };
-            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT, metrics)) {
                 Assert.assertEquals(20, writer.columns.size());
                 ts = populateProducts(writer, rnd, ts, 10000, 60000L * 1000L);
                 writer.commit();
@@ -3261,7 +3261,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 Assert.assertEquals(30000, writer.size());
             }
 
-            try (TableWriter writer = new TableWriter(configuration, PRODUCT)) {
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT, metrics)) {
                 populateProducts(writer, rnd, ts, 10000, 60000L * 1000L);
                 writer.commit();
                 Assert.assertEquals(40000, writer.size());
