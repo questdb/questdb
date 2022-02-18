@@ -72,7 +72,6 @@ public class TableWriter implements Closeable {
     private static final CharSequenceHashSet IGNORED_FILES = new CharSequenceHashSet();
     private static final Runnable NOOP = () -> {
     };
-    private final static RemoveFileLambda REMOVE_OR_LOG = TableWriter::removeFileAndOrLog;
     final ObjList<MemoryMAR> columns;
     private final ObjList<MemoryMA> logColumns;
     private final ObjList<MapWriter> symbolMapWriters;
@@ -1158,15 +1157,15 @@ public class TableWriter implements Closeable {
                         }
 
                         if (ColumnType.isVariableLength(metadata.getColumnType(j))) {
-                            throw new UnsupportedOperationException();
-//                            iFile(path.trimTo(plen), columnName);
-//                            long sz = TableUtils.readLongAtOffset(
-//                                    ff,
-//                                    path,
-//                                    tempMem16b,
-//                                    ourSize * 8L
-//                            );
-//                            model.addVarColumnSize(ts, j, sz);
+                            long columnNameTxn = columnVersionWriter.getColumnNameTxn(ts, j);
+                            iFile(path.trimTo(plen), columnName, columnNameTxn);
+                            long sz = TableUtils.readLongAtOffset(
+                                    ff,
+                                    path,
+                                    tempMem16b,
+                                    ourSize * 8L
+                            );
+                            model.addVarColumnSize(ts, j, sz);
                         }
                     }
                 }
@@ -1176,74 +1175,32 @@ public class TableWriter implements Closeable {
         }
 
         slaveMetaMem.of(slaveMetaData, slaveMetaDataSize);
+        int slaveColumnCount = slaveMetaMem.getInt(META_OFFSET_COUNT);
+        long offset = getColumnNameOffset(slaveColumnCount);
 
-        final LowerCaseCharSequenceIntHashMap slaveColumnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
-        // create column name - index map
-        // We will rely on this writer's metadata to convert CharSequence instances
-        // of column names to string in the map. The assumption here that most of the time
-        // column names will be the same
+        int newIndex = 0;
+        for (int masterIndex = 0; masterIndex < columnCount; masterIndex++) {
+            if (masterIndex < slaveColumnCount) {
+                CharSequence slaveName = slaveMetaMem.getStr(offset);
+                offset += Vm.getStorageLength(slaveName);
+                int slaveColumnType = getColumnType(slaveMetaMem, masterIndex);
+                boolean isSlaveIndexed = isColumnIndexed(slaveMetaMem, masterIndex);
+                boolean isRename = !Chars.equalsIgnoreCase(slaveName, metadata.getColumnName(masterIndex));
 
-        int slaveColumnCount = slaveMetaMem.getInt(TableUtils.META_OFFSET_COUNT);
-        long offset = TableUtils.getColumnNameOffset(slaveColumnCount);
-
-        // don't create strings in this loop, we already have them in columnNameIndexMap
-        for (int i = 0; i < slaveColumnCount; i++) {
-            final CharSequence name = slaveMetaMem.getStr(offset);
-            int ourColumnIndex = this.metadata.getColumnIndexQuiet(name);
-            if (ourColumnIndex > -1) {
-                slaveColumnNameIndexMap.put(this.metadata.getColumnName(ourColumnIndex), i);
+                if (slaveColumnType != metadata.getColumnType(masterIndex)
+                        || isRename
+                        || isSlaveIndexed != metadata.isColumnIndexed(masterIndex)) {
+                    model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_REMOVE, masterIndex, masterIndex);
+                    if (metadata.getColumnType(masterIndex) > 0) {
+                        model.addColumnMetadata(metadata.getColumnQuick(masterIndex));
+                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_ADD, newIndex++, masterIndex);
+                    }
+                }
             } else {
-                slaveColumnNameIndexMap.put(Chars.toString(name), i);
+                model.addColumnMetadata(metadata.getColumnQuick(masterIndex));
+                model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_ADD, newIndex++, masterIndex);
             }
-            offset += Vm.getStorageLength(name);
         }
-//
-//        final long pTransitionIndex = TableUtils.createTransitionIndex(
-//                metaMem,
-//                slaveMetaMem,
-//                slaveColumnCount,
-//                slaveColumnNameIndexMap
-//        );
-//
-//        try {
-//            final long pIndexBase = pTransitionIndex + 8;
-//
-//            int addedColumnMetadataIndex = -1;
-//            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-//
-//                final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L) - 1;
-//
-//                if (copyFrom == i) {
-//                    // It appears that column hasn't changed its position. There are three possibilities here:
-//                    // 1. Column has been deleted and re-added by the same name. We must check if file
-//                    //    descriptor is still valid. If it isn't, reload the column from disk
-//                    // 2. Column has been forced out of the reader via closeColumnForRemove(). This is required
-//                    //    on Windows before column can be deleted. In this case we must check for marker
-//                    //    instance and the column from disk
-//                    // 3. Column hasn't been altered, and we can skip to next column.
-//                    continue;
-//                }
-//
-//                if (copyFrom > -1) {
-//                    int copyTo = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4) - 1;
-//                    if (copyTo == -1) {
-//                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_REMOVE, i, -1);
-//                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_MOVE, copyFrom, i);
-//                    } else {
-//                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_MOVE, copyFrom, copyTo + 1);
-//                    }
-//                } else {
-//                    // new column
-//                    model.addColumnMetadata(metadata.getColumnQuick(i));
-//                    if (copyFrom == -2) {
-//                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_REMOVE, i, -1);
-//                    }
-//                    model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_ADD, ++addedColumnMetadataIndex, i);
-//                }
-//            }
-//        } finally {
-//            TableUtils.freeTransitionIndex(pTransitionIndex);
-//        }
 
         return model;
     }
@@ -3938,10 +3895,10 @@ public class TableWriter implements Closeable {
 
             long columnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(columnIndex);
             if (ColumnType.isSymbol(columnType)) {
-                TableWriter.REMOVE_OR_LOG.remove(ff, offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn));
-                TableWriter.REMOVE_OR_LOG.remove(ff, charFileName(path.trimTo(rootLen), columnName, columnNameTxn));
-                TableWriter.REMOVE_OR_LOG.remove(ff, BitmapIndexUtils.keyFileName(path.trimTo(rootLen), columnName, columnNameTxn));
-                TableWriter.REMOVE_OR_LOG.remove(ff, BitmapIndexUtils.valueFileName(path.trimTo(rootLen), columnName, columnNameTxn));
+                removeFileAndOrLog(ff, offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn));
+                removeFileAndOrLog(ff, charFileName(path.trimTo(rootLen), columnName, columnNameTxn));
+                removeFileAndOrLog(ff, BitmapIndexUtils.keyFileName(path.trimTo(rootLen), columnName, columnNameTxn));
+                removeFileAndOrLog(ff, BitmapIndexUtils.valueFileName(path.trimTo(rootLen), columnName, columnNameTxn));
             }
         } finally {
             path.trimTo(rootLen);
@@ -3953,10 +3910,10 @@ public class TableWriter implements Closeable {
         txnPartitionConditionally(path, partitionNameTxn);
         int plen = path.length();
         long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-        TableWriter.REMOVE_OR_LOG.remove(ff, dFile(path, columnName, columnNameTxn));
-        TableWriter.REMOVE_OR_LOG.remove(ff, iFile(path.trimTo(plen), columnName, columnNameTxn));
-        TableWriter.REMOVE_OR_LOG.remove(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn));
-        TableWriter.REMOVE_OR_LOG.remove(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn));
+        removeFileAndOrLog(ff, dFile(path, columnName, columnNameTxn));
+        removeFileAndOrLog(ff, iFile(path.trimTo(plen), columnName, columnNameTxn));
+        removeFileAndOrLog(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn));
+        removeFileAndOrLog(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn));
         path.trimTo(rootLen);
     }
 
@@ -4949,11 +4906,6 @@ public class TableWriter implements Closeable {
         Unsafe.getUnsafe().storeFence();
         todoMem.putLong(24, todoTxn);
         todoMem.jumpTo(56);
-    }
-
-    @FunctionalInterface
-    private interface RemoveFileLambda {
-        void remove(FilesFacade ff, LPSZ name);
     }
 
     @FunctionalInterface

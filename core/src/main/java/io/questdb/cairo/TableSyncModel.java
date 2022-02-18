@@ -394,7 +394,10 @@ public class TableSyncModel implements Mutable, Sinkable {
 
                 final TableColumnMetadata metadata = addedColumnMetadata.getQuick(i);
                 sink.putQuoted("name").put(':').putQuoted(metadata.getName()).put(',');
-                sink.putQuoted("type").put(':').putQuoted(ColumnType.nameOf(metadata.getType())).put(',');
+                sink.putQuoted("type").put(':').putQuoted(ColumnType.nameOf(Math.abs(metadata.getType()))).put(',');
+                if (metadata.getType() < 0) {
+                    sink.putQuoted("deleted").put(':').put("true").put(',');
+                }
                 sink.putQuoted("hash").put(':').put(metadata.getHash()).put(',');
                 sink.putQuoted("index").put(':').put(metadata.isIndexed()).put(',');
                 sink.putQuoted("indexCapacity").put(':').put(metadata.getIndexValueBlockCapacity());

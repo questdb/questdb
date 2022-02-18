@@ -282,13 +282,12 @@ public final class TableUtils {
         index += 8;
 
         // index structure is
-        // [delete: int, copy from:int]
+        // [action: int, copy from:int]
 
-        // delete: if -1 then current column in slave is deleted or renamed, else it's reused
+        // action: if -1 then current column in slave is deleted or renamed, else it's reused
         // "copy from" >= 0 indicates that column is to be copied from slave position
         // "copy from" < 0  indicates that column is new and should be taken from updated metadata position
-        // "copy from" == Integer.MIN_VALUE  indicates that column is deleted and should not be re-added from any source
-
+        // "copy from" == Integer.MIN_VALUE  indicates that column is deleted for good and should not be re-added from any source
 
         long offset = getColumnNameOffset(masterColumnCount);
         int slaveIndex = 0;
@@ -324,7 +323,7 @@ public final class TableUtils {
                     // reuse
                     Unsafe.getUnsafe().putInt(index + outIndex * 8L + 4, slaveIndex);
                     if (slaveIndex > outIndex) {
-                        // do nothing with existing column, this may be overwritten later
+                        // mark to do nothing with existing column, this may be overwritten later
                         Unsafe.getUnsafe().putInt(index + slaveIndex * 8L + 4, Integer.MIN_VALUE);
                     }
                 } else {
