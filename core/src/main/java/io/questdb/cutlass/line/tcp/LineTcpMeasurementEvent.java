@@ -24,13 +24,17 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.FloatingDirectCharSink;
 
 import java.io.Closeable;
@@ -132,60 +136,51 @@ class LineTcpMeasurementEvent implements Closeable {
                     }
 
                     case LineTcpParser.ENTITY_TYPE_CACHED_TAG: {
-                        int symIndex = buffer.readInt();
-                        row.putSymIndex(colIndex, symIndex);
+                        row.putSymIndex(colIndex, buffer.readInt());
                         break;
                     }
 
                     case LineTcpParser.ENTITY_TYPE_LONG:
                     case LineTcpParser.ENTITY_TYPE_GEOLONG: {
-                        long v = buffer.readLong();
-                        row.putLong(colIndex, v);
+                        row.putLong(colIndex, buffer.readLong());
                         break;
                     }
 
                     case LineTcpParser.ENTITY_TYPE_INTEGER:
                     case LineTcpParser.ENTITY_TYPE_GEOINT: {
-                        int v = buffer.readInt();
-                        row.putInt(colIndex, v);
+                        row.putInt(colIndex, buffer.readInt());
                         break;
                     }
 
                     case LineTcpParser.ENTITY_TYPE_SHORT:
                     case LineTcpParser.ENTITY_TYPE_GEOSHORT: {
-                        short v = buffer.readShort();
-                        row.putShort(colIndex, v);
+                        row.putShort(colIndex, buffer.readShort());
                         break;
                     }
 
                     case LineTcpParser.ENTITY_TYPE_BYTE:
                     case LineTcpParser.ENTITY_TYPE_GEOBYTE: {
-                        byte v = buffer.readByte();
-                        row.putByte(colIndex, v);
+                        row.putByte(colIndex, buffer.readByte());
                         break;
                     }
 
                     case LineTcpParser.ENTITY_TYPE_DATE: {
-                        long v = buffer.readLong();
-                        row.putDate(colIndex, v);
+                        row.putDate(colIndex, buffer.readLong());
                         break;
                     }
 
                     case LineTcpParser.ENTITY_TYPE_DOUBLE: {
-                        double v = buffer.readDouble();
-                        row.putDouble(colIndex, v);
+                        row.putDouble(colIndex, buffer.readDouble());
                         break;
                     }
 
                     case LineTcpParser.ENTITY_TYPE_FLOAT: {
-                        float v = buffer.readFloat();
-                        row.putFloat(colIndex, v);
+                        row.putFloat(colIndex, buffer.readFloat());
                         break;
                     }
 
                     case LineTcpParser.ENTITY_TYPE_BOOLEAN: {
-                        byte b = buffer.readByte();
-                        row.putBool(colIndex, b == 1);
+                        row.putBool(colIndex, buffer.readByte() == 1);
                         break;
                     }
 
@@ -196,8 +191,7 @@ class LineTcpMeasurementEvent implements Closeable {
                     }
 
                     case LineTcpParser.ENTITY_TYPE_CHAR: {
-                        char c = buffer.readChar();
-                        row.putChar(colIndex, c);
+                        row.putChar(colIndex, buffer.readChar());
                         break;
                     }
 
@@ -208,8 +202,7 @@ class LineTcpMeasurementEvent implements Closeable {
                     }
 
                     case LineTcpParser.ENTITY_TYPE_TIMESTAMP: {
-                        long ts = buffer.readLong();
-                        row.putTimestamp(colIndex, ts);
+                        row.putTimestamp(colIndex, buffer.readLong());
                         break;
                     }
 
@@ -233,6 +226,22 @@ class LineTcpMeasurementEvent implements Closeable {
                 row.cancel();
             }
         }
+    }
+
+    private CairoException boundsError(long entityValue, int colIndex, int colType) {
+        return CairoException.instance(0)
+                .put("line protocol integer is out of ").put(ColumnType.nameOf(colType))
+                .put(" bounds [columnIndex=").put(colIndex)
+                .put(", value=").put(entityValue)
+                .put(']');
+    }
+
+    private CairoException castError(String ilpType, int colIndex, int colType) {
+        return CairoException.instance(0)
+                .put("cast error for line protocol ").put(ilpType)
+                .put(" [columnIndex=").put(colIndex)
+                .put(", columnType=").put(ColumnType.nameOf(colType))
+                .put(']');
     }
 
     void createMeasurementEvent(
@@ -299,33 +308,36 @@ class LineTcpMeasurementEvent implements Closeable {
                             break;
 
                         case ColumnType.INT: {
-                            long entityValue = entity.getLongValue();
-                            if (entityValue == Numbers.LONG_NaN) {
-                                entityValue = Numbers.INT_NaN;
-                            } else if (entityValue < Integer.MIN_VALUE || entityValue > Integer.MAX_VALUE) {
+                            final long entityValue = entity.getLongValue();
+                            if (entityValue >= Integer.MIN_VALUE && entityValue <= Integer.MAX_VALUE) {
+                                buffer.addInt((int) entityValue);
+                            } else if (entityValue == Numbers.LONG_NaN) {
+                                buffer.addInt(Numbers.INT_NaN);
+                            } else {
                                 throw boundsError(entityValue, colIndex, ColumnType.INT);
                             }
-                            buffer.addInt((int) entityValue);
                             break;
                         }
                         case ColumnType.SHORT: {
-                            long entityValue = entity.getLongValue();
-                            if (entityValue == Numbers.LONG_NaN) {
-                                entityValue = (short) 0;
-                            } else if (entityValue < Short.MIN_VALUE || entityValue > Short.MAX_VALUE) {
+                            final long entityValue = entity.getLongValue();
+                            if (entityValue >= Short.MIN_VALUE && entityValue <= Short.MAX_VALUE) {
+                                buffer.addShort((short) entityValue);
+                            } else if (entityValue == Numbers.LONG_NaN) {
+                                buffer.addShort((short) 0);
+                            } else {
                                 throw boundsError(entityValue, colIndex, ColumnType.SHORT);
                             }
-                            buffer.addShort((short) entityValue);
                             break;
                         }
                         case ColumnType.BYTE: {
-                            long entityValue = entity.getLongValue();
-                            if (entityValue == Numbers.LONG_NaN) {
-                                entityValue = (byte) 0;
-                            } else if (entityValue < Byte.MIN_VALUE || entityValue > Byte.MAX_VALUE) {
+                            final long entityValue = entity.getLongValue();
+                            if (entityValue >= Byte.MIN_VALUE && entityValue <= Byte.MAX_VALUE) {
+                                buffer.addByte((byte) entityValue);
+                            } else if (entityValue == Numbers.LONG_NaN) {
+                                buffer.addByte((byte) 0);
+                            } else {
                                 throw boundsError(entityValue, colIndex, ColumnType.BYTE);
                             }
-                            buffer.addByte((byte) entityValue);
                             break;
                         }
                         case ColumnType.TIMESTAMP:
@@ -350,6 +362,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             } else {
                                 throw castError("integer", colIndex, colType);
                             }
+                            break;
                     }
                     break;
                 }
@@ -369,21 +382,20 @@ class LineTcpMeasurementEvent implements Closeable {
                             } else {
                                 throw castError("float", colIndex, colType);
                             }
+                            break;
                     }
                     break;
                 }
                 case LineTcpParser.ENTITY_TYPE_STRING: {
                     final int colTypeMeta = localDetails.getColumnTypeMeta(colIndex);
-                    if (colTypeMeta != 0) { // geohash
-                        buffer.addGeoHash(entity.getValue(), colTypeMeta);
-                    } else {
+                    final DirectByteCharSequence entityValue = entity.getValue();
+                    if (colTypeMeta == 0) { // not geohash
                         switch (ColumnType.tagOf(colType)) {
                             case ColumnType.STRING:
-                                buffer.addString(entity.getValue(), floatingCharSink, parser.hasNonAsciiChars());
+                                buffer.addString(entityValue, floatingCharSink, parser.hasNonAsciiChars());
                                 break;
 
                             case ColumnType.CHAR:
-                                CharSequence entityValue = entity.getValue();
                                 if (stringToCharCastAllowed || entityValue.length() == 1) {
                                     buffer.addChar(entityValue.charAt(0));
                                 } else {
@@ -393,11 +405,13 @@ class LineTcpMeasurementEvent implements Closeable {
 
                             default:
                                 if (symbolAsFieldSupported && colType == ColumnType.SYMBOL) {
-                                    buffer.addSymbol(entity.getValue(), floatingCharSink, parser.hasNonAsciiChars(), localDetails, colIndex);
+                                    buffer.addSymbol(entityValue, floatingCharSink, parser.hasNonAsciiChars(), localDetails, colIndex);
                                 } else {
                                     throw castError("string", colIndex, colType);
                                 }
                         }
+                    } else {
+                        buffer.addGeoHash(entityValue, colTypeMeta);
                     }
                     break;
                 }
@@ -405,6 +419,7 @@ class LineTcpMeasurementEvent implements Closeable {
                     if (ColumnType.tagOf(colType) == ColumnType.LONG256) {
                         buffer.addLong256(entity.getValue(), floatingCharSink, parser.hasNonAsciiChars());
                     } else if (symbolAsFieldSupported && colType == ColumnType.SYMBOL) {
+                        // todo: was someone doing this?
                         buffer.addSymbol(entity.getValue(), floatingCharSink, parser.hasNonAsciiChars(), localDetails, colIndex);
                     } else {
                         throw castError("long256", colIndex, colType);
@@ -455,6 +470,7 @@ class LineTcpMeasurementEvent implements Closeable {
                     if (ColumnType.tagOf(colType) == ColumnType.TIMESTAMP) {
                         buffer.addTimestamp(entity.getLongValue());
                     } else if (symbolAsFieldSupported && colType == ColumnType.SYMBOL) {
+                        // todo: this makes no sense
                         buffer.addSymbol(entity.getValue(), floatingCharSink, parser.hasNonAsciiChars(), localDetails, colIndex);
                     } else {
                         throw castError("timestamp", colIndex, colType);
@@ -462,11 +478,14 @@ class LineTcpMeasurementEvent implements Closeable {
                     break;
                 }
                 case LineTcpParser.ENTITY_TYPE_SYMBOL: {
-                    final int colTypeMeta = localDetails.getColumnTypeMeta(colIndex);
-                    if (colTypeMeta != 0) { // geohash
-                        buffer.addGeoHash(entity.getValue(), colTypeMeta);
-                    } else if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {
-                        buffer.addSymbol(entity.getValue(), floatingCharSink, parser.hasNonAsciiChars(), localDetails, colIndex);
+                    if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {
+                        buffer.addSymbol(
+                                entity.getValue(),
+                                floatingCharSink,
+                                parser.hasNonAsciiChars(),
+                                localDetails,
+                                colIndex
+                        );
                     } else {
                         throw castError("symbol", colIndex, colType);
                     }
@@ -490,22 +509,6 @@ class LineTcpMeasurementEvent implements Closeable {
         writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_RELEASE_WRITER;
         this.tableUpdateDetails = tableUpdateDetails;
         this.commitOnWriterClose = commitOnWriterClose;
-    }
-
-    private CairoException boundsError(long entityValue, int colIndex, int colType) {
-        return CairoException.instance(0)
-                .put("line protocol integer is out of ").put(ColumnType.nameOf(colType))
-                .put(" bounds [columnIndex=").put(colIndex)
-                .put(", value=").put(entityValue)
-                .put(']');
-    }
-
-    private CairoException castError(String ilpType, int colIndex, int colType) {
-        return CairoException.instance(0)
-                .put("cast error for line protocol ").put(ilpType)
-                .put(" [columnIndex=").put(colIndex)
-                .put(", columnType=").put(ColumnType.nameOf(colType))
-                .put(']');
     }
 
     private CairoException invalidColNameError(CharSequence colName) {

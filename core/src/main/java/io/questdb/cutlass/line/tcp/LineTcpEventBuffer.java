@@ -182,8 +182,14 @@ public class LineTcpEventBuffer {
         closePreparedUtf8CharSequence(LineTcpParser.ENTITY_TYPE_STRING);
     }
 
-    public void addSymbol(DirectByteCharSequence value, FloatingDirectCharSink floatingCharSink, boolean hasNonAsciiChars, TableUpdateDetails.ThreadLocalDetails localDetails, int colIndex) {
-        CharSequence columnValue = prepareUtf8CharSequence(value, floatingCharSink, hasNonAsciiChars);
+    public void addSymbol(
+            DirectByteCharSequence value,
+            FloatingDirectCharSink tempSink,
+            boolean hasNonAsciiChars,
+            TableUpdateDetails.ThreadLocalDetails localDetails,
+            int colIndex
+    ) {
+        CharSequence columnValue = prepareUtf8CharSequence(value, tempSink, hasNonAsciiChars);
         int symIndex = getSymbolIndex(localDetails, colIndex, columnValue);
         if (symIndex != SymbolTable.VALUE_NOT_FOUND) {
             // We know the symbol int value
@@ -276,7 +282,11 @@ public class LineTcpEventBuffer {
         }
     }
 
-    private CharSequence prepareUtf8CharSequence(DirectByteCharSequence value, FloatingDirectCharSink tempSink, boolean hasNonAsciiChars) {
+    private CharSequence prepareUtf8CharSequence(
+            DirectByteCharSequence value,
+            FloatingDirectCharSink tempSink,
+            boolean hasNonAsciiChars
+    ) {
         int len = 2 * value.length();
         checkCapacity(Byte.BYTES + Integer.BYTES + len);
 
