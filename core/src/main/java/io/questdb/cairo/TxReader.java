@@ -210,7 +210,7 @@ public class TxReader implements Closeable, Mutable {
             this.structureVersion = roTxMem.getLong(TX_OFFSET_STRUCT_VERSION_64);
             final long prevPartitionTableVersion = this.partitionTableVersion;
             this.partitionTableVersion = roTxMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION_64);
-            this.columnVersion = roTxMem.getLong(TX_OFFSET_COLUMN_VERSION_64);
+            this.columnVersion = unsafeReadColumnVersion();
             this.symbolColumnCount = this.symbolsSize / 8;
             unsafeLoadSymbolCounts(symbolColumnCount);
 
@@ -230,6 +230,10 @@ public class TxReader implements Closeable, Mutable {
 
         clearData();
         return false;
+    }
+
+    public long unsafeReadColumnVersion() {
+        return roTxMem.getLong(TX_OFFSET_COLUMN_VERSION_64);
     }
 
     public long getLastPartitionTimestamp() {

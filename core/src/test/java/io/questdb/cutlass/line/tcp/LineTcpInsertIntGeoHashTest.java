@@ -98,8 +98,6 @@ public class LineTcpInsertIntGeoHashTest extends LineTcpInsertGeoHashTest {
                         "9v1s8h\t1970-01-01T00:00:01.000000Z\n");
     }
 
-
-
     @Override
     public void testGeoHashesNotEnoughPrecision() throws Exception {
         assertGeoHash(32,

@@ -434,7 +434,7 @@ public class TableWriter implements Closeable {
         }
 
         // add column objects
-        configureColumn(type, isIndexed);
+        configureColumn(type, isIndexed, columnCount);
         if (isIndexed) {
             populateDenseIndexerList();
         }
@@ -508,18 +508,19 @@ public class TableWriter implements Closeable {
         final long columnNameTxn = columnVersionWriter.getColumnNameTxn(txWriter.getLastPartitionTimestamp(), columnIndex);
         try {
             try {
-
                 // edge cases here are:
                 // column spans only part of table - e.g. it was added after table was created and populated
                 // column has top value, e.g. does not span entire partition
                 // to this end, we have a super-edge case:
-                //
+
+                // This piece of code is unbelievably fragile!
                 if (PartitionBy.isPartitioned(partitionBy)) {
                     // run indexer for the whole table
-                    final long timestamp = indexHistoricPartitions(indexer, columnName, indexValueBlockSize);
+                    indexHistoricPartitions(indexer, columnName, indexValueBlockSize);
+                    long timestamp = txWriter.getMaxTimestamp();
                     if (timestamp != Numbers.LONG_NaN) {
                         path.trimTo(rootLen);
-                        setStateForTimestamp(path, timestamp, true);
+                        setStateForTimestamp(path, timestamp, false);
                         // create index in last partition
                         indexLastPartition(indexer, columnName, columnNameTxn, columnIndex, indexValueBlockSize);
                     }
@@ -533,7 +534,7 @@ public class TableWriter implements Closeable {
             }
         } catch (Throwable e) {
             LOG.error().$("rolling back index created so far [path=").$(path).$(']').$();
-            removeIndexFiles(columnName, columnNameTxn);
+            removeIndexFiles(columnName, columnIndex);
             throw e;
         }
 
@@ -1521,6 +1522,7 @@ public class TableWriter implements Closeable {
                 break;
             case ColumnType.GEOLONG:
                 nullers.add(() -> mem1.putLong(GeoHashes.NULL));
+                break;
             default:
                 nullers.add(NOOP);
         }
@@ -1858,7 +1860,7 @@ public class TableWriter implements Closeable {
         activeColumns = columns;
     }
 
-    private void configureColumn(int type, boolean indexFlag) {
+    private void configureColumn(int type, boolean indexFlag, int index) {
         final MemoryMAR primary;
         final MemoryMAR secondary;
         final MemoryCARW oooPrimary;
@@ -1894,16 +1896,17 @@ public class TableWriter implements Closeable {
             oooPrimary = oooSecondary = oooPrimary2 = oooSecondary2 = NullMemory.INSTANCE;
         }
 
-        columns.add(primary);
-        columns.add(secondary);
-        o3Columns.add(oooPrimary);
-        o3Columns.add(oooSecondary);
-        o3Columns2.add(oooPrimary2);
-        o3Columns2.add(oooSecondary2);
+        int baseIndex = getPrimaryColumnIndex(index);
+        columns.extendAndSet(baseIndex, primary);
+        columns.extendAndSet(baseIndex + 1, secondary);
+        o3Columns.extendAndSet(baseIndex, oooPrimary);
+        o3Columns.extendAndSet(baseIndex + 1, oooSecondary);
+        o3Columns2.extendAndSet(baseIndex, oooPrimary2);
+        o3Columns2.extendAndSet(baseIndex + 1, oooSecondary2);
         configureNullSetters(nullSetters, type, primary, secondary);
         configureNullSetters(o3NullSetters, type, oooPrimary, oooSecondary);
-        logColumns.add(logPrimary);
-        logColumns.add(logSecondary);
+        logColumns.extendAndSet(baseIndex, logPrimary);
+        logColumns.extendAndSet(baseIndex + 1, logSecondary);
 
         if (indexFlag) {
             indexers.extendAndSet((columns.size() - 1) / 2, new SymbolColumnIndexer());
@@ -1915,7 +1918,7 @@ public class TableWriter implements Closeable {
         this.symbolMapWriters.setPos(columnCount);
         for (int i = 0; i < columnCount; i++) {
             int type = metadata.getColumnType(i);
-            configureColumn(type, metadata.isColumnIndexed(i));
+            configureColumn(type, metadata.isColumnIndexed(i), i);
 
             if (ColumnType.isSymbol(type)) {
                 final int symbolIndex = denseSymbolMapWriters.size();
@@ -2277,20 +2280,19 @@ public class TableWriter implements Closeable {
         nullSetters.setQuick(columnIndex, NOOP);
     }
 
-    private long indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize) {
+    private void indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize) {
         long ts = this.txWriter.getMaxTimestamp();
         if (ts > Numbers.LONG_NaN) {
             final int columnIndex = metadata.getColumnIndex(columnName);
             try (final MemoryMR roMem = indexMem) {
-
-                for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+                // Index last partition separately
+                for (int i = 0, n = txWriter.getPartitionCount() - 1; i < n; i++) {
 
                     long timestamp = txWriter.getPartitionTimestamp(i);
                     path.trimTo(rootLen);
-                    setStateForTimestamp(path, timestamp, true);
+                    setStateForTimestamp(path, timestamp, false);
 
                     if (ff.exists(path.$())) {
-                        ts = timestamp;
                         final int plen = path.length();
 
                         long columnNameTxn = columnVersionWriter.getColumnNameTxn(timestamp, columnIndex);
@@ -2319,7 +2321,6 @@ public class TableWriter implements Closeable {
                 indexer.close();
             }
         }
-        return ts;
     }
 
     private void indexLastPartition(SymbolColumnIndexer indexer, CharSequence columnName, long columnNameTxn, int columnIndex, int indexValueBlockSize) {
@@ -3666,7 +3667,6 @@ public class TableWriter implements Closeable {
             long partitionTimestamp = txWriter.getLastPartitionTimestamp();
             long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
             setStateForTimestamp(path, partitionTimestamp, false);
-            txnPartitionConditionally(path, partitionNameTxn);
             final int plen = path.length();
             final int columnIndex = columnCount - 1;
 
@@ -3957,6 +3957,31 @@ public class TableWriter implements Closeable {
         path.trimTo(rootLen);
     }
 
+    private void removeIndexFiles(CharSequence columnName, int columnIndex) {
+        try {
+            for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
+                long partitionTimestamp = txWriter.getPartitionTimestamp(i);
+                long partitionNameTxn = txWriter.getPartitionNameTxn(i);
+                removeIndexFilesInPartition(columnName, columnIndex, partitionTimestamp, partitionNameTxn);
+            }
+            if (!PartitionBy.isPartitioned(partitionBy)) {
+                removeColumnFilesInPartition(columnName, columnIndex, txWriter.getLastPartitionTimestamp(), -1L);
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
+    private void removeIndexFilesInPartition(CharSequence columnName, int columnIndex, long partitionTimestamp, long partitionNameTxn) {
+        setPathForPartition(path, partitionBy, partitionTimestamp, false);
+        txnPartitionConditionally(path, partitionNameTxn);
+        int plen = path.length();
+        long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+        removeFileAndOrLog(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn));
+        removeFileAndOrLog(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn));
+        path.trimTo(rootLen);
+    }
+
     private int removeColumnFromMeta(int index) {
         try {
             int metaSwapIndex = openMetaSwapFile(ff, ddlMem, path, rootLen, fileOperationRetryCount);
@@ -3986,22 +4011,6 @@ public class TableWriter implements Closeable {
             return metaSwapIndex;
         } finally {
             ddlMem.close();
-        }
-    }
-
-    private void removeIndexFiles(CharSequence columnName, long columnNameTxn) {
-        try {
-            ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
-                if (Files.isDir(pUtf8NameZ, type)) {
-                    path.trimTo(rootLen);
-                    path.concat(pUtf8NameZ);
-                    int plen = path.length();
-                    removeFileAndOrLog(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn));
-                    removeFileAndOrLog(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn));
-                }
-            });
-        } finally {
-            path.trimTo(rootLen);
         }
     }
 
@@ -4633,7 +4642,7 @@ public class TableWriter implements Closeable {
     private void setColumnSize(int columnIndex, long size, boolean doubleAllocate) {
         MemoryMA mem1 = getPrimaryColumn(columnIndex);
         MemoryMA mem2 = getSecondaryColumn(columnIndex);
-        int type = getColumnType(metaMem, columnIndex);
+        int type = metadata.getColumnType(columnIndex);
         if (type > 0) { // Not deleted
             final long pos = size - columnTops.getQuick(columnIndex);
             if (pos > 0) {

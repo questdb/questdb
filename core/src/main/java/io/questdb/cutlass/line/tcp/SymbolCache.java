@@ -44,6 +44,7 @@ class SymbolCache implements Closeable {
     private final long waitUsBeforeReload;
     private long lastSymbolReaderReloadTimestamp;
     private int symbolIndexInTxFile;
+    private long columnVersion;
 
     SymbolCache(LineTcpReceiverConfiguration configuration) {
         this.clock = configuration.getMicrosecondClock();
@@ -93,7 +94,7 @@ class SymbolCache implements Closeable {
         this.txReader = txReader;
         int symCount = safeReadUnsafeSymbolCount(symbolIndexInTxFile, false);
         path.trimTo(plen);
-        if (columnVersionReader.getVersion() < txReader.getColumnVersion()) {
+        if (columnVersionReader.getVersion() < columnVersion) {
             columnVersionReader.readSafe(configuration.getMicrosecondClock(), configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs());
         }
         long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
@@ -107,6 +108,7 @@ class SymbolCache implements Closeable {
         while (true) {
             if (offsetReloadOk) {
                 int count = txReader.unsafeReadSymbolTransientCount(symbolIndexInTxFile);
+                this.columnVersion = txReader.unsafeReadColumnVersion();
                 Unsafe.getUnsafe().loadFence();
 
                 if (txReader.unsafeReadVersion() == txReader.getVersion()) {

@@ -402,7 +402,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                 new FilesFacadeImpl() {
                     @Override
                     public long openRW(LPSZ name) {
-                        if (Chars.endsWith(name, "broken.d")) {
+                        if (Chars.endsWith(name, "broken.d.1")) {
                             return -1;
                         }
                         return super.openRW(name);
