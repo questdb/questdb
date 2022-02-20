@@ -349,7 +349,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                 queue.get(seq).createMeasurementEvent(
                         tableUpdateDetails,
                         parser,
-                        floatingDirectCharSink,
                         netIoJob.getWorkerId()
                 );
             } finally {

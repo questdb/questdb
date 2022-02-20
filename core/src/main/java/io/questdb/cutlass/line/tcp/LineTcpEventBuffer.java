@@ -27,6 +27,7 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.sql.SymbolLookup;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
@@ -36,16 +37,13 @@ import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.FloatingDirectCharSink;
 
 import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
+import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16Unchecked;
 
 public class LineTcpEventBuffer {
     private final long bufLo;
     private final long bufMax;
-
+    private final FloatingDirectCharSink tempSink = new FloatingDirectCharSink();
     private long bufPos;
-
-    private DirectByteCharSequence value;
-    private FloatingDirectCharSink tempSink;
-    private boolean hasNonAsciiChars;
 
     public LineTcpEventBuffer(long bufLo, long bufSize) {
         this.bufLo = bufLo;
@@ -156,9 +154,8 @@ public class LineTcpEventBuffer {
         putLong(value);
     }
 
-    public void addLong256(DirectByteCharSequence value, FloatingDirectCharSink tempSink, boolean hasNonAsciiChars) {
-        prepareUtf8CharSequence(value, tempSink, hasNonAsciiChars);
-        closePreparedUtf8CharSequence(LineTcpParser.ENTITY_TYPE_LONG256);
+    public void addLong256(DirectByteCharSequence value, boolean hasNonAsciiChars) {
+        addString(value, hasNonAsciiChars, LineTcpParser.ENTITY_TYPE_LONG256);
     }
 
     public void addNull() {
@@ -177,20 +174,22 @@ public class LineTcpEventBuffer {
         putShort(value);
     }
 
-    public void addString(DirectByteCharSequence value, FloatingDirectCharSink tempSink, boolean hasNonAsciiChars) {
-        prepareUtf8CharSequence(value, tempSink, hasNonAsciiChars);
-        closePreparedUtf8CharSequence(LineTcpParser.ENTITY_TYPE_STRING);
+    public void addString(DirectByteCharSequence value, boolean hasNonAsciiChars) {
+        addString(value, hasNonAsciiChars, LineTcpParser.ENTITY_TYPE_STRING);
     }
 
-    public void addSymbol(
-            DirectByteCharSequence value,
-            FloatingDirectCharSink tempSink,
-            boolean hasNonAsciiChars,
-            TableUpdateDetails.ThreadLocalDetails localDetails,
-            int colIndex
-    ) {
-        CharSequence columnValue = prepareUtf8CharSequence(value, tempSink, hasNonAsciiChars);
-        int symIndex = getSymbolIndex(localDetails, colIndex, columnValue);
+    public void addSymbol(DirectByteCharSequence value, boolean hasNonAsciiChars, SymbolLookup symbolLookup) {
+        final int maxLen = 2 * value.length();
+        checkCapacity(Byte.BYTES + Integer.BYTES + maxLen);
+        final long strPos = bufPos + Byte.BYTES + Integer.BYTES; // skip field type and string length
+
+        // via temp string the utf8 decoder will be writing directly to our buffer
+        tempSink.of(strPos, strPos + maxLen);
+
+        // this method will write column name to the buffer if it has to be utf8 decoded
+        // otherwise it will write nothing.
+        CharSequence columnValue = utf8ToUtf16(value, tempSink, hasNonAsciiChars);
+        final int symIndex = symbolLookup.keyOf(columnValue);
         if (symIndex != SymbolTable.VALUE_NOT_FOUND) {
             // We know the symbol int value
             // Encode the int
@@ -198,8 +197,14 @@ public class LineTcpEventBuffer {
             putInt(symIndex);
         } else {
             // Symbol value cannot be resolved at this point
-            // Encode whole string value into the messagecrossjoinrecord
-            closePreparedUtf8CharSequence(LineTcpParser.ENTITY_TYPE_TAG);
+            // Encode whole string value into the message
+            if (!hasNonAsciiChars) {
+                tempSink.put(columnValue);
+            }
+            final int length = tempSink.length();
+            putByte(LineTcpParser.ENTITY_TYPE_TAG);
+            putInt(length);
+            bufPos += length * 2L;
         }
     }
 
@@ -251,14 +256,15 @@ public class LineTcpEventBuffer {
         return value;
     }
 
-    public void readUtf16Chars(FloatingDirectCharSink sink) {
-        readUtf16Chars(sink, readInt());
+    public CharSequence readUtf16Chars() {
+        return readUtf16Chars(readInt());
     }
 
-    public void readUtf16Chars(FloatingDirectCharSink sink, int length) {
+    public CharSequence readUtf16Chars(int length) {
         long nameLo = bufPos;
         bufPos += 2L * length;
-        sink.asCharSequence(nameLo, bufPos);
+        tempSink.asCharSequence(nameLo, bufPos);
+        return tempSink;
     }
 
     public void reset() {
@@ -269,44 +275,26 @@ public class LineTcpEventBuffer {
         bufPos = bufLo + Long.BYTES + Integer.BYTES; // timestamp and number of columns
     }
 
-    private static int getSymbolIndex(TableUpdateDetails.ThreadLocalDetails localDetails, int colIndex, CharSequence symValue) {
-        if (colIndex >= 0) {
-            return localDetails.getSymbolIndex(colIndex, symValue);
+    private void addString(DirectByteCharSequence value, boolean hasNonAsciiChars, byte entityTypeString) {
+        int maxLen = 2 * value.length();
+        checkCapacity(Byte.BYTES + Integer.BYTES + maxLen);
+        long strPos = bufPos + Byte.BYTES + Integer.BYTES; // skip field type and string length
+        tempSink.of(strPos, strPos + maxLen);
+        if (hasNonAsciiChars) {
+            utf8ToUtf16Unchecked(value, tempSink);
+        } else {
+            tempSink.put(value);
         }
-        return SymbolTable.VALUE_NOT_FOUND;
+        final int length = tempSink.length();
+        putByte(entityTypeString);
+        putInt(length);
+        bufPos += length * 2L;
     }
 
     private void checkCapacity(int length) {
         if (bufPos + length >= bufMax) {
             throw CairoException.instance(0).put("queue buffer overflow");
         }
-    }
-
-    private CharSequence prepareUtf8CharSequence(
-            DirectByteCharSequence value,
-            FloatingDirectCharSink tempSink,
-            boolean hasNonAsciiChars
-    ) {
-        int len = 2 * value.length();
-        checkCapacity(Byte.BYTES + Integer.BYTES + len);
-
-        this.value = value;
-        this.tempSink = tempSink;
-        this.hasNonAsciiChars = hasNonAsciiChars;
-
-        long strPos = bufPos + Byte.BYTES + Integer.BYTES; // skip field type and string length
-        tempSink.of(strPos, strPos + len);
-        return utf8ToUtf16(value, tempSink, hasNonAsciiChars);
-    }
-
-    private void closePreparedUtf8CharSequence(byte type) {
-        if (!hasNonAsciiChars) {
-            tempSink.put(value);
-        }
-        int length = tempSink.length();
-        putByte(type);
-        putInt(length);
-        bufPos += length * 2L;
     }
 
     private void putByte(byte value) {

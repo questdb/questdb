@@ -26,6 +26,8 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.SymbolLookup;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -36,11 +38,12 @@ import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
-import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
 import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8BytesToString;
+import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
 
 public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
+    private static final SymbolLookup NOT_FOUND_LOOKUP = value -> SymbolTable.VALUE_NOT_FOUND;
     private final String tableNameUtf16;
     private final ThreadLocalDetails[] localDetailsArray;
     private final int timestampIndex;
@@ -91,12 +94,6 @@ public class TableUpdateDetails implements Closeable {
                 .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
                 .$(']').$();
 
-    }
-
-    public void tick() {
-        if (writer != null) {
-            writer.tick(false);
-        }
     }
 
     @Override
@@ -173,45 +170,10 @@ public class TableUpdateDetails implements Closeable {
                 .I$();
     }
 
-    ThreadLocalDetails getThreadLocalDetails(int workerId) {
-        lastMeasurementMillis = millisecondClock.getTicks();
-        return localDetailsArray[workerId];
-    }
-
-    int getTimestampIndex() {
-        return timestampIndex;
-    }
-
-    TableWriter getWriter() {
-        return writer;
-    }
-
-    void commitIfMaxUncommittedRowsCountReached() {
-        final long rowsSinceCommit = writer.getUncommittedRowCount();
-        if (rowsSinceCommit < writer.getMetadata().getMaxUncommittedRows()) {
-            if ((rowsSinceCommit & writerTickRowsCountMod) == 0) {
-                // Tick without commit. Some tick commands may force writer to commit though.
-                writer.tick(false);
-            }
-            return;
-        }
-        LOG.debug().$("max-uncommitted-rows commit with lag [").$(tableNameUtf16).I$();
-        nextCommitTime = millisecondClock.getTicks() + writer.getCommitInterval();
-        writer.commitWithLag();
-        // Tick after commit.
-        writer.tick(false);
-    }
-
-    long commitIfIntervalElapsed(long wallClockMillis) {
-        if (wallClockMillis < nextCommitTime) {
-            return nextCommitTime;
-        }
+    public void tick() {
         if (writer != null) {
-            final long commitInterval = writer.getCommitInterval();
-            commit(wallClockMillis - lastMeasurementMillis < commitInterval);
-            nextCommitTime += commitInterval;
+            writer.tick(false);
         }
-        return nextCommitTime;
     }
 
     private void commit(boolean withLag) {
@@ -234,6 +196,47 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
+    long commitIfIntervalElapsed(long wallClockMillis) {
+        if (wallClockMillis < nextCommitTime) {
+            return nextCommitTime;
+        }
+        if (writer != null) {
+            final long commitInterval = writer.getCommitInterval();
+            commit(wallClockMillis - lastMeasurementMillis < commitInterval);
+            nextCommitTime += commitInterval;
+        }
+        return nextCommitTime;
+    }
+
+    void commitIfMaxUncommittedRowsCountReached() {
+        final long rowsSinceCommit = writer.getUncommittedRowCount();
+        if (rowsSinceCommit < writer.getMetadata().getMaxUncommittedRows()) {
+            if ((rowsSinceCommit & writerTickRowsCountMod) == 0) {
+                // Tick without commit. Some tick commands may force writer to commit though.
+                writer.tick(false);
+            }
+            return;
+        }
+        LOG.debug().$("max-uncommitted-rows commit with lag [").$(tableNameUtf16).I$();
+        nextCommitTime = millisecondClock.getTicks() + writer.getCommitInterval();
+        writer.commitWithLag();
+        // Tick after commit.
+        writer.tick(false);
+    }
+
+    ThreadLocalDetails getThreadLocalDetails(int workerId) {
+        lastMeasurementMillis = millisecondClock.getTicks();
+        return localDetailsArray[workerId];
+    }
+
+    int getTimestampIndex() {
+        return timestampIndex;
+    }
+
+    TableWriter getWriter() {
+        return writer;
+    }
+
     void releaseWriter(boolean commit) {
         if (writer != null) {
             try {
@@ -254,7 +257,6 @@ public class TableUpdateDetails implements Closeable {
     public class ThreadLocalDetails implements Closeable {
         static final int COLUMN_NOT_FOUND = -1;
         static final int DUPLICATED_COLUMN = -2;
-
         private final Path path = new Path();
         // maps column names to their indexes
         // keys are mangled strings created from the utf-8 encoded byte representations of the column names
@@ -326,6 +328,11 @@ public class TableUpdateDetails implements Closeable {
             columnTypeMeta.add(0);
         }
 
+        String getColName() {
+            assert colName != null;
+            return colName;
+        }
+
         // returns the column index for column name passed in colNameUtf8,
         // or COLUMN_NOT_FOUND if column index cannot be resolved (i.e. new column),
         // or DUPLICATED_COLUMN if the column has already been processed on the current event
@@ -375,18 +382,6 @@ public class TableUpdateDetails implements Closeable {
             }
         }
 
-        private void updateColumnTypeCache(int colIndex, TableReaderMetadata metadata) {
-            if (colIndex < 0) {
-                return;
-            }
-            columnCount = metadata.getColumnCount();
-            final int colType = metadata.getColumnType(colIndex);
-            columnTypes.extendAndSet(colIndex, colType);
-            final int geoHashBits = ColumnType.getGeoHashBits(colType);
-            columnTypeMeta.extendAndSet(colIndex + 1,
-                    geoHashBits == 0 ? 0 : Numbers.encodeLowHighShorts((short) geoHashBits, ColumnType.tagOf(colType)));
-        }
-
         int getColumnType(int colIndex) {
             return columnTypes.getQuick(colIndex);
         }
@@ -395,22 +390,20 @@ public class TableUpdateDetails implements Closeable {
             return columnTypeMeta.getQuick(colIndex + 1); // first val accounts for new cols, index -1
         }
 
+        SymbolLookup getSymbolLookup(int columnIndex) {
+            if (columnIndex > -1) {
+                SymbolCache symCache = symbolCacheByColumnIndex.getQuiet(columnIndex);
+                if (symCache != null) {
+                    return symCache;
+                }
+                return addSymbolCache(columnIndex);
+            }
+            return NOT_FOUND_LOOKUP;
+        }
+
         void resetProcessedColumnsTracking() {
             processedCols.setAll(columnCount, false);
             addedColsUtf16.clear();
-        }
-
-        String getColName() {
-            assert colName != null;
-            return colName;
-        }
-
-        int getSymbolIndex(int colIndex, CharSequence symValue) {
-            SymbolCache symCache = symbolCacheByColumnIndex.getQuiet(colIndex);
-            if (null == symCache) {
-                symCache = addSymbolCache(colIndex);
-            }
-            return symCache.getSymbolKey(symValue);
         }
 
         private int resolveSymbolIndex(TableReaderMetadata metadata, int colIndex) {
@@ -421,6 +414,18 @@ public class TableUpdateDetails implements Closeable {
                 }
             }
             return symIndex;
+        }
+
+        private void updateColumnTypeCache(int colIndex, TableReaderMetadata metadata) {
+            if (colIndex < 0) {
+                return;
+            }
+            columnCount = metadata.getColumnCount();
+            final int colType = metadata.getColumnType(colIndex);
+            columnTypes.extendAndSet(colIndex, colType);
+            final int geoHashBits = ColumnType.getGeoHashBits(colType);
+            columnTypeMeta.extendAndSet(colIndex + 1,
+                    geoHashBits == 0 ? 0 : Numbers.encodeLowHighShorts((short) geoHashBits, ColumnType.tagOf(colType)));
         }
     }
 }
