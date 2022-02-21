@@ -34,8 +34,10 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -69,6 +71,8 @@ public class AbstractCairoTest {
     protected static int binaryEncodingMaxLength = -1;
     protected static CharSequence defaultMapType;
     protected static int pageFrameMaxSize = -1;
+    protected static CharSequence snapshotRoot;
+    protected static CharSequence snapshotDirTimestampFormat;
 
     @Rule
     public TestName testName = new TestName();
@@ -181,6 +185,16 @@ public class AbstractCairoTest {
                 // Bump it to high number so that test don't fail with memory leak if LongList
                 // re-allocates
                 return 512;
+            }
+
+            @Override
+            public CharSequence getSnapshotRoot() {
+                return snapshotRoot;
+            }
+
+            @Override
+            public DateFormat getSnapshotDirTimestampFormat() {
+                return new TimestampFormatCompiler().compile(snapshotDirTimestampFormat);
             }
         };
         engine = new CairoEngine(configuration, metrics);
