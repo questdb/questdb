@@ -327,7 +327,7 @@ public class TableUpdateDetails implements Closeable {
                     path.trimTo(pathLen);
                 }
 
-                symCache.of(engine.getConfiguration(), path, reader.getMetadata().getColumnName(colIndex), symIndex, this.txReader, this.columnVersionReader, writerIndex);
+                symCache.of(engine.getConfiguration(), path, reader.getMetadata().getColumnName(colIndex), symIndex, txReader, columnVersionReader, writerIndex);
                 symbolCacheByColumnIndex.extendAndSet(colIndex, symCache);
                 return symCache;
             }

@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -49,7 +48,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_OFFSET_NAME_TXN = 2;
     private static final int PARTITIONS_SLOT_OFFSET_DATA_TXN = 3;
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
-    private final ColumnCopyStruct tempCopyStruct = new ColumnCopyStruct();
     private final FilesFacade ff;
     private final Path path;
     private final int partitionBy;
@@ -194,7 +192,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             // replace columns we force closed with special marker object
             // when we come to reloading table reader we would be able to
             // tell that column has to be attempted to be read from disk
-            closeColumn(getColumnBase(partitionIndex), columnIndex);
+            closePartitionColumnFile(getColumnBase(partitionIndex), columnIndex);
         }
 
         if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
@@ -393,7 +391,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
             final long openPartitionTimestamp = openPartitionInfo.getQuick(offset);
             final long openPartitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
-            final long openPartitionDataTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_DATA_TXN);
             final long openPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
 
             long txPartTs = txFile.getPartitionTimestamp(txPartitionIndex);
@@ -411,9 +408,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             } else {
                 // Refresh partition
                 long newPartitionSize = txFile.getPartitionSize(txPartitionIndex);
-                final long txPartitionDataTxn = txFile.getPartitionDataTxn(partitionIndex);
                 final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
-                if (openPartitionNameTxn == txPartitionNameTxn && openPartitionDataTxn == txPartitionDataTxn) {
+                if (openPartitionNameTxn == txPartitionNameTxn) {
                     if (openPartitionSize != newPartitionSize) {
                         if (openPartitionSize > -1L) {
                             reloadPartition(partitionIndex, newPartitionSize, txPartitionNameTxn);
@@ -542,14 +538,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void closeColumn(int columnBase, int columnIndex) {
-        final int index = getPrimaryColumnIndex(columnBase, columnIndex);
-        Misc.free(columns.getAndSetQuick(index, NullColumn.INSTANCE));
-        Misc.free(columns.getAndSetQuick(index + 1, NullColumn.INSTANCE));
-        Misc.free(bitmapIndexes.getAndSetQuick(index, null));
-        Misc.free(bitmapIndexes.getAndSetQuick(index + 1, null));
-    }
-
     private void closePartitionColumnFile(int base, int columnIndex) {
         int index = getPrimaryColumnIndex(base, columnIndex);
         Misc.free(columns.getAndSetQuick(index, NullColumn.INSTANCE));
@@ -561,7 +549,10 @@ public class TableReader implements Closeable, SymbolTableSource {
     private long closeRewrittenPartitionFiles(int partitionIndex, int oldBase, Path path) {
         long partitionTs = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
         long exisingPartitionNameTxn = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_NAME_TXN);
-        if (exisingPartitionNameTxn != txFile.getPartitionNameTxnByPartitionTimestamp(partitionTs)) {
+        long newNameTxn = txFile.getPartitionNameTxnByPartitionTimestamp(partitionTs);
+        long newSize = txFile.getPartitionSizeByPartitionTimestamp(partitionTs);
+        if (exisingPartitionNameTxn != newNameTxn || newSize < 0) {
+            LOG.debugW().$("close outdated partition files [table=").$(tableName).$(", ts=").$ts(partitionTs).$(", nameTxn=").$(newNameTxn).$();
             // Close all columns, partition is overwritten. Partition reconciliation process will re-open correct files
             for (int i = 0; i < this.columnCount; i++) {
                 closePartitionColumnFile(oldBase, i);
@@ -571,45 +562,33 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         pathGenPartitioned(partitionIndex);
         TableUtils.txnPartitionConditionally(path, exisingPartitionNameTxn);
-        return txFile.getPartitionSizeByPartitionTimestamp(partitionTs);
+        return newSize;
     }
 
-    private void copyColumnsTo(
-            int partitionIndex,
-            ObjList<MemoryMR> columns,
-            LongList columnTops,
-            ObjList<BitmapIndexReader> indexReaders,
-            int columnBase,
-            int columnIndex,
-            long partitionRowCount
+    private void copyColumns(
+            int fromBase,
+            int fromColumnIndex,
+            ObjList<MemoryMR> toColumns,
+            LongList toColumnTops,
+            ObjList<BitmapIndexReader> toIndexReaders,
+            int toBase,
+            int toColumnIndex
     ) {
-        MemoryMR mem1 = tempCopyStruct.mem1;
-        final boolean reload = mem1 != null && mem1.isDeleted();
-        final int index = getPrimaryColumnIndex(columnBase, columnIndex);
-        tempCopyStruct.mem1 = columns.getAndSetQuick(index, mem1);
-        tempCopyStruct.mem2 = columns.getAndSetQuick(index + 1, tempCopyStruct.mem2);
-        tempCopyStruct.top = columnTops.getAndSetQuick(columnBase / 2 + columnIndex, tempCopyStruct.top);
-        tempCopyStruct.backwardReader = indexReaders.getAndSetQuick(index, tempCopyStruct.backwardReader);
-        tempCopyStruct.forwardReader = indexReaders.getAndSetQuick(index + 1, tempCopyStruct.forwardReader);
-        if (reload) {
-            reloadColumnAt(
-                    partitionIndex,
-                    path,
-                    columns,
-                    columnTops,
-                    indexReaders,
-                    columnBase,
-                    columnIndex,
-                    partitionRowCount
-            );
-        }
+        final int fromIndex = getPrimaryColumnIndex(fromBase, fromColumnIndex);
+        final int toIndex = getPrimaryColumnIndex(toBase, toColumnIndex);
+
+        toColumns.getAndSetQuick(toIndex, columns.getAndSetQuick(fromIndex, null));
+        toColumns.getAndSetQuick(toIndex + 1, columns.getAndSetQuick(fromIndex + 1, null));
+        toColumnTops.getAndSetQuick(toBase / 2 + toColumnIndex, columnTops.getQuick(fromBase / 2 + fromColumnIndex));
+        toIndexReaders.getAndSetQuick(toIndex, bitmapIndexes.getAndSetQuick(fromIndex, null));
+        toIndexReaders.getAndSetQuick(toIndex + 1, bitmapIndexes.getAndSetQuick(fromIndex + 1, null));
     }
 
-    private SymbolMapReader copyOrRenewSymbolMapReader(SymbolMapReader reader, int columnIndex) {
+    private void copyOrRenewSymbolMapReader(SymbolMapReader reader, int columnIndex) {
         if (reader != null && reader.isDeleted()) {
             reader = reloadSymbolMapReader(columnIndex, reader);
         }
-        return symbolMapReaders.getAndSetQuick(columnIndex, reader);
+        symbolMapReaders.setQuick(columnIndex, reader);
     }
 
     private BitmapIndexReader createBitmapIndexReaderAt(int globalIndex, int columnBase, int columnIndex, long columnNameTxn, int direction, long txn) {
@@ -659,6 +638,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void createNewColumnList(int columnCount, long pTransitionIndex, int columnCountShl) {
+        LOG.debug().$("resizing columns file list [table=").$(tableName).I$();
         int capacity = partitionCount << columnCountShl;
         final ObjList<MemoryMR> columns = new ObjList<>(capacity + 2);
         final LongList columnTops = new LongList(capacity / 2);
@@ -687,8 +667,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         }
 
                         if (copyFrom > -1) {
-                            fetchColumnsFrom(oldBase, copyFrom);
-                            copyColumnsTo(partitionIndex, columns, columnTops, indexReaders, base, i, partitionRowCount);
+                            copyColumns(oldBase, copyFrom, columns, columnTops, indexReaders, base, i);
                         } else if (copyFrom != Integer.MIN_VALUE) {
                             // new instance
                             reloadColumnAt(partitionIndex, path, columns, columnTops, indexReaders, base, i, partitionRowCount);
@@ -712,7 +691,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         int columnBase = getColumnBase(partitionIndex);
         if (partitionSize > -1L) {
             for (int k = 0; k < columnCount; k++) {
-                closeColumn(columnBase, k);
+                closePartitionColumnFile(columnBase, k);
             }
         }
         int baseIndex = getPrimaryColumnIndex(columnBase, 0);
@@ -722,18 +701,6 @@ public class TableReader implements Closeable, SymbolTableSource {
 
         LOG.info().$("deleted partition [path=").$(path).$(",timestamp=").$ts(partitionTimestamp).I$();
         partitionCount--;
-    }
-
-    private void fetchColumnsFrom(
-            int columnBase,
-            int columnIndex
-    ) {
-        final int index = getPrimaryColumnIndex(columnBase, columnIndex);
-        tempCopyStruct.mem1 = columns.getAndSetQuick(index, null);
-        tempCopyStruct.mem2 = columns.getAndSetQuick(index + 1, null);
-        tempCopyStruct.top = columnTops.getQuick(columnBase / 2 + columnIndex);
-        tempCopyStruct.backwardReader = bitmapIndexes.getAndSetQuick(index, null);
-        tempCopyStruct.forwardReader = bitmapIndexes.getAndSetQuick(index + 1, null);
     }
 
     private void formatPartitionDirName(int partitionIndex, CharSink sink) {
@@ -824,7 +791,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, -1L); // name txn
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_DATA_TXN, -1L); // data txn
         partitionCount++;
-        LOG.debug().$("inserted partition [path=").$(path).$(",timestamp=").$ts(timestamp).I$();
+        LOG.debug().$("inserted partition [index=").$(partitionIndex).$(", path=").$(path).$(", timestamp=").$ts(timestamp).I$();
     }
 
     boolean isColumnCached(int columnIndex) {
@@ -884,17 +851,16 @@ public class TableReader implements Closeable, SymbolTableSource {
                 path.chop$();
 
                 final long partitionSize = txFile.getPartitionSize(partitionIndex);
+                if (partitionSize > -1L) {
+                    LOG.info()
+                            .$("open partition ").utf8(path.$())
+                            .$(" [rowCount=").$(partitionSize)
+                            .$(", partitionNameTxn=").$(partitionNameTxn)
+                            .$(", transientRowCount=").$(txFile.getTransientRowCount())
+                            .$(", partitionIndex=").$(partitionIndex)
+                            .$(", partitionCount=").$(partitionCount)
+                            .$(']').$();
 
-                LOG.info()
-                        .$("open partition ").utf8(path.$())
-                        .$(" [rowCount=").$(partitionSize)
-                        .$(", partitionNameTxn=").$(partitionNameTxn)
-                        .$(", transientRowCount=").$(txFile.getTransientRowCount())
-                        .$(", partitionIndex=").$(partitionIndex)
-                        .$(", partitionCount=").$(partitionCount)
-                        .$(']').$();
-
-                if (partitionSize > 0) {
                     openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
                     final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
                     this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
@@ -1006,12 +972,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                     // partition that is not yet in memory
                     if (openPartitionSize > -1) {
                         final long openPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
-//                        final long openPartitionDataTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_DATA_TXN);
                         final long txPartitionSize = txFile.getPartitionSize(partitionIndex);
                         final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
-//                        final long txPartitionDataTxn = txFile.getPartitionDataTxn(partitionIndex);
 
-                        if (openPartitionNameTxn == txPartitionNameTxn) { // TODO: find out why  && openPartitionDataTxn == txPartitionDataTxn was here
+                        if (openPartitionNameTxn == txPartitionNameTxn) {
                             if (openPartitionSize != txPartitionSize) {
                                 reloadPartition(partitionIndex, txPartitionSize, txPartitionNameTxn);
                                 this.openPartitionInfo.setQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
@@ -1165,7 +1129,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     // the reason is that we'd have to create gaps in columns list between
                     // partitions. It is possible in theory, but this could be an algo for
                     // another day.
-                    if (columnCountShl != this.columnCountShl) {
+                    if (columnCountShl > this.columnCountShl) {
                         createNewColumnList(columnCount, pTransitionIndex, columnCountShl);
                     } else {
                         reshuffleColumns(columnCount, pTransitionIndex);
@@ -1268,6 +1232,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void reshuffleColumns(int columnCount, long pTransitionIndex) {
+        LOG.debug().$("reshuffling columns file list [table=").$(tableName).I$();
         final long pIndexBase = pTransitionIndex + 8;
         int iterateCount = Math.max(columnCount, this.columnCount);
 
@@ -1288,14 +1253,12 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                         if (copyFrom == i) {
                             // It appears that column hasn't changed its position. There are three possibilities here:
-                            // 1. Column has been deleted and re-added by the same name. We must check if file
-                            //    descriptor is still valid. If it isn't, reload the column from disk
-                            // 2. Column has been forced out of the reader via closeColumnForRemove(). This is required
+                            // 1. Column has been forced out of the reader via closeColumnForRemove(). This is required
                             //    on Windows before column can be deleted. In this case we must check for marker
                             //    instance and the column from disk
-                            // 3. Column hasn't been altered and we can skip to next column.
+                            // 2. Column hasn't been altered and we can skip to next column.
                             MemoryMR col = columns.getQuick(getPrimaryColumnIndex(base, i));
-                            if ((col instanceof MemoryCMRImpl && col.isDeleted()) || col instanceof NullColumn) {
+                            if (col instanceof NullColumn) {
                                 reloadColumnAt(
                                         partitionIndex,
                                         path,
@@ -1308,8 +1271,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 );
                             }
                         } else if (copyFrom > -1) {
-                            fetchColumnsFrom(base, copyFrom);
-                            copyColumnsTo(partitionIndex, this.columns, this.columnTops, this.bitmapIndexes, base, i, partitionRowCount);
+                            copyColumns(base, copyFrom, columns, columnTops, bitmapIndexes, base, i);
                         } else if (copyFrom != Integer.MIN_VALUE) {
                             // new instance
                             reloadColumnAt(
@@ -1360,13 +1322,5 @@ public class TableReader implements Closeable, SymbolTableSource {
                 symbolMapReaders.getAndSetQuick(i, reloadSymbolMapReader(i, null));
             }
         }
-    }
-
-    private static class ColumnCopyStruct {
-        MemoryMR mem1;
-        MemoryMR mem2;
-        BitmapIndexReader backwardReader;
-        BitmapIndexReader forwardReader;
-        long top;
     }
 }

@@ -55,7 +55,6 @@ class SymbolCache implements Closeable {
     public void close() {
         symbolMapReader.close();
         symbolValueToKeyMap.clear();
-        txReader.close();
     }
 
     int getCacheValueCount() {
@@ -73,7 +72,7 @@ class SymbolCache implements Closeable {
 
         if (
                 ticks - lastSymbolReaderReloadTimestamp > waitUsBeforeReload &&
-                        (symbolValueCount = safeReadUnsafeSymbolCount(symbolIndexInTxFile, true)) > symbolMapReader.getSymbolCount()
+                        (symbolValueCount = safeReadUncommittedSymbolCount(symbolIndexInTxFile, true)) > symbolMapReader.getSymbolCount()
         ) {
             symbolMapReader.updateSymbolCount(symbolValueCount);
             lastSymbolReaderReloadTimestamp = ticks;
@@ -88,11 +87,18 @@ class SymbolCache implements Closeable {
         return symbolKey;
     }
 
-    void of(CairoConfiguration configuration, Path path, CharSequence columnName, int symbolIndexInTxFile, TxReader txReader, ColumnVersionReader columnVersionReader, int writerIndex) {
+    void of(CairoConfiguration configuration,
+            Path path,
+            CharSequence columnName,
+            int symbolIndexInTxFile,
+            TxReader txReader,
+            ColumnVersionReader columnVersionReader,
+            int writerIndex
+    ) {
         this.symbolIndexInTxFile = symbolIndexInTxFile;
         final int plen = path.length();
         this.txReader = txReader;
-        int symCount = safeReadUnsafeSymbolCount(symbolIndexInTxFile, false);
+        int symCount = safeReadUncommittedSymbolCount(symbolIndexInTxFile, false);
         path.trimTo(plen);
         if (columnVersionReader.getVersion() < columnVersion) {
             columnVersionReader.readSafe(configuration.getMicrosecondClock(), configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs());
@@ -102,7 +108,7 @@ class SymbolCache implements Closeable {
         symbolValueToKeyMap.clear(symCount);
     }
 
-    private int safeReadUnsafeSymbolCount(int symbolIndexInTxFile, boolean initialStateOk) {
+    private int safeReadUncommittedSymbolCount(int symbolIndexInTxFile, boolean initialStateOk) {
         // TODO: avoid reading dirty distinct counts from _txn file, add new file instead
         boolean offsetReloadOk = initialStateOk;
         while (true) {
