@@ -42,6 +42,7 @@ public final class Unsafe {
     static final AtomicLong MEM_USED = new AtomicLong(0);
     private static final sun.misc.Unsafe UNSAFE;
     private static final AtomicLong MALLOC_COUNT = new AtomicLong(0);
+    private static final AtomicLong REALLOC_COUNT = new AtomicLong(0);
     private static final AtomicLong FREE_COUNT = new AtomicLong(0);
     //#if jdk.version!=8
     private static final long OVERRIDE;
@@ -193,6 +194,10 @@ public final class Unsafe {
         return MALLOC_COUNT.get();
     }
 
+    public static long getReallocCount() {
+        return REALLOC_COUNT.get();
+    }
+
     public static long getMemUsed() {
         return MEM_USED.get();
     }
@@ -216,6 +221,7 @@ public final class Unsafe {
     public static long realloc(long address, long oldSize, long newSize, int memoryTag) {
         long ptr = getUnsafe().reallocateMemory(address, newSize);
         recordMemAlloc(-oldSize + newSize, memoryTag);
+        REALLOC_COUNT.incrementAndGet();
         return ptr;
     }
 
