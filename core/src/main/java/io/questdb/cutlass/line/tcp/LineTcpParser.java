@@ -662,6 +662,8 @@ public class LineTcpParser implements Closeable {
                 return true;
             }
             type = ENTITY_TYPE_TAG;
+            // todo: this has dramatic impact on cache coherency
+            //   lets find another way to check for quotes
             return value.byteAt(0) != '"' || valueLen < 2 || value.byteAt(valueLen - 1) != '"' || stringAsTagSupported;
         }
     }

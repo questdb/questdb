@@ -89,7 +89,7 @@ class LineTcpMeasurementEvent implements Closeable {
         TableWriter.Row row = null;
         try {
             TableWriter writer = tableUpdateDetails.getWriter();
-            long offset = 0;
+            long offset = buffer.getAddress();
             long timestamp = buffer.readLong(offset);
             offset += Long.BYTES;
             if (timestamp == LineTcpParser.NULL_TIMESTAMP) {
@@ -127,7 +127,7 @@ class LineTcpMeasurementEvent implements Closeable {
                         writer.addColumn(columnName, colType);
 
                         // Seek to beginning of entities
-                        offset = Long.BYTES + Integer.BYTES;
+                        offset = Long.BYTES + Integer.BYTES + buffer.getAddress();
                         nEntity = -1;
                         row = writer.newRow(timestamp);
                         continue;
@@ -250,7 +250,7 @@ class LineTcpMeasurementEvent implements Closeable {
         }
         // timestamp and entitiesWritten are saved to timestampBufPos after saving all fields
         // because their values are worked out while the columns are processed
-        long offset = Long.BYTES + Integer.BYTES;
+        long offset = Long.BYTES + Integer.BYTES + buffer.getAddress();
 //        buffer.seekToEntities();
         int entitiesWritten = 0;
         for (int nEntity = 0, n = parser.getEntityCount(); nEntity < n; nEntity++) {
@@ -489,8 +489,8 @@ class LineTcpMeasurementEvent implements Closeable {
                     break;
             }
         }
-        buffer.addDesignatedTimestamp(0, timestamp);
-        buffer.addNumOfColumns(Long.BYTES, entitiesWritten);
+        buffer.addDesignatedTimestamp(buffer.getAddress(), timestamp);
+        buffer.addNumOfColumns(buffer.getAddress() + Long.BYTES, entitiesWritten);
         writerWorkerId = tableUpdateDetails.getWriterThreadId();
     }
 
