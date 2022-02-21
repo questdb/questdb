@@ -31,6 +31,7 @@ import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.TextException;
@@ -97,6 +98,7 @@ public class SqlCompiler implements Closeable {
     private final TextLoader textLoader;
     private final FilesFacade ff;
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
+    private final ObjList<TableReader> lockedReaders = new ObjList<>();
 
     //determines how compiler parses query text
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
@@ -161,6 +163,7 @@ public class SqlCompiler implements Closeable {
         final KeywordBasedExecutor sqlBackup = backupAgent::sqlBackup;
         final KeywordBasedExecutor sqlShow = this::sqlShow;
         final KeywordBasedExecutor vacuumTable = this::vacuum;
+        final KeywordBasedExecutor snapshotDatabase = this::snapshotDatabase;
 
         keywordBasedExecutors.put("truncate", truncateTables);
         keywordBasedExecutors.put("TRUNCATE", truncateTables);
@@ -192,6 +195,8 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("SHOW", sqlShow);
         keywordBasedExecutors.put("vacuum", vacuumTable);
         keywordBasedExecutors.put("VACUUM", vacuumTable);
+        keywordBasedExecutors.put("snapshot", snapshotDatabase);
+        keywordBasedExecutors.put("SNAPSHOT", snapshotDatabase);
 
         configureLexer(lexer);
 
@@ -901,6 +906,7 @@ public class SqlCompiler implements Closeable {
         Misc.free(path);
         Misc.free(renamePath);
         Misc.free(textLoader);
+        Misc.free(lockedReaders);
     }
 
     @NotNull
@@ -1152,7 +1158,7 @@ public class SqlCompiler implements Closeable {
             tableExistsOrFail(tableNamePosition, tok, executionContext);
 
             CharSequence name = GenericLexer.immutableOf(tok);
-            try (TableReader reader = getTableReaderForAlterTable(executionContext, name)) {
+            try (TableReader reader = getTableReaderForStatement(executionContext, name, "alter table")) {
                 String tableName = reader.getTableName();
                 TableReaderMetadata tableMetadata = reader.getMetadata();
                 tok = expectToken(lexer, "'add', 'alter' or 'drop'");
@@ -2236,24 +2242,27 @@ public class SqlCompiler implements Closeable {
         return codeGenerator.generate(queryModel, executionContext);
     }
 
-    private TableReader getTableReaderForAlterTable(SqlExecutionContext executionContext, CharSequence tableName) {
+    private TableReader getTableReaderForStatement(SqlExecutionContext executionContext, CharSequence tableName, CharSequence statement) {
         try {
             return engine.getReader(executionContext.getCairoSecurityContext(), tableName);
         } catch (CairoException ex) {
             // Cannot open reader on existing table is pretty bad
-            LOG.error().$("error opening reader for alter table statement [table=").$(tableName)
+            LOG.error().$("error opening reader for ").$(statement)
+                    .$(" statement [table=").$(tableName)
                     .$(",errno=").$(ex.getErrno())
                     .$(",error=").$(ex.getMessage()).I$();
             // In some messed states, for example after _meta file swap failure Reader cannot be opened
             // but writer can be
             // Opening writer fixes the table mess
-            try (TableWriter ignored = engine.getWriter(executionContext.getCairoSecurityContext(), tableName, "alter table statement")) {
+            try (TableWriter ignored = engine.getWriter(executionContext.getCairoSecurityContext(), tableName, statement + " statement")) {
                 return engine.getReader(executionContext.getCairoSecurityContext(), tableName);
             } catch (EntryUnavailableException wrOpEx) {
                 // This is fine, writer is busy. Throw back origin error
                 throw ex;
             } catch (Throwable th) {
-                LOG.error().$("error preliminary opening writer for alter table statement [table=").$(tableName).$(",error=").$(ex.getMessage()).I$();
+                LOG.error().$("error preliminary opening writer for ").$(statement)
+                        .$(" statement [table=").$(tableName)
+                        .$(",error=").$(ex.getMessage()).I$();
                 throw ex;
             }
         }
@@ -2769,6 +2778,84 @@ public class SqlCompiler implements Closeable {
             throw SqlException.$(lexer.lastTokenPosition(), "end of line or ';' expected");
         }
         throw SqlException.$(lexer.lastTokenPosition(), "'partitions' expected");
+    }
+
+    private CompiledQuery snapshotDatabase(SqlExecutionContext executionContext) throws SqlException {
+
+        executionContext.getCairoSecurityContext().checkWritePermission();
+        CharSequence snapshotRoot = configuration.getSnapshotRoot();
+        if (null == snapshotRoot) {
+            throw CairoException.instance(0).put("Snapshots are disabled, no snapshot root directory is configured in the server configuration ['cairo.sql.snapshot.root' property]");
+        }
+        CharSequence tok = expectToken(lexer, "'prepare' or 'commit'");
+        if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
+
+            if (lockedReaders.size() > 0) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("Another snapshot command in progress");
+            }
+
+            path.of(configuration.getSnapshotRoot()).slash();
+            configuration.getSnapshotDirTimestampFormat().format(
+                    configuration.getMicrosecondClock().getTicks(),
+                    configuration.getDefaultDateLocale(),
+                    null,
+                    path);
+
+            int snapshotLen = path.length();
+            if (ff.exists(path.slash$())){
+                throw CairoException.instance(0).put("Snapshot dir already exists [dir=").put(path).put(']');
+            }
+            path.trimTo(snapshotLen);
+            try (TableListRecordCursorFactory factory = new TableListRecordCursorFactory(configuration.getFilesFacade(),
+                    configuration.getRoot())) {
+                try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                    final Record record = cursor.getRecord();
+                    try {
+                        while (cursor.hasNext()) {
+                            CharSequence tableName = record.getStr(0);
+                            TableReader reader = getTableReaderForStatement(executionContext, tableName, "snapshot");
+                            lockedReaders.add(reader);
+
+                            path.concat(configuration.getDbDirectory()).concat(tableName).slash$();
+
+                            if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
+                                throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(path).put(']');
+                            }
+
+                            int rootLen = path.length();
+                            try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+                                mem.smallFile(ff, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                                reader.getMetadata().dumpTo(mem);
+                                mem.close(false);
+                                mem.smallFile(ff, path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                                reader.getTxFile().dumpTo(mem);
+                                mem.close(false);
+                            }
+
+                            path.trimTo(snapshotLen);
+                        }
+                        ff.sync(); // commit filesystem caches to disk
+                    } catch (Throwable e) {
+                        path.trimTo(snapshotLen);
+                        path.$();
+                        ff.rmdir(path);
+                        Misc.freeObjList(lockedReaders);
+                        lockedReaders.clear();
+                        throw e;
+                    }
+                }
+            }
+            return compiledQuery.ofSnapshotDbPrepare();
+        }
+
+        if (Chars.equalsLowerCaseAscii(tok, "commit")) {
+            // simply release locked readers if any
+            Misc.freeObjList(lockedReaders);
+            lockedReaders.clear();
+            return compiledQuery.ofSnapshotDbCommit();
+        }
+
+        throw SqlException.position(lexer.lastTokenPosition()).put('\'').put("'prepare' or 'commit'").put("' expected");
     }
 
     private Function validateAndConsume(

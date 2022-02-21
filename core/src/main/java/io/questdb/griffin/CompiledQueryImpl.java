@@ -42,7 +42,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.tasks.TableWriterTask;
 
-import java.util.concurrent.locks.LockSupport;
 import io.questdb.griffin.update.UpdateStatement;
 
 public class CompiledQueryImpl implements CompiledQuery {
@@ -246,6 +245,14 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     CompiledQuery ofVacuum() {
         return of(VACUUM);
+    }
+
+    CompiledQuery ofSnapshotDbPrepare() {
+        return of(SNAPSHOT_DB_PREPARE);
+    }
+
+    CompiledQuery ofSnapshotDbCommit() {
+        return of(SNAPSHOT_DB_COMMIT);
     }
 
     private class AlterTableQueryFuture implements QueryFuture {
