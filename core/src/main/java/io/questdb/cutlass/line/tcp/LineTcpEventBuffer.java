@@ -46,6 +46,7 @@ public class LineTcpEventBuffer {
     private long bufPos;
 
     public LineTcpEventBuffer(long bufLo, long bufSize) {
+        assert bufSize > 0;
         this.bufLo = bufLo;
         this.bufPos = bufLo;
         this.bufMax = bufLo + bufSize;
@@ -203,8 +204,7 @@ public class LineTcpEventBuffer {
             }
             final int length = tempSink.length();
             putByte(LineTcpParser.ENTITY_TYPE_TAG);
-            putInt(length);
-            bufPos += length * 2L;
+            putInt(length, length * 2);
         }
     }
 
@@ -287,12 +287,11 @@ public class LineTcpEventBuffer {
         }
         final int length = tempSink.length();
         putByte(entityTypeString);
-        putInt(length);
-        bufPos += length * 2L;
+        putInt(length, length * 2);
     }
 
     private void checkCapacity(int length) {
-        if (bufPos + length >= bufMax) {
+        if (bufPos + length > bufMax) {
             throw CairoException.instance(0).put("queue buffer overflow");
         }
     }
@@ -320,6 +319,11 @@ public class LineTcpEventBuffer {
     private void putInt(int value) {
         Unsafe.getUnsafe().putInt(bufPos, value);
         bufPos += Integer.BYTES;
+    }
+
+    private void putInt(int value, int bufPosExtra) {
+        Unsafe.getUnsafe().putInt(bufPos, value);
+        bufPos += Integer.BYTES + bufPosExtra;
     }
 
     private void putLong(long value) {
