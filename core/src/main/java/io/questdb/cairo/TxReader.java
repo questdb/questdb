@@ -221,8 +221,6 @@ public class TxReader implements Closeable, Mutable {
 
             Unsafe.getUnsafe().loadFence();
             if (version == unsafeReadVersion()) {
-//                LOG.infoW().$("read txn record ").$(version).$(", offset=").$(baseOffset).$(", size=").$(size)
-//                        .$(", txn=").$(txn).$(", records=").$(fixedRowCount + transientRowCount).$(", dataVersion=").$(dataVersion).$();
                 return true;
             }
 
