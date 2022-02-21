@@ -2855,7 +2855,7 @@ public class SqlCompiler implements Closeable {
             return compiledQuery.ofSnapshotDbCommit();
         }
 
-        throw SqlException.position(lexer.lastTokenPosition()).put('\'').put("'prepare' or 'commit'").put("' expected");
+        throw SqlException.position(lexer.lastTokenPosition()).put("'prepare' or 'commit' expected");
     }
 
     private Function validateAndConsume(

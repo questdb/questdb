@@ -209,4 +209,17 @@ public class SnapshotDbTest extends AbstractGriffinTest {
             }
         });
     }
+
+    @Test
+    public void testUnknownSubOption() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table " + "test" + " (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            try {
+                compiler.compile("snapshot db", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException ex) {
+                Assert.assertTrue(ex.getMessage().startsWith("[9] 'prepare' or 'commit' expected"));
+            }
+        });
+    }
 }
