@@ -20,7 +20,7 @@ community **[Slack channel](https://slack.questdb.io/)** and post your questions
 there.
 
 We aim to respond to your issues and questions soonest. If you wish to receive a
-faster response, we recommend you to always describe your steps and provide
+faster response, we recommend you always describe your steps and provide
 information about your environment in the bug reports. And if you're proposing a
 new feature, it'll help us to evaluate the priority if you explain why you need
 it.
@@ -49,9 +49,11 @@ git to make build of development process Java-centric and simplified.
 
 Our maintainers label issues with relevant categories so you can use that to
 search for certain type of issues you'd like to work on. If you don't know where
-to start, try search for issues labeled with `good first issue` or
-`help wanted`. If you wish to understand how our maintainers work together, you
-can refer to [this section](#for-maintainers).
+to start, try search for issues labeled with
+[`good first issue`](https://github.com/questdb/questdb/labels/Good%20first%20issue)
+or [`help wanted`](https://github.com/questdb/questdb/labels/Help%20wanted). If
+you wish to understand how our maintainers work together, you can refer to
+[this section](#for-maintainers).
 
 # Environment setup
 
@@ -105,7 +107,7 @@ You can then run QuestDB with:
 java -p core/target/questdb-<version>-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_dir>
 ```
 
-The web console will available at [localhost:9000](http://localhost:9000).
+The web console will be available at [localhost:9000](http://localhost:9000).
 
 ### Compiling C-libraries
 
@@ -166,15 +168,15 @@ ui -> core/src/main/resources/io/questdb/site/public.zip
 We have a lot of unit tests, most of which are of "integration" type, e.g. test
 starts a server, interacts with it and asserts the outcome. We expect all
 contributors to submit PRs with tests. Please reach out to us via slack if
-you're uncertain on how to test, or you think an existing test is inadequate and
-should be removed.
+you're uncertain on how to test, or you think an existing test can be improved.
 
 ## Dependencies
 
-QuestDB does not have dependencies. This may sound unorthodox but in reality we
-try not to reinvent the wheel but rather than using libraries we implement
-algorithms on first principles to ensure perfect fit with existing code. With
-that in mind we expect contributions that do not add third-party dependencies.
+QuestDB does not have Java dependencies. This may sound unorthodox but in
+reality we try not to reinvent the wheel but rather than using libraries we
+implement algorithms on first principles to ensure perfect fit with existing
+code. With that in mind we expect contributions that do not add third-party
+dependencies.
 
 ## Allocations, "new" operator and garbage collection
 
