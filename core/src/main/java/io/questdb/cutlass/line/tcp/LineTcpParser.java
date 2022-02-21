@@ -77,14 +77,10 @@ public class LineTcpParser implements Closeable {
     private EntityHandler entityHandler;
     private long timestamp;
     private final EntityHandler entityTimestampHandler = this::expectTimestamp;
-    private final EntityHandler entityTableHandler = this::expectTableName;
-    private final EntityHandler entityValueHandler = this::expectEntityValue;
-    private final EntityHandler entityNameHandler = this::expectEntityName;
-    private int nQuoteCharacters;
-    private boolean scape;
-    private boolean nextValueCanBeOpenQuote;
+    private int nQuoteCharacters;    private final EntityHandler entityTableHandler = this::expectTableName;
+    private boolean scape;    private final EntityHandler entityValueHandler = this::expectEntityValue;
+    private boolean nextValueCanBeOpenQuote;    private final EntityHandler entityNameHandler = this::expectEntityName;
     private boolean hasNonAscii;
-
     public LineTcpParser(boolean stringAsTagSupported, boolean symbolAsFieldSupported) {
         this.stringAsTagSupported = stringAsTagSupported;
         this.symbolAsFieldSupported = symbolAsFieldSupported;
@@ -103,6 +99,10 @@ public class LineTcpParser implements Closeable {
         return entityCache.get(n);
     }
 
+    public int getEntityCount() {
+        return nEntities;
+    }
+
     public ErrorCode getErrorCode() {
         return errorCode;
     }
@@ -113,10 +113,6 @@ public class LineTcpParser implements Closeable {
 
     public long getTimestamp() {
         return timestamp;
-    }
-
-    public int getEntityCount() {
-        return nEntities;
     }
 
     public boolean hasNonAsciiChars() {
@@ -661,10 +657,9 @@ public class LineTcpParser implements Closeable {
                 if (valueLen > 0) {
                     byte lastByte = value.byteAt(valueLen - 1);
                     return parse(lastByte, valueLen) && (symbolAsFieldSupported || type != ENTITY_TYPE_SYMBOL);
-                } else {
-                    type = ENTITY_TYPE_NULL;
-                    return true;
                 }
+                type = ENTITY_TYPE_NULL;
+                return true;
             }
             type = ENTITY_TYPE_TAG;
             return value.byteAt(0) != '"' || valueLen < 2 || value.byteAt(valueLen - 1) != '"' || stringAsTagSupported;

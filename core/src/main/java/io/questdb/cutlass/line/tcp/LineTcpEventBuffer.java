@@ -43,76 +43,80 @@ public class LineTcpEventBuffer {
     private final long bufLo;
     private final long bufMax;
     private final FloatingDirectCharSink tempSink = new FloatingDirectCharSink();
-    private long bufPos;
 
     public LineTcpEventBuffer(long bufLo, long bufSize) {
-        assert bufSize > 0;
         this.bufLo = bufLo;
-        this.bufPos = bufLo;
-        this.bufMax = bufLo + bufSize;
+        this.bufMax = bufSize;
     }
 
-    public void addBoolean(byte value) {
-        checkCapacity(Byte.BYTES + Byte.BYTES);
-        putByte(LineTcpParser.ENTITY_TYPE_BOOLEAN);
-        putByte(value);
+    public long addBoolean(long offset, byte value) {
+        checkCapacity(offset, Byte.BYTES + Byte.BYTES);
+        Unsafe.getUnsafe().putByte(bufLo + offset, LineTcpParser.ENTITY_TYPE_BOOLEAN);
+        Unsafe.getUnsafe().putByte(bufLo + offset + Byte.BYTES, value);
+        return offset + Byte.BYTES * 2;
     }
 
-    public void addByte(byte value) {
-        checkCapacity(Byte.BYTES + Byte.BYTES);
-        putByte(LineTcpParser.ENTITY_TYPE_BYTE);
-        putByte(value);
+    public long addByte(long offset, byte value) {
+        checkCapacity(offset, Byte.BYTES + Byte.BYTES);
+        Unsafe.getUnsafe().putByte(bufLo + offset, LineTcpParser.ENTITY_TYPE_BYTE);
+        Unsafe.getUnsafe().putByte(bufLo + offset + 1, value);
+        return offset + Byte.BYTES * 2;
     }
 
-    public void addChar(char value) {
-        checkCapacity(Character.BYTES + Byte.BYTES);
-        putByte(LineTcpParser.ENTITY_TYPE_CHAR);
-        putChar(value);
+    public long addChar(long offset, char value) {
+        checkCapacity(offset, Character.BYTES + Byte.BYTES);
+        Unsafe.getUnsafe().putByte(bufLo + offset, LineTcpParser.ENTITY_TYPE_CHAR);
+        Unsafe.getUnsafe().putChar(bufLo + offset + 1, value);
+        return offset + Character.BYTES + Byte.BYTES;
     }
 
-    public void addColumnIndex(int colIndex) {
-        checkCapacity(Integer.BYTES);
-        putInt(colIndex);
+    public long addColumnIndex(long offset, int colIndex) {
+        checkCapacity(offset, Integer.BYTES);
+        Unsafe.getUnsafe().putInt(bufLo + offset, colIndex);
+        return offset + Integer.BYTES;
     }
 
-    public void addColumnName(CharSequence colName) {
+    public long addColumnName(long offset, CharSequence colName) {
         int length = colName.length();
         int len = 2 * length;
-        checkCapacity(Integer.BYTES + len);
+        checkCapacity(offset, Integer.BYTES + len);
 
         // Negative length indicates to the writer thread that column is passed by
         // name rather than by index. When value is positive (on the else branch)
         // the value is treated as column index.
-        putInt(-1 * length);
+        Unsafe.getUnsafe().putInt(bufLo + offset, -1 * length);
 
-        Chars.copyStrChars(colName, 0, length, bufPos);
-        bufPos += len;
+        Chars.copyStrChars(colName, 0, length, bufLo + offset + Integer.BYTES);
+        return offset + len + Integer.BYTES;
     }
 
-    public void addDate(long value) {
-        checkCapacity(Long.BYTES + Byte.BYTES);
-        putByte(LineTcpParser.ENTITY_TYPE_DATE);
-        putLong(value);
+    public long addDate(long offset, long value) {
+        checkCapacity(offset, Long.BYTES + Byte.BYTES);
+        Unsafe.getUnsafe().putByte(bufLo + offset, LineTcpParser.ENTITY_TYPE_DATE);
+        Unsafe.getUnsafe().putLong(bufLo + offset + 1, value);
+        return offset + Long.BYTES + Byte.BYTES;
     }
 
-    public void addDesignatedTimestamp(long timestamp) {
-        checkCapacity(Long.BYTES);
-        putLong(timestamp);
+    public void addDesignatedTimestamp(long offset, long timestamp) {
+        checkCapacity(offset, Long.BYTES);
+        Unsafe.getUnsafe().putLong(bufLo + offset, timestamp);
     }
 
-    public void addDouble(double value) {
-        checkCapacity(Double.BYTES + Byte.BYTES);
-        putByte(LineTcpParser.ENTITY_TYPE_DOUBLE);
-        putDouble(value);
+    public long addDouble(long offset, double value) {
+        checkCapacity(offset, Double.BYTES + Byte.BYTES);
+        Unsafe.getUnsafe().putByte(bufLo + offset, LineTcpParser.ENTITY_TYPE_DOUBLE);
+        Unsafe.getUnsafe().putDouble(bufLo + offset + 1, value);
+        return offset + Double.BYTES + Byte.BYTES;
     }
 
-    public void addFloat(float value) {
-        checkCapacity(Float.BYTES + Byte.BYTES);
-        putByte(LineTcpParser.ENTITY_TYPE_FLOAT);
-        putFloat(value);
+    public long addFloat(long offset, float value) {
+        checkCapacity(offset, Float.BYTES + Byte.BYTES);
+        Unsafe.getUnsafe().putByte(bufLo + offset, LineTcpParser.ENTITY_TYPE_FLOAT);
+        Unsafe.getUnsafe().putFloat(bufLo + offset + 1, value);
+        return offset + Float.BYTES + Byte.BYTES;
     }
 
-    public void addGeoHash(DirectByteCharSequence value, int colTypeMeta) {
+    public long addGeoHash(long offset, DirectByteCharSequence value, int colTypeMeta) {
         long geohash;
         try {
             geohash = GeoHashes.fromStringTruncatingNl(value.getLo(), value.getHi(), Numbers.decodeLowShort(colTypeMeta));
@@ -121,68 +125,72 @@ public class LineTcpEventBuffer {
         }
         switch (Numbers.decodeHighShort(colTypeMeta)) {
             default:
-                checkCapacity(Long.BYTES + Byte.BYTES);
-                putByte(LineTcpParser.ENTITY_TYPE_GEOLONG);
-                putLong(geohash);
-                break;
+                checkCapacity(offset, Long.BYTES + Byte.BYTES);
+                Unsafe.getUnsafe().putByte(bufLo + offset, LineTcpParser.ENTITY_TYPE_GEOLONG);
+                Unsafe.getUnsafe().putLong(bufLo + offset + 1, geohash);
+                return offset + Long.BYTES + Byte.BYTES;
             case ColumnType.GEOINT:
-                checkCapacity(Integer.BYTES + Byte.BYTES);
-                putByte(LineTcpParser.ENTITY_TYPE_GEOINT);
-                putInt((int) geohash);
-                break;
+                checkCapacity(offset, Integer.BYTES + Byte.BYTES);
+                Unsafe.getUnsafe().putByte(bufLo + offset, LineTcpParser.ENTITY_TYPE_GEOINT);
+                Unsafe.getUnsafe().putInt(bufLo + offset + 1, (int) geohash);
+                return offset + Integer.BYTES + Byte.BYTES;
             case ColumnType.GEOSHORT:
-                checkCapacity(Short.BYTES + Byte.BYTES);
-                putByte(LineTcpParser.ENTITY_TYPE_GEOSHORT);
-                putShort((short) geohash);
-                break;
+                checkCapacity(offset, Short.BYTES + Byte.BYTES);
+                Unsafe.getUnsafe().putByte(bufLo + offset, LineTcpParser.ENTITY_TYPE_GEOSHORT);
+                Unsafe.getUnsafe().putShort(bufLo + offset + 1, (short) geohash);
+                return offset + Short.BYTES + Byte.BYTES;
             case ColumnType.GEOBYTE:
-                checkCapacity(Byte.BYTES + Byte.BYTES);
-                putByte(LineTcpParser.ENTITY_TYPE_GEOBYTE);
-                putByte((byte) geohash);
-                break;
+                checkCapacity(offset, Byte.BYTES + Byte.BYTES);
+                Unsafe.getUnsafe().putByte(bufLo + offset, LineTcpParser.ENTITY_TYPE_GEOBYTE);
+                Unsafe.getUnsafe().putByte(bufLo + offset + 1, (byte) geohash);
+                return offset + Byte.BYTES * 2;
         }
     }
 
-    public void addInt(int value) {
-        checkCapacity(Integer.BYTES + Byte.BYTES);
-        putByte(LineTcpParser.ENTITY_TYPE_INTEGER);
-        putInt(value);
+    public long addInt(long offset, int value) {
+        checkCapacity(offset, Integer.BYTES + Byte.BYTES);
+        Unsafe.getUnsafe().putByte(bufLo + offset, LineTcpParser.ENTITY_TYPE_INTEGER);
+        Unsafe.getUnsafe().putInt(bufLo + offset + 1, value);
+        return offset + Integer.BYTES + Byte.BYTES;
     }
 
-    public void addLong(long value) {
-        checkCapacity(Long.BYTES + Byte.BYTES);
-        putByte(LineTcpParser.ENTITY_TYPE_LONG);
-        putLong(value);
+    public long addLong(long offset, long value) {
+        checkCapacity(offset, Long.BYTES + Byte.BYTES);
+        Unsafe.getUnsafe().putByte(bufLo + offset, LineTcpParser.ENTITY_TYPE_LONG);
+        Unsafe.getUnsafe().putLong(bufLo + offset + Byte.BYTES, value);
+        return offset + Long.BYTES + Byte.BYTES;
     }
 
-    public void addLong256(DirectByteCharSequence value, boolean hasNonAsciiChars) {
-        addString(value, hasNonAsciiChars, LineTcpParser.ENTITY_TYPE_LONG256);
+    public long addLong256(long offset, DirectByteCharSequence value, boolean hasNonAsciiChars) {
+        return addString(offset, value, hasNonAsciiChars, LineTcpParser.ENTITY_TYPE_LONG256);
     }
 
-    public void addNull() {
-        checkCapacity(Byte.BYTES);
-        putByte(LineTcpParser.ENTITY_TYPE_NULL);
+    public long addNull(long offset) {
+        checkCapacity(offset, Byte.BYTES);
+        Unsafe.getUnsafe().putByte(bufLo + offset, LineTcpParser.ENTITY_TYPE_NULL);
+        return offset + Byte.BYTES;
     }
 
-    public void addNumOfColumns(int numOfColumns) {
-        checkCapacity(Integer.BYTES);
-        putInt(numOfColumns);
+    public void addNumOfColumns(long offset, int numOfColumns) {
+        checkCapacity(offset, Integer.BYTES);
+        Unsafe.getUnsafe().putInt(bufLo + offset, numOfColumns);
     }
 
-    public void addShort(short value) {
-        checkCapacity(Short.BYTES + Byte.BYTES);
-        putByte(LineTcpParser.ENTITY_TYPE_SHORT);
-        putShort(value);
+    public long addShort(long offset, short value) {
+        checkCapacity(offset, Short.BYTES + Byte.BYTES);
+        Unsafe.getUnsafe().putByte(bufLo + offset, LineTcpParser.ENTITY_TYPE_SHORT);
+        Unsafe.getUnsafe().putShort(bufLo + offset + 1, value);
+        return offset + Short.BYTES + Byte.BYTES;
     }
 
-    public void addString(DirectByteCharSequence value, boolean hasNonAsciiChars) {
-        addString(value, hasNonAsciiChars, LineTcpParser.ENTITY_TYPE_STRING);
+    public long addString(long offset, DirectByteCharSequence value, boolean hasNonAsciiChars) {
+        return addString(offset, value, hasNonAsciiChars, LineTcpParser.ENTITY_TYPE_STRING);
     }
 
-    public void addSymbol(DirectByteCharSequence value, boolean hasNonAsciiChars, SymbolLookup symbolLookup) {
+    public long addSymbol(long offset, DirectByteCharSequence value, boolean hasNonAsciiChars, SymbolLookup symbolLookup) {
         final int maxLen = 2 * value.length();
-        checkCapacity(Byte.BYTES + Integer.BYTES + maxLen);
-        final long strPos = bufPos + Byte.BYTES + Integer.BYTES; // skip field type and string length
+        checkCapacity(offset, Byte.BYTES + Integer.BYTES + maxLen);
+        final long strPos = bufLo + offset + Byte.BYTES + Integer.BYTES; // skip field type and string length
 
         // via temp string the utf8 decoder will be writing directly to our buffer
         tempSink.of(strPos, strPos + maxLen);
@@ -194,8 +202,9 @@ public class LineTcpEventBuffer {
         if (symIndex != SymbolTable.VALUE_NOT_FOUND) {
             // We know the symbol int value
             // Encode the int
-            putByte(LineTcpParser.ENTITY_TYPE_CACHED_TAG);
-            putInt(symIndex);
+            Unsafe.getUnsafe().putByte(bufLo + offset, LineTcpParser.ENTITY_TYPE_CACHED_TAG);
+            Unsafe.getUnsafe().putInt(bufLo + offset + 1, symIndex);
+            return offset + Integer.BYTES + 1;
         } else {
             // Symbol value cannot be resolved at this point
             // Encode whole string value into the message
@@ -203,82 +212,61 @@ public class LineTcpEventBuffer {
                 tempSink.put(columnValue);
             }
             final int length = tempSink.length();
-            putByte(LineTcpParser.ENTITY_TYPE_TAG);
-            putInt(length, length * 2);
+            Unsafe.getUnsafe().putByte(bufLo + offset, LineTcpParser.ENTITY_TYPE_TAG);
+            Unsafe.getUnsafe().putInt(bufLo + offset + 1, length);
+            return offset + length * 2L + Integer.BYTES + 1;
         }
     }
 
-    public void addTimestamp(long value) {
-        checkCapacity(Long.BYTES + Byte.BYTES);
-        putByte(LineTcpParser.ENTITY_TYPE_TIMESTAMP);
-        putLong(value);
+    public long addTimestamp(long offset, long value) {
+        checkCapacity(offset, Long.BYTES + Byte.BYTES);
+        Unsafe.getUnsafe().putByte(bufLo + offset, LineTcpParser.ENTITY_TYPE_TIMESTAMP);
+        Unsafe.getUnsafe().putLong(bufLo + offset + 1, value);
+        return offset + Long.BYTES + Byte.BYTES;
     }
 
-    public byte readByte() {
-        byte value = Unsafe.getUnsafe().getByte(bufPos);
-        bufPos += Byte.BYTES;
-        return value;
+    public byte readByte(long offset) {
+        return Unsafe.getUnsafe().getByte(bufLo + offset);
     }
 
-    public char readChar() {
-        char value = Unsafe.getUnsafe().getChar(bufPos);
-        bufPos += Character.BYTES;
-        return value;
+    public char readChar(long offset) {
+        return Unsafe.getUnsafe().getChar(bufLo + offset);
     }
 
-    public double readDouble() {
-        double value = Unsafe.getUnsafe().getDouble(bufPos);
-        bufPos += Double.BYTES;
-        return value;
+    public double readDouble(long offset) {
+        return Unsafe.getUnsafe().getDouble(bufLo + offset);
     }
 
-    public float readFloat() {
-        float value = Unsafe.getUnsafe().getFloat(bufPos);
-        bufPos += Float.BYTES;
-        return value;
+    public float readFloat(long offset) {
+        return Unsafe.getUnsafe().getFloat(bufLo + offset);
     }
 
-    public int readInt() {
-        int value = Unsafe.getUnsafe().getInt(bufPos);
-        bufPos += Integer.BYTES;
-        return value;
+    public int readInt(long offset) {
+        return Unsafe.getUnsafe().getInt(bufLo + offset);
     }
 
-    public long readLong() {
-        long value = Unsafe.getUnsafe().getLong(bufPos);
-        bufPos += Long.BYTES;
-        return value;
+    public long readLong(long offset) {
+        return Unsafe.getUnsafe().getLong(bufLo + offset);
     }
 
-    public short readShort() {
-        short value = Unsafe.getUnsafe().getShort(bufPos);
-        bufPos += Short.BYTES;
-        return value;
+    public short readShort(long offset) {
+        return Unsafe.getUnsafe().getShort(bufLo + offset);
     }
 
-    public CharSequence readUtf16Chars() {
-        return readUtf16Chars(readInt());
+    public CharSequence readUtf16Chars(long offset) {
+        int len = readInt(offset);
+        return readUtf16Chars(offset + Integer.BYTES, len);
     }
 
-    public CharSequence readUtf16Chars(int length) {
-        long nameLo = bufPos;
-        bufPos += 2L * length;
-        tempSink.asCharSequence(nameLo, bufPos);
+    public CharSequence readUtf16Chars(long offset, int length) {
+        tempSink.asCharSequence(bufLo + offset, bufLo + offset + length * 2L);
         return tempSink;
     }
 
-    public void reset() {
-        bufPos = bufLo;
-    }
-
-    public void seekToEntities() {
-        bufPos = bufLo + Long.BYTES + Integer.BYTES; // timestamp and number of columns
-    }
-
-    private void addString(DirectByteCharSequence value, boolean hasNonAsciiChars, byte entityTypeString) {
+    private long addString(long offset, DirectByteCharSequence value, boolean hasNonAsciiChars, byte entityTypeString) {
         int maxLen = 2 * value.length();
-        checkCapacity(Byte.BYTES + Integer.BYTES + maxLen);
-        long strPos = bufPos + Byte.BYTES + Integer.BYTES; // skip field type and string length
+        checkCapacity(offset, Byte.BYTES + Integer.BYTES + maxLen);
+        long strPos = bufLo + offset + Byte.BYTES + Integer.BYTES; // skip field type and string length
         tempSink.of(strPos, strPos + maxLen);
         if (hasNonAsciiChars) {
             utf8ToUtf16Unchecked(value, tempSink);
@@ -286,53 +274,14 @@ public class LineTcpEventBuffer {
             tempSink.put(value);
         }
         final int length = tempSink.length();
-        putByte(entityTypeString);
-        putInt(length, length * 2);
+        Unsafe.getUnsafe().putByte(bufLo + offset, entityTypeString);
+        Unsafe.getUnsafe().putInt(bufLo + offset + 1, length);
+        return offset + length * 2L + Integer.BYTES + Byte.BYTES;
     }
 
-    private void checkCapacity(int length) {
-        if (bufPos + length > bufMax) {
+    private void checkCapacity(long offset, int length) {
+        if (offset + length > bufMax) {
             throw CairoException.instance(0).put("queue buffer overflow");
         }
-    }
-
-    private void putByte(byte value) {
-        Unsafe.getUnsafe().putByte(bufPos, value);
-        bufPos += Byte.BYTES;
-    }
-
-    private void putChar(char value) {
-        Unsafe.getUnsafe().putChar(bufPos, value);
-        bufPos += Character.BYTES;
-    }
-
-    private void putDouble(double value) {
-        Unsafe.getUnsafe().putDouble(bufPos, value);
-        bufPos += Double.BYTES;
-    }
-
-    private void putFloat(float value) {
-        Unsafe.getUnsafe().putFloat(bufPos, value);
-        bufPos += Float.BYTES;
-    }
-
-    private void putInt(int value) {
-        Unsafe.getUnsafe().putInt(bufPos, value);
-        bufPos += Integer.BYTES;
-    }
-
-    private void putInt(int value, int bufPosExtra) {
-        Unsafe.getUnsafe().putInt(bufPos, value);
-        bufPos += Integer.BYTES + bufPosExtra;
-    }
-
-    private void putLong(long value) {
-        Unsafe.getUnsafe().putLong(bufPos, value);
-        bufPos += Long.BYTES;
-    }
-
-    private void putShort(short value) {
-        Unsafe.getUnsafe().putShort(bufPos, value);
-        bufPos += Short.BYTES;
     }
 }
