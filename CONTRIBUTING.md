@@ -1,21 +1,29 @@
 # Contributing to QuestDB
 
-Hi, glad to know that you're interested in contributing to QuestDB.
-Here are some topics that can help you to get started:
+Hi, glad to know that you're interested in contributing to QuestDB. Here are
+some topics that can help you to get started:
 
-- 💡 [Bugs and features](#bugs-and-features) 
+- 💡 [Bugs and features](#bugs-and-features)
 - 🧭 [Navigation](#navigation)
 - 🔧 [Environment setup](#environment-setup)
 - ✅ [Before you submit](#before-you-submit)
-- 📢 [For maintainers](#for-maintainers) 
+- 📢 [For maintainers](#for-maintainers)
 
 # Bugs and features
 
-Whether it's a bug report or feature request, you're welcome to raise an **[issue](https://github.com/questdb/questdb/issues)** using the respective template. 
+Whether it's a bug report or feature request, you're welcome to raise an
+**[issue](https://github.com/questdb/questdb/issues)** using the respective
+template.
 
-If you're not sure whether you should raise an issue, you can also join our community **[Slack channel](https://slack.questdb.io/)** and post your questions there. 
+If you're not sure whether you should raise an issue, you can also join our
+community **[Slack channel](https://slack.questdb.io/)** and post your questions
+there.
 
-We aim to respond to your issues and questions soonest. If you wish to receive a faster response, we recommend you to always describe your steps and provide information about your environment in the bug reports. And if you're proposing a new feature, it'll help us to evaluate the priority if you explain why you need it. 
+We aim to respond to your issues and questions soonest. If you wish to receive a
+faster response, we recommend you to always describe your steps and provide
+information about your environment in the bug reports. And if you're proposing a
+new feature, it'll help us to evaluate the priority if you explain why you need
+it.
 
 # Navigation
 
@@ -37,12 +45,13 @@ We aim to respond to your issues and questions soonest. If you wish to receive a
 Compiled binaries (for C libraries and Windows service wrapper) are committed to
 git to make build of development process Java-centric and simplified.
 
-## Find suitable Sissues 
+## Find suitable Sissues
 
-Our maintainers label issues with relevant categories so you can use that to search for certain type of issues you'd like to work on.
-If you don't know where to start, try search for issues labeled with `good first issue` or `help wanted`. 
-If you wish to understand how our maintainers work together, you can refer to [this section](#for-maintainers).
-
+Our maintainers label issues with relevant categories so you can use that to
+search for certain type of issues you'd like to work on. If you don't know where
+to start, try search for issues labeled with `good first issue` or
+`help wanted`. If you wish to understand how our maintainers work together, you
+can refer to [this section](#for-maintainers).
 
 # Environment setup
 
@@ -59,7 +68,7 @@ If you wish to understand how our maintainers work together, you can refer to [t
   OPTIONAL
 - C-compiler, CMake - to contribute to C libraries - OPTIONAL
 
-## Local environment 
+## Local environment
 
 ### Setup Java and JAVA_HOME
 
@@ -83,7 +92,8 @@ set JAVA_HOME="c:\path\to\java directory"
 
 ### Compiling Java and frontend code
 
-You can compile the database and build the web console with the following command:
+You can compile the database and build the web console with the following
+command:
 
 ```bash
 mvn clean package -DskipTests -P build-web-console
@@ -155,9 +165,9 @@ ui -> core/src/main/resources/io/questdb/site/public.zip
 
 We have a lot of unit tests, most of which are of "integration" type, e.g. test
 starts a server, interacts with it and asserts the outcome. We expect all
-contributors to submit PRs with tests. Please reach out to us via slack if you're
-uncertain on how to test, or you think an existing test is inadequate and should be
-removed.
+contributors to submit PRs with tests. Please reach out to us via slack if
+you're uncertain on how to test, or you think an existing test is inadequate and
+should be removed.
 
 ## Dependencies
 
@@ -251,34 +261,33 @@ In case of ESET products, the following steps may resolve the issue:
 
 # For maintainers
 
-We have an [engineering project board](https://github.com/orgs/questdb/projects/2/views/8) to help us organize pending GitHub issues among engineers across different timezones. And there are configured views for bug reports and feature requests respectively. 
+We have an
+[engineering project board](https://github.com/orgs/questdb/projects/2/views/8)
+to help us organize pending GitHub issues among engineers across different
+timezones. And there are configured views for bug reports and feature requests
+respectively.
 
-This is what you can do to organize open issues: 
+This is what you can do to organize open issues:
+
 - Add new issues to project board
 - Always assign yourself when you pick up an issue
 - Label the issues correctly after you assess them
 - Close the issue when no further action is required
 
-Stages of our project board: 
-| Stage     | Description                                              |
-| ---             | ---                                                |
-| New | When users reported a bug, await for someone to reproduce or follow up |
-| More info needed  | When more communication with OP is required before we can begin triage |
-| To do    | Once issues are confirmed and engineers can pick up. Oder of To-do items should imply priority  |
-| In progress  | If an engineer pick up an issue, self-assign and move to In-progress  |
-| Done    | Once the linked pull request is merged, the issue is closed and moved to Done automatically |
+Stages of our project board: | Stage | Description | | --- | --- | | New | When
+users reported a bug, await for someone to reproduce or follow up | | More info
+needed | When more communication with OP is required before we can begin triage
+| | To do | Once issues are confirmed and engineers can pick up. Oder of To-do
+items should imply priority | | In progress | If an engineer pick up an issue,
+self-assign and move to In-progress | | Done | Once the linked pull request is
+merged, the issue is closed and moved to Done automatically |
 
-We also use labels to organize GitHub issues to have better overview. 
-The current labels can be roughly categorized as below:
+We also use labels to organize GitHub issues to have better overview. The
+current labels can be roughly categorized as below:
 
-| Categories     | Labels                                              |
-| ---             | ---                                                |
-| Type | `Bug`, `New features`, `Enhancement`, `Test`, `Tidy up`, `Question`, `Performance`, `Java` |
-| Component   | `ILP`, `Rest API`, `Postgres wire`, `SQL`, `Core`(for storage, data type etc.), `UI`                |
-| Priority    | `Immediate`, `Minor`, `Won't fix`, `Later`              |
-| Difficulty    | `Good first issue`           |
-
-
-
-
-
+| Categories | Labels                                                                                     |
+| ---------- | ------------------------------------------------------------------------------------------ |
+| Type       | `Bug`, `New features`, `Enhancement`, `Test`, `Tidy up`, `Question`, `Performance`, `Java` |
+| Component  | `ILP`, `Rest API`, `Postgres wire`, `SQL`, `Core`(for storage, data type etc.), `UI`       |
+| Priority   | `Immediate`, `Minor`, `Won't fix`, `Later`                                                 |
+| Difficulty | `Good first issue`                                                                         |
