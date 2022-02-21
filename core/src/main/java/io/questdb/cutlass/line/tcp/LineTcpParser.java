@@ -299,6 +299,7 @@ public class LineTcpParser implements Closeable {
         isQuotedFieldValue = false;
         entityLo = bufAt;
         tagsComplete = false;
+        tagStartsWithQuote = false;
         nEntities = 0;
         currentEntity = null;
         entityHandler = entityTableHandler;
@@ -348,8 +349,6 @@ public class LineTcpParser implements Closeable {
                 } else {
                     nextValueCanBeOpenQuote = true;
                 }
-            } else {
-                tagStartsWithQuote = false;
             }
             return true;
         }

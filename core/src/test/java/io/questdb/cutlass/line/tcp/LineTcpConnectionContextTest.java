@@ -1612,6 +1612,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "tbl,t1=tv1,t2=tv2 f1=\"Zen=Internet,Ltd\" 1465839830100400200\n" +
                     "tbl,t1=t\\\"v1,t2=t\"v2 f2=\"1\" 1465839830100400200\n" +
                     "tbl,t1=\"tv1\",t2=tv2 f2=\"1\" 1465839830100400200\n" +
+                    "tbl,t1=tv1\",t2=tv2 f2=\"1\" 1465839830100400200\n" +
+                    "tbl,t1=\"tv1,t2=tv2 f2=\"1\" 1465839830100400200\n" +
                     "tbl,t1=tv1,t2=tv2 f1=\"Zen Internet Ltd\",f2=\"fv2\" 1465839830100400200\n";
             do {
                 handleContextIO();
@@ -1623,6 +1625,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "tv1\ttv2\tZen Internet Ltd\t\t2016-06-13T17:43:50.100400Z\n" +
                     "tv1\ttv2\tZen=Internet,Ltd\t\t2016-06-13T17:43:50.100400Z\n" +
                     "t\"v1\tt\"v2\t\t1\t2016-06-13T17:43:50.100400Z\n" +
+                    "tv1\"\ttv2\t\t1\t2016-06-13T17:43:50.100400Z\n" +
+                    "\"tv1\ttv2\t\t1\t2016-06-13T17:43:50.100400Z\n" +
                     "tv1\ttv2\tZen Internet Ltd\tfv2\t2016-06-13T17:43:50.100400Z\n";
             assertTable(expected, "tbl");
         });
