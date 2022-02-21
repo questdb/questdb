@@ -69,6 +69,7 @@ public class LineTcpParser implements Closeable {
     private long bufAt;
     private long entityLo;
     private boolean tagsComplete;
+    private boolean tagStartsWithQuote;
     private int nEscapedChars;
     private boolean isQuotedFieldValue;
     private int nEntities;
@@ -235,6 +236,8 @@ public class LineTcpParser implements Closeable {
                         break;
                     } else if (isQuotedFieldValue) {
                         return getError();
+                    } else if (entityLo == bufAt) {
+                        tagStartsWithQuote = true;
                     }
 
                 default:
@@ -345,6 +348,8 @@ public class LineTcpParser implements Closeable {
                 } else {
                     nextValueCanBeOpenQuote = true;
                 }
+            } else {
+                tagStartsWithQuote = false;
             }
             return true;
         }
@@ -662,9 +667,7 @@ public class LineTcpParser implements Closeable {
                 return true;
             }
             type = ENTITY_TYPE_TAG;
-            // todo: this has dramatic impact on cache coherency
-            //   lets find another way to check for quotes
-            return value.byteAt(0) != '"' || valueLen < 2 || value.byteAt(valueLen - 1) != '"' || stringAsTagSupported;
+            return !tagStartsWithQuote || valueLen < 2 || value.byteAt(valueLen - 1) != '"' || stringAsTagSupported;
         }
     }
 }
