@@ -74,97 +74,112 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public void jumpTo(long offset) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long putBin(BinarySequence value) {
-        return 0L;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long putBin(long from, long len) {
-        return 0L;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void putBlockOfBytes(long from, long len) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void putBool(boolean value) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void putByte(byte b) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void putChar(char value) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void putDouble(double value) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void putFloat(float value) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void putInt(int value) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void putLong(long value) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void putLong128(long l1, long l2) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void putLong256(long l0, long l1, long l2, long l3) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void putLong256(Long256 value) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void putLong256(CharSequence hexString) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void putLong256(@NotNull CharSequence hexString, int start, int end) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long putNullBin() {
-        return 0L;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long putNullStr() {
-        return 0L;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void putShort(short value) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long putStr(CharSequence value) {
-        return 0L;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long putStr(char value) {
-        return 0L;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long putStr(CharSequence value, int pos, int len) {
-        return 0L;
+        throw new UnsupportedOperationException();
     }
 
     @Override

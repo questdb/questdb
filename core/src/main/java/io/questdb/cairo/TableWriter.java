@@ -3200,12 +3200,14 @@ public class TableWriter implements Closeable {
 
     private void o3OpenColumns() {
         for (int i = 0; i < columnCount; i++) {
-            MemoryARW mem1 = o3Columns.getQuick(getPrimaryColumnIndex(i));
-            mem1.jumpTo(0);
-            MemoryARW mem2 = o3Columns.getQuick(getSecondaryColumnIndex(i));
-            if (mem2 != null) {
-                mem2.jumpTo(0);
-                mem2.putLong(0);
+            if (metadata.getColumnType(i) > 0) {
+                MemoryARW mem1 = o3Columns.getQuick(getPrimaryColumnIndex(i));
+                mem1.jumpTo(0);
+                MemoryARW mem2 = o3Columns.getQuick(getSecondaryColumnIndex(i));
+                if (mem2 != null) {
+                    mem2.jumpTo(0);
+                    mem2.putLong(0);
+                }
             }
         }
         activeColumns = o3Columns;
@@ -3665,7 +3667,6 @@ public class TableWriter implements Closeable {
         try {
             // open column files
             long partitionTimestamp = txWriter.getLastPartitionTimestamp();
-            long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
             setStateForTimestamp(path, partitionTimestamp, false);
             final int plen = path.length();
             final int columnIndex = columnCount - 1;
