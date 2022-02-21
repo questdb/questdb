@@ -166,6 +166,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlJitDebugEnabled;
     private final DateLocale locale;
     private final String backupRoot;
+    private final String snapshotRoot;
+    private final DateFormat snapshotDirTimestampFormat;
     private final DateFormat backupDirTimestampFormat;
     private final CharSequence backupTempDirName;
     private final int backupMkdirMode;
@@ -702,6 +704,8 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.inputRoot = getString(properties, env, "cairo.sql.copy.root", null);
             this.backupRoot = getString(properties, env, "cairo.sql.backup.root", null);
+            this.snapshotRoot = getString(properties, env, "cairo.sql.snapshot.root", null);
+            this.snapshotDirTimestampFormat = getSnapshotTimestampFormat(properties, env);
             this.backupDirTimestampFormat = getTimestampFormat(properties, env);
             this.backupTempDirName = getString(properties, env, "cairo.sql.backup.dir.tmp.name", "tmp");
             this.backupMkdirMode = getInt(properties, env, "cairo.sql.backup.mkdir.mode", 509);
@@ -1087,6 +1091,16 @@ public class PropServerConfiguration implements ServerConfiguration {
             return compiler.compile(pattern);
         }
         return compiler.compile("yyyy-MM-dd");
+    }
+
+    private DateFormat getSnapshotTimestampFormat(Properties properties, @Nullable Map<String, String> env) {
+        final String pattern = overrideWithEnv(properties, env, "cairo.sql.snapshot.dir.datetime.format");
+        TimestampFormatCompiler compiler = new TimestampFormatCompiler();
+        //noinspection ReplaceNullCheck
+        if (null != pattern) {
+            return compiler.compile(pattern);
+        }
+        return compiler.compile("yyyy-MM-ddTHH-mm-ss-SSS");
     }
 
     private String overrideWithEnv(Properties properties, @Nullable Map<String, String> env, String key) {
@@ -1598,6 +1612,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public CharSequence getBackupRoot() {
             return backupRoot;
+        }
+
+        @Override
+        public CharSequence getSnapshotRoot() {
+            return snapshotRoot;
+        }
+
+        @Override
+        public DateFormat getSnapshotDirTimestampFormat() {
+            return snapshotDirTimestampFormat;
         }
 
         @Override
