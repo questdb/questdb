@@ -45,7 +45,7 @@ it.
 Compiled binaries (for C libraries and Windows service wrapper) are committed to
 git to make build of development process Java-centric and simplified.
 
-## Find suitable Sissues
+## Finding suitable issues
 
 Our maintainers label issues with relevant categories so you can use that to
 search for certain type of issues you'd like to work on. If you don't know where
