@@ -41,12 +41,12 @@ import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16Unchecked;
 
 public class LineTcpEventBuffer {
     private final long bufLo;
-    private final long bufMax;
+    private final long bufSize;
     private final FloatingDirectCharSink tempSink = new FloatingDirectCharSink();
 
     public LineTcpEventBuffer(long bufLo, long bufSize) {
         this.bufLo = bufLo;
-        this.bufMax = bufSize;
+        this.bufSize = bufSize;
     }
 
     public long addBoolean(long offset, byte value) {
@@ -280,7 +280,7 @@ public class LineTcpEventBuffer {
     }
 
     private void checkCapacity(long offset, int length) {
-        if (offset + length > bufMax) {
+        if (offset + length > bufSize) {
             throw CairoException.instance(0).put("queue buffer overflow");
         }
     }
