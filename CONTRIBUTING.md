@@ -11,11 +11,11 @@ Here are some topics that can help you to get started:
 
 # Bugs and features
 
-Whether it's a bug report or feature request, you're welcome to raise **[issues](https://github.com/questdb/questdb/issues)** using respective templates. 
+Whether it's a bug report or feature request, you're welcome to raise an **[issue](https://github.com/questdb/questdb/issues)** using the respective template. 
 
 If you're not sure whether you should raise an issue, you can also join our community **[Slack channel](https://slack.questdb.io/)** and post your questions there. 
 
-We aim to respond to your issues and questions soonest. If you wish to receive a faster response, we recommend you to always describe your steps and provide information about your environment in your bug reports. And if you're proposing a new feature, it'll help us to evaluate the priority if you explain why you need a specific feature. 
+We aim to respond to your issues and questions soonest. If you wish to receive a faster response, we recommend you to always describe your steps and provide information about your environment in the bug reports. And if you're proposing a new feature, it'll help us to evaluate the priority if you explain why you need it. 
 
 # Navigation
 
@@ -39,7 +39,7 @@ git to make build of development process Java-centric and simplified.
 
 ## Find suitable Sissues 
 
-Our maintainers label issues with relevant categories so you can use that to search for certain type of issues you'd like to work on. 
+Our maintainers label issues with relevant categories so you can use that to search for certain type of issues you'd like to work on.
 If you don't know where to start, try search for issues labeled with `good first issue` or `help wanted`. 
 If you wish to understand how our maintainers work together, you can refer to [this section](#for-maintainers).
 
@@ -83,7 +83,7 @@ set JAVA_HOME="c:\path\to\java directory"
 
 ### Compiling Java and frontend code
 
-Compiling the database + the web console can be done with:
+You can compile the database and build the web console with the following command:
 
 ```bash
 mvn clean package -DskipTests -P build-web-console
