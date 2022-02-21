@@ -6161,7 +6161,23 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(k) partition by NONE",
                 13, "unsupported column type: BINARY"
         );
+    }
 
+    @Test
+    public void testFailsForOrderByPositionWithColumnAliasesAndInvalidAggregateFuncCall() throws Exception {
+        // This query was leading to an NPE in the past.
+        assertFailure("select b col_1, count(a) col_cnt from x order by 2 desc",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                16,
+                "unexpected argument for function: count. expected args: (). actual args: (DOUBLE)");
     }
 
     @Test
