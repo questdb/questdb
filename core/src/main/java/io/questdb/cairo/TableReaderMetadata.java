@@ -145,7 +145,10 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
             // we are done
             this.columnCount = columnCount;
         }
-        this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
+        this.timestampIndex     = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
+        this.structureVersion   = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
+        this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
+        this.commitLag          = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
     }
 
     public void cloneTo(MemoryMA mem) {
