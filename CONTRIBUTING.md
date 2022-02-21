@@ -39,9 +39,9 @@ git to make build of development process Java-centric and simplified.
 
 ## Find suitable Sissues 
 
-Our maintainers will labell issues with relevant categories so you can use that to search for issues you'd like to work on. 
-If you don't know where to start, try search for issues labelled with `good first issue` or `help wanted`. 
-To understand how our maintainer works, you can refer to [this section](#for-maintainers).
+Our maintainers label issues with relevant categories so you can use that to search for certain type of issues you'd like to work on. 
+If you don't know where to start, try search for issues labeled with `good first issue` or `help wanted`. 
+If you wish to understand how our maintainers work together, you can refer to [this section](#for-maintainers).
 
 
 # Environment setup
@@ -257,7 +257,7 @@ This is what you can do to organize open issues:
 - Add new issues to project board
 - Always assign yourself when you pick up an issue
 - Label the issues correctly after you assess them
-- Close the issue when no further actions is required
+- Close the issue when no further action is required
 
 Stages of our project board: 
 | Stage     | Description                                              |
@@ -268,8 +268,8 @@ Stages of our project board:
 | In progress  | If an engineer pick up an issue, self-assign and move to In-progress  |
 | Done    | Once the linked pull request is merged, the issue is closed and moved to Done automatically |
 
-We also use labels to help us categorize GitHub issues. 
-The current labels can be roughly categorized like this:
+We also use labels to organize GitHub issues to have better overview. 
+The current labels can be roughly categorized as below:
 
 | Categories     | Labels                                              |
 | ---             | ---                                                |
