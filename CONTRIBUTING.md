@@ -276,13 +276,15 @@ This is what you can do to organize open issues:
 - Label the issues correctly after you assess them
 - Close the issue when no further action is required
 
-Stages of our project board: | Stage | Description | | --- | --- | | New | When
-users reported a bug, await for someone to reproduce or follow up | | More info
-needed | When more communication with OP is required before we can begin triage
-| | To do | Once issues are confirmed and engineers can pick up. Oder of To-do
-items should imply priority | | In progress | If an engineer pick up an issue,
-self-assign and move to In-progress | | Done | Once the linked pull request is
-merged, the issue is closed and moved to Done automatically |
+Stages of our project board:
+
+| Stage            | Description                                                                                   |
+| ---------------- | --------------------------------------------------------------------------------------------- |
+| New              | When users reported a bug, await for someone to reproduce or follow up                        |
+| More info needed | When more communication with OP is required before we can begin triage                        |
+| To do            | Once issues are confirmed and engineers can pick up. Order of items should imply the priority |
+| In progress      | If an engineer picks up an issue, self-assign and move the issue to `In progress` stage       |
+| Done             | Once the linked pull request is merged, the issue is closed and moved to `Done` automatically |
 
 We also use labels to organize GitHub issues to have better overview. The
 current labels can be roughly categorized as below:
