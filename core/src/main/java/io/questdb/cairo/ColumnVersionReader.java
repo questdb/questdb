@@ -35,7 +35,7 @@ import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
 
-public class ColumnVersionReader implements Closeable {
+public class ColumnVersionReader implements Closeable, Mutable {
     public static final int OFFSET_VERSION_64 = 0;
     public static final int OFFSET_OFFSET_A_64 = OFFSET_VERSION_64 + 8;
     public static final int OFFSET_SIZE_A_64 = OFFSET_OFFSET_A_64 + 8;
@@ -55,10 +55,15 @@ public class ColumnVersionReader implements Closeable {
     private long version;
 
     @Override
-    public void close() {
+    public void clear() {
         if (ownMem) {
             mem.close();
         }
+    }
+
+    @Override
+    public void close() {
+        clear();
     }
 
     public LongList getCachedList() {

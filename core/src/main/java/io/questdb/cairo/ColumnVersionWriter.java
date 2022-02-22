@@ -26,12 +26,13 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 
-import java.io.Closeable;
-
-public class ColumnVersionWriter extends ColumnVersionReader implements Closeable {
+public class ColumnVersionWriter extends ColumnVersionReader {
     private final MemoryCMARW mem;
     private long version;
     private long size;
@@ -56,6 +57,16 @@ public class ColumnVersionWriter extends ColumnVersionReader implements Closeabl
         mem.close(false);
     }
 
+    @Override
+    public void clear() {
+        mem.close(false);
+    }
+
+    @Override
+    public long getVersion() {
+        return version;
+    }
+
     public void commit() {
         if (!hasChanges) {
             return;
@@ -78,11 +89,6 @@ public class ColumnVersionWriter extends ColumnVersionReader implements Closeabl
 
     public long getSize() {
         return transientSize;
-    }
-
-    @Override
-    public long getVersion() {
-        return version;
     }
 
     public void removeColumnTop(long partitionTimestamp, int columnIndex) {

@@ -37,8 +37,8 @@ import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
-import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
 import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8BytesToString;
+import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
 
 public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
@@ -345,6 +345,12 @@ public class TableUpdateDetails implements Closeable {
             symbolCacheByColumnIndex.clear();
             columnTypeMeta.clear();
             columnTypeMeta.add(0);
+            if (txReader != null) {
+                txReader.clear();
+            }
+            if (columnVersionReader != null) {
+                columnVersionReader.clear();
+            }
         }
 
         // returns the column index for column name passed in colNameUtf8,
