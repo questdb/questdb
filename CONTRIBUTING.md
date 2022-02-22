@@ -168,7 +168,7 @@ ui -> core/src/main/resources/io/questdb/site/public.zip
 
 We have a lot of tests, most of which are of "integration" type, e.g. test
 starts a server, interacts with it and asserts the outcome. We expect all
-contributors to submit PRs with tests. Please reach out to us via slack if
+contributors to submit PRs with tests. Please reach out to us via Slack if
 you're uncertain on how to test, or you think an existing test can be improved.
 
 ## Dependencies
