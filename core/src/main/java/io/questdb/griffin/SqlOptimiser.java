@@ -2767,7 +2767,10 @@ class SqlOptimiser {
         QueryModel baseParent = model;
 
         while (base.getBottomUpColumns().size() > 0) {
-            baseParent = base;
+            // Check if the model contains the full list of selected columns and, thus, can be used as the parent.
+            if (!base.isSelectTranslation()) {
+                baseParent = base;
+            }
             base = base.getNestedModel();
         }
 
@@ -2776,7 +2779,6 @@ class SqlOptimiser {
         if (sz > 0) {
             final ObjList<QueryColumn> columns = baseParent.getBottomUpColumns();
             final int columnCount = columns.size();
-            // for each order by column check how deep we need to go between "model" and "base"
             for (int i = 0; i < sz; i++) {
                 final ExpressionNode orderBy = orderByNodes.getQuick(i);
                 final CharSequence column = orderBy.token;
@@ -2890,8 +2892,6 @@ class SqlOptimiser {
         analyticModel.setSelectModelType(QueryModel.SELECT_MODEL_ANALYTIC);
         final QueryModel translatingModel = queryModelPool.next();
         translatingModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
-        final QueryModel analyticTranslatingModel = queryModelPool.next();
-        analyticTranslatingModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
         // this is dangling model, which isn't chained with any other
         // we use it to ensure expression and alias uniqueness
         final QueryModel cursorModel = queryModelPool.next();
@@ -3143,6 +3143,7 @@ class SqlOptimiser {
             translatingModel.setNestedModel(baseModel);
             translatingModel.moveLimitFrom(model);
             translatingModel.moveAliasFrom(model);
+            translatingModel.setSelectTranslation(true);
         }
 
         if (useInnerModel) {
