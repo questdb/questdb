@@ -117,6 +117,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     //and doesn't need to be enforced by LimitRecordCursor. We need it to detect whether current factory implements limit from this or inner query .    
     private boolean isLimitImplemented;
 
+    // A flag to mark intermediate SELECT translation models. Such models do not contain the full list of selected
+    // columns (e.g. they lack virtual columns), so they should be skipped when rewriting positional ORDER BY.
+    private boolean isSelectTranslation = false;
+
     private int selectModelType = SELECT_MODEL_NONE;
     private boolean nestedModelIsSubQuery = false;
     private boolean distinct = false;
@@ -215,6 +219,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         clearSampleBy();
         orderBy.clear();
         orderByDirection.clear();
+        isSelectTranslation = false;
         groupBy.clear();
         dependencies.clear();
         parsedWhere.clear();
@@ -723,6 +728,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setNestedModelIsSubQuery(boolean nestedModelIsSubQuery) {
         this.nestedModelIsSubQuery = nestedModelIsSubQuery;
+    }
+
+    public boolean isSelectTranslation() {
+        return isSelectTranslation;
+    }
+
+    public void setSelectTranslation(boolean isSelectTranslation) {
+        this.isSelectTranslation = isSelectTranslation;
     }
 
     public boolean isTopDownNameMissing(CharSequence columnName) {
