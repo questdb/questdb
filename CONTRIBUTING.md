@@ -59,13 +59,13 @@ you wish to understand how our maintainers work together, you can refer to
 
 ## Requirements
 
-- Operating system - **x86-64**: Windows, Linux, FreeBSD and OSX
-- Java 11 64-bit
+- Operating system - **x86-64**: Windows, Linux, FreeBSD and OS X
+- Java 11 64-bit or later
 - Maven 3 (from your package manager on Linux / OSX
   ([Homebrew](https://github.com/Homebrew/brew)) or
   [from the jar](https://maven.apache.org/install.html) for any OS)
 - Node.js 16 / npm 8 (to manage your Node.js versions we recommend
-  [`nvm`](https://github.com/nvm-sh/nvm) for OSX/Linux/windows WSL, and
+  [`nvm`](https://github.com/nvm-sh/nvm) for OSX/Linux/Windows WSL, and
   [`nvm-windows`](https://github.com/coreybutler/nvm-windows) for Windows) -
   _OPTIONAL_
 - C-compiler, CMake - to contribute to C libraries - _OPTIONAL_
@@ -74,13 +74,13 @@ you wish to understand how our maintainers work together, you can refer to
 
 ### Setting up Java and `JAVA_HOME`
 
-Java Home is required by Maven. It is possible to have multiple version of Java
-on the same platform. Please set up `JAVA_HOME` to point to Java 11. Other
-versions of Java may not work. If you are new to Java please check that
-`JAVA_HOME` is pointing to the root of Java directory:
+`JAVA_HOME` is required by Maven. It is possible to have multiple versions of
+Java on the same platform. Please set up `JAVA_HOME` to point to Java 11 or
+later. Other versions of Java may not work. If you are new to Java please check
+that `JAVA_HOME` is pointing to the root of Java directory:
 `C:\Users\me\dev\jdk-11.0.8` and **not** `C:\Users\me\dev\jdk-11.0.8\bin\java`.
 
-Linux/OSX
+Linux/OS X
 
 ```bash
 export JAVA_HOME="/path/to/java/"
@@ -166,7 +166,7 @@ ui -> core/src/main/resources/io/questdb/site/public.zip
 
 ## Testing
 
-We have a lot of unit tests, most of which are of "integration" type, e.g. test
+We have a lot of tests, most of which are of "integration" type, e.g. test
 starts a server, interacts with it and asserts the outcome. We expect all
 contributors to submit PRs with tests. Please reach out to us via slack if
 you're uncertain on how to test, or you think an existing test can be improved.
@@ -231,7 +231,7 @@ mvn clean package -DskipTests -P build-web-console
 
 ### How can I easily manage the `Node.js` installation?
 
-You can use [`nvm`](https://github.com/nvm-sh/nvm) for OSX/Linux/windows WSL,
+You can use [`nvm`](https://github.com/nvm-sh/nvm) for OS X/Linux/Windows WSL,
 and [`nvm-windows`](https://github.com/coreybutler/nvm-windows) for Windows. To
 have multiple active versions.
 
