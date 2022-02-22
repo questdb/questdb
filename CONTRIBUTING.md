@@ -64,21 +64,21 @@ you wish to understand how our maintainers work together, you can refer to
 - Maven 3 (from your package manager on Linux / OSX
   ([Homebrew](https://github.com/Homebrew/brew)) or
   [from the jar](https://maven.apache.org/install.html) for any OS)
-- Node.js 12 / npm 6 (to manage your Node.js versions we recommend
-  [nvm](https://github.com/nvm-sh/nvm) for OSX/Linux/windows WSL, and
-  [nvm-windows](https://github.com/coreybutler/nvm-windows) for Windows) -
-  OPTIONAL
-- C-compiler, CMake - to contribute to C libraries - OPTIONAL
+- Node.js 16 / npm 8 (to manage your Node.js versions we recommend
+  [`nvm`](https://github.com/nvm-sh/nvm) for OSX/Linux/windows WSL, and
+  [`nvm-windows`](https://github.com/coreybutler/nvm-windows) for Windows) -
+  _OPTIONAL_
+- C-compiler, CMake - to contribute to C libraries - _OPTIONAL_
 
 ## Local environment
 
-### Setup Java and JAVA_HOME
+### Setting up Java and `JAVA_HOME`
 
-JAVA*HOME is required by Maven. It is possible to have multiple version of Java
-on the same platform. Please set up JAVA_HOME to point to Java 11. Other
+Java Home is required by Maven. It is possible to have multiple version of Java
+on the same platform. Please set up `JAVA_HOME` to point to Java 11. Other
 versions of Java may not work. If you are new to Java please check that
-JAVA_HOME is pointing to the root of Java directory:
-`C:\Users\me\dev\jdk-11.0.8` and \_not* `C:\Users\me\dev\jdk-11.0.8\bin\java`.
+`JAVA_HOME` is pointing to the root of Java directory:
+`C:\Users\me\dev\jdk-11.0.8` and \_not\* `C:\Users\me\dev\jdk-11.0.8\bin\java`.
 
 Linux/OSX
 
@@ -112,7 +112,8 @@ The web console will be available at [localhost:9000](http://localhost:9000).
 ### Compiling C-libraries
 
 C-libraries will have to be compiled for each platform separately. Cmake will
-also need JAVA_HOME to be set. The following commands will compile on Linux/OSX.
+also need `JAVA_HOME` to be set. The following commands will compile on
+Linux/OSX.
 
 ```text
 cmake .
@@ -230,18 +231,18 @@ mvn clean package -DskipTests -P build-web-console
 
 ### How can I easily manage the `Node.js` installation?
 
-You can use [nvm](https://github.com/nvm-sh/nvm) for OSX/Linux/windows WSL, and
-[nvm-windows](https://github.com/coreybutler/nvm-windows) for Windows. To have
-multiple active versions.
+You can use [`nvm`](https://github.com/nvm-sh/nvm) for OSX/Linux/windows WSL,
+and [`nvm-windows`](https://github.com/coreybutler/nvm-windows) for Windows. To
+have multiple active versions.
 
-Otherwise, you can use the dedicated `maven` profile to build the code:
+Otherwise, you can use the dedicated Maven profile to build the code:
 
 ```bash
 mvn clean package -DskipTests -P build-web-console,build-binaries
 ```
 
-That way, `maven` will install `node` on the fly in `ui/node` so you don't have
-to install it locally.
+That way, Maven will install Node on the fly in `ui/node` so you don't have to
+install it locally.
 
 ### Why do some tests fail on Windows?
 
@@ -292,6 +293,6 @@ current labels can be roughly categorized as below:
 | Categories | Labels                                                                                     |
 | ---------- | ------------------------------------------------------------------------------------------ |
 | Type       | `Bug`, `New features`, `Enhancement`, `Test`, `Tidy up`, `Question`, `Performance`, `Java` |
-| Component  | `ILP`, `Rest API`, `Postgres wire`, `SQL`, `Core`(for storage, data type etc.), `UI`       |
+| Component  | `ILP`, `Rest API`, `Postgres wire`, `SQL`, `Core`, `UI`                                    |
 | Priority   | `Immediate`, `Minor`, `Won't fix`, `Later`                                                 |
 | Difficulty | `Good first issue`                                                                         |
