@@ -78,7 +78,7 @@ Java Home is required by Maven. It is possible to have multiple version of Java
 on the same platform. Please set up `JAVA_HOME` to point to Java 11. Other
 versions of Java may not work. If you are new to Java please check that
 `JAVA_HOME` is pointing to the root of Java directory:
-`C:\Users\me\dev\jdk-11.0.8` and \_not\* `C:\Users\me\dev\jdk-11.0.8\bin\java`.
+`C:\Users\me\dev\jdk-11.0.8` and **not** `C:\Users\me\dev\jdk-11.0.8\bin\java`.
 
 Linux/OSX
 
