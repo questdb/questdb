@@ -58,12 +58,12 @@ public class RndFloatCFunctionFactory implements FunctionFactory {
         private Rnd rnd;
 
         public RndFunction(int nanRate) {
-            this.nanRate = nanRate + 1;
+            this.nanRate = nanRate;
         }
 
         @Override
         public float getFloat(Record rec) {
-            if ((rnd.nextInt() % nanRate) == 1) {
+            if (nanRate > 0 && (rnd.nextPositiveInt() % nanRate) == 0) {
                 return Float.NaN;
             }
             return rnd.nextFloat();

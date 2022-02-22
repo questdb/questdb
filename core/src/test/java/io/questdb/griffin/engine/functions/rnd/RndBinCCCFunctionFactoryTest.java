@@ -24,18 +24,114 @@
 
 package io.questdb.griffin.engine.functions.rnd;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.math.NegIntFunctionFactory;
 import org.junit.Test;
 
 public class RndBinCCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
-    private static final CairoEngine engine = new CairoEngine(configuration);
-    private static final SqlCompiler compiler = new SqlCompiler(engine);
+
+    @Test
+    public void testAllNulls() throws Exception {
+        testNullRate("testCol\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n",
+                1);
+    }
+
+    @Test
+    public void testNoNulls() throws Exception {
+        testNullRate("testCol\n" +
+                        "00000000 ee 41 1d 15 55 8a 17\n" +
+                        "00000000 d8 cc 14 ce f1\n" +
+                        "00000000 88 c4 91 3b 72 db\n" +
+                        "00000000 04 1b c7 88 de a0\n" +
+                        "00000000 3c 77 15 68 61 26\n" +
+                        "00000000 19 c4 95 94 36 53 49 b4\n" +
+                        "00000000 7e 3b 08 a1 1e 38 8d 1b\n" +
+                        "00000000 f4 c8 39 09 fe d8 9d\n" +
+                        "00000000 78 36 6a\n" +
+                        "00000000 de e4 7c\n",
+                0);
+    }
+
+    @Test
+    public void testWithNulls() throws Exception {
+        testNullRate("testCol\n" +
+                        "\n" +
+                        "00000000 1d 15 55 8a 17 fa\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "00000000 59 88 c4 91 3b 72\n" +
+                        "00000000 04 1b c7 88 de a0\n" +
+                        "00000000 77 15 68\n" +
+                        "00000000 af 19 c4 95 94 36 53\n" +
+                        "00000000 59 7e 3b 08 a1\n",
+                4);
+    }
+
+
+    @Test
+    public void testAllNullsFixedLength() throws Exception {
+        testNullRateFixedLength("testCol\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n",
+                1);
+    }
+
+    @Test
+    public void testNoNullsFixedLength() throws Exception {
+        testNullRateFixedLength("testCol\n" +
+                        "00000000 50 ee 41 1d 15\n" +
+                        "00000000 55 8a 17 fa d8\n" +
+                        "00000000 cc 14 ce f1 59\n" +
+                        "00000000 88 c4 91 3b 72\n" +
+                        "00000000 db f3 04 1b c7\n" +
+                        "00000000 88 de a0 79 3c\n" +
+                        "00000000 77 15 68 61 26\n" +
+                        "00000000 af 19 c4 95 94\n" +
+                        "00000000 36 53 49 b4 59\n" +
+                        "00000000 7e 3b 08 a1 1e\n",
+                0);
+    }
+
+    @Test
+    public void testWithNullsFixedLength() throws Exception {
+        testNullRateFixedLength("testCol\n" +
+                        "\n" +
+                        "00000000 41 1d 15 55 8a\n" +
+                        "00000000 fa d8 cc 14 ce\n" +
+                        "00000000 59 88 c4 91 3b\n" +
+                        "00000000 db f3 04 1b c7\n" +
+                        "\n" +
+                        "00000000 a0 79 3c 77 15\n" +
+                        "\n" +
+                        "00000000 26 af 19 c4 95\n" +
+                        "\n",
+                4);
+    }
+
+    @Test
+    public void testNegativeNullRate() {
+        assertFailure("[19] invalid null rate", "select rnd_bin(3,6,-1) as testCol from long_sequence(20)");
+    }
 
     @Test
     public void testBadMinimum() {
@@ -43,77 +139,8 @@ public class RndBinCCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testFixedLength() throws SqlException {
-        assertQuery("x\n" +
-                        "00000000 ee 41 1d 15 55 8a\n" +
-                        "\n" +
-                        "00000000 d8 cc 14 ce f1 59\n" +
-                        "00000000 c4 91 3b 72 db f3\n" +
-                        "00000000 1b c7 88 de a0 79\n" +
-                        "00000000 77 15 68 61 26 af\n" +
-                        "00000000 c4 95 94 36 53 49\n" +
-                        "\n" +
-                        "\n" +
-                        "00000000 3b 08 a1 1e 38 8d\n",
-                "select to_char(rnd_bin(6,6,2)) x from long_sequence(10)");
-    }
-
-    @Test
-    public void testFixedLengthNoNulls() throws SqlException {
-        assertQuery("x\n" +
-                        "00000000 ee 41 1d 15 55\n" +
-                        "00000000 17 fa d8 cc 14\n" +
-                        "00000000 f1 59 88 c4 91\n" +
-                        "00000000 72 db f3 04 1b\n" +
-                        "00000000 88 de a0 79 3c\n" +
-                        "00000000 15 68 61 26 af\n" +
-                        "00000000 c4 95 94 36 53\n" +
-                        "00000000 b4 59 7e 3b 08\n" +
-                        "00000000 1e 38 8d 1b 9e\n" +
-                        "00000000 c8 39 09 fe d8\n",
-                "select to_char(rnd_bin(5,5,0)) x from long_sequence(10)");
-    }
-
-    @Test
     public void testInvalidRange() {
         assertFailure(0, "invalid range", 150L, 140L, 3);
-    }
-
-    @Test
-    public void testNegativeNullRate() {
-        assertFailure(14, "invalid null rate", 20L, 30L, -1);
-    }
-
-    @Test
-    public void testVarLength() throws SqlException {
-        assertQuery("x\n" +
-                        "00000000 41 1d 15\n" +
-                        "00000000 17 fa d8 cc 14\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "00000000 91 3b 72 db f3\n" +
-                        "00000000 c7 88 de a0 79 3c 77 15\n" +
-                        "00000000 26 af 19 c4 95 94 36 53\n" +
-                        "\n" +
-                        "\n",
-                "select to_char(rnd_bin(3,8,2)) x from long_sequence(10)");
-    }
-
-    @Test
-    public void testVarLengthNoNulls() throws SqlException {
-        assertQuery("x\n" +
-                        "00000000 41 1d 15\n" +
-                        "00000000 17 fa d8 cc 14\n" +
-                        "00000000 59 88 c4 91 3b 72\n" +
-                        "00000000 04 1b c7 88 de a0\n" +
-                        "00000000 77 15 68\n" +
-                        "00000000 af 19 c4 95 94 36 53\n" +
-                        "00000000 59 7e 3b 08 a1\n" +
-                        "00000000 8d 1b 9e f4 c8 39 09\n" +
-                        "00000000 9d 30 78\n" +
-                        "00000000 32 de e4\n",
-                "select to_char(rnd_bin(3,8,0)) x from long_sequence(10)");
     }
 
     @Override
@@ -126,8 +153,11 @@ public class RndBinCCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
         return new RndBinCCCFunctionFactory();
     }
 
-    private void assertQuery(CharSequence expected, CharSequence sql) throws SqlException {
-        RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
-        assertCursor(expected, factory.getCursor(sqlExecutionContext), factory.getMetadata(), true);
+    private void testNullRate(CharSequence expectedData, int nullRate) throws Exception {
+        assertQuery(expectedData, "select to_char(rnd_bin(3,8," + nullRate + ")) as testCol from long_sequence(10)");
+    }
+
+    private void testNullRateFixedLength(CharSequence expectedData, int nullRate) throws Exception {
+        assertQuery(expectedData, "select to_char(rnd_bin(5,5," + nullRate + ")) as testCol from long_sequence(10)");
     }
 }
