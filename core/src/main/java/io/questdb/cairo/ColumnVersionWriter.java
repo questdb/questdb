@@ -106,7 +106,8 @@ public class ColumnVersionWriter extends ColumnVersionReader {
      *
      * @param timestamp   partition timestamp
      * @param columnIndex column index
-     * @param txn         column version.
+     * @param txn         column file txn name
+     * @param columnTop   column top
      */
     public void upsert(long timestamp, int columnIndex, long txn, long columnTop) {
         LongList cachedList = getCachedList();

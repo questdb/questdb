@@ -281,7 +281,8 @@ public class TableUpdateDetails implements Closeable {
         private int columnCount;
         private String colName;
         private TxReader txReader;
-        private ColumnVersionReader columnVersionReader;
+        private ColumnVersionReader columnVersionReader = new ColumnVersionReader();
+        private boolean clean = true;
 
         ThreadLocalDetails(LineTcpReceiverConfiguration configuration, ObjList<SymbolCache> unusedSymbolCaches, int columnCount) {
             this.configuration = configuration;
@@ -319,12 +320,17 @@ public class TableUpdateDetails implements Closeable {
                 }
                 int symIndex = resolveSymbolIndex(reader.getMetadata(), colIndex);
                 int writerIndex = reader.getMetadata().getWriterIndex(colIndex);
-                if (this.columnVersionReader == null) {
-                    FilesFacade filesFacade = engine.getConfiguration().getFilesFacade();
-                    this.txReader = new TxReader(filesFacade).ofRO(path, reader.getPartitionedBy());
+                FilesFacade filesFacade = engine.getConfiguration().getFilesFacade();
+
+                if (this.clean) {
+                    if (this.txReader == null) {
+                        this.txReader = new TxReader(filesFacade);
+                    }
+                    this.txReader.ofRO(path, reader.getPartitionedBy());
                     path.trimTo(pathLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
-                    this.columnVersionReader = new ColumnVersionReader().ofRO(filesFacade, path);
+                    this.columnVersionReader.ofRO(filesFacade, path);
                     path.trimTo(pathLen);
+                    this.clean = false;
                 }
 
                 symCache.of(engine.getConfiguration(), path, reader.getMetadata().getColumnName(colIndex), symIndex, txReader, columnVersionReader, writerIndex);
@@ -348,9 +354,8 @@ public class TableUpdateDetails implements Closeable {
             if (txReader != null) {
                 txReader.clear();
             }
-            if (columnVersionReader != null) {
-                columnVersionReader.clear();
-            }
+            columnVersionReader.clear();
+            this.clean = true;
         }
 
         // returns the column index for column name passed in colNameUtf8,
