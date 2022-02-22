@@ -3921,6 +3921,10 @@ public class TableWriter implements Closeable {
         freeAndRemoveColumnPair(columns, pi, si);
         freeAndRemoveO3ColumnPair(o3Columns, pi, si);
         freeAndRemoveO3ColumnPair(o3Columns2, pi, si);
+        if (columnIndex < indexers.size()) {
+            Misc.free(indexers.getAndSetQuick(columnIndex, null));
+            populateDenseIndexerList();
+        }
     }
 
     private void removeColumnFiles(CharSequence columnName, int columnIndex, int columnType) {
