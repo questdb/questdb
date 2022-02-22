@@ -63,10 +63,11 @@ public class SOCountDownLatch implements CountDownLatchSPI {
         }
 
         while (true) {
-            long deadline = System.nanoTime() + nanos;
+            long start = System.nanoTime();
             LockSupport.parkNanos(nanos);
+            long elapsed = System.nanoTime() - start;
 
-            if (System.nanoTime() < deadline) {
+            if (elapsed < nanos) {
                 // this could be spurious wakeup, ignore if count is non-zero
                 if (getCount() == 0) {
                     return true;
