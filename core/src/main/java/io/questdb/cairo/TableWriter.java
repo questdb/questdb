@@ -1821,7 +1821,7 @@ public class TableWriter implements Closeable {
                 syncColumns(commitMode);
             }
 
-            final long committedRowCount = txWriter.getCommittedFixedRowCount() + txWriter.getCommittedTransientRowCount();
+            final long committedRowCount = txWriter.unsafeCommittedFixedRowCount() + txWriter.unsafeCommittedTransientRowCount();
             final long rowsAdded = txWriter.getRowCount() - committedRowCount;
 
             updateIndexes();
@@ -3043,7 +3043,7 @@ public class TableWriter implements Closeable {
     }
 
     private long o3MoveUncommitted(final int timestampIndex) {
-        final long committedRowCount = txWriter.getCommittedFixedRowCount() + txWriter.getCommittedTransientRowCount();
+        final long committedRowCount = txWriter.unsafeCommittedFixedRowCount() + txWriter.unsafeCommittedTransientRowCount();
         final long rowsAdded = txWriter.getRowCount() - committedRowCount;
         final long transientRowsAdded = Math.min(txWriter.getTransientRowCount(), rowsAdded);
         if (transientRowsAdded > 0) {
