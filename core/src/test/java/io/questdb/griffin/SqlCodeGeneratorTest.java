@@ -6137,6 +6137,118 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testOrderByPositionalOnAliasedVirtualColumn() throws Exception {
+        final String expected = "col_1\tcol_2\tcol_sum\n" +
+                "1326447242\t592859671\t1919306913\n" +
+                "-1436881714\t-1575378703\t1282706879\n" +
+                "-1191262516\t-2041844972\t1061859808\n" +
+                "1868723706\t-847531048\t1021192658\n" +
+                "1548800833\t-727724771\t821076062\n" +
+                "-409854405\t339631474\t-70222931\n" +
+                "-1148479920\t315515118\t-832964802\n" +
+                "73575701\t-948263339\t-874687638\n" +
+                "1569490116\t1573662097\t-1151815083\n" +
+                "806715481\t1545253512\t-1942998303\n";
+
+        assertQuery(expected,
+                "select a col_1, b col_2, a+b col_sum from x order by 3 desc, 2, 1 desc",
+                "create table x as (" +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " timestamp_sequence(0, 1000000000) k" +
+                        " from" +
+                        " long_sequence(10)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testOrderByPositionalOnVirtualColumn() throws Exception {
+        final String expected = "a\tb\tcolumn\n" +
+                "1326447242\t592859671\t1919306913\n" +
+                "-1436881714\t-1575378703\t1282706879\n" +
+                "-1191262516\t-2041844972\t1061859808\n" +
+                "1868723706\t-847531048\t1021192658\n" +
+                "1548800833\t-727724771\t821076062\n" +
+                "-409854405\t339631474\t-70222931\n" +
+                "-1148479920\t315515118\t-832964802\n" +
+                "73575701\t-948263339\t-874687638\n" +
+                "1569490116\t1573662097\t-1151815083\n" +
+                "806715481\t1545253512\t-1942998303\n";
+
+        assertQuery(expected,
+                "select a, b, a+b from x order by 3 desc, 2, 1 desc",
+                "create table x as (" +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " timestamp_sequence(0, 1000000000) k" +
+                        " from" +
+                        " long_sequence(10)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testOrderByPositionalOnAliasedAggregateColumn() throws Exception {
+        final String expected = "col_1\tcol_cnt\n" +
+                "0\t3\n" +
+                "1\t3\n" +
+                "4\t3\n" +
+                "5\t1\n";
+
+        assertQuery(expected,
+                "select a col_1, count(*) col_cnt from x order by 2 desc, 1 asc",
+                "create table x as (" +
+                        "select" +
+                        " rnd_int(0,5,0) a," +
+                        " rnd_int() b," +
+                        " timestamp_sequence(0, 1000000000) k" +
+                        " from" +
+                        " long_sequence(10)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testOrderByPositionalOnAggregateColumn() throws Exception {
+        final String expected = "a\tcount\n" +
+                "0\t3\n" +
+                "1\t3\n" +
+                "4\t3\n" +
+                "5\t1\n";
+
+        assertQuery(expected,
+                "select a, count(*) from x order by 2 desc, 1 asc",
+                "create table x as (" +
+                        "select" +
+                        " rnd_int(0,5,0) a," +
+                        " rnd_int() b," +
+                        " timestamp_sequence(0, 1000000000) k" +
+                        " from" +
+                        " long_sequence(10)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testOrderByUnsupportedType() throws Exception {
         assertFailure(
                 "x order by a,m,n",
