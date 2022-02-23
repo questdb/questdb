@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
@@ -34,7 +33,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -67,26 +65,28 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
         }
 
         if (nullRate < 0) {
-            throw SqlException.position(argPositions.getQuick(3)).put("rate must be positive");
+            throw SqlException.position(argPositions.getQuick(3)).put("null rate must be positive");
         }
 
-        return new Func(count, lo, hi, nullRate);
+        final RndStringMemory strMem = new RndStringMemory(count, lo, hi, argPositions.getQuick(0), configuration);
+        return new Func(strMem, count, nullRate);
     }
 
     private static final class Func extends SymbolFunction implements Function {
         private final int count;
-        private final int lo;
-        private final int hi;
         private final int nullRate;
-        private final ObjList<String> symbols;
+        private final RndStringMemory strMem;
         private Rnd rnd;
 
-        public Func(int count, int lo, int hi, int nullRate) {
+        public Func(RndStringMemory strMem, int count, int nullRate) {
             this.count = count;
-            this.lo = lo;
-            this.hi = hi;
             this.nullRate = nullRate + 1;
-            this.symbols = new ObjList<>(count);
+            this.strMem = strMem;
+        }
+
+        @Override
+        public void close() {
+            strMem.close();
         }
 
         @Override
@@ -96,7 +96,7 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getSymbol(Record rec) {
-            return symbols.getQuick(TableUtils.toIndexKey(next()));
+            return strMem.getStr(next());
         }
 
         @Override
@@ -106,8 +106,8 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            this.rnd = executionContext.getRandom();
-            seedSymbols();
+            rnd = executionContext.getRandom();
+            strMem.init(rnd);
         }
 
         @Override
@@ -117,12 +117,12 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence valueOf(int symbolKey) {
-            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
+            return strMem.getStr(symbolKey);
         }
 
         @Override
-        public CharSequence valueBOf(int key) {
-            return valueOf(key);
+        public CharSequence valueBOf(int symbolKey) {
+            return valueOf(symbolKey);
         }
 
         private int next() {
@@ -130,29 +130,6 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
                 return SymbolTable.VALUE_IS_NULL;
             }
             return rnd.nextPositiveInt() % count;
-        }
-
-        private void seedFixed() {
-            for (int i = 0; i < count; i++) {
-                symbols.add(Chars.toString(rnd.nextChars(lo)));
-            }
-        }
-
-        private void seedSymbols() {
-            symbols.clear();
-            symbols.add(null);
-            if (lo == hi) {
-                seedFixed();
-            } else {
-                seedVariable();
-            }
-        }
-
-        private void seedVariable() {
-            int range = hi - lo + 1;
-            for (int i = 0; i < count; i++) {
-                symbols.add(rnd.nextChars(lo + rnd.nextPositiveInt() % range).toString());
-            }
         }
     }
 }
