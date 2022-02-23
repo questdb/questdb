@@ -32,6 +32,9 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.ThreadLocal;
 
 public class SqlException extends Exception implements Sinkable, FlyweightMessageContainer {
+
+    private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
+
     private static final ThreadLocal<SqlException> tlException = new ThreadLocal<>(SqlException::new);
     private final StringSink message = new StringSink();
     private int position;
@@ -94,9 +97,19 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
 
     public static SqlException position(int position) {
         SqlException ex = tlException.get();
+        // This is to have correct stack trace in local debugging with -ea option
+        assert (ex = new SqlException()) != null;
         ex.message.clear();
         ex.position = position;
         return ex;
+    }
+
+    @Override
+    public StackTraceElement[] getStackTrace() {
+        StackTraceElement[] result = EMPTY_STACK_TRACE;
+        // This is to have correct stack trace reported in CI 
+        assert (result = super.getStackTrace()) != null;
+        return result;
     }
 
     public static SqlException unexpectedToken(int position, CharSequence token) {
