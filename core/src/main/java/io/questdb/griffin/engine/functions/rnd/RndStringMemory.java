@@ -48,16 +48,16 @@ class RndStringMemory implements Closeable {
 
         final int pageSize = configuration.getRndFunctionMemoryPageSize();
         final int maxPages = configuration.getRndFunctionMemoryMaxPages();
-        final long actualMem = (long) maxPages * pageSize;
+        final long memLimit = (long) maxPages * pageSize;
         // check against worst case, the highest possible mem usage
-        final long hiMem = count * (Vm.getStorageLength(hi) + Long.BYTES);
-        if (hiMem > actualMem) {
+        final long requiredMem = count * (Vm.getStorageLength(hi) + Long.BYTES);
+        if (requiredMem > memLimit) {
             throw SqlException.position(position)
-                    .put("not enough memory for ").put(signature)
+                    .put("breached memory limit set for ").put(signature)
                     .put(" [pageSize=").put(pageSize)
                     .put(", maxPages=").put(maxPages)
-                    .put(", actualMem=").put(actualMem)
-                    .put(", requiredMem=").put(hiMem)
+                    .put(", memLimit=").put(memLimit)
+                    .put(", requiredMem=").put(requiredMem)
                     .put(']');
         }
 
