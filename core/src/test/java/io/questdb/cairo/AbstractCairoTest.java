@@ -70,7 +70,7 @@ public class AbstractCairoTest {
     protected static CharSequence defaultMapType;
     protected static int pageFrameMaxSize = -1;
     protected static int rndFunctionMemoryPageSize = -1;
-    protected static int rndFunctionMemorymaxPages = -1;
+    protected static int rndFunctionMemoryMaxPages = -1;
 
     @Rule
     public TestName testName = new TestName();
@@ -192,7 +192,7 @@ public class AbstractCairoTest {
 
             @Override
             public int getRndFunctionMemoryMaxPages() {
-                return rndFunctionMemorymaxPages < 0 ? super.getRndFunctionMemoryMaxPages() : rndFunctionMemorymaxPages;
+                return rndFunctionMemoryMaxPages < 0 ? super.getRndFunctionMemoryMaxPages() : rndFunctionMemoryMaxPages;
             }
         };
         engine = new CairoEngine(configuration, metrics);
