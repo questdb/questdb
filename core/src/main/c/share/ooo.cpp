@@ -540,7 +540,7 @@ Java_io_questdb_std_Vect_mergeLongIndexesAsc(JAVA_STATIC, jlong pIndexStructArra
             entries[i].size = -1;
         }
     }
-
+    //this piece allocates memory for merged_index that doesn't show up in stats
     auto *merged_index = reinterpret_cast<index_t *>(malloc(merged_index_size * sizeof(index_t)));
     k_way_merge_long_index(entries, size, size - count, merged_index);
     return reinterpret_cast<jlong>(merged_index);

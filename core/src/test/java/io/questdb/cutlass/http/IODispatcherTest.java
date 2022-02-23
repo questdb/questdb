@@ -113,7 +113,7 @@ public class IODispatcherTest {
             CairoTestUtils.create(model);
         }
 
-        try (TableWriter writer = new TableWriter(configuration, "y")) {
+        try (TableWriter writer = new TableWriter(configuration, "y", metrics)) {
             for (int i = 0; i < n; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putSym(0, "ok\0ok");
@@ -283,7 +283,7 @@ public class IODispatcherTest {
                             return nf;
                         }
                     },
-                    (fd, dispatcher1) -> new HttpConnectionContext(httpContextConfiguration).of(fd, dispatcher1)
+                    (fd, dispatcher1) -> new HttpConnectionContext(httpContextConfiguration, metrics).of(fd, dispatcher1)
             )) {
 
                 // spin up dispatcher thread
@@ -354,7 +354,7 @@ public class IODispatcherTest {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -664,7 +664,7 @@ public class IODispatcherTest {
         final String baseDir = temp.getRoot().getAbsolutePath();
         final CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
         try (
-                CairoEngine cairoEngine = new CairoEngine(configuration);
+                CairoEngine cairoEngine = new CairoEngine(configuration, metrics);
                 HttpServer ignored = HttpServer.create(
                         new DefaultHttpServerConfiguration(
                                 new DefaultHttpContextConfiguration() {
@@ -733,7 +733,7 @@ public class IODispatcherTest {
         final String baseDir = temp.getRoot().getAbsolutePath();
         final CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
         try (
-                CairoEngine cairoEngine = new CairoEngine(configuration);
+                CairoEngine cairoEngine = new CairoEngine(configuration, metrics);
                 HttpServer ignored = HttpServer.create(
                         new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
                             @Override
@@ -1495,10 +1495,10 @@ public class IODispatcherTest {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
+            }, Metrics.disabled());
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -1968,10 +1968,10 @@ public class IODispatcherTest {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
+            }, Metrics.disabled());
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -1991,8 +1991,7 @@ public class IODispatcherTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                workerPool.getWorkerCount(),
-                                metrics
+                                workerPool.getWorkerCount()
                         );
                     }
 
@@ -2591,11 +2590,11 @@ public class IODispatcherTest {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
+            }, Metrics.disabled());
 
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -2615,8 +2614,7 @@ public class IODispatcherTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                workerPool.getWorkerCount(),
-                                metrics
+                                workerPool.getWorkerCount()
                         );
                     }
 
@@ -3755,11 +3753,11 @@ public class IODispatcherTest {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
+            }, Metrics.disabled());
 
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -3779,8 +3777,7 @@ public class IODispatcherTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                workerPool.getWorkerCount(),
-                                metrics
+                                workerPool.getWorkerCount()
                         );
                     }
 
@@ -3963,10 +3960,10 @@ public class IODispatcherTest {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
+            }, Metrics.disabled());
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -3985,8 +3982,7 @@ public class IODispatcherTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                workerPool.getWorkerCount(),
-                                metrics);
+                                workerPool.getWorkerCount());
                     }
 
                     @Override
@@ -4054,10 +4050,10 @@ public class IODispatcherTest {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
+            }, Metrics.disabled());
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -4077,8 +4073,7 @@ public class IODispatcherTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                workerPool.getWorkerCount(),
-                                metrics);
+                                workerPool.getWorkerCount());
                     }
 
                     @Override
@@ -4160,10 +4155,10 @@ public class IODispatcherTest {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
+            }, Metrics.disabled());
 
-            try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                 HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+            try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
+                 HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -4183,8 +4178,7 @@ public class IODispatcherTest {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
-                                workerPool.getWorkerCount(),
-                                metrics
+                                workerPool.getWorkerCount()
                         );
                     }
 
@@ -4429,7 +4423,7 @@ public class IODispatcherTest {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             openCount.incrementAndGet();
-                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                                 @Override
                                 public void close() {
                                     closeCount.incrementAndGet();
@@ -4921,8 +4915,8 @@ public class IODispatcherTest {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
-            try (HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
+            }, Metrics.disabled());
+            try (HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -5089,8 +5083,8 @@ public class IODispatcherTest {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
-            try (HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
+            }, Metrics.disabled());
+            try (HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -5253,8 +5247,8 @@ public class IODispatcherTest {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
-            try (HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
+            }, Metrics.disabled());
+            try (HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -5473,7 +5467,7 @@ public class IODispatcherTest {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -5641,7 +5635,7 @@ public class IODispatcherTest {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -5803,7 +5797,7 @@ public class IODispatcherTest {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()) {
+                            return new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -6057,7 +6051,7 @@ public class IODispatcherTest {
             final SOCountDownLatch senderHalt = new SOCountDownLatch(senderCount);
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
-                    (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()).of(fd, dispatcher1)
+                    (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics).of(fd, dispatcher1)
             )) {
 
                 // server will publish status of each request to this queue

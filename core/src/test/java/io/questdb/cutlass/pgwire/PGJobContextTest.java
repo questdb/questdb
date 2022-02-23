@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableReader;
@@ -1288,7 +1289,7 @@ public class PGJobContextTest extends BasePGTest {
 
                     insert.execute();
                     Assert.assertEquals(1, insert.getUpdateCount());
-                    micros += 1000;
+                    micros += 1;
 
                     if (i % 128 == 0) {
                         connection.commit();
@@ -4696,7 +4697,7 @@ create table tab as (
             }
         };
 
-        WorkerPool pool = new WorkerPool(conf);
+        WorkerPool pool = new WorkerPool(conf, metrics);
         pool.assign(engine.getEngineMaintenanceJob());
         try (
                 final PGWireServer ignored = PGWireServer.create(

@@ -109,8 +109,18 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int joinType;
     private int joinKeywordPosition;
     private IntList orderedJoinModels = orderedJoinModels2;
+
     private ExpressionNode limitLo;
     private ExpressionNode limitHi;
+
+    //simple flag to mark when limit x,y in current model (part of query) is already taken care of by existing factories e.g. LimitedSizeSortedLightRecordCursorFactory
+    //and doesn't need to be enforced by LimitRecordCursor. We need it to detect whether current factory implements limit from this or inner query .    
+    private boolean isLimitImplemented;
+
+    // A flag to mark intermediate SELECT translation models. Such models do not contain the full list of selected
+    // columns (e.g. they lack virtual columns), so they should be skipped when rewriting positional ORDER BY.
+    private boolean isSelectTranslation = false;
+
     private int selectModelType = SELECT_MODEL_NONE;
     private boolean nestedModelIsSubQuery = false;
     private boolean distinct = false;
@@ -209,6 +219,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         clearSampleBy();
         orderBy.clear();
         orderByDirection.clear();
+        isSelectTranslation = false;
         groupBy.clear();
         dependencies.clear();
         parsedWhere.clear();
@@ -231,6 +242,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         orderedJoinModels = orderedJoinModels2;
         limitHi = null;
         limitLo = null;
+        isLimitImplemented = false;
         timestamp = null;
         sqlNodeStack.clear();
         joinColumns.clear();
@@ -353,6 +365,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses() {
         return withClauseModel;
+    }
+
+    public boolean isLimitImplemented() {
+        return isLimitImplemented;
     }
 
     public boolean isUpdate() {
@@ -501,6 +517,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public int getModelPosition() {
         return modelPosition;
+    }
+
+    public void setLimitImplemented(boolean limitImplemented) {
+        isLimitImplemented = limitImplemented;
     }
 
     public void setModelPosition(int modelPosition) {
@@ -708,6 +728,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setNestedModelIsSubQuery(boolean nestedModelIsSubQuery) {
         this.nestedModelIsSubQuery = nestedModelIsSubQuery;
+    }
+
+    public boolean isSelectTranslation() {
+        return isSelectTranslation;
+    }
+
+    public void setSelectTranslation(boolean isSelectTranslation) {
+        this.isSelectTranslation = isSelectTranslation;
     }
 
     public boolean isTopDownNameMissing(CharSequence columnName) {

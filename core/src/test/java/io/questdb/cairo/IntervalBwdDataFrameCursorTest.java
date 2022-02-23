@@ -370,7 +370,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
 
                 assertEquals("", record, cursor);
 
-                try (TableWriter writer = new TableWriter(configuration, "x")) {
+                try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
                     for (int i = 0; i < rowCount; i++) {
                         TableWriter.Row row = writer.newRow(timestamp);
                         row.putSym(0, rnd.nextChars(4));
@@ -573,7 +573,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
 
             final Rnd rnd = new Rnd();
             long timestamp = TimestampFormatUtils.parseTimestamp("1980-01-01T00:00:00.000Z");
-            try (TableWriter writer = new TableWriter(configuration, "x")) {
+            try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < rowCount; i++) {
                     TableWriter.Row row = writer.newRow(timestamp);
                     row.putSym(0, rnd.nextChars(4));

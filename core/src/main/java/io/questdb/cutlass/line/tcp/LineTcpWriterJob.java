@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.Metrics;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
@@ -49,6 +50,7 @@ class LineTcpWriterJob implements Job, Closeable {
     private final long commitIntervalDefault;
     private final LineTcpMeasurementScheduler scheduler;
     private long nextCommitTime;
+    private final Metrics metrics;
 
     LineTcpWriterJob(
             int workerId,
@@ -56,7 +58,8 @@ class LineTcpWriterJob implements Job, Closeable {
             Sequence sequence,
             MillisecondClock millisecondClock,
             long commitIntervalDefault,
-            LineTcpMeasurementScheduler scheduler
+            LineTcpMeasurementScheduler scheduler,
+            Metrics metrics
     ) {
         this.workerId = workerId;
         this.queue = queue;
@@ -65,6 +68,7 @@ class LineTcpWriterJob implements Job, Closeable {
         this.commitIntervalDefault = commitIntervalDefault;
         this.nextCommitTime = millisecondClock.getTicks();
         this.scheduler = scheduler;
+        this.metrics = metrics;
     }
 
     @Override
@@ -161,6 +165,8 @@ class LineTcpWriterJob implements Job, Closeable {
                                 .I$();
                         event.createWriterReleaseEvent(tab, false);
                         eventProcessed = false;
+                        // This is a critical error, so we treat it as an unhandled one.
+                        metrics.healthCheck().incrementUnhandledErrors();
                     }
                 } else {
                     if (event.getWriterWorkerId() == LineTcpMeasurementEventType.ALL_WRITERS_RELEASE_WRITER) {

@@ -22,28 +22,34 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.groupby;
+package io.questdb.griffin;
 
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.sql.DelegatingRecordCursor;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
-import org.jetbrains.annotations.NotNull;
+import org.junit.Assert;
+import org.junit.Test;
 
-@FunctionalInterface
-public interface SampleByCursorLambda {
-    @NotNull
-    DelegatingRecordCursor createCursor(
-            Map map,
-            RecordSink sink,
-            @NotNull TimestampSampler timestampSampler,
-            int timestampIndex,
-            ObjList<GroupByFunction> groupByFunctions,
-            ObjList<Function> recordFunctions,
-            IntList symbolTableSkewIndex,
-            int keyCount
-    );
+import static io.questdb.griffin.SqlKeywords.*;
+
+public class SqlKeywordsTest {
+
+    @Test
+    public void testPrev() {
+        Assert.assertFalse(isPrevKeyword("123"));
+        Assert.assertFalse(isPrevKeyword("1234"));
+        Assert.assertFalse(isPrevKeyword("p123"));
+        Assert.assertFalse(isPrevKeyword("pr12"));
+        Assert.assertFalse(isPrevKeyword("pre1"));
+        Assert.assertTrue(isPrevKeyword("prev"));
+    }
+
+    @Test
+    public void testLinear() {
+        Assert.assertFalse(isLinearKeyword("12345"));
+        Assert.assertFalse(isLinearKeyword("123456"));
+        Assert.assertFalse(isLinearKeyword("l12345"));
+        Assert.assertFalse(isLinearKeyword("li1234"));
+        Assert.assertFalse(isLinearKeyword("lin123"));
+        Assert.assertFalse(isLinearKeyword("line12"));
+        Assert.assertFalse(isLinearKeyword("linea1"));
+        Assert.assertTrue(isLinearKeyword("linear"));
+    }
 }

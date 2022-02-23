@@ -350,6 +350,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private String lineTcpAuthDbPath;
     private int lineTcpDefaultPartitionBy;
     private long minIdleMsBeforeWriterRelease;
+    private boolean lineTcpDisconnectOnError;
     private String httpVersion;
     private int httpMinWorkerCount;
     private boolean httpMinWorkerHaltOnError;
@@ -785,7 +786,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpNetConnectionRcvBuf = getIntSize(properties, env, "line.tcp.net.recv.buf.size", -1);
                 this.lineTcpNetConnectionRcvBuf = getIntSize(properties, env, "line.tcp.net.connection.rcvbuf", this.lineTcpNetConnectionRcvBuf);
 
-                this.lineTcpConnectionPoolInitialCapacity = getInt(properties, env, "line.tcp.connection.pool.capacity", 64);
+                this.lineTcpConnectionPoolInitialCapacity = getInt(properties, env, "line.tcp.connection.pool.capacity", 8);
                 this.lineTcpTimestampAdapter = getLineTimestampAdaptor(properties, env, "line.tcp.timestamp");
                 this.lineTcpMsgBufferSize = getIntSize(properties, env, "line.tcp.msg.buffer.size", 32768);
                 this.lineTcpMaxMeasurementSize = getIntSize(properties, env, "line.tcp.max.measurement.size", 32768);
@@ -834,6 +835,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     this.lineTcpAuthDbPath = new File(root, this.lineTcpAuthDbPath).getAbsolutePath();
                 }
                 this.minIdleMsBeforeWriterRelease = getLong(properties, env, "line.tcp.min.idle.ms.before.writer.release", 10_000);
+                this.lineTcpDisconnectOnError = getBoolean(properties, env, "line.tcp.disconnect.on.error", true);
             }
 
             this.sharedWorkerCount = getInt(properties, env, "shared.worker.count", Math.max(1, cpuAvailable / 2 - 1 - cpuUsed));
@@ -2510,6 +2512,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isEnabled() {
             return lineTcpEnabled;
+        }
+
+        @Override
+        public boolean getDisconnectOnError() {
+            return lineTcpDisconnectOnError;
         }
 
         @Override

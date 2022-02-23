@@ -1007,7 +1007,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     static {
         final DateFormatCompiler milliCompiler = new DateFormatCompiler();
-        final DateFormat pgDateTimeFormat = milliCompiler.compile("yyyy-MM-dd HH:mm:ssz");
+        final DateFormat pgDateTimeFormat = milliCompiler.compile("y-MM-dd HH:mm:ssz");
 
         DATE_FORMATS = new DateFormat[]{
                 pgDateTimeFormat,

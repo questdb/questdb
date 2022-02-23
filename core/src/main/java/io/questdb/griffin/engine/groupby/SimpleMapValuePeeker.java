@@ -22,16 +22,37 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.engine.groupby;
 
-public class OrderByMnemonic {
+import io.questdb.cairo.sql.Record;
 
-    //Order is unknown at this stage and needs to be checked. It might be optional .    
-    public static final int ORDER_BY_UNKNOWN = 0;
+public class SimpleMapValuePeeker {
+    private AbstractNoRecordSampleByCursor cursor;
+    private final SimpleMapValue currentRecord;
+    private final SimpleMapValue nextRecord;
+    private boolean nextHasNext = false;
+    private long nextLocalEpoch = -1;
 
-    //Order is required by current stage/nested model (even though it might still be unknown) 
-    public static final int ORDER_BY_REQUIRED = 1;
+    SimpleMapValuePeeker(SimpleMapValue currentRecord, SimpleMapValue nextRecord) {
+        this.currentRecord = currentRecord;
+        this.nextRecord = nextRecord;
+    }
 
-    //Order is known and needs to be maintained at current stage/nested model 
-    public static final int ORDER_BY_INVARIANT = 2;
+    void setCursor(AbstractNoRecordSampleByCursor cursor) {
+        this.cursor = cursor;
+    }
+
+    Record peek() {
+        final long localEpochTemp = cursor.localEpoch;
+        nextHasNext = cursor.notKeyedLoop(nextRecord);
+        nextLocalEpoch = cursor.localEpoch;
+        cursor.localEpoch = localEpochTemp;
+        return nextRecord;
+    }
+
+    boolean reset() {
+        cursor.localEpoch = nextLocalEpoch;
+        currentRecord.copy(nextRecord);
+        return nextHasNext;
+    }
 }

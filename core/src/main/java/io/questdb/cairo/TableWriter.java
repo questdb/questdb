@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
+import io.questdb.Metrics;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryFCRImpl;
@@ -177,18 +178,19 @@ public class TableWriter implements Closeable {
     private ObjList<Runnable> activeNullSetters;
     private int rowActon = ROW_ACTION_OPEN_PARTITION;
     private long committedMasterRef;
+    private final Metrics metrics;
 
     // ILP related
     private double commitIntervalFraction;
     private long commitIntervalDefault;
     private long commitInterval;
 
-    public TableWriter(CairoConfiguration configuration, CharSequence tableName) {
-        this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot());
+    public TableWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
+        this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
     }
 
-    public TableWriter(CairoConfiguration configuration, CharSequence tableName, @NotNull MessageBus messageBus) {
-        this(configuration, tableName, messageBus, true, DefaultLifecycleManager.INSTANCE);
+    public TableWriter(CairoConfiguration configuration, CharSequence tableName, @NotNull MessageBus messageBus, Metrics metrics) {
+        this(configuration, tableName, messageBus, true, DefaultLifecycleManager.INSTANCE, metrics);
     }
 
     public TableWriter(
@@ -196,9 +198,10 @@ public class TableWriter implements Closeable {
             CharSequence tableName,
             @NotNull MessageBus messageBus,
             boolean lock,
-            LifecycleManager lifecycleManager
+            LifecycleManager lifecycleManager,
+            Metrics metrics
     ) {
-        this(configuration, tableName, messageBus, null, lock, lifecycleManager, configuration.getRoot());
+        this(configuration, tableName, messageBus, null, lock, lifecycleManager, configuration.getRoot(), metrics);
     }
 
     public TableWriter(
@@ -208,10 +211,12 @@ public class TableWriter implements Closeable {
             MessageBus ownMessageBus,
             boolean lock,
             LifecycleManager lifecycleManager,
-            CharSequence root
+            CharSequence root,
+            Metrics metrics
     ) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
         this.configuration = configuration;
+        this.metrics = metrics;
         this.ownMessageBus = ownMessageBus;
         if (ownMessageBus != null) {
             this.messageBus = ownMessageBus;
@@ -1261,6 +1266,7 @@ public class TableWriter implements Closeable {
                 o3MasterRef = -1;
                 LOG.info().$("tx rollback complete [name=").$(tableName).$(']').$();
                 processCommandQueue(false);
+                metrics.tableWriter().incrementRollbacks();
             } catch (Throwable e) {
                 LOG.critical().$("could not perform rollback [name=").$(tableName).$(", msg=").$(e.getMessage()).$(']').$();
                 distressed = true;
@@ -1829,12 +1835,18 @@ public class TableWriter implements Closeable {
                 syncColumns(commitMode);
             }
 
+            final long committedRowCount = txWriter.getCommittedFixedRowCount() + txWriter.getCommittedTransientRowCount();
+            final long rowsAdded = txWriter.getRowCount() - committedRowCount;
+
             updateIndexes();
             txWriter.commit(commitMode, this.denseSymbolMapWriters);
 
             // Bookmark masterRef to track how many rows is in uncommitted state
             this.committedMasterRef = masterRef;
             o3ProcessPartitionRemoveCandidates();
+
+            metrics.tableWriter().incrementCommits();
+            metrics.tableWriter().addCommittedRows(rowsAdded);
         }
     }
 
@@ -2746,6 +2758,9 @@ public class TableWriter implements Closeable {
             distressed = true;
             throw e;
         }
+
+        metrics.tableWriter().incrementO3Commits();
+
         return false;
     }
 
@@ -2877,6 +2892,7 @@ public class TableWriter implements Closeable {
                     O3CopyJob.closeColumnIdle(
                             openColumnTask.getColumnCounter(),
                             openColumnTask.getTimestampMergeIndexAddr(),
+                            openColumnTask.getTimestampMergeIndexSize(),
                             openColumnTask.getSrcTimestampFd(),
                             openColumnTask.getSrcTimestampAddr(),
                             openColumnTask.getSrcTimestampSize(),
@@ -2897,6 +2913,7 @@ public class TableWriter implements Closeable {
                             copyTask.getColumnCounter(),
                             copyTask.getPartCounter(),
                             copyTask.getTimestampMergeIndexAddr(),
+                            copyTask.getTimestampMergeIndexSize(),
                             copyTask.getSrcDataFixFd(),
                             copyTask.getSrcDataFixAddr(),
                             copyTask.getSrcDataFixSize(),
@@ -2996,13 +3013,13 @@ public class TableWriter implements Closeable {
     private long o3MoveUncommitted(final int timestampIndex) {
         final long committedRowCount = txWriter.getCommittedFixedRowCount() + txWriter.getCommittedTransientRowCount();
         final long rowsAdded = txWriter.getRowCount() - committedRowCount;
-        long transientRowsAdded = Math.min(txWriter.getTransientRowCount(), rowsAdded);
-        final long committedTransientRowCount = txWriter.getTransientRowCount() - transientRowsAdded;
+        final long transientRowsAdded = Math.min(txWriter.getTransientRowCount(), rowsAdded);
         if (transientRowsAdded > 0) {
             LOG.debug()
                     .$("o3 move uncommitted [table=").$(tableName)
                     .$(", transientRowsAdded=").$(transientRowsAdded)
                     .I$();
+            final long committedTransientRowCount = txWriter.getTransientRowCount() - transientRowsAdded;
             return o3ScheduleMoveUncommitted0(
                     timestampIndex,
                     transientRowsAdded,

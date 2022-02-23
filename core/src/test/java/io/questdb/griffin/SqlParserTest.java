@@ -4546,6 +4546,95 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testOrderByPositionColumnAliases() throws Exception {
+        assertQuery(
+                "select-choose x c1, y c2 from (select [x, y] from tab) order by c2, c1",
+                "select x c1, y c2 from tab order by 2,1",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOrderByPositionWithVirtualColumn() throws Exception {
+        assertQuery(
+                "select-virtual x, y, x + y column from (select [x, y] from tab) order by column, y, x",
+                "select x, y, x+y from tab order by 3,2,1",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOrderByWithColumnAliasesAndVirtualColumn() throws Exception {
+        assertQuery(
+                "select-virtual c1, c2, c1 + c2 c3 from (select-choose [x c1, y c2] x c1, y c2 from (select [x, y] from tab)) order by c3, c2, c1",
+                "select x c1, y c2, x+y c3 from tab order by c3,c2,c1",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOrderByPositionWithColumnAliasesAndVirtualColumn() throws Exception {
+        assertQuery(
+                "select-virtual c1, c2, c1 + c2 c3 from (select-choose [x c1, y c2] x c1, y c2 from (select [x, y] from tab)) order by c3, c2, c1",
+                "select x c1, y c2, x+y c3 from tab order by 3,2,1",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOrderByPositionWithAggregateColumn() throws Exception {
+        assertQuery(
+                "select-group-by x, y, count() count from (select [x, y] from tab) order by count, y, x",
+                "select x, y, count() from tab order by 3,2,1",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOrderByWithColumnAliasesAndAggregateColumn() throws Exception {
+        assertQuery(
+                "select-group-by c1, c2, count() c3 from (select-choose [x c1, y c2] x c1, y c2 from (select [x, y] from tab)) order by c3, c2, c1",
+                "select x c1, y c2, count() c3 from tab order by c3,c2,c1",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOrderByPositionWithColumnAliasesAndAggregateColumn() throws Exception {
+        assertQuery(
+                "select-group-by c1, c2, count() c3 from (select-choose [x c1, y c2] x c1, y c2 from (select [x, y] from tab)) order by c3, c2, c1",
+                "select x c1, y c2, count() c3 from tab order by 3,2,1",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOrderByWithWildcardAndVirtualColumn() throws Exception {
+        assertQuery(
+                "select-virtual x, y, x + y c3 from (select [x, y] from tab) order by c3, y, x",
+                "select *, x+y c3 from tab order by 3,2,1",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testOrderByPositionCorrupt() throws Exception {
         assertSyntaxError(
                 "tab order by 3a, 1",
@@ -4555,7 +4644,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
                         .col("z", ColumnType.INT)
-
         );
     }
 
@@ -5314,8 +5402,21 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectDistinctGroupByFunctionArithmeticLimit() throws SqlException {
-        assertQuery("select-distinct a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from (select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1 from (select [a, c, b] from tab)) limit 10)",
+        assertQuery("select-distinct a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from (select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1 from (select [a, c, b] from tab))) limit 10",
                 "select distinct a, sum(b)+sum(c) bb from tab limit 10",
+                modelOf("tab")
+                        .col("a", ColumnType.STRING)
+                        .col("b", ColumnType.LONG)
+                        .col("c", ColumnType.LONG)
+        );
+    }
+
+    @Test
+    public void testSelectDistinctGroupByFunctionArithmeticOrderByLimit() throws SqlException {
+        assertQuery("select-distinct a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from " +
+                        "(select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1 " +
+                        "from (select [a, c, b] from tab))) order by a limit 10",
+                "select distinct a, sum(b)+sum(c) bb from tab order by a limit 10",
                 modelOf("tab")
                         .col("a", ColumnType.STRING)
                         .col("b", ColumnType.LONG)

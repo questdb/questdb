@@ -24,6 +24,8 @@
 
 package io.questdb;
 
+import io.questdb.cairo.TableWriterMetrics;
+import io.questdb.cutlass.http.processors.HealthCheckMetrics;
 import io.questdb.cutlass.http.processors.JsonQueryMetrics;
 import io.questdb.metrics.MetricsRegistry;
 import io.questdb.metrics.MetricsRegistryImpl;
@@ -36,11 +38,15 @@ import io.questdb.std.str.CharSink;
 public class Metrics implements Scrapable {
     private final boolean enabled;
     private final JsonQueryMetrics jsonQuery;
+    private final HealthCheckMetrics healthCheck;
+    private final TableWriterMetrics tableWriter;
     private final MetricsRegistry metricsRegistry;
 
     Metrics(boolean enabled, MetricsRegistry metricsRegistry) {
         this.enabled = enabled;
         this.jsonQuery = new JsonQueryMetrics(metricsRegistry);
+        this.healthCheck = new HealthCheckMetrics(metricsRegistry);
+        this.tableWriter = new TableWriterMetrics(metricsRegistry);
         createMemoryGauges(metricsRegistry);
         this.metricsRegistry = metricsRegistry;
     }
@@ -53,6 +59,7 @@ public class Metrics implements Scrapable {
         metricsRegistry.newVirtualGauge("memory_free_count", Unsafe::getFreeCount);
         metricsRegistry.newVirtualGauge("memory_mem_used", Unsafe::getMemUsed);
         metricsRegistry.newVirtualGauge("memory_malloc_count", Unsafe::getMallocCount);
+        metricsRegistry.newVirtualGauge("memory_realloc_count", Unsafe::getReallocCount);
     }
 
     public static Metrics enabled() {
@@ -69,6 +76,14 @@ public class Metrics implements Scrapable {
 
     public JsonQueryMetrics jsonQuery() {
         return jsonQuery;
+    }
+
+    public HealthCheckMetrics healthCheck() {
+        return healthCheck;
+    }
+
+    public TableWriterMetrics tableWriter() {
+        return tableWriter;
     }
 
     @Override

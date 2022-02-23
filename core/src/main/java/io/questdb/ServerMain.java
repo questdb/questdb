@@ -27,6 +27,9 @@ package io.questdb;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.async.PageFrameDispatchJob;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.O3Utils;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
@@ -156,7 +159,14 @@ public class ServerMain {
             }
         }
 
-        final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration());
+        Metrics metrics;
+        if (configuration.getMetricsConfiguration().isEnabled()) {
+            metrics = Metrics.enabled();
+        } else {
+            metrics = Metrics.disabled();
+        }
+
+        final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration(), metrics);
         final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(
                 configuration.getCairoConfiguration(),
                 ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
@@ -164,7 +174,7 @@ public class ServerMain {
         final ObjList<Closeable> instancesToClean = new ObjList<>();
 
         LogFactory.configureFromSystemProperties(workerPool);
-        final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration());
+        final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration(), metrics);
         workerPool.assign(cairoEngine.getEngineMaintenanceJob());
         instancesToClean.add(cairoEngine);
 
@@ -191,12 +201,6 @@ public class ServerMain {
                             SharedRandom.getRandom(configuration.getCairoConfiguration())
                     )
             );
-        }
-        Metrics metrics;
-        if (configuration.getMetricsConfiguration().isEnabled()) {
-            metrics = Metrics.enabled();
-        } else {
-            metrics = Metrics.disabled();
         }
 
         try {
@@ -236,7 +240,8 @@ public class ServerMain {
                     configuration.getLineTcpReceiverConfiguration(),
                     workerPool,
                     log,
-                    cairoEngine
+                    cairoEngine,
+                    metrics
             ));
 
             startQuestDb(workerPool, cairoEngine, log);
@@ -486,6 +491,9 @@ public class ServerMain {
             final CairoEngine cairoEngine,
             FunctionFactoryCache functionFactoryCache,
             Metrics metrics) {
+        if (!metrics.isEnabled()) {
+            log.advisory().$("Min health server is starting. Health check endpoint will not consider unhandled errors when metrics are disabled.").$();
+        }
         return HttpServer.createMin(
                 configuration.getHttpMinServerConfiguration(),
                 workerPool,
@@ -496,6 +504,7 @@ public class ServerMain {
         );
     }
 
+    @SuppressWarnings("unused")
     protected void initQuestDb(
             final WorkerPool workerPool,
             final CairoEngine cairoEngine,

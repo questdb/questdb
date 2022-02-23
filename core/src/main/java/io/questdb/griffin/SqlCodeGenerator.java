@@ -1283,7 +1283,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ExpressionNode limitLo = model.getLimitLo();
         ExpressionNode limitHi = model.getLimitHi();
 
-        if ((limitLo == null && limitHi == null) || factory.implementsLimit()) {
+        //we've to check model otherwise we could be skipping limit in outer query that's actually different from the one in inner query!
+        if ((limitLo == null && limitHi == null) ||
+                (factory.implementsLimit() && model.isLimitImplemented())) {
             return factory;
         }
 
@@ -1389,6 +1391,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 if (recordCursorFactory.recordCursorSupportsRandomAccess()) {
                     if (canBeOptimized(model, executionContext, loFunc, hiFunc)) {
+                        model.setLimitImplemented(true);
                         return new LimitedSizeSortedLightRecordCursorFactory(
                                 configuration,
                                 orderedMetadata,
