@@ -68,7 +68,7 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
             throw SqlException.position(argPositions.getQuick(3)).put("null rate must be positive");
         }
 
-        final RndStringMemory strMem = new RndStringMemory(count, lo, hi, argPositions.getQuick(0), configuration);
+        final RndStringMemory strMem = new RndStringMemory(getSignature(), count, lo, hi, argPositions.getQuick(0), configuration);
         return new Func(strMem, count, nullRate);
     }
 

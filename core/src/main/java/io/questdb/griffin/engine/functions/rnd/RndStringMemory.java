@@ -41,7 +41,7 @@ class RndStringMemory implements Closeable {
     private final int lo;
     private final int hi;
 
-    RndStringMemory(int count, int lo, int hi, int position, CairoConfiguration configuration) throws SqlException {
+    RndStringMemory(String signature, int count, int lo, int hi, int position, CairoConfiguration configuration) throws SqlException {
         this.count = count;
         this.lo = lo;
         this.hi = hi;
@@ -53,7 +53,8 @@ class RndStringMemory implements Closeable {
         final long hiMem = count * (Vm.getStorageLength(hi) + Long.BYTES);
         if (hiMem > actualMem) {
             throw SqlException.position(position)
-                    .put("not enough memory for rnd_str [pageSize=").put(pageSize)
+                    .put("not enough memory for ").put(signature)
+                    .put(" [pageSize=").put(pageSize)
                     .put(", maxPages=").put(maxPages)
                     .put(", actualMem=").put(actualMem)
                     .put(", requiredMem=").put(hiMem)

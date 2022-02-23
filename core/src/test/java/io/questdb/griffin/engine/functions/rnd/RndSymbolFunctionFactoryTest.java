@@ -192,8 +192,45 @@ public class RndSymbolFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
+    public void testRndFunctionsMemoryConfiguration() {
+        rndFunctionMemoryPageSize = 1024;
+        rndFunctionMemorymaxPages = 32;
+
+        assertFailure("[18] not enough memory for rnd_symbol(iiii) [pageSize=1024, maxPages=32, actualMem=32768, requiredMem=78000]",
+                "select rnd_symbol(1000,30,33,0) as testCol from long_sequence(20)");
+
+        rndFunctionMemoryPageSize = -1;
+        rndFunctionMemorymaxPages = -1;
+    }
+
+    @Test
     public void testNegativeNullRate() {
         assertFailure("[26] null rate must be positive", "select rnd_symbol(5,25,33,-1) as testCol from long_sequence(20)");
+    }
+
+    @Test
+    public void testInvalidRange() {
+        assertFailure("[7] invalid range", "select rnd_symbol(5,34,33,6) as testCol from long_sequence(20)");
+    }
+
+    @Test
+    public void testLowZero() {
+        assertFailure("[7] invalid range", "select rnd_symbol(50,0,33,6) as testCol from long_sequence(20)");
+    }
+
+    @Test
+    public void testLowNegative() {
+        assertFailure("[7] invalid range", "select rnd_symbol(50,-1,33,6) as testCol from long_sequence(20)");
+    }
+
+    @Test
+    public void testCountZero() {
+        assertFailure("[18] invalid symbol count", "select rnd_symbol(0,15,33,6) as testCol from long_sequence(20)");
+    }
+
+    @Test
+    public void testCountNegative() {
+        assertFailure("[18] invalid symbol count", "select rnd_symbol(-3,15,33,6) as testCol from long_sequence(20)");
     }
 
     @Override

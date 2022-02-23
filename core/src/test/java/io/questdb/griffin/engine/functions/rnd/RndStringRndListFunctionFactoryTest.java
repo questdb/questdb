@@ -191,7 +191,7 @@ public class RndStringRndListFunctionFactoryTest extends AbstractFunctionFactory
         rndFunctionMemoryPageSize = 1024;
         rndFunctionMemorymaxPages = 16;
 
-        assertFailure("[15] not enough memory for rnd_str [pageSize=1024, maxPages=16, actualMem=16384, requiredMem=78000]",
+        assertFailure("[15] not enough memory for rnd_str(iiii) [pageSize=1024, maxPages=16, actualMem=16384, requiredMem=78000]",
                 "select rnd_str(1000,30,33,0) as testCol from long_sequence(20)");
 
         rndFunctionMemoryPageSize = -1;
@@ -201,6 +201,31 @@ public class RndStringRndListFunctionFactoryTest extends AbstractFunctionFactory
     @Test
     public void testNegativeNullRate() {
         assertFailure("[23] null rate must be positive", "select rnd_str(5,25,33,-1) as testCol from long_sequence(20)");
+    }
+
+    @Test
+    public void testInvalidRange() {
+        assertFailure("[7] invalid range", "select rnd_str(5,34,33,6) as testCol from long_sequence(20)");
+    }
+
+    @Test
+    public void testLowZero() {
+        assertFailure("[7] invalid range", "select rnd_str(50,0,33,6) as testCol from long_sequence(20)");
+    }
+
+    @Test
+    public void testLowNegative() {
+        assertFailure("[7] invalid range", "select rnd_str(50,-1,33,6) as testCol from long_sequence(20)");
+    }
+
+    @Test
+    public void testCountZero() {
+        assertFailure("[15] invalid string count", "select rnd_str(0,15,33,6) as testCol from long_sequence(20)");
+    }
+
+    @Test
+    public void testCountNegative() {
+        assertFailure("[15] invalid string count", "select rnd_str(-3,15,33,6) as testCol from long_sequence(20)");
     }
 
     @Override
