@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.async.PageFrameDispatchJob;
@@ -65,7 +66,7 @@ public class FilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                 public boolean haltOnError() {
                     return false;
                 }
-            });
+            }, Metrics.disabled());
 
             pool.assign(new PageFrameDispatchJob(engine.getMessageBus(), pool.getWorkerCount()));
             for (int i = 0, n = pool.getWorkerCount(); i < n; i++) {

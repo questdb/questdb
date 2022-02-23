@@ -188,20 +188,7 @@ public class ServerMain {
         }
 
         workerPool.assignCleaner(Path.CLEANER);
-        workerPool.assign(new O3CallbackJob(cairoEngine.getMessageBus()));
-        workerPool.assign(new O3PartitionJob(cairoEngine.getMessageBus()));
-        workerPool.assign(new O3OpenColumnJob(cairoEngine.getMessageBus()));
-        workerPool.assign(new O3CopyJob(cairoEngine.getMessageBus()));
-        workerPool.assign(new O3PurgeDiscoveryJob(cairoEngine.getMessageBus(), workerPool.getWorkerCount()));
-
-        workerPool.assign(new PageFrameDispatchJob(cairoEngine.getMessageBus(), workerPool.getWorkerCount()));
-        for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
-            workerPool.assign(i, new PageFrameReduceJob(
-                            cairoEngine.getMessageBus(),
-                            SharedRandom.getRandom(configuration.getCairoConfiguration())
-                    )
-            );
-        }
+        O3Utils.setupWorkerPool(workerPool, cairoEngine.getMessageBus(), configuration.getCairoConfiguration());
 
         try {
             initQuestDb(workerPool, cairoEngine, log);

@@ -183,7 +183,7 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             final Path path = new Path(4096);
             try (LineTcpReceiver receiver = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine, metrics)) {
                 sharedWorkerPool.assignCleaner(Path.CLEANER);
-                try (Closeable ignored = O3Utils.setupWorkerPool(sharedWorkerPool, engine.getMessageBus())) {
+                try (Closeable ignored = O3Utils.setupWorkerPool(sharedWorkerPool, engine.getMessageBus(), configuration)) {
                     if (needMaintenanceJob) {
                         sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
                     }

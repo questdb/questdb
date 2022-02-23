@@ -344,7 +344,7 @@ public class AbstractO3Test {
             try {
                 if (pool != null) {
                     pool.assignCleaner(Path.CLEANER);
-                    try (Closeable ignored = O3Utils.setupWorkerPool(pool, engine.getMessageBus())) {
+                    try (Closeable ignored = O3Utils.setupWorkerPool(pool, engine.getMessageBus(), configuration)) {
                         pool.start(LOG);
                     }
                 } else {

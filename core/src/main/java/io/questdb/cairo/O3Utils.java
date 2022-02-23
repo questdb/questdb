@@ -25,6 +25,9 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.sql.async.PageFrameDispatchJob;
+import io.questdb.cairo.sql.async.PageFrameReduceJob;
+import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -60,14 +63,26 @@ public class O3Utils {
         }
     }
 
-    public static Closeable setupWorkerPool(WorkerPool workerPool, MessageBus messageBus) {
+    //TODO: maybe remove pageframe outside ?
+    public static Closeable setupWorkerPool(WorkerPool workerPool, MessageBus messageBus, CairoConfiguration configuration) {
         O3PurgeDiscoveryJob purgeDiscoveryJob = new O3PurgeDiscoveryJob(messageBus, workerPool.getWorkerCount());
         workerPool.assign(purgeDiscoveryJob);
         workerPool.assign(new O3PartitionJob(messageBus));
         workerPool.assign(new O3OpenColumnJob(messageBus));
         workerPool.assign(new O3CopyJob(messageBus));
         workerPool.assign(new O3CallbackJob(messageBus));
+
+        workerPool.assign(new PageFrameDispatchJob(messageBus, workerPool.getWorkerCount()));
+        for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
+            workerPool.assign(i, new PageFrameReduceJob(
+                            messageBus,
+                            SharedRandom.getRandom(configuration)
+                    )
+            );
+        }
+
         initBuf(workerPool.getWorkerCount() + 1);
+
         return purgeDiscoveryJob;
     }
 
