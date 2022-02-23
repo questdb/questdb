@@ -191,7 +191,7 @@ public class RndStringRndListFunctionFactoryTest extends AbstractFunctionFactory
         rndFunctionMemoryPageSize = 1024;
         rndFunctionMemoryMaxPages = 16;
 
-        assertFailure("[15] not enough memory for rnd_str(iiii) [pageSize=1024, maxPages=16, actualMem=16384, requiredMem=78000]",
+        assertFailure("[15] breached memory limit set for rnd_str(iiii) [pageSize=1024, maxPages=16, memLimit=16384, requiredMem=78000]",
                 "select rnd_str(1000,30,33,0) as testCol from long_sequence(20)");
 
         rndFunctionMemoryPageSize = -1;

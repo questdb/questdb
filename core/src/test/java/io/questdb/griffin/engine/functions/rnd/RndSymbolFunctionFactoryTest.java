@@ -196,7 +196,7 @@ public class RndSymbolFunctionFactoryTest extends AbstractFunctionFactoryTest {
         rndFunctionMemoryPageSize = 1024;
         rndFunctionMemoryMaxPages = 32;
 
-        assertFailure("[18] not enough memory for rnd_symbol(iiii) [pageSize=1024, maxPages=32, actualMem=32768, requiredMem=78000]",
+        assertFailure("[18] breached memory limit set for rnd_symbol(iiii) [pageSize=1024, maxPages=32, memLimit=32768, requiredMem=78000]",
                 "select rnd_symbol(1000,30,33,0) as testCol from long_sequence(20)");
 
         rndFunctionMemoryPageSize = -1;
