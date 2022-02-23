@@ -36,11 +36,11 @@ import java.io.Closeable;
 import static io.questdb.cairo.TableUtils.*;
 
 public class TxReader implements Closeable, Mutable {
-    private final static Log LOG = LogFactory.getLog(TxReader.class);
     protected static final int PARTITION_TS_OFFSET = 0;
     protected static final int PARTITION_SIZE_OFFSET = 1;
     protected static final int PARTITION_NAME_TX_OFFSET = 2;
     protected static final int PARTITION_DATA_TX_OFFSET = 3;
+    private static final long DEFAULT_PARTITION_TIMESTAMP = 0L;
     protected final LongList attachedPartitions = new LongList();
     private final IntList symbolCountSnapshot = new IntList();
     private final FilesFacade ff;
@@ -234,7 +234,7 @@ public class TxReader implements Closeable, Mutable {
         if (PartitionBy.isPartitioned(partitionBy)) {
             return getPartitionTimestampLo(maxTimestamp);
         }
-        return Long.MIN_VALUE;
+        return DEFAULT_PARTITION_TIMESTAMP;
     }
 
     public void initRO(MemoryMR txnFile, int partitionBy) {
@@ -319,7 +319,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     protected long getPartitionTimestampLo(long timestamp) {
-        return partitionFloorMethod != null && timestamp != Numbers.LONG_NaN ? partitionFloorMethod.floor(timestamp) : Long.MIN_VALUE;
+        return partitionFloorMethod != null ? (timestamp != Long.MIN_VALUE ? partitionFloorMethod.floor(timestamp) : Long.MIN_VALUE) : DEFAULT_PARTITION_TIMESTAMP;
     }
 
     protected void initPartitionAt(int index, long partitionTimestampLo, long partitionSize) {
@@ -385,7 +385,7 @@ public class TxReader implements Closeable, Mutable {
         } else {
             // Add transient row count as the only partition in attached partitions list
             attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);
-            initPartitionAt(0, Long.MIN_VALUE, transientRowCount);
+            initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, transientRowCount);
         }
     }
 

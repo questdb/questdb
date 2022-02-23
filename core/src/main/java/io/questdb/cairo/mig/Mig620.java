@@ -26,7 +26,6 @@ package io.questdb.cairo.mig;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -36,26 +35,28 @@ import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cairo.TableUtils.*;
-
 public class Mig620 {
-    public static final long META_OFFSET_COLUMN_TYPES_MIG = 128;
-    public static final long CV_COL_TOP_DEFAULT_PARTITION_MIG = Long.MIN_VALUE + 1;
+    private static final long META_OFFSET_COUNT_MIG = 0;
+    private static final long META_OFFSET_COLUMN_TYPES_MIG = 128;
+    private static final long META_COLUMN_DATA_SIZE_MIG = 32;
+    private static final long CV_COL_TOP_DEFAULT_PARTITION_MIG = Long.MIN_VALUE;
     private static final Log LOG = LogFactory.getLog(EngineMigration.class);
     private static final String TXN_FILE_NAME_MIG = "_txn";
     private static final String COLUMN_VERSION_FILE_NAME_MIG = "_cv";
     private static final String META_FILE_NAME_MIG = "_meta";
     private static final long META_OFFSET_PARTITION_BY_MIG = 4;
+    private static final int TX_BASE_HEADER_SECTION_PADDING_MIG = 12; // Add some free space into header for future use
     private static final long TX_OFFSET_MAP_WRITER_COUNT_MIG = 128;
     private static final long TXN_OFFSET_MIG = 0;
     private static final long TX_BASE_OFFSET_VERSION_MIG = 0;
     private static final long TX_BASE_OFFSET_A_MIG = TX_BASE_OFFSET_VERSION_MIG + 8;
     private static final long TX_BASE_OFFSET_SYMBOLS_SIZE_A_MIG = TX_BASE_OFFSET_A_MIG + 4;
     private static final long TX_BASE_OFFSET_PARTITIONS_SIZE_A_MIG = TX_BASE_OFFSET_SYMBOLS_SIZE_A_MIG + 4;
-    private static final long TX_BASE_OFFSET_B_MIG = TX_BASE_OFFSET_PARTITIONS_SIZE_A_MIG + 4 + TX_BASE_HEADER_SECTION_PADDING;
+    private static final long TX_BASE_OFFSET_B_MIG = TX_BASE_OFFSET_PARTITIONS_SIZE_A_MIG + 4 + TX_BASE_HEADER_SECTION_PADDING_MIG;
     private static final long TX_BASE_OFFSET_SYMBOLS_SIZE_B_MIG = TX_BASE_OFFSET_B_MIG + 4;
     private static final long TX_BASE_OFFSET_PARTITIONS_SIZE_B_MIG = TX_BASE_OFFSET_SYMBOLS_SIZE_B_MIG + 4;
-    private static final int TX_BASE_HEADER_SIZE_MIG = (int) Math.max(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 + 4 + TX_BASE_HEADER_SECTION_PADDING, 64);
+    private static final int TX_BASE_HEADER_SIZE_MIG = (int) Math.max(TX_BASE_OFFSET_PARTITIONS_SIZE_B_MIG + 4 + TX_BASE_HEADER_SECTION_PADDING_MIG, 64);
+
     private static final long TX_OFFSET_COLUMN_VERSION_MIG = 64;
     private static final long PARTITION_NAME_TX_OFFSET_MIG = 2;
     private static final int COLUMN_VERSION_FILE_HEADER_SIZE_MIG = 40;
@@ -65,6 +66,7 @@ public class Mig620 {
     private static final int CV_OFFSET_OFFSET_B_64 = CV_OFFSET_SIZE_A_64 + 8;
     private static final int CV_OFFSET_SIZE_B_64 = CV_OFFSET_OFFSET_B_64 + 8;
     private static final int CV_HEADER_SIZE = CV_OFFSET_SIZE_B_64 + 8;
+    private static final long TX_DEFAULT_PARTITION_TIMESTAMP_MIG = 0L;
 
     static void migrate(MigrationContext migrationContext) {
         final FilesFacade ff = migrationContext.getFf();
@@ -175,7 +177,7 @@ public class Mig620 {
     private static LongList readColumnTops(int columnCount, int partitionBy, long partitionSizeOffset, int partitionTableSize, MemoryMARW txMemory, FilesFacade ff, Path path, int pathLen, ObjList<String> columnNames) {
         if (!PartitionBy.isPartitioned(partitionBy)) {
             LongList result = new LongList();
-            readColumnTopsForPartition(result, columnNames, columnCount, partitionBy, Long.MIN_VALUE, -1L, ff, path, pathLen);
+            readColumnTopsForPartition(result, columnNames, columnCount, partitionBy, TX_DEFAULT_PARTITION_TIMESTAMP_MIG, -1L, ff, path, pathLen);
             return result;
         }
         return readColumnTopsAllPartitions(columnCount, partitionBy, partitionSizeOffset, partitionTableSize, txMemory, ff, path, pathLen, columnNames);
@@ -198,14 +200,13 @@ public class Mig620 {
         tops.add(partitionTimestamp);
 
         path.trimTo(pathLen);
-        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
-        TableUtils.txnPartitionConditionally(path, partitionNameTxn);
+        setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
         int partitionPathLen = path.length();
 
         for (int i = 0; i < columnCount; i++) {
             path.trimTo(partitionPathLen);
             String columnName = columnNames.get(i);
-            dFile(path, columnName, -1);
+            dFile(path, columnName);
             long columnTop = -1;
             if (ff.exists(path)) {
                 columnTop = readColumnTop(ff, path.trimTo(partitionPathLen), columnName, partitionPathLen);
@@ -214,17 +215,27 @@ public class Mig620 {
         }
     }
 
+    private static void setPathForPartition(Path path, int partitionBy, long timestamp, long partitionNameTxn) {
+        PartitionBy.setSinkForPartition(path.slash(), partitionBy, timestamp, false);
+        if (partitionNameTxn > -1L) {
+            path.put('.').put(partitionNameTxn);
+        }
+    }
+
     private static ObjList<String> readColumNames(MemoryMARW metaMem) {
         ObjList<String> columnNames = new ObjList<>();
-        // TODO: remove TableUtils dependency
-        final int columnCount = metaMem.getInt(META_OFFSET_COUNT);
-        long offset = TableUtils.getColumnNameOffset(columnCount);
+        final int columnCount = metaMem.getInt(META_OFFSET_COUNT_MIG);
+        long offset = getColumnNameOffset(columnCount);
         for (int metaIndex = 0; metaIndex < columnCount; metaIndex++) {
             String name = Chars.toString(metaMem.getStr(offset));
             columnNames.add(name);
             offset += Vm.getStorageLength(name);
         }
         return columnNames;
+    }
+
+    private static long getColumnNameOffset(int columnCount) {
+        return META_OFFSET_COLUMN_TYPES_MIG + columnCount * META_COLUMN_DATA_SIZE_MIG;
     }
 
     private static void migrateTxn(MemoryMARW txMemory, int symbolCount, int partitionTableSize, long existingTotalSize, long txn) {
@@ -262,6 +273,10 @@ public class Mig620 {
         return Vm.getCMARWInstance(ff, path, Files.PAGE_SIZE, fileLen, MemoryTag.NATIVE_DEFAULT);
     }
 
+    private static void dFile(Path path, CharSequence columnName) {
+        path.concat(columnName).put('.').put('d').$();
+    }
+
     /**
      * Reads 8 bytes from "top" file.
      *
@@ -274,7 +289,7 @@ public class Mig620 {
     private static long readColumnTop(FilesFacade ff, Path path, CharSequence name, int plen) {
         try {
             if (ff.exists(topFile(path.chop$(), name))) {
-                final long fd = TableUtils.openRO(ff, path, LOG);
+                final long fd = openRO(ff, path);
                 try {
                     long n;
                     if ((n = ff.readULong(fd, 0)) < 0) {
@@ -289,6 +304,15 @@ public class Mig620 {
         } finally {
             path.trimTo(plen);
         }
+    }
+
+    private static long openRO(FilesFacade ff, LPSZ path) {
+        final long fd = ff.openRO(path);
+        if (fd > -1) {
+            Mig620.LOG.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
+            return fd;
+        }
+        throw CairoException.instance(ff.errno()).put("could not open read-only [file=").put(path).put(']');
     }
 
     private static LPSZ topFile(Path path, CharSequence columnName) {

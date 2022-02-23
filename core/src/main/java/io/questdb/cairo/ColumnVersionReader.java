@@ -45,8 +45,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
     public static final int BLOCK_SIZE = 4;
     public static final int BLOCK_SIZE_BYTES = BLOCK_SIZE * Long.BYTES;
     public static final int BLOCK_SIZE_MSB = Numbers.msb(BLOCK_SIZE);
-
-    public static final long COL_TOP_DEFAULT_PARTITION = Long.MIN_VALUE + 1; // Away from Long.MIN_VALUE, it's non-partitioned table default partition timestamp
+    public static final long COL_TOP_DEFAULT_PARTITION = Long.MIN_VALUE;
 
     private final static Log LOG = LogFactory.getLog(ColumnVersionReader.class);
     private final LongList cachedList = new LongList();

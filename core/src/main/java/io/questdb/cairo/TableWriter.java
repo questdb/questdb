@@ -3807,7 +3807,7 @@ public class TableWriter implements Closeable {
 
             assert columnCount > 0;
 
-            long partitionTimestamp = PartitionBy.isPartitioned(partitionBy) ? partitionFloorMethod.floor(timestamp) : Long.MIN_VALUE;
+            long partitionTimestamp = txWriter.getPartitionTimestampLo(timestamp);
             for (int i = 0; i < columnCount; i++) {
                 if (metadata.getColumnType(i) > 0) {
                     final CharSequence name = metadata.getColumnName(i);
