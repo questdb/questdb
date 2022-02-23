@@ -172,6 +172,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             txMemBase.putLong(TX_BASE_OFFSET_VERSION_64, ++baseVersion);
 
             super.switchRecord(writeBaseOffset, writeAreaSize); // writeAreaSize should be between records
+            this.readBaseOffset = writeBaseOffset;
+
             prevTransientRowCount = transientRowCount;
             prevRecordBaseOffset = lastRecordBaseOffset;
             lastRecordBaseOffset = writeBaseOffset;

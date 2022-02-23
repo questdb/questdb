@@ -57,6 +57,10 @@ class SymbolCache implements Closeable {
         symbolValueToKeyMap.clear();
     }
 
+    public int getCacheValueCount() {
+        return symbolValueToKeyMap.size();
+    }
+
     int getSymbolKey(CharSequence symbolValue) {
         final int index = symbolValueToKeyMap.keyIndex(symbolValue);
         if (index < 0) {
