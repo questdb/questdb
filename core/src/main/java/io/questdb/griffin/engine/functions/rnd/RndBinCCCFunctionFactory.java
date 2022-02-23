@@ -84,12 +84,12 @@ public class RndBinCCCFunctionFactory implements FunctionFactory {
         public VarLenFunction(long lo, long hi, int nullRate) {
             this.lo = lo;
             this.range = hi - lo + 1;
-            this.nullRate = nullRate;
+            this.nullRate = nullRate + 1;
         }
 
         @Override
         public BinarySequence getBin(Record rec) {
-            if (nullRate > 0 && (sequence.rnd.nextPositiveInt() % nullRate) == 0) {
+            if ((this.sequence.rnd.nextPositiveInt() % nullRate) == 1) {
                 return null;
             }
             sequence.len = lo + sequence.rnd.nextPositiveLong() % range;
@@ -112,13 +112,13 @@ public class RndBinCCCFunctionFactory implements FunctionFactory {
         private final int nullRate;
 
         public FixLenFunction(long len, int nullRate) {
-            this.nullRate = nullRate;
+            this.nullRate = nullRate + 1;
             this.sequence.len = len;
         }
 
         @Override
         public BinarySequence getBin(Record rec) {
-            if (nullRate > 0 && (sequence.rnd.nextPositiveInt() % nullRate) == 0) {
+            if ((sequence.rnd.nextPositiveInt() % nullRate) == 1) {
                 return null;
             }
             return sequence;

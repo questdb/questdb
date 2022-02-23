@@ -27,23 +27,22 @@ package io.questdb.griffin.engine.functions.rnd;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.BaseFunctionFactoryTest;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-public class RndGeoHashFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class RndGeoHashFunctionFactoryTest extends BaseFunctionFactoryTest {
     private FunctionParser functionParser;
     private GenericRecordMetadata metadata;
     private Rnd rnd;
 
     @Before
     public void setUp5() {
-        functions.add(getFunctionFactory());
+        functions.add(new RndGeoHashFunctionFactory());
         functionParser = createFunctionParser();
         metadata = new GenericRecordMetadata();
         rnd = new Rnd();
@@ -118,10 +117,5 @@ public class RndGeoHashFunctionFactoryTest extends AbstractFunctionFactoryTest {
         Assert.assertFalse(function.isConstant());
         function.init(null, sqlExecutionContext);
         return function;
-    }
-
-    @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new RndGeoHashFunctionFactory();
     }
 }

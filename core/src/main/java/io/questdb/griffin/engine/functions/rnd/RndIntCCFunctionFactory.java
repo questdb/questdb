@@ -72,12 +72,12 @@ public class RndIntCCFunctionFactory implements FunctionFactory {
             super();
             this.lo = lo;
             this.range = hi - lo + 1;
-            this.nanRate = nanRate;
+            this.nanRate = nanRate + 1;
         }
 
         @Override
         public int getInt(Record rec) {
-            if (nanRate > 0 && (rnd.nextPositiveInt() % nanRate) == 0) {
+            if ((rnd.nextInt() % nanRate) == 1) {
                 return Numbers.INT_NaN;
             }
             return lo + rnd.nextPositiveInt() % range;

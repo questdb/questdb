@@ -29,7 +29,6 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.cast.CastIntToByteFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntToShortFunctionFactory;
@@ -50,26 +49,11 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
     private static int toByteRefs = 0;
     private FunctionFactory factory;
 
-    protected void assertQuery(CharSequence expected, CharSequence sql) throws SqlException {
-        RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
-        assertCursor(expected, factory.getCursor(sqlExecutionContext), factory.getMetadata(), true);
-    }
-
-    protected void assertFailure(CharSequence expectedMsg, CharSequence sql) {
-        try {
-            RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
-            factory.getCursor(sqlExecutionContext);
-            Assert.fail();
-        } catch (Exception e) {
-            Assert.assertEquals(expectedMsg, e.getMessage());
-        }
-    }
-
-    protected void assertFailure(int expectedPosition, CharSequence expectedMsg, Object... args) {
+    public void assertFailure(int expectedPosition, CharSequence expectedMsg, Object... args) {
         assertFailure(false, expectedPosition, expectedMsg, args);
     }
 
-    protected void assertFailure(boolean forceConstant, int expectedPosition, CharSequence expectedMsg, Object... args) {
+    public void assertFailure(boolean forceConstant, int expectedPosition, CharSequence expectedMsg, Object... args) {
         try {
             callCustomised(forceConstant, true, args);
             Assert.fail();
@@ -338,6 +322,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         final String columnName = "f" + i;
         final boolean constantArg;
         final int argType;
+
 
         if (b) {
             final char typeChar = signature.charAt(signatureTypeOffset + i + 1);

@@ -69,8 +69,6 @@ public class AbstractCairoTest {
     protected static int binaryEncodingMaxLength = -1;
     protected static CharSequence defaultMapType;
     protected static int pageFrameMaxSize = -1;
-    protected static int rndFunctionMemoryPageSize = -1;
-    protected static int rndFunctionMemorymaxPages = -1;
 
     @Rule
     public TestName testName = new TestName();
@@ -183,16 +181,6 @@ public class AbstractCairoTest {
                 // Bump it to high number so that test don't fail with memory leak if LongList
                 // re-allocates
                 return 512;
-            }
-
-            @Override
-            public int getRndFunctionMemoryPageSize() {
-                return rndFunctionMemoryPageSize < 0 ? super.getRndFunctionMemoryPageSize() : rndFunctionMemoryPageSize;
-            }
-
-            @Override
-            public int getRndFunctionMemoryMaxPages() {
-                return rndFunctionMemorymaxPages < 0 ? super.getRndFunctionMemoryMaxPages() : rndFunctionMemorymaxPages;
             }
         };
         engine = new CairoEngine(configuration, metrics);

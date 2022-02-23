@@ -359,16 +359,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getRndFunctionMemoryPageSize() {
-        return 8192;
-    }
-
-    @Override
-    public int getRndFunctionMemoryMaxPages() {
-        return 128;
-    }
-
-    @Override
     public long getSpinLockTimeoutUs() {
         return 5000000;
     }

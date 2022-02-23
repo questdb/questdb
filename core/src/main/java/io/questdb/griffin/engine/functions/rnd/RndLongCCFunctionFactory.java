@@ -69,12 +69,12 @@ public class RndLongCCFunctionFactory implements FunctionFactory {
         public Func(long lo, long hi, int nanRate) {
             this.lo = lo;
             this.range = hi - lo + 1;
-            this.nanRate = nanRate;
+            this.nanRate = nanRate + 1;
         }
 
         @Override
         public long getLong(Record rec) {
-            if (nanRate > 0 && (rnd.nextPositiveInt() % nanRate) == 0) {
+            if ((rnd.nextInt() % nanRate) == 1) {
                 return Numbers.LONG_NaN;
             }
             return lo + rnd.nextPositiveLong() % range;

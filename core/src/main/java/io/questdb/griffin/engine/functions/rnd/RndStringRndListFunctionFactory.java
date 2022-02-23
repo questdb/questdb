@@ -28,8 +28,9 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryAR;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.*;
@@ -41,71 +42,129 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+
+        // todo: limit pages
+        MemoryAR strMem = Vm.getARInstance(1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+        MemoryAR idxMem = Vm.getARInstance(1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+
         final int count = args.getQuick(0).getInt(null);
         final int lo = args.getQuick(1).getInt(null);
         final int hi = args.getQuick(2).getInt(null);
         final int nullRate = args.getQuick(3).getInt(null);
 
-        if (count < 1) {
-            throw SqlException.$(argPositions.getQuick(0), "invalid string count");
+        if (lo == hi) {
+            return new FixedFunc(strMem, idxMem, lo, count, nullRate);
         }
-
-        if (lo > hi || lo < 1) {
-            throw SqlException.$(position, "invalid range");
-        }
-
-        if (nullRate < 0) {
-            throw SqlException.position(argPositions.getQuick(3)).put("null rate must be positive");
-        }
-
-        final RndStringMemory strMem = new RndStringMemory(count, lo, hi, argPositions.getQuick(0), configuration);
-        return new Func(strMem, count, nullRate);
+        return new Func(strMem, idxMem, lo, hi, count, nullRate);
     }
 
     private static final class Func extends StrFunction implements Function {
         private final int count;
-        private final RndStringMemory strMem;
+        private final MemoryAR strMem;
+        private final MemoryAR idxMem;
+        private final int lo;
+        private final int hi;
         private final int nullRate;
         private Rnd rnd;
 
-        public Func(RndStringMemory strMem, int count, int nullRate) {
+        public Func(MemoryAR strMem, MemoryAR idxMem, int lo, int hi, int count, int nullRate) {
             this.count = count;
             this.strMem = strMem;
+            this.idxMem = idxMem;
+            this.lo = lo;
+            this.hi = hi;
             this.nullRate = nullRate;
         }
 
         @Override
         public void close() {
-            strMem.close();
+            Misc.free(strMem);
+            Misc.free(idxMem);
         }
 
         @Override
         public CharSequence getStr(Record rec) {
-            if (nullRate > 0 && (rnd.nextPositiveInt() % nullRate) == 0) {
+            if (nullRate > 0 && (rnd.nextInt() % nullRate) == 1) {
                 return null;
             }
-            return strMem.getStr(rnd.nextPositiveInt() % count);
+            long o = idxMem.getLong((rnd.nextPositiveInt() % count) * 8L);
+            return strMem.getStr(o);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            if (nullRate > 0 && (rnd.nextPositiveInt() % nullRate) == 0) {
+            if (nullRate > 0 && (rnd.nextInt() % nullRate) == 1) {
                 return null;
             }
-            return strMem.getStr2(rnd.nextPositiveInt() % count);
+            long o = idxMem.getLong((rnd.nextPositiveInt() % count) * 8L);
+            return strMem.getStr2(o);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            rnd = executionContext.getRandom();
-            strMem.init(rnd);
+            this.rnd = executionContext.getRandom();
+
+            strMem.jumpTo(0);
+            idxMem.jumpTo(0);
+            for (int i = 0; i < count; i++) {
+                final int len = lo + rnd.nextPositiveInt() % (hi - lo);
+                final long o = strMem.putStr(rnd.nextChars(len));
+                idxMem.putLong(o - Vm.getStorageLength(len));
+            }
+        }
+    }
+
+    private static final class FixedFunc extends StrFunction implements Function {
+        private final int count;
+        private final MemoryAR strMem;
+        private final MemoryAR idxMem;
+        private final int len;
+        private final int nullRate;
+        private Rnd rnd;
+
+        public FixedFunc(MemoryAR strMem, MemoryAR idxMem, int len, int strCount, int nullRate) {
+            this.count = strCount;
+            this.strMem = strMem;
+            this.idxMem = idxMem;
+            this.len = len;
+            this.nullRate = nullRate;
+        }
+
+        @Override
+        public void close() {
+            Misc.free(strMem);
+            Misc.free(idxMem);
+        }
+
+        @Override
+        public CharSequence getStr(Record rec) {
+            if (nullRate > 0 && (rnd.nextInt() % nullRate) == 1) {
+                return null;
+            }
+            long o = idxMem.getLong((rnd.nextPositiveInt() % count) * 8L);
+            return strMem.getStr(o);
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            if (nullRate > 0 && (rnd.nextInt() % nullRate) == 1) {
+                return null;
+            }
+            long o = idxMem.getLong((rnd.nextPositiveInt() % count) * 8L);
+            return strMem.getStr2(o);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
+
+            strMem.jumpTo(0);
+            idxMem.jumpTo(0);
+            for (int i = 0; i < count; i++) {
+                final long o = strMem.putStr(rnd.nextChars(len));
+                idxMem.putLong(o - Vm.getStorageLength(len));
+            }
         }
     }
 }

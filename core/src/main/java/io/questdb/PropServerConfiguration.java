@@ -91,8 +91,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean httpSqlCacheEnabled;
     private final int httpSqlCacheBlockCount;
     private final int httpSqlCacheRowCount;
-    private final int rndFunctionMemoryPageSize;
-    private final int rndFunctionMemoryMaxPages;
     private final int sqlCharacterStoreCapacity;
     private final int sqlCharacterStoreSequencePoolCapacity;
     private final int sqlColumnPoolCapacity;
@@ -719,10 +717,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.maxUncommittedRows = getInt(properties, env, "cairo.max.uncommitted.rows", 500_000);
             this.commitLag = getLong(properties, env, "cairo.commit.lag", 300_000) * 1_000;
             this.o3QuickSortEnabled = getBoolean(properties, env, "cairo.o3.quicksort.enabled", false);
-            this.rndFunctionMemoryPageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.rnd.memory.page.size", 8192));
-            this.rndFunctionMemoryMaxPages = Numbers.ceilPow2(getInt(properties, env, "cairo.rnd.memory.max.pages", 128));
             this.sqlAnalyticStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.store.page.size", 1024 * 1024));
-            this.sqlAnalyticStoreMaxPages = Numbers.ceilPow2(getInt(properties, env, "cairo.sql.analytic.store.max.pages", Integer.MAX_VALUE));
+            this.sqlAnalyticStoreMaxPages = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.store.max.pages", Integer.MAX_VALUE));
             this.sqlAnalyticRowIdPageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.rowid.page.size", 512 * 1024));
             this.sqlAnalyticRowIdMaxPages = Numbers.ceilPow2(getInt(properties, env, "cairo.sql.analytic.rowid.max.pages", Integer.MAX_VALUE));
             this.sqlAnalyticTreeKeyPageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.tree.page.size", 512 * 1024));
@@ -1872,16 +1868,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getMiscAppendPageSize() {
             return writerMiscAppendPageSize;
-        }
-
-        @Override
-        public int getRndFunctionMemoryPageSize() {
-            return rndFunctionMemoryPageSize;
-        }
-
-        @Override
-        public int getRndFunctionMemoryMaxPages() {
-            return rndFunctionMemoryMaxPages;
         }
 
         @Override

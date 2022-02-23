@@ -58,12 +58,12 @@ public class RndDoubleCCFunctionFactory implements FunctionFactory {
         private Rnd rnd;
 
         public RndFunction(int nanRate) {
-            this.nanRate = nanRate;
+            this.nanRate = nanRate + 1;
         }
 
         @Override
         public double getDouble(Record rec) {
-            if (nanRate > 0 && (rnd.nextPositiveInt() % nanRate) == 0) {
+            if ((rnd.nextInt() % nanRate) == 1) {
                 return Double.NaN;
             }
             return rnd.nextDouble();
