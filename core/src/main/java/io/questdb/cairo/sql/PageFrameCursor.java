@@ -33,6 +33,15 @@ public interface PageFrameCursor extends Closeable, SymbolTableSource {
     @Override
     void close(); // we don't throw IOException
 
+    /**
+     * Return the REAL row id of given row on current page .
+     * This is used for e.g. updating rows.
+     *
+     * @param rowIndex - page index of row
+     * @return real row id
+     */
+    long getUpdateRowId(long rowIndex);
+
     @Nullable PageFrame next();
 
     /**

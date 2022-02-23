@@ -31,6 +31,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -539,8 +541,15 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 long ts = record.getTimestamp(index);
                 if ((isAscending && timestamp > ts) ||
                         (!isAscending && timestamp < ts)) {
-                    Assert.fail("record # " + c + " should have " + (isAscending ? "bigger" : "smaller") +
-                            " (or equal) timestamp than the row before. Values prior=" + timestamp + " current=" + ts);
+
+                    StringSink error = new StringSink();
+                    error.put("record # ").put(c).put(" should have ").put(isAscending ? "bigger" : "smaller").put(
+                            " (or equal) timestamp than the row before. Values prior=");
+                    TimestampFormatUtils.appendDateTimeUSec(error, timestamp);
+                    error.put(" current=");
+                    TimestampFormatUtils.appendDateTimeUSec(error, ts);
+
+                    Assert.fail(error.toString());
                 }
                 timestamp = ts;
                 c++;

@@ -48,6 +48,10 @@ import io.questdb.std.str.ByteSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.hamcrest.MatcherAssert;
+
+import static org.hamcrest.Matchers.*;
+
 import org.jetbrains.annotations.NotNull;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
@@ -4141,7 +4145,6 @@ public class IODispatcherTest {
                     .build();
             QueryCache.configure(httpConfiguration);
 
-
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
@@ -4159,9 +4162,8 @@ public class IODispatcherTest {
                 }
             });
 
-            try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+            try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                 HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -4264,7 +4266,7 @@ public class IODispatcherTest {
                     peerDisconnectLatch.await();
                     // depending on how quick the CI hardware is we may end up processing different
                     // number of rows before query is interrupted
-                    Assert.assertTrue(tableRowCount > TestLatchedCounterFunctionFactory.getCount());
+                    MatcherAssert.assertThat(tableRowCount, greaterThanOrEqualTo(TestLatchedCounterFunctionFactory.getCount()));
                 } finally {
                     workerPool.halt();
                 }

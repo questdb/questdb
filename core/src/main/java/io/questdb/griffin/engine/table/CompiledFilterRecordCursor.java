@@ -201,7 +201,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
     private void seekNextColTopsRow() {
         while (++current < hi) {
-            recordA.setRowIndex(current);
+            recordA.setRowIndex(getCurrentRowIndex());
             if (colTopsFilter.getBool(recordA)) {
                 return;
             }
@@ -210,7 +210,8 @@ class CompiledFilterRecordCursor implements RecordCursor {
 
     private boolean nextRow() {
         if (current < hi) {
-            recordA.setRowIndex(rows.get(current++));
+            recordA.setRowIndex(rows.get(getCurrentRowIndex()));
+            current++;
             return true;
         }
         return nextPage();

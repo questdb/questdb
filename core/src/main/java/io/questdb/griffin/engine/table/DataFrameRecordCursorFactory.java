@@ -32,10 +32,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import io.questdb.std.LongList;
-import io.questdb.std.Misc;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -164,6 +161,11 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         @Override
         public void close() {
             dataFrameCursor = Misc.free(dataFrameCursor);
+        }
+
+        @Override
+        public long getUpdateRowId(long rowIndex) {
+            return Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo() + rowIndex);
         }
 
         @Override

@@ -31,6 +31,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
 
+//contiguous readable 
 public interface MemoryCR extends MemoryC, MemoryR {
     default BinarySequence getBin(long offset, ByteSequenceView view) {
         final long addr = addressOf(offset);

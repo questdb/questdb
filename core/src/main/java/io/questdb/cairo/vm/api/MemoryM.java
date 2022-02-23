@@ -30,6 +30,7 @@ import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
 
+//mapped 
 public interface MemoryM extends Closeable {
 
     FilesFacade getFilesFacade();
@@ -58,7 +59,7 @@ public interface MemoryM extends Closeable {
      *  @param ff                the files facade - an abstraction used to simulate failures
      * @param name              the name of the file
      * @param extendSegmentSize for those implementations that can need to extend mapped memory beyond available file size
- *                          should use this parameter as the increment size
+     *                          should use this parameter as the increment size
      * @param size              size of the initial mapped memory when smaller than the actual file
      * @param memoryTag     memory tag for diagnostics
      */
