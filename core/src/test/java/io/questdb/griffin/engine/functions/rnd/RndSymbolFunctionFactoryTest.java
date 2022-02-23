@@ -194,13 +194,13 @@ public class RndSymbolFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testRndFunctionsMemoryConfiguration() {
         rndFunctionMemoryPageSize = 1024;
-        rndFunctionMemorymaxPages = 32;
+        rndFunctionMemoryMaxPages = 32;
 
         assertFailure("[18] not enough memory for rnd_symbol(iiii) [pageSize=1024, maxPages=32, actualMem=32768, requiredMem=78000]",
                 "select rnd_symbol(1000,30,33,0) as testCol from long_sequence(20)");
 
         rndFunctionMemoryPageSize = -1;
-        rndFunctionMemorymaxPages = -1;
+        rndFunctionMemoryMaxPages = -1;
     }
 
     @Test

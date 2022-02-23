@@ -102,9 +102,10 @@ class RndStringMemory implements Closeable {
     }
 
     private void initFixedLength(Rnd rnd) {
+        final long storageLength = Vm.getStorageLength(lo);
         for (int i = 0; i < count; i++) {
             final long o = strMem.putStr(rnd.nextChars(lo));
-            idxMem.putLong(o - Vm.getStorageLength(lo));
+            idxMem.putLong(o - storageLength);
         }
     }
 
