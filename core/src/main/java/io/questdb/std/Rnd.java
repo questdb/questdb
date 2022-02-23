@@ -52,6 +52,7 @@ public class Rnd {
         return (byte) nextLong();
     }
 
+    //returns random bytes between 'B' and 'Z' for legacy reasons 
     public byte[] nextBytes(int len) {
         byte[] bytes = new byte[len];
         for (int i = 0; i < len; i++) {
@@ -60,6 +61,7 @@ public class Rnd {
         return bytes;
     }
 
+    //returns random bytes between 'B' and 'Z' for legacy reasons
     public void nextBytes(byte[] bytes) {
         int len = bytes.length;
         for (int i = 0; i < len; i++) {
@@ -67,6 +69,7 @@ public class Rnd {
         }
     }
 
+    //returns random bytes between 'B' and 'Z' for legacy reasons
     public char nextChar() {
         return (char) (nextPositiveInt() % 25 + 'B');
     }
@@ -83,6 +86,7 @@ public class Rnd {
         return sink;
     }
 
+    //returns random bytes between 'B' and 'Z' for legacy reasons
     public void nextChars(CharSink sink, int len) {
         for (int i = 0; i < len; i++) {
             sink.put((char) (nextPositiveInt() % 25 + 66));
@@ -158,6 +162,7 @@ public class Rnd {
         return (short) nextLong();
     }
 
+    //returns random bytes between 'B' and 'Z' for legacy reasons
     public String nextString(int len) {
         char[] chars = new char[len];
         for (int i = 0; i < len; i++) {
