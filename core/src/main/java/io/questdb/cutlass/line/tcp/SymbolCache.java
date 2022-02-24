@@ -45,7 +45,6 @@ class SymbolCache implements Closeable, SymbolLookup {
     private final long waitUsBeforeReload;
     private long lastSymbolReaderReloadTimestamp;
     private int symbolIndexInTxFile;
-    private long columnVersion;
 
     SymbolCache(LineTcpReceiverConfiguration configuration) {
         this.clock = configuration.getMicrosecondClock();
@@ -94,7 +93,7 @@ class SymbolCache implements Closeable, SymbolLookup {
             CharSequence columnName,
             int symbolIndexInTxFile,
             TxReader txReader,
-            ColumnVersionReader columnVersionReader,
+            long columnNameTxn,
             int writerIndex
     ) {
         this.symbolIndexInTxFile = symbolIndexInTxFile;
@@ -102,10 +101,6 @@ class SymbolCache implements Closeable, SymbolLookup {
         this.txReader = txReader;
         int symCount = safeReadUncommittedSymbolCount(symbolIndexInTxFile, false);
         path.trimTo(plen);
-        if (columnVersionReader.getVersion() < columnVersion) {
-            columnVersionReader.readSafe(configuration.getMicrosecondClock(), configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs());
-        }
-        long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
         symbolMapReader.of(configuration, path, columnName, columnNameTxn, symCount);
         symbolValueToKeyMap.clear(symCount);
     }
@@ -116,7 +111,6 @@ class SymbolCache implements Closeable, SymbolLookup {
         while (true) {
             if (offsetReloadOk) {
                 int count = txReader.unsafeReadSymbolTransientCount(symbolIndexInTxFile);
-                this.columnVersion = txReader.unsafeReadColumnVersion();
                 Unsafe.getUnsafe().loadFence();
 
                 if (txReader.unsafeReadVersion() == txReader.getVersion()) {

@@ -251,7 +251,6 @@ class LineTcpMeasurementEvent implements Closeable {
         // timestamp and entitiesWritten are saved to timestampBufPos after saving all fields
         // because their values are worked out while the columns are processed
         long offset = Long.BYTES + Integer.BYTES + buffer.getAddress();
-//        buffer.seekToEntities();
         int entitiesWritten = 0;
         for (int nEntity = 0, n = parser.getEntityCount(); nEntity < n; nEntity++) {
             LineTcpParser.ProtoEntity entity = parser.getEntity(nEntity);

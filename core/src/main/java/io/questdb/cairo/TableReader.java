@@ -253,6 +253,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         return this.txFile.getDataVersion();
     }
 
+    public ColumnVersionReader getColumnVersionReader() {
+        return columnVersionReader;
+    }
+
     public long getMaxTimestamp() {
         return txFile.getMaxTimestamp();
     }

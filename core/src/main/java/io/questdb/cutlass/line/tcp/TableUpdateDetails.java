@@ -276,7 +276,6 @@ public class TableUpdateDetails implements Closeable {
         private int columnCount;
         private String colName;
         private TxReader txReader;
-        private ColumnVersionReader columnVersionReader = new ColumnVersionReader();
         private boolean clean = true;
         private String symbolNameTemp;
 
@@ -294,7 +293,6 @@ public class TableUpdateDetails implements Closeable {
         public void close() {
             Misc.freeObjList(symbolCacheByColumnIndex);
             Misc.free(path);
-            columnVersionReader = Misc.free(columnVersionReader);
             txReader = Misc.free(txReader);
         }
 
@@ -305,8 +303,6 @@ public class TableUpdateDetails implements Closeable {
                     throw CairoException.instance(0).put(reader.getMetadata().getColumnName(colWriterIndex)).put(" cannot find symbol column name by writer index ").put(colWriterIndex);
                 }
                 path.of(engine.getConfiguration().getRoot()).concat(tableNameUtf16);
-                int pathLen = path.length();
-
                 SymbolCache symCache;
                 final int lastUnusedSymbolCacheIndex = unusedSymbolCaches.size() - 1;
                 if (lastUnusedSymbolCacheIndex > -1) {
@@ -322,13 +318,11 @@ public class TableUpdateDetails implements Closeable {
                         this.txReader = new TxReader(filesFacade);
                     }
                     this.txReader.ofRO(path, reader.getPartitionedBy());
-                    path.trimTo(pathLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
-                    this.columnVersionReader.ofRO(filesFacade, path);
-                    path.trimTo(pathLen);
                     this.clean = false;
                 }
 
-                symCache.of(engine.getConfiguration(), path, symbolNameTemp, symIndex, txReader, columnVersionReader, colWriterIndex);
+                long columnNameTxn = reader.getColumnVersionReader().getDefaultColumnNameTxn(colWriterIndex);
+                symCache.of(engine.getConfiguration(), path, symbolNameTemp, symIndex, txReader, columnNameTxn, colWriterIndex);
                 symbolCacheByColumnIndex.extendAndSet(colWriterIndex, symCache);
                 return symCache;
             }
@@ -350,7 +344,6 @@ public class TableUpdateDetails implements Closeable {
             if (txReader != null) {
                 txReader.clear();
             }
-            columnVersionReader.clear();
             this.clean = true;
         }
 

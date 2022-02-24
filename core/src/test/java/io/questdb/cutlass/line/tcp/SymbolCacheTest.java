@@ -43,8 +43,6 @@ import org.junit.Test;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import static io.questdb.cairo.TableUtils.COLUMN_VERSION_FILE_NAME;
-
 public class SymbolCacheTest extends AbstractGriffinTest {
 
     @Test
@@ -62,11 +60,10 @@ public class SymbolCacheTest extends AbstractGriffinTest {
             try (
                     SymbolCache symbolCache = new SymbolCache(new DefaultLineTcpReceiverConfiguration());
                     Path path = new Path();
-                    TxReader txReader = new TxReader(ff).ofRO(path.of(configuration.getRoot()).concat("x"), PartitionBy.DAY);
-                    ColumnVersionReader columnVersionReader = new ColumnVersionReader().ofRO(ff, path.of(configuration.getRoot()).concat("x").concat(COLUMN_VERSION_FILE_NAME).$())
+                    TxReader txReader = new TxReader(ff).ofRO(path.of(configuration.getRoot()).concat("x"), PartitionBy.DAY)
             ) {
                 path.of(configuration.getRoot()).concat("x");
-                symbolCache.of(configuration, path, "b", 1, txReader, columnVersionReader, 1);
+                symbolCache.of(configuration, path, "b", 1, txReader, -1, 1);
 
                 final CyclicBarrier barrier = new CyclicBarrier(2);
                 final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
@@ -165,8 +162,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                 try (
                         TableWriter writer = new TableWriter(configuration, tableName, metrics);
                         MemoryMR txMem = Vm.getMRInstance();
-                        TxReader txReader = new TxReader(ff).ofRO(path.of(configuration.getRoot()).concat(tableName), PartitionBy.DAY);
-                        ColumnVersionReader columnVersionReader = new ColumnVersionReader().ofRO(ff, path.of(configuration.getRoot()).concat(tableName).concat(COLUMN_VERSION_FILE_NAME).$())
+                        TxReader txReader = new TxReader(ff).ofRO(path.of(configuration.getRoot()).concat(tableName), PartitionBy.DAY)
                 ) {
                     int symColIndex1 = writer.getColumnIndex("symCol1");
                     int symColIndex2 = writer.getColumnIndex("symCol2");
@@ -187,7 +183,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                             "symCol2",
                             symColIndex2,
                             txReader,
-                            columnVersionReader,
+                            -1,
                             symColIndex2
                     );
 
@@ -274,7 +270,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                             "symCol2",
                             0,
                             txReader,
-                            columnVersionReader,
+                            -1,
                             1
                     );
 
