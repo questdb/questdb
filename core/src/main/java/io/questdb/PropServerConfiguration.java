@@ -1893,11 +1893,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getMiscAppendPageSize() {
-            return writerMiscAppendPageSize;
-        }
-
-        @Override
         public int getRndFunctionMemoryPageSize() {
             return rndFunctionMemoryPageSize;
         }

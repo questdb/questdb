@@ -85,7 +85,6 @@ stages:
     jobs:
       - template: templates/hosted-cover-jobs.yml
 
-
   - stage: CoverageReports
     displayName: "Coverage Report"
     dependsOn:
@@ -97,13 +96,10 @@ stages:
         pool:
           vmImage: "ubuntu-latest"
         variables:
-          SOURCE_CODE_CHANGED:
-            $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
-          CODE_COVERAGE_TOOL_OPTION:
-            $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
+          SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
+          CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
           MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m"
-          COVERAGE_DIFF:
-            $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
+          COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
         condition: |
           and(
             and(
@@ -127,8 +123,7 @@ stages:
             inputs:
               mavenPomFile: "core/pom.xml"
               mavenOptions: "$(MAVEN_OPTS)"
-              options:
-                "compile -DskipTests"
+              options: "compile -DskipTests"
               jdkVersionOption: "1.11"
           - download: current
             artifact: jacoco-coverage
@@ -138,12 +133,14 @@ stages:
               mavenPomFile: "ci/jacoco-merge.xml"
               goals: "verify"
               options:
-                "-Dhttp.keepAlive=false -DincludeRoot=$(Pipeline.Workspace) -DoutputDirectory=$(Pipeline.Workspace)/jacoco-aggregate -DcoverDiff=$(COVERAGE_DIFF)"
+                "-Dhttp.keepAlive=false -DincludeRoot=$(Pipeline.Workspace)
+                -DoutputDirectory=$(Pipeline.Workspace)/jacoco-aggregate
+                -DcoverDiff=$(COVERAGE_DIFF)"
           - bash:
               $JAVA_HOME_11_X64/bin/java -jar
               $(Build.SourcesDirectory)/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar
               -c $(Pipeline.Workspace)/jacoco-aggregate/jacoco.xml
-              --github-token $(GH_TOKEN) --repo "questdb/questdb"
-              --pr $(System.PullRequest.PullRequestNumber)
+              --github-token $(GH_TOKEN) --repo "questdb/questdb" --pr
+              $(System.PullRequest.PullRequestNumber)
               -t  $(DIFF_COVER_THRESHOLD_PCT) -type jacoco;
             displayName: "Diff coverage PR report"

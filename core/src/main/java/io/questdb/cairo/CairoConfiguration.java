@@ -190,8 +190,6 @@ public interface CairoConfiguration {
 
     int getSampleByIndexSearchPageSize();
 
-    long getMiscAppendPageSize();
-
     int getRndFunctionMemoryPageSize();
 
     int getRndFunctionMemoryMaxPages();
