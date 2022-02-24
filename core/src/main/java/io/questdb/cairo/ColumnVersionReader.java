@@ -132,7 +132,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
     }
 
     public void readSafe(MicrosecondClock microsecondClock, long spinLockTimeoutUs) {
-        long deadline = microsecondClock.getTicks() + spinLockTimeoutUs;
+        final long tick = microsecondClock.getTicks();
         while (true) {
             long version = unsafeGetVersion();
             if (version == this.version) {
@@ -140,9 +140,17 @@ public class ColumnVersionReader implements Closeable, Mutable {
             }
             Unsafe.getUnsafe().loadFence();
 
-            boolean areaA = version % 2 == 0;
-            long offset = areaA ? mem.getLong(OFFSET_OFFSET_A_64) : mem.getLong(OFFSET_OFFSET_B_64);
-            long size = areaA ? mem.getLong(OFFSET_SIZE_A_64) : mem.getLong(OFFSET_SIZE_B_64);
+            final long offset;
+            final long size;
+
+            final boolean areaA = version % 2 == 0;
+            if (areaA) {
+                offset = mem.getLong(OFFSET_OFFSET_A_64);
+                size = mem.getLong(OFFSET_SIZE_A_64);
+            } else {
+                offset = mem.getLong(OFFSET_OFFSET_B_64);
+                size = mem.getLong(OFFSET_SIZE_B_64);
+            }
 
             Unsafe.getUnsafe().loadFence();
             if (version == unsafeGetVersion()) {
@@ -157,7 +165,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
                 }
             }
 
-            if (microsecondClock.getTicks() > deadline) {
+            if (microsecondClock.getTicks() - tick > spinLockTimeoutUs) {
                 LOG.error().$("Column Version read timeout [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
                 throw CairoException.instance(0).put("Column Version read timeout");
             }
