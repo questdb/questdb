@@ -24,19 +24,13 @@
 
 package io.questdb.griffin.engine.functions.rnd;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.math.NegIntFunctionFactory;
 import org.junit.Test;
 
 public class RndBinCCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
-    private static final CairoEngine engine = new CairoEngine(configuration);
-    private static final SqlCompiler compiler = new SqlCompiler(engine);
-
     @Test
     public void testBadMinimum() {
         assertFailure(8, "minimum has to be grater than 0", 0L, 10L, 2);
@@ -124,10 +118,5 @@ public class RndBinCCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new RndBinCCCFunctionFactory();
-    }
-
-    private void assertQuery(CharSequence expected, CharSequence sql) throws SqlException {
-        RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
-        assertCursor(expected, factory.getCursor(sqlExecutionContext), factory.getMetadata(), true);
     }
 }

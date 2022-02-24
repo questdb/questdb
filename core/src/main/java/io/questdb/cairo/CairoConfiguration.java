@@ -190,6 +190,12 @@ public interface CairoConfiguration {
 
     int getSampleByIndexSearchPageSize();
 
+    long getMiscAppendPageSize();
+
+    int getRndFunctionMemoryPageSize();
+
+    int getRndFunctionMemoryMaxPages();
+
     long getSpinLockTimeoutUs();
 
     int getSqlAnalyticRowIdMaxPages();

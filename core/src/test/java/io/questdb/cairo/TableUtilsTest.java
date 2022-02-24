@@ -47,19 +47,35 @@ public class TableUtilsTest {
     }
 
     @Test
-    public void testIsValidInfluxColumnName() {
-        Assert.assertTrue(TableUtils.isValidInfluxColumnName("a"));
+    public void testIsValidColumnName() {
+        testIsValidColumnName('?', false);
+        testIsValidColumnName('.', false);
+        testIsValidColumnName(',', false);
+        testIsValidColumnName('\'', false);
+        testIsValidColumnName('\"', false);
+        testIsValidColumnName('\\', false);
+        testIsValidColumnName('/', false);
+        testIsValidColumnName('\0', false);
+        testIsValidColumnName(':', false);
+        testIsValidColumnName(')', false);
+        testIsValidColumnName('(', false);
+        testIsValidColumnName('+', false);
+        testIsValidColumnName('-', false);
+        testIsValidColumnName('*', false);
+        testIsValidColumnName('%', false);
+        testIsValidColumnName('~', false);
 
-        Assert.assertFalse(TableUtils.isValidInfluxColumnName("_a"));
+        testIsValidColumnName('!', true);
+        testIsValidColumnName('a', true);
+        testIsValidColumnName('b', true);
+        testIsValidColumnName('^', true);
+        testIsValidColumnName('[', true);
+    }
 
-        Assert.assertFalse(TableUtils.isValidInfluxColumnName("-a"));
-
-        Assert.assertFalse(TableUtils.isValidInfluxColumnName("a-"));
-
-        Assert.assertTrue(TableUtils.isValidInfluxColumnName("a_"));
-
-        Assert.assertTrue(TableUtils.isValidInfluxColumnName("a_b"));
-
-        Assert.assertTrue(TableUtils.isValidInfluxColumnName("data_connectionSource_user-agent"));
+    private void testIsValidColumnName(char c, boolean expected) {
+        Assert.assertEquals(expected, TableUtils.isValidColumnName(Character.toString(c)));
+        Assert.assertEquals(expected, TableUtils.isValidColumnName(c + "abc"));
+        Assert.assertEquals(expected, TableUtils.isValidColumnName("abc" + c));
+        Assert.assertEquals(expected, TableUtils.isValidColumnName("ab" + c + "c"));
     }
 }

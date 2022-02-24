@@ -92,6 +92,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean httpSqlCacheEnabled;
     private final int httpSqlCacheBlockCount;
     private final int httpSqlCacheRowCount;
+    private final int rndFunctionMemoryPageSize;
+    private final int rndFunctionMemoryMaxPages;
     private final int sqlCharacterStoreCapacity;
     private final int sqlCharacterStoreSequencePoolCapacity;
     private final int sqlColumnPoolCapacity;
@@ -361,6 +363,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinNetConnectionRcvBuf;
     private int httpMinNetConnectionSndBuf;
     private long symbolCacheWaitUsBeforeReload;
+    private boolean stringToCharCastAllowed;
+    private boolean symbolAsFieldSupported;
+    private boolean isStringAsTagSupported;
 
     public PropServerConfiguration(
             String root,
@@ -730,8 +735,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.maxUncommittedRows = getInt(properties, env, "cairo.max.uncommitted.rows", 500_000);
             this.commitLag = getLong(properties, env, "cairo.commit.lag", 300_000) * 1_000;
             this.o3QuickSortEnabled = getBoolean(properties, env, "cairo.o3.quicksort.enabled", false);
+            this.rndFunctionMemoryPageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.rnd.memory.page.size", 8192));
+            this.rndFunctionMemoryMaxPages = Numbers.ceilPow2(getInt(properties, env, "cairo.rnd.memory.max.pages", 128));
             this.sqlAnalyticStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.store.page.size", 1024 * 1024));
-            this.sqlAnalyticStoreMaxPages = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.store.max.pages", Integer.MAX_VALUE));
+            this.sqlAnalyticStoreMaxPages = Numbers.ceilPow2(getInt(properties, env, "cairo.sql.analytic.store.max.pages", Integer.MAX_VALUE));
             this.sqlAnalyticRowIdPageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.rowid.page.size", 512 * 1024));
             this.sqlAnalyticRowIdMaxPages = Numbers.ceilPow2(getInt(properties, env, "cairo.sql.analytic.rowid.max.pages", Integer.MAX_VALUE));
             this.sqlAnalyticTreeKeyPageSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.analytic.tree.page.size", 512 * 1024));
@@ -789,7 +796,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpNetConnectionRcvBuf = getIntSize(properties, env, "line.tcp.net.recv.buf.size", -1);
                 this.lineTcpNetConnectionRcvBuf = getIntSize(properties, env, "line.tcp.net.connection.rcvbuf", this.lineTcpNetConnectionRcvBuf);
 
-                this.lineTcpConnectionPoolInitialCapacity = getInt(properties, env, "line.tcp.connection.pool.capacity", 64);
+                this.lineTcpConnectionPoolInitialCapacity = getInt(properties, env, "line.tcp.connection.pool.capacity", 8);
                 this.lineTcpTimestampAdapter = getLineTimestampAdaptor(properties, env, "line.tcp.timestamp");
                 this.lineTcpMsgBufferSize = getIntSize(properties, env, "line.tcp.msg.buffer.size", 32768);
                 this.lineTcpMaxMeasurementSize = getIntSize(properties, env, "line.tcp.max.measurement.size", 32768);
@@ -841,6 +848,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                 }
                 this.minIdleMsBeforeWriterRelease = getLong(properties, env, "line.tcp.min.idle.ms.before.writer.release", 10_000);
                 this.lineTcpDisconnectOnError = getBoolean(properties, env, "line.tcp.disconnect.on.error", true);
+                this.stringToCharCastAllowed = getBoolean(properties, env, "line.tcp.undocumented.string.to.char.cast.allowed", false);
+                this.symbolAsFieldSupported = getBoolean(properties, env, "line.tcp.undocumented.symbol.as.field.supported", false);
+                this.isStringAsTagSupported = getBoolean(properties, env, "line.tcp.undocumented.string.as.tag.supported", false);
             }
 
             this.sharedWorkerCount = getInt(properties, env, "shared.worker.count", Math.max(1, cpuAvailable / 2 - 1 - cpuUsed));
@@ -1883,6 +1893,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getMiscAppendPageSize() {
+            return writerMiscAppendPageSize;
+        }
+
+        @Override
+        public int getRndFunctionMemoryPageSize() {
+            return rndFunctionMemoryPageSize;
+        }
+
+        @Override
+        public int getRndFunctionMemoryMaxPages() {
+            return rndFunctionMemoryMaxPages;
+        }
+
+        @Override
         public long getSpinLockTimeoutUs() {
             return spinLockTimeoutUs;
         }
@@ -2505,6 +2530,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSymbolCacheWaitUsBeforeReload() {
             return symbolCacheWaitUsBeforeReload;
+        }
+
+        @Override
+        public boolean isStringToCharCastAllowed() {
+            return stringToCharCastAllowed;
+        }
+
+        @Override
+        public boolean isSymbolAsFieldSupported() {
+            return symbolAsFieldSupported;
+        }
+
+        @Override
+        public boolean isStringAsTagSupported() {
+            return isStringAsTagSupported;
         }
     }
 

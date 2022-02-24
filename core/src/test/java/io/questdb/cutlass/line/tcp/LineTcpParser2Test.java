@@ -37,7 +37,7 @@ import org.junit.Test;
 
 
 public class LineTcpParser2Test extends LineUdpLexerTest {
-    private final LineTcpParser lineTcpParser = new LineTcpParser();
+    private final LineTcpParser lineTcpParser = new LineTcpParser(false, false);
     private boolean onErrorLine;
     private long startOfLineAddr;
 
@@ -49,8 +49,8 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     @Override
     public void testDanglingCommaOnTag() {
         assertThat(
-                "measurement,tag=value field=x 10000\n",
-                "measurement,tag=value, field=x 10000\n"
+                "measurement,tag=value field=\"x\" 10000\n",
+                "measurement,tag=value, field=\"x\" 10000\n"
         );
     }
 
@@ -73,16 +73,16 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     @Override
     public void testNoTagValue1() {
         assertThat(
-                "measurement,tag= field=x 10000\n",
-                "measurement,tag= field=x 10000\n"
+                "measurement,tag= field=\"x\" 10000\n",
+                "measurement,tag= field=\"x\" 10000\n"
         );
     }
 
     @Override
     public void testNoTagValue2() {
         assertThat(
-                "measurement,tag= field=x 10000\n",
-                "measurement,tag=, field=x 10000\n"
+                "measurement,tag= field=\"x\" 10000\n",
+                "measurement,tag=, field=\"x\" 10000\n"
         );
     }
 
@@ -147,31 +147,10 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     }
 
     @Test
-    public void testSupportsUnquotedStrings() {
-        assertThat(
-                "measurement,t\"ag=value with space,tag2=value field=10000i,field 2=strend 100000\n",
-                "measurement,t\\\"ag=value\\ with\\ space,tag2=value field=10000i,field\\ 2=strend 100000\n"
-        );
-    }
-
-    @Test
-    public void testSupportsUnquotedStringsWithQuoteInMiddle() {
-        assertThat(
-                "measurement,t\"ag=value with space,tag2=value field=10000i,field 2=str\"end 100000\n",
-                "measurement,t\\\"ag=value\\ with\\ space,tag2=value field=10000i,field\\ 2=str\"end 100000\n"
-        );
-
-        assertThat(
-                "measurement,t\"ag=value with space,tag2=value field=10000i,field 2=str\"end\" 100000\n",
-                "measurement,t\\\"ag=value\\ with\\ space,tag2=value field=10000i,field\\ 2=str\"end\" 100000\n"
-        );
-    }
-
-    @Test
     public void testSupportsUtf8Chars() {
         assertThat(
-                "लаблअца,символ=значение1 поле=значение2,поле2=\"значение3\" 123--non ascii--\n",
-                "लаблअца,символ=значение1 поле=значение2,поле2=\"значение3\" 123\n"
+                "लаблअца,символ=значение1 поле=\"значение2\",поле2=\"значение3\" 123--non ascii--\n",
+                "लаблअца,символ=значение1 поле=\"значение2\",поле2=\"значение3\" 123\n"
         );
 
         assertThat(

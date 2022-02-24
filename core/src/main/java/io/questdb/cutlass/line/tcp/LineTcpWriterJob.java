@@ -33,7 +33,6 @@ import io.questdb.mp.Sequence;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -44,7 +43,6 @@ class LineTcpWriterJob implements Job, Closeable {
     private final RingQueue<LineTcpMeasurementEvent> queue;
     private final Sequence sequence;
     private final Path path = new Path();
-    private final FloatingDirectCharSink floatingCharSink = new FloatingDirectCharSink();
     private final ObjList<TableUpdateDetails> assignedTables = new ObjList<>();
     private final MillisecondClock millisecondClock;
     private final long commitIntervalDefault;
@@ -150,7 +148,7 @@ class LineTcpWriterJob implements Job, Closeable {
                                     .$(", threadId=").$(workerId)
                                     .I$();
                         }
-                        event.append(floatingCharSink);
+                        event.append();
                         eventProcessed = true;
                     } catch (Throwable ex) {
                         LOG.error()
