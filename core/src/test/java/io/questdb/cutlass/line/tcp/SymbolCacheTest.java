@@ -85,8 +85,8 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                             // we pretend we don't know this upfront. The aim is to cause
                             // race condition between lookup and table writer
                             final CharSequence value2 = rndCache.nextString(5);
-                            symbolCache.getSymbolKey(constValue);
-                            symbolCache.getSymbolKey(value2);
+                            symbolCache.keyOf(constValue);
+                            symbolCache.keyOf(value2);
                             final long cursor = pubSeq.nextBully();
                             final Holder h = wheel.get(cursor);
                             // publish the value2 to the table writer

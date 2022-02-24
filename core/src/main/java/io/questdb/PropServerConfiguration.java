@@ -361,6 +361,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinNetConnectionRcvBuf;
     private int httpMinNetConnectionSndBuf;
     private long symbolCacheWaitUsBeforeReload;
+    private boolean stringToCharCastAllowed;
+    private boolean symbolAsFieldSupported;
+    private boolean isStringAsTagSupported;
 
     public PropServerConfiguration(
             String root,
@@ -830,6 +833,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                 }
                 this.minIdleMsBeforeWriterRelease = getLong(properties, env, "line.tcp.min.idle.ms.before.writer.release", 10_000);
                 this.lineTcpDisconnectOnError = getBoolean(properties, env, "line.tcp.disconnect.on.error", true);
+                this.stringToCharCastAllowed = getBoolean(properties, env, "line.tcp.undocumented.string.to.char.cast.allowed", false);
+                this.symbolAsFieldSupported = getBoolean(properties, env, "line.tcp.undocumented.symbol.as.field.supported", false);
+                this.isStringAsTagSupported = getBoolean(properties, env, "line.tcp.undocumented.string.as.tag.supported", false);
             }
 
             this.sharedWorkerCount = getInt(properties, env, "shared.worker.count", Math.max(1, cpuAvailable / 2 - 1 - cpuUsed));
@@ -2507,6 +2513,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSymbolCacheWaitUsBeforeReload() {
             return symbolCacheWaitUsBeforeReload;
+        }
+
+        @Override
+        public boolean isStringToCharCastAllowed() {
+            return stringToCharCastAllowed;
+        }
+
+        @Override
+        public boolean isSymbolAsFieldSupported() {
+            return symbolAsFieldSupported;
+        }
+
+        @Override
+        public boolean isStringAsTagSupported() {
+            return isStringAsTagSupported;
         }
     }
 

@@ -81,4 +81,10 @@ public interface LineTcpReceiverConfiguration {
     boolean getDisconnectOnError();
 
     long getSymbolCacheWaitUsBeforeReload();
+
+    boolean isStringToCharCastAllowed();
+
+    boolean isSymbolAsFieldSupported();
+
+    boolean isStringAsTagSupported();
 }

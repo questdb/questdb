@@ -32,7 +32,7 @@ import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-class SymbolCache implements Closeable {
+class SymbolCache implements Closeable, SymbolLookup {
     private final ObjIntHashMap<CharSequence> symbolValueToKeyMap = new ObjIntHashMap<>(
             256,
             0.5,
@@ -57,10 +57,7 @@ class SymbolCache implements Closeable {
         symbolValueToKeyMap.clear();
     }
 
-    public int getCacheValueCount() {
-        return symbolValueToKeyMap.size();
-    }
-
+    @Override
     int getSymbolKey(CharSequence symbolValue) {
         final int index = symbolValueToKeyMap.keyIndex(symbolValue);
         if (index < 0) {
@@ -85,6 +82,10 @@ class SymbolCache implements Closeable {
         }
 
         return symbolKey;
+    }
+
+    int getCacheValueCount() {
+        return symbolValueToKeyMap.size();
     }
 
     void of(CairoConfiguration configuration,

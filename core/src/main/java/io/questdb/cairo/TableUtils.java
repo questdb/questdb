@@ -459,43 +459,6 @@ public final class TableUtils {
         return true;
     }
 
-    public static boolean isValidInfluxColumnName(CharSequence seq) {
-        for (int i = 0, l = seq.length(); i < l; i++) {
-            switch (seq.charAt(i)) {
-                default:
-                    break;
-                case '?':
-                case '.':
-                case ',':
-                case '\'':
-                case '\"':
-                case '\\':
-                case '/':
-                case '\0':
-                case ':':
-                case ')':
-                case '(':
-                case '+':
-                case '*':
-                case '%':
-                case '~':
-                case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
-                    return false;
-                case '_':
-                    if (i < 1) {
-                        return false;
-                    }
-                    break;
-                case '-':
-                    if (i == 0 || i == l - 1) {
-                        return false;
-                    }
-                    break;
-            }
-        }
-        return true;
-    }
-
     public static long lock(FilesFacade ff, Path path) {
         long fd = ff.openRW(path);
         if (fd == -1) {
