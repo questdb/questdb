@@ -72,6 +72,8 @@ public class AbstractCairoTest {
     protected static CharSequence defaultMapType;
     protected static int pageFrameMaxSize = -1;
     protected static int jitMode = SqlJitMode.JIT_MODE_ENABLED;
+    protected static int rndFunctionMemoryPageSize = -1;
+    protected static int rndFunctionMemoryMaxPages = -1;
 
     @Rule
     public TestName testName = new TestName();
@@ -182,6 +184,16 @@ public class AbstractCairoTest {
                 // Bump it to high number so that test don't fail with memory leak if LongList
                 // re-allocates
                 return 512;
+            }
+
+            @Override
+            public int getRndFunctionMemoryPageSize() {
+                return rndFunctionMemoryPageSize < 0 ? super.getRndFunctionMemoryPageSize() : rndFunctionMemoryPageSize;
+            }
+
+            @Override
+            public int getRndFunctionMemoryMaxPages() {
+                return rndFunctionMemoryMaxPages < 0 ? super.getRndFunctionMemoryMaxPages() : rndFunctionMemoryMaxPages;
             }
         };
         engine = new CairoEngine(configuration, metrics);
