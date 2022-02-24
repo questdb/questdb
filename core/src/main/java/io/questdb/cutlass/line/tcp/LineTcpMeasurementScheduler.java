@@ -100,7 +100,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                         address,
                         addressSize,
                         lineConfiguration.getMicrosecondClock(),
-                        lineConfiguration.getTimestampAdapter()
+                        lineConfiguration.getTimestampAdapter(),
+                        lineConfiguration.isStringToCharCastAllowed(),
+                        lineConfiguration.isSymbolAsFieldSupported()
                 ),
                 getEventSlotSize(maxMeasurementSize),
                 queueSize,
@@ -156,18 +158,8 @@ class LineTcpMeasurementScheduler implements Closeable {
             pubSeq = null;
             tableUpdateDetailsLock.writeLock().lock();
             try {
-                ObjList<CharSequence> tableNames = tableUpdateDetailsUtf16.keys();
-                for (int n = 0, sz = tableNames.size(); n < sz; n++) {
-                    tableUpdateDetailsUtf16.get(tableNames.get(n)).closeLocals();
-                }
-                tableUpdateDetailsUtf16.clear();
-
-                tableNames = idleTableUpdateDetailsUtf16.keys();
-                for (int n = 0, sz = tableNames.size(); n < sz; n++) {
-                    TableUpdateDetails updateDetails = idleTableUpdateDetailsUtf16.get(tableNames.get(n));
-                    updateDetails.closeLocals();
-                }
-                idleTableUpdateDetailsUtf16.clear();
+                closeLocals(tableUpdateDetailsUtf16);
+                closeLocals(idleTableUpdateDetailsUtf16);
             } finally {
                 tableUpdateDetailsLock.writeLock().unlock();
             }
@@ -246,6 +238,14 @@ class LineTcpMeasurementScheduler implements Closeable {
         return Numbers.ceilPow2((long) (maxMeasurementSize / 4) * (Integer.BYTES + Double.BYTES + 1));
     }
 
+    private void closeLocals(LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tudUtf16) {
+        ObjList<CharSequence> tableNames = tudUtf16.keys();
+        for (int n = 0, sz = tableNames.size(); n < sz; n++) {
+            tudUtf16.get(tableNames.get(n)).closeLocals();
+        }
+        tudUtf16.clear();
+    }
+
     protected NetworkIOJob createNetworkIOJob(IODispatcher<LineTcpConnectionContext> dispatcher, int workerId) {
         return new LineTcpNetworkIOJob(configuration, this, dispatcher, workerId);
     }
@@ -322,11 +322,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         return null != pubSeq;
     }
 
-    @TestOnly
-    void setListener(LineTcpReceiver.SchedulerListener listener) {
-        this.listener = listener;
-    }
-
     boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser, FloatingDirectCharSink floatingDirectCharSink) {
         TableUpdateDetails tableUpdateDetails;
         try {
@@ -354,7 +349,6 @@ class LineTcpMeasurementScheduler implements Closeable {
                 queue.get(seq).createMeasurementEvent(
                         tableUpdateDetails,
                         parser,
-                        floatingDirectCharSink,
                         netIoJob.getWorkerId()
                 );
             } finally {
@@ -364,6 +358,11 @@ class LineTcpMeasurementScheduler implements Closeable {
             return false;
         }
         return true;
+    }
+
+    @TestOnly
+    void setListener(LineTcpReceiver.SchedulerListener listener) {
+        this.listener = listener;
     }
 
     @NotNull
