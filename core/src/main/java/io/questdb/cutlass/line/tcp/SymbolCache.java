@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.SymbolLookup;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -58,8 +59,8 @@ class SymbolCache implements Closeable, SymbolLookup {
     }
 
     @Override
-    int getSymbolKey(CharSequence symbolValue) {
-        final int index = symbolValueToKeyMap.keyIndex(symbolValue);
+    public int keyOf(CharSequence value) {
+        final int index = symbolValueToKeyMap.keyIndex(value);
         if (index < 0) {
             return symbolValueToKeyMap.valueAt(index);
         }
@@ -75,10 +76,10 @@ class SymbolCache implements Closeable, SymbolLookup {
             lastSymbolReaderReloadTimestamp = ticks;
         }
 
-        final int symbolKey = symbolMapReader.keyOf(symbolValue);
+        final int symbolKey = symbolMapReader.keyOf(value);
 
         if (SymbolTable.VALUE_NOT_FOUND != symbolKey) {
-            symbolValueToKeyMap.putAt(index, Chars.toString(symbolValue), symbolKey);
+            symbolValueToKeyMap.putAt(index, Chars.toString(value), symbolKey);
         }
 
         return symbolKey;

@@ -202,10 +202,10 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     Assert.assertEquals(1, txReader.unsafeReadSymbolCount(1));
                     Assert.assertEquals(1, txReader.unsafeReadSymbolTransientCount(1));
 
-                    int rc = cache.getSymbolKey("missing");
+                    int rc = cache.keyOf("missing");
                     Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, rc);
                     Assert.assertEquals(0, cache.getCacheValueCount());
-                    rc = cache.getSymbolKey("sym21");
+                    rc = cache.keyOf("sym21");
                     Assert.assertEquals(0, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
 
@@ -216,10 +216,10 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     writer.commit();
                     Assert.assertEquals(1, txReader.unsafeReadSymbolCount(1));
                     Assert.assertEquals(1, txReader.unsafeReadSymbolTransientCount(1));
-                    rc = cache.getSymbolKey("missing");
+                    rc = cache.keyOf("missing");
                     Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
-                    rc = cache.getSymbolKey("sym21");
+                    rc = cache.keyOf("sym21");
                     Assert.assertEquals(0, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
 
@@ -232,10 +232,10 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     writer.commit();
                     Assert.assertEquals(1, txReader.unsafeReadSymbolCount(1));
                     Assert.assertEquals(2, txReader.unsafeReadSymbolTransientCount(1));
-                    rc = cache.getSymbolKey("sym21");
+                    rc = cache.keyOf("sym21");
                     Assert.assertEquals(0, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
-                    rc = cache.getSymbolKey("sym22");
+                    rc = cache.keyOf("sym22");
                     Assert.assertEquals(1, rc);
                     Assert.assertEquals(2, cache.getCacheValueCount());
 
@@ -254,10 +254,10 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     r.putSym(symColIndex2, "sym25");
                     r.append();
 
-                    rc = cache.getSymbolKey("sym22");
+                    rc = cache.keyOf("sym22");
                     Assert.assertEquals(1, rc);
                     Assert.assertEquals(2, cache.getCacheValueCount());
-                    rc = cache.getSymbolKey("sym24");
+                    rc = cache.keyOf("sym24");
                     Assert.assertEquals(3, rc);
                     Assert.assertEquals(3, cache.getCacheValueCount());
                     writer.commit();
@@ -278,18 +278,18 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                             1
                     );
 
-                    rc = cache.getSymbolKey("sym24");
+                    rc = cache.keyOf("sym24");
                     Assert.assertEquals(3, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
 
                     r = writer.newRow();
                     r.putSym(symColIndex2, "sym26");
                     r.append();
-                    rc = cache.getSymbolKey("sym26");
+                    rc = cache.keyOf("sym26");
                     Assert.assertEquals(5, rc);
                     Assert.assertEquals(2, cache.getCacheValueCount());
                     writer.commit();
-                    rc = cache.getSymbolKey("sym26");
+                    rc = cache.keyOf("sym26");
                     Assert.assertEquals(5, rc);
                     Assert.assertEquals(2, cache.getCacheValueCount());
                 }

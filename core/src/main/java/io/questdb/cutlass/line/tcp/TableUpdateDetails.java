@@ -459,19 +459,8 @@ public class TableUpdateDetails implements Closeable {
             columnCount = metadata.getColumnCount();
             final int colType = metadata.getColumnType(colIndex);
             final int geoHashBits = ColumnType.getGeoHashBits(colType);
+            columnTypes.extendAndSet(writerColIndex, colType);
             columnTypeMeta.extendAndSet(writerColIndex + 1,
-                    geoHashBits == 0 ? 0 : Numbers.encodeLowHighShorts((short) geoHashBits, ColumnType.tagOf(colType)));
-        }
-
-        private void updateColumnTypeCache(int colIndex, TableReaderMetadata metadata) {
-            if (colIndex < 0) {
-                return;
-            }
-            columnCount = metadata.getColumnCount();
-            final int colType = metadata.getColumnType(colIndex);
-            columnTypes.extendAndSet(colIndex, colType);
-            final int geoHashBits = ColumnType.getGeoHashBits(colType);
-            columnTypeMeta.extendAndSet(colIndex + 1,
                     geoHashBits == 0 ? 0 : Numbers.encodeLowHighShorts((short) geoHashBits, ColumnType.tagOf(colType)));
         }
     }
