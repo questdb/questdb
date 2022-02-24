@@ -24,9 +24,7 @@
 
 package io.questdb;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.O3Utils;
-import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.*;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
@@ -96,13 +94,15 @@ public class ServerMain {
         }
 
         readServerConfiguration(rootDirectory, properties, log, buildInformation);
+        final CairoConfiguration cairoConfiguration = configuration.getCairoConfiguration();
+
         log.advisory().$("Server config : ").$(configurationFile.getAbsoluteFile()).$();
         log.advisory().$("Config changes applied:").$();
         log.advisory().$("  http.enabled : ").$(configuration.getHttpServerConfiguration().isEnabled()).$();
         log.advisory().$("  tcp.enabled  : ").$(configuration.getLineTcpReceiverConfiguration().isEnabled()).$();
         log.advisory().$("  pg.enabled   : ").$(configuration.getPGWireConfiguration().isEnabled()).$();
 
-        log.advisory().$("open database [id=").$(configuration.getCairoConfiguration().getDatabaseIdLo()).$('.').$(configuration.getCairoConfiguration().getDatabaseIdHi()).$(']').$();
+        log.advisory().$("open database [id=").$(cairoConfiguration.getDatabaseIdLo()).$('.').$(cairoConfiguration.getDatabaseIdHi()).$(']').$();
         log.advisory().$("platform [bit=").$(System.getProperty("sun.arch.data.model")).$(']').$();
         switch (Os.type) {
             case Os.WINDOWS:
@@ -128,11 +128,12 @@ public class ServerMain {
                 break;
         }
         log.advisory().$("available CPUs: ").$(Runtime.getRuntime().availableProcessors()).$();
-        log.advisory().$("db root: ").$(configuration.getCairoConfiguration().getRoot()).$();
-        log.advisory().$("backup root: ").$(configuration.getCairoConfiguration().getBackupRoot()).$();
+        log.advisory().$("db root: ").$(cairoConfiguration.getRoot()).$();
+        log.advisory().$("backup root: ").$(cairoConfiguration.getBackupRoot()).$();
         try (Path path = new Path()) {
-            verifyFileSystem("db", configuration.getCairoConfiguration().getRoot(), path, log);
-            verifyFileSystem("backup", configuration.getCairoConfiguration().getBackupRoot(), path, log);
+            verifyFileSystem("db", cairoConfiguration.getRoot(), path, log);
+            verifyFileSystem("backup", cairoConfiguration.getBackupRoot(), path, log);
+            verifyFileOpts(cairoConfiguration, path);
         }
 
         if (JitUtil.isJitSupported()) {
@@ -254,22 +255,6 @@ public class ServerMain {
         }
     }
 
-    private void verifyFileSystem(String kind, CharSequence dir, Path path, Log log) {
-        if (dir != null) {
-            path.of(dir).$();
-            // path will contain file system name
-            long fsStatus = Files.getFileSystemStatus(path);
-            path.seekZ();
-            LogRecord rec = log.advisory().$(kind).$(" file system magic: 0x");
-            if (fsStatus < 0) {
-                rec.$hex(-fsStatus).$(" [").$(path).$("] SUPPORTED").$();
-            } else {
-                rec.$hex(fsStatus).$(" [").$(path).$("] EXPERIMENTAL").$();
-                log.advisory().$("\n\n\n\t\t\t*** SYSTEM IS USING UNSUPPORTED FILE SYSTEM AND COULD BE UNSTABLE ***\n\n").$();
-            }
-        }
-    }
-
     public static void deleteOrException(File file) {
         if (!file.exists()) {
             return;
@@ -290,6 +275,34 @@ public class ServerMain {
 
     public static void main(String[] args) throws Exception {
         new ServerMain(args);
+    }
+
+    static void verifyFileOpts(CairoConfiguration cairoConfiguration, Path path) {
+        final FilesFacade ff = cairoConfiguration.getFilesFacade();
+
+        path.of(cairoConfiguration.getRoot()).concat("_verify_").put(cairoConfiguration.getRandom().nextPositiveInt()).put(".d");
+        long fd = ff.openRW(path.$(), cairoConfiguration.getWriterFileOpenOpts());
+
+        try {
+            if (fd > -1) {
+                long mem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    TableUtils.writeLongOrFail(
+                            ff,
+                            fd,
+                            0,
+                            123456789L,
+                            mem,
+                            path
+                    );
+                } finally {
+                    Unsafe.free(mem, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        } finally {
+            ff.close(fd);
+        }
+        ff.remove(path);
     }
 
     private static void logWebConsoleUrls(Log log, PropServerConfiguration configuration) throws SocketException {
@@ -338,7 +351,6 @@ public class ServerMain {
 
         return optHash;
     }
-
 
     private static long getPublicVersion(String publicDir) throws IOException {
         File f = new File(publicDir, VERSION_TXT);
@@ -467,6 +479,22 @@ public class ServerMain {
     protected static void shutdownQuestDb(final WorkerPool workerPool, final ObjList<? extends Closeable> instancesToClean) {
         workerPool.halt();
         Misc.freeObjList(instancesToClean);
+    }
+
+    private static void verifyFileSystem(String kind, CharSequence dir, Path path, Log log) {
+        if (dir != null) {
+            path.of(dir).$();
+            // path will contain file system name
+            long fsStatus = Files.getFileSystemStatus(path);
+            path.seekZ();
+            LogRecord rec = log.advisory().$(kind).$(" file system magic: 0x");
+            if (fsStatus < 0) {
+                rec.$hex(-fsStatus).$(" [").$(path).$("] SUPPORTED").$();
+            } else {
+                rec.$hex(fsStatus).$(" [").$(path).$("] EXPERIMENTAL").$();
+                log.advisory().$("\n\n\n\t\t\t*** SYSTEM IS USING UNSUPPORTED FILE SYSTEM AND COULD BE UNSTABLE ***\n\n").$();
+            }
+        }
     }
 
     protected HttpServer createHttpServer(

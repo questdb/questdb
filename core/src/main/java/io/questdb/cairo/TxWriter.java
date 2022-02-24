@@ -136,7 +136,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         int pathLen = path.length();
         try {
             if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
-                return txMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT);
+                return txMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
             }
             throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
         } finally {

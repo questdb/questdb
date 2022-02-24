@@ -25,8 +25,8 @@
 package io.questdb.griffin.update;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.griffin.SqlException;
@@ -47,6 +47,7 @@ public class InplaceUpdateExecution implements Closeable {
     private final IntList updateToColumnMap = new IntList();
     private final ObjList<MemoryCMARW> updateMemory = new ObjList<>();
     private final long dataAppendPageSize;
+    private final long fileOpenOpts;
     private Path path;
 
     public InplaceUpdateExecution(CairoConfiguration configuration) {
@@ -54,6 +55,7 @@ public class InplaceUpdateExecution implements Closeable {
         path = new Path().of(configuration.getRoot());
         rootLen = path.length();
         dataAppendPageSize = configuration.getDataAppendPageSize();
+        this.fileOpenOpts = configuration.getWriterFileOpenOpts();
     }
 
     @Override
@@ -133,12 +135,44 @@ public class InplaceUpdateExecution implements Closeable {
                 rowsUpdated++;
             }
         } finally {
-            for(int i = 0; i < updateMemory.size(); i++) {
+            for (int i = 0; i < updateMemory.size(); i++) {
                 updateMemory.getQuick(i).close(false);
             }
         }
         if (rowsUpdated > 0) {
             tableWriter.commit();
+        }
+    }
+
+    private void initUpdateMemory(int columnCount) {
+        for (int i = updateMemory.size(); i < columnCount; i++) {
+            updateMemory.add(Vm.getCMARWInstance());
+        }
+    }
+
+    private void openPartitionColumnsForUpdate(TableWriter tableWriter, ObjList<MemoryCMARW> updateMemory, int partitionIndex, IntList columnMap) {
+        long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
+        RecordMetadata metadata = tableWriter.getMetadata();
+        try {
+            path.concat(tableWriter.getTableName());
+            TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, false);
+            int pathTrimToLen = path.length();
+
+            for (int i = 0, n = columnMap.size(); i < n; i++) {
+                CharSequence name = metadata.getColumnName(columnMap.get(i));
+                MemoryCMARW colMem = updateMemory.get(i);
+                colMem.close(false);
+                colMem.of(
+                        ff,
+                        dFile(path.trimTo(pathTrimToLen), name),
+                        dataAppendPageSize,
+                        -1,
+                        MemoryTag.MMAP_TABLE_WRITER,
+                        fileOpenOpts
+                );
+            }
+        } finally {
+            path.trimTo(rootLen);
         }
     }
 
@@ -200,31 +234,6 @@ public class InplaceUpdateExecution implements Closeable {
                             .put(ColumnType.nameOf(columnType))
                             .put(" not supported for updates");
             }
-        }
-    }
-
-    private void initUpdateMemory(int columnCount) {
-        for(int i = updateMemory.size(); i < columnCount; i++) {
-            updateMemory.add(Vm.getCMARWInstance());
-        }
-    }
-
-    private void openPartitionColumnsForUpdate(TableWriter tableWriter, ObjList<MemoryCMARW> updateMemory, int partitionIndex, IntList columnMap) {
-        long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
-        RecordMetadata metadata = tableWriter.getMetadata();
-        try {
-            path.concat(tableWriter.getTableName());
-            TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, false);
-            int pathTrimToLen = path.length();
-
-            for (int i = 0, n = columnMap.size(); i < n; i++) {
-                CharSequence name = metadata.getColumnName(columnMap.get(i));
-                MemoryCMARW colMem = updateMemory.get(i);
-                colMem.close(false);
-                colMem.of(ff, dFile(path.trimTo(pathTrimToLen), name), dataAppendPageSize, -1, MemoryTag.MMAP_TABLE_WRITER);
-            }
-        } finally {
-            path.trimTo(rootLen);
         }
     }
 }

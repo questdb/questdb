@@ -328,7 +328,7 @@ public class CairoEngine implements Closeable, WriterSource {
         FilesFacade ff = configuration.getFilesFacade();
         Path path = Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
         try {
-            tableIdFd = TableUtils.openFileRWOrFail(ff, path);
+            tableIdFd = TableUtils.openFileRWOrFail(ff, path, configuration.getWriterFileOpenOpts());
             this.tableIdMem = TableUtils.mapRW(ff, tableIdFd, tableIdMemSize, MemoryTag.MMAP_DEFAULT);
         } catch (Throwable e) {
             close();

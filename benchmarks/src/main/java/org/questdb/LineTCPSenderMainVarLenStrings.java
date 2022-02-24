@@ -24,6 +24,7 @@
 
 package org.questdb;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.network.Net;
@@ -50,7 +51,7 @@ public class LineTCPSenderMainVarLenStrings {
             long logFd = -1;
             if (args.length == 1) {
                 path.put(args[0]).$();
-                logFd = ff.openRW(path);
+                logFd = ff.openRW(path, CairoConfiguration.O_NONE);
             }
             try (LineTcpSender sender = new LoggingLineTcpSender(Net.parseIPv4(hostIPv4), port, bufferCapacity, logFd, ff)) {
                 for (int i = 0; i < count; i++) {

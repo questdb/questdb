@@ -2010,7 +2010,15 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
                 try (
                         Path path = new Path().of(engine.getConfiguration().getRoot()).concat(tableName).concat(TableUtils.META_FILE_NAME).$();
-                        MemoryMARW mem = Vm.getMARWInstance(FilesFacadeImpl.INSTANCE, path, -1, Files.PAGE_SIZE, MemoryTag.NATIVE_DEFAULT)) {
+                        MemoryMARW mem = Vm.getMARWInstance(
+                                FilesFacadeImpl.INSTANCE,
+                                path,
+                                -1,
+                                Files.PAGE_SIZE,
+                                MemoryTag.NATIVE_DEFAULT,
+                                configuration.getWriterFileOpenOpts()
+                        )
+                ) {
                     mem.putLong(TableUtils.META_OFFSET_STRUCTURE_VERSION, 0);
                 }
 

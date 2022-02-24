@@ -265,7 +265,13 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 }
 
                 try (MemoryMA mem = Vm.getMAInstance()) {
-                    mem.of(FilesFacadeImpl.INSTANCE, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), pageSize, MemoryTag.MMAP_DEFAULT);
+                    mem.of(
+                            FilesFacadeImpl.INSTANCE,
+                            path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(),
+                            pageSize,
+                            MemoryTag.MMAP_DEFAULT,
+                            CairoConfiguration.O_NONE
+                    );
 
                     mem.putInt(columnCount);
                     mem.putInt(PartitionBy.NONE);
@@ -287,7 +293,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 if (trimSize > -1) {
                     FilesFacade ff = FilesFacadeImpl.INSTANCE;
                     path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
-                    long fd = ff.openRW(path);
+                    long fd = ff.openRW(path, configuration.getWriterFileOpenOpts());
                     assert fd > -1;
                     ff.truncate(fd, trimSize);
                     ff.close(fd);

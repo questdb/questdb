@@ -53,7 +53,7 @@ public class ColumnVersionWriter implements Closeable {
     // it can be zero when there are no columns deviating from the main
     // data branch
     public ColumnVersionWriter(FilesFacade ff, LPSZ fileName, long size) {
-        this.mem = Vm.getCMARWInstance(ff, fileName, ff.getPageSize(), size, MemoryTag.MMAP_TABLE_READER);
+        this.mem = Vm.getCMARWInstance(ff, fileName, ff.getPageSize(), size, MemoryTag.MMAP_TABLE_READER, CairoConfiguration.O_NONE);
         this.size = size;
     }
 
