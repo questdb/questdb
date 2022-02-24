@@ -2371,6 +2371,15 @@ public class TableWriter implements Closeable {
     }
 
 
+    private boolean isLastPartitionColumnsOpen() {
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.getColumnType(i) > 0) {
+                return columns.getQuick(getPrimaryColumnIndex(i)).isOpen();
+            }
+        }
+        // No columns, doesn't matter
+        return true;
+    }
 
     /**
      * Commits O3 data. Lag is optional. When 0 is specified the entire O3 segment is committed.
@@ -2773,7 +2782,7 @@ public class TableWriter implements Closeable {
         if (!o3InError) {
             updateO3ColumnTops();
         }
-        if (!columns.getQuick(0).isOpen() || partitionTimestampHi > partitionTimestampHiLimit) {
+        if (!isLastPartitionColumnsOpen() || partitionTimestampHi > partitionTimestampHiLimit) {
             openPartition(txWriter.getMaxTimestamp());
         }
 
@@ -3368,30 +3377,32 @@ public class TableWriter implements Closeable {
 
             for (int colIndex = 0; colIndex < columnCount; colIndex++) {
                 int columnType = metadata.getColumnType(colIndex);
-                int columnIndex = colIndex != timestampIndex ? colIndex : -colIndex - 1;
+                if (columnType > 0) {
+                    int columnIndex = colIndex != timestampIndex ? colIndex : -colIndex - 1;
 
-                long cursor = pubSeq.next();
+                    long cursor = pubSeq.next();
 
-                // Pass column index as -1 when it's designated timestamp column to o3 move method
-                if (cursor > -1 && columnType > 0) {
-                    try {
-                        final O3CallbackTask task = queue.get(cursor);
-                        task.of(
-                                o3DoneLatch,
-                                columnIndex,
-                                columnType,
-                                committedTransientRowCount,
-                                transientRowsAdded,
-                                this.o3MoveUncommittedRef
-                        );
+                    // Pass column index as -1 when it's designated timestamp column to o3 move method
+                    if (cursor > -1) {
+                        try {
+                            final O3CallbackTask task = queue.get(cursor);
+                            task.of(
+                                    o3DoneLatch,
+                                    columnIndex,
+                                    columnType,
+                                    committedTransientRowCount,
+                                    transientRowsAdded,
+                                    this.o3MoveUncommittedRef
+                            );
 
-                        o3PendingCallbackTasks.add(task);
-                    } finally {
-                        queuedCount++;
-                        pubSeq.done(cursor);
+                            o3PendingCallbackTasks.add(task);
+                        } finally {
+                            queuedCount++;
+                            pubSeq.done(cursor);
+                        }
+                    } else {
+                        o3MoveUncommitted0(columnIndex, columnType, committedTransientRowCount, transientRowsAdded);
                     }
-                } else {
-                    o3MoveUncommitted0(columnIndex, columnType, committedTransientRowCount, transientRowsAdded);
                 }
             }
 
@@ -4686,7 +4697,10 @@ public class TableWriter implements Closeable {
 
     private void setO3AppendPosition(final long position) {
         for (int i = 0; i < columnCount; i++) {
-            o3SetAppendOffset(i, metadata.getColumnType(i), position);
+            int columnType = metadata.getColumnType(i);
+            if (columnType > 0) {
+                o3SetAppendOffset(i, columnType, position);
+            }
         }
     }
 

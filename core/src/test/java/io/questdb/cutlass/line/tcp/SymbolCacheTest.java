@@ -170,7 +170,6 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                 ) {
                     int symColIndex1 = writer.getColumnIndex("symCol1");
                     int symColIndex2 = writer.getColumnIndex("symCol2");
-                    long symCountOffset = TableUtils.getSymbolWriterIndexOffset(symColIndex2);
                     long transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symColIndex2);
                     path.of(configuration.getRoot()).concat(tableName);
 

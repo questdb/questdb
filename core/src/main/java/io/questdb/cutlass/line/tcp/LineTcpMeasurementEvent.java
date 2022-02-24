@@ -436,17 +436,17 @@ class LineTcpMeasurementEvent implements Closeable {
         for (int nEntity = 0, n = parser.getEntityCount(); nEntity < n; nEntity++) {
             if (bufPos + Long.BYTES < bufMax) {
                 LineTcpParser.ProtoEntity entity = parser.getEntity(nEntity);
-                int colIndex = localDetails.getColumnIndex(entity.getName(), parser.hasNonAsciiChars());
-                if (colIndex > -1) {
+                int columnWriterIndex = localDetails.getColumnIndex(entity.getName(), parser.hasNonAsciiChars());
+                if (columnWriterIndex > -1) {
                     // column index found, processing column by index
-                    if (colIndex == tableUpdateDetails.getTimestampIndex()) {
+                    if (columnWriterIndex == tableUpdateDetails.getTimestampIndex()) {
                         timestamp = timestampAdapter.getMicros(entity.getLongValue());
                         continue;
                     }
 
-                    Unsafe.getUnsafe().putInt(bufPos, colIndex);
+                    Unsafe.getUnsafe().putInt(bufPos, columnWriterIndex);
                     bufPos += Integer.BYTES;
-                } else if (colIndex == COLUMN_NOT_FOUND) {
+                } else if (columnWriterIndex == COLUMN_NOT_FOUND) {
                     // send column by name
                     String colName = localDetails.getColName();
                     int colNameLen = colName.length();
@@ -486,7 +486,7 @@ class LineTcpMeasurementEvent implements Closeable {
                                 columnValue = floatingCharSink;
                             }
 
-                            symIndex = tableUpdateDetails.getSymbolIndex(localDetails, colIndex, columnValue);
+                            symIndex = tableUpdateDetails.getSymbolIndex(localDetails, columnWriterIndex, columnValue);
                             if (symIndex != SymbolTable.VALUE_NOT_FOUND) {
                                 // We know the symbol int value
                                 // Encode the int
@@ -528,7 +528,7 @@ class LineTcpMeasurementEvent implements Closeable {
                     case LineTcpParser.ENTITY_TYPE_STRING:
                     case LineTcpParser.ENTITY_TYPE_SYMBOL:
                     case LineTcpParser.ENTITY_TYPE_LONG256: {
-                        final int colTypeMeta = localDetails.getColumnTypeMeta(colIndex);
+                        final int colTypeMeta = localDetails.getColumnTypeMeta(columnWriterIndex);
                         if (colTypeMeta == 0) { // not a geohash
                             Unsafe.getUnsafe().putByte(bufPos, entity.getType());
                             bufPos += Byte.BYTES + Integer.BYTES;
