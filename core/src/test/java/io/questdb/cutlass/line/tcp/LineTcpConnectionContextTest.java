@@ -48,10 +48,10 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     @Test
     public void testAddCastFieldColumnNoTable() throws Exception {
         String tableName = "addCastColumn";
+        symbolAsFieldSupported = true;
         runInContext(() -> {
-            recvBuffer =
-                    tableName + ",location=us-midwest temperature=82 1465839830100400200\n" +
-                            tableName + ",location=us-eastcoast cast=cast,temperature=81,humidity=23 1465839830101400200\n";
+            recvBuffer = tableName + ",location=us-midwest temperature=82 1465839830100400200\n" +
+                         tableName + ",location=us-eastcoast cast=cast,temperature=81,humidity=23 1465839830101400200\n";
             do {
                 handleContextIO();
                 Assert.assertFalse(disconnected);
@@ -990,7 +990,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     table + ",location=us-midwest temperature=82,timestamp=1465839830100400200t 1465839830100300200\n" +
                             table + ",location=us-midwest temperature=83 1465839830100500200\n" +
                             table + ",location=us-eastcoast,city=york,city=london temperature=81,Temperature=89 1465839830101400200\n" +
-                            table + ",location=us-midwest,City=london,city=windsor temperature=85,city=glasgow,City=manchaster 1465839830102300200\n" +
+                            table + ",location=us-midwest,LOCation=Europe,City=london,city=windsor temperature=85 1465839830102300200\n" +
                             table + ",location=us-eastcoast Temperature=89,temperature=88 1465839830102400200\n" +
                             table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                             table + ",location=us-westcost temperature=82,timestamp=1465839830102500200t\n";
@@ -1612,6 +1612,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "tbl,t1=tv1,t2=tv2 f1=\"Zen=Internet,Ltd\" 1465839830100400200\n" +
                     "tbl,t1=t\\\"v1,t2=t\"v2 f2=\"1\" 1465839830100400200\n" +
                     "tbl,t1=\"tv1\",t2=tv2 f2=\"1\" 1465839830100400200\n" +
+                    "tbl,t1=tv1\",t2=tv2 f2=\"1\" 1465839830100400200\n" +
+                    "tbl,t1=\"tv1,t2=tv2 f2=\"1\" 1465839830100400200\n" +
                     "tbl,t1=tv1,t2=tv2 f1=\"Zen Internet Ltd\",f2=\"fv2\" 1465839830100400200\n";
             do {
                 handleContextIO();
@@ -1623,7 +1625,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "tv1\ttv2\tZen Internet Ltd\t\t2016-06-13T17:43:50.100400Z\n" +
                     "tv1\ttv2\tZen=Internet,Ltd\t\t2016-06-13T17:43:50.100400Z\n" +
                     "t\"v1\tt\"v2\t\t1\t2016-06-13T17:43:50.100400Z\n" +
-                    "\"tv1\"\ttv2\t\t1\t2016-06-13T17:43:50.100400Z\n" +
+                    "tv1\"\ttv2\t\t1\t2016-06-13T17:43:50.100400Z\n" +
+                    "\"tv1\ttv2\t\t1\t2016-06-13T17:43:50.100400Z\n" +
                     "tv1\ttv2\tZen Internet Ltd\tfv2\t2016-06-13T17:43:50.100400Z\n";
             assertTable(expected, "tbl");
         });

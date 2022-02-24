@@ -27,6 +27,7 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.SymbolLookup;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -39,7 +40,7 @@ import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-class SymbolCache implements Closeable {
+class SymbolCache implements Closeable, SymbolLookup {
     private final ObjIntHashMap<CharSequence> symbolValueToKeyMap = new ObjIntHashMap<>(
             256,
             0.5,
@@ -48,9 +49,9 @@ class SymbolCache implements Closeable {
     private final MemoryMR txMem = Vm.getMRInstance();
     private final SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl();
     private final MicrosecondClock clock;
+    private final long waitUsBeforeReload;
     private long transientSymCountOffset;
     private long lastSymbolReaderReloadTimestamp;
-    private final long waitUsBeforeReload;
 
     SymbolCache(LineTcpReceiverConfiguration configuration) {
         this.clock = configuration.getMicrosecondClock();
@@ -64,11 +65,8 @@ class SymbolCache implements Closeable {
         txMem.close();
     }
 
-    int getCacheValueCount() {
-        return symbolValueToKeyMap.size();
-    }
-
-    int getSymbolKey(CharSequence symbolValue) {
+    @Override
+    public int keyOf(CharSequence symbolValue) {
         final int index = symbolValueToKeyMap.keyIndex(symbolValue);
         if (index < 0) {
             return symbolValueToKeyMap.valueAt(index);
@@ -92,6 +90,10 @@ class SymbolCache implements Closeable {
         }
 
         return symbolKey;
+    }
+
+    int getCacheValueCount() {
+        return symbolValueToKeyMap.size();
     }
 
     void of(CairoConfiguration configuration, Path path, CharSequence columnName, int symbolIndexInTxFile) {

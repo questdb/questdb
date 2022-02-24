@@ -218,6 +218,9 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1024 * 1024, configuration.getCairoConfiguration().getSqlJitPageAddressCacheThreshold());
         Assert.assertFalse(configuration.getCairoConfiguration().isSqlJitDebugEnabled());
 
+        Assert.assertEquals(8192, configuration.getCairoConfiguration().getRndFunctionMemoryPageSize());
+        Assert.assertEquals(128, configuration.getCairoConfiguration().getRndFunctionMemoryMaxPages());
+
         // statics
         Assert.assertSame(FilesFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getFilesFacade());
         Assert.assertSame(MillisecondClockImpl.INSTANCE, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getClock());
@@ -251,7 +254,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getListenBacklog());
         Assert.assertEquals(-1, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getRcvBufSize());
         Assert.assertEquals(-1, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getSndBufSize());
-        Assert.assertEquals(64, configuration.getLineTcpReceiverConfiguration().getConnectionPoolInitialCapacity());
+        Assert.assertEquals(8, configuration.getLineTcpReceiverConfiguration().getConnectionPoolInitialCapacity());
         Assert.assertEquals(LineProtoNanoTimestampAdapter.INSTANCE, configuration.getLineTcpReceiverConfiguration().getTimestampAdapter());
         Assert.assertEquals(32768, configuration.getLineTcpReceiverConfiguration().getNetMsgBufferSize());
         Assert.assertEquals(32768, configuration.getLineTcpReceiverConfiguration().getMaxMeasurementSize());
@@ -651,6 +654,9 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlJitRowsThreshold());
             Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlJitPageAddressCacheThreshold());
             Assert.assertTrue(configuration.getCairoConfiguration().isSqlJitDebugEnabled());
+
+            Assert.assertEquals(16384, configuration.getCairoConfiguration().getRndFunctionMemoryPageSize());
+            Assert.assertEquals(32, configuration.getCairoConfiguration().getRndFunctionMemoryMaxPages());
 
             // influxdb line TCP protocol
             Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().isEnabled());

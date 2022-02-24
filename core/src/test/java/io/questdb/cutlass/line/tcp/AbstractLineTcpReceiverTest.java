@@ -100,6 +100,7 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected double commitIntervalFraction = 0.5;
     protected long commitIntervalDefault = 2000;
     protected boolean disconnectOnError = false;
+    protected boolean symbolAsFieldSupported;
 
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
         @Override
@@ -161,6 +162,11 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         public boolean getDisconnectOnError() {
             return disconnectOnError;
         }
+
+        @Override
+        public boolean isSymbolAsFieldSupported() {
+            return symbolAsFieldSupported;
+        }
     };
 
     @After
@@ -191,7 +197,7 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                     try {
                         r.run(receiver);
                     } catch (Throwable err) {
-                        LOG.error().$("Stopping ILP worker pool because of an error").$();
+                        LOG.error().$("Stopping ILP worker pool because of an error").$(err).$();
                         throw err;
                     } finally {
                         sharedWorkerPool.halt();
@@ -200,7 +206,7 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                     }
                 }
             } catch (Throwable err) {
-                LOG.error().$("Stopping ILP receiver because of an error").$();
+                LOG.error().$("Stopping ILP receiver because of an error").$(err).$();
                 throw err;
             } finally {
                 Misc.free(path);
