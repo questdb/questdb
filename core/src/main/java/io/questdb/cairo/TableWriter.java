@@ -1792,8 +1792,6 @@ public class TableWriter implements Closeable {
      */
     private void commit(int commitMode, long commitLag) {
 
-        LOG.debug().$("commit [table=").$(tableName).I$();
-
         checkDistressed();
 
         if (o3InError) {
@@ -1883,6 +1881,7 @@ public class TableWriter implements Closeable {
                     break;
             }
         } else {
+            primary = secondary = NullMemory.INSTANCE;
             oooPrimary = oooSecondary = oooPrimary2 = oooSecondary2 = NullMemory.INSTANCE;
         }
 
@@ -2140,7 +2139,7 @@ public class TableWriter implements Closeable {
         metadata.setTableVersion();
     }
 
-    private void freeAndRemoveColumnPair(ObjList<MemoryMAR> columns, int pi, int si) {
+    private void freeAndRemoveColumnPair(ObjList<MemoryMA> columns, int pi, int si) {
         Misc.free(columns.getAndSetQuick(pi, NullMemory.INSTANCE));
         Misc.free(columns.getAndSetQuick(si, NullMemory.INSTANCE));
     }
@@ -3649,13 +3648,13 @@ public class TableWriter implements Closeable {
         o3TimestampMem.putLong128(timestamp, getO3RowCount0());
     }
 
-    private void openColumnFiles(CharSequence name, int columnIndex, int pathTrimToLen) {
+    private void openColumnFiles(CharSequence name, long columnNameTxn, int columnIndex, int pathTrimToLen) {
         MemoryMA mem1 = getPrimaryColumn(columnIndex);
         MemoryMA mem2 = getSecondaryColumn(columnIndex);
 
         try {
             mem1.of(ff, dFile(
-                    path.trimTo(pathTrimToLen), name),
+                            path.trimTo(pathTrimToLen), name, columnNameTxn),
                     configuration.getDataAppendPageSize(),
                     -1,
                     MemoryTag.MMAP_TABLE_WRITER,
@@ -3664,7 +3663,7 @@ public class TableWriter implements Closeable {
             if (mem2 != null) {
                 mem2.of(
                         ff,
-                        iFile(path.trimTo(pathTrimToLen), name),
+                        iFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
                         configuration.getDataAppendPageSize(),
                         -1,
                         MemoryTag.MMAP_TABLE_WRITER,
@@ -3685,19 +3684,6 @@ public class TableWriter implements Closeable {
             performRecovery();
         }
         txWriter.openFirstPartition(ts);
-    }
-
-    private void openColumnFiles(CharSequence name, long columnNameTxn, int columnIndex, int pathTrimToLen) {
-        MemoryMAR mem1 = getPrimaryColumn(columnIndex);
-        MemoryMAR mem2 = getSecondaryColumn(columnIndex);
-        try {
-            mem1.of(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
-            if (mem2 != null) {
-                mem2.of(ff, iFile(path.trimTo(pathTrimToLen), name, columnNameTxn), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
-            }
-        } finally {
-            path.trimTo(pathTrimToLen);
-        }
     }
 
     private void openNewColumnFiles(CharSequence name, boolean indexFlag, int indexValueBlockCapacity) {

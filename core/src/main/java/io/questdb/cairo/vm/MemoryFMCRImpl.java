@@ -35,6 +35,11 @@ public class MemoryFMCRImpl extends MemoryFCRImpl implements MemoryMR {
     }
 
     @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
         throw new UnsupportedOperationException();
     }

@@ -59,7 +59,8 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
+
     }
 
     @Override
@@ -271,6 +272,11 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     @Override
     public boolean isMapped(long offset, long len) {
         return false;
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.mig;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.vm.Vm;
@@ -97,7 +98,8 @@ public class Mig620 {
                 path.trimTo(pathLen).concat(COLUMN_VERSION_FILE_NAME_MIG).$(),
                 Files.PAGE_SIZE,
                 COLUMN_VERSION_FILE_HEADER_SIZE_MIG,
-                MemoryTag.NATIVE_DEFAULT
+                MemoryTag.NATIVE_DEFAULT,
+                CairoConfiguration.O_NONE
         )) {
             cvMemory.extend(COLUMN_VERSION_FILE_HEADER_SIZE_MIG);
             cvMemory.jumpTo(COLUMN_VERSION_FILE_HEADER_SIZE_MIG);
@@ -269,7 +271,7 @@ public class Mig620 {
             throw CairoException.instance(0).put("File length ").put(fileLen).put(" is too small at ").put(path);
         }
 
-        return Vm.getCMARWInstance(ff, path, Files.PAGE_SIZE, fileLen, MemoryTag.NATIVE_DEFAULT);
+        return Vm.getCMARWInstance(ff, path, Files.PAGE_SIZE, fileLen, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
     }
 
     private static void dFile(Path path, CharSequence columnName) {

@@ -140,27 +140,7 @@ public class O3FailureTest extends AbstractO3Test {
             return super.mkdirs(path, mode);
         }
     };
-    private static final FilesFacade ffWriteTop19700107 = new FilesFacadeImpl() {
-        long theFd;
 
-        @Override
-        public long openRW(LPSZ name, long opts) {
-            long fd = super.openRW(name, opts);
-            if (Chars.endsWith(name, "1970-01-07.15" + Files.SEPARATOR + "v.top") && counter.decrementAndGet() == 0) {
-                theFd = fd;
-            }
-            return fd;
-        }
-
-        @Override
-        public long write(long fd, long address, long len, long offset) {
-            if (fd == theFd) {
-                theFd = 0;
-                return 5;
-            }
-            return super.write(fd, address, len, offset);
-        }
-    };
     private static final FilesFacade ffMapRW = new FilesFacadeImpl() {
 
         private long theFd = 0;
@@ -954,11 +934,11 @@ public class O3FailureTest extends AbstractO3Test {
         AtomicInteger counter = new AtomicInteger(count);
         return new FilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, fileName) && counter.decrementAndGet() == 0) {
                     return -1;
                 }
-                return super.openRW(name);
+                return super.openRW(name, opts);
             }
         };
     }
@@ -3558,8 +3538,8 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
-            public long openRW(LPSZ name) {
-                long fd = super.openRW(name);
+            public long openRW(LPSZ name, long opts) {
+                long fd = super.openRW(name, opts);
                 if (Chars.endsWith(name, fileName)) {
                     targetFd.set(fd);
                 }

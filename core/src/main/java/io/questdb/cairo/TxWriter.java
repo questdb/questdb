@@ -439,9 +439,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         try {
             if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
                 if (txMemBase == null) {
-                    txMemBase = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT);
+                    txMemBase = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
                 } else {
-                    txMemBase.of(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT);
+                    txMemBase.of(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
                 }
                 return;
             }
