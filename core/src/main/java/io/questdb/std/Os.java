@@ -33,6 +33,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.concurrent.locks.LockSupport;
 
 public final class Os {
     public static final int WINDOWS = 3;
@@ -120,9 +121,13 @@ public final class Os {
     }
 
     public static void pause() {
-        try {
-            Thread.sleep(0);
-        } catch (InterruptedException ignore) {
+        if (Os.type != Os.WINDOWS) {
+            LockSupport.parkNanos(1);
+        } else {
+            try {
+                Thread.sleep(0);
+            } catch (InterruptedException ignore) {
+            }
         }
     }
 

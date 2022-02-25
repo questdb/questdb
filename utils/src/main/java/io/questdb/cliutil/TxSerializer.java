@@ -26,6 +26,7 @@ package io.questdb.cliutil;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -56,11 +57,11 @@ public class TxSerializer {
     static long TX_OFFSET_MAX_TIMESTAMP = TX_OFFSET_MAX_TIMESTAMP_64;
     static FilesFacade ff = new FilesFacadeImpl();
 
-    /**
+    /*
      * Read _txn file and prints to std output JSON translation.
      * Reads json file and saves it to binary _txn format.
-     * <p>
-     * Command line arguments: -s <json_path> <txn_path> | -d <txn_path>
+     *
+     *  Command line arguments: -s <json_path> <txn_path> | -d <txn_path>
      */
     public static void main(String[] args) throws IOException {
         if (args.length < 2 || args.length > 3) {
@@ -110,7 +111,7 @@ public class TxSerializer {
         long fileSize = tx.calculateFileSize();
         try (Path path = new Path()) {
             path.put(target).$();
-            try (MemoryCMARW rwTxMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT)) {
+            try (MemoryCMARW rwTxMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)) {
                 Vect.memset(rwTxMem.addressOf(0), fileSize, 0);
                 rwTxMem.putLong(TX_BASE_OFFSET_VERSION_64, version);
                 rwTxMem.putLong(offsetOffset, baseOffset);

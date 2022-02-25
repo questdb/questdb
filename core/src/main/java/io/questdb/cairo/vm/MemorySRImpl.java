@@ -59,7 +59,7 @@ public class MemorySRImpl extends MemoryPARWImpl {
     }
 
     @Override
-    protected long mapWritePage(int page) {
+    protected long mapWritePage(int page, long offset) {
         throw new UnsupportedOperationException("Cannot jump() read-only memory. Use extend() instead.");
     }
 

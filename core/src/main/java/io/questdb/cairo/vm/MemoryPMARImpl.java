@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.vm;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryMAR;
@@ -39,8 +40,8 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     private long pageAddress = 0;
     private int mappedPage;
 
-    public MemoryPMARImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag) {
-        of(ff, name, pageSize, memoryTag);
+    public MemoryPMARImpl(FilesFacade ff, LPSZ name, long pageSize, int memoryTag, long opts) {
+        of(ff, name, pageSize, memoryTag, opts);
     }
 
     public MemoryPMARImpl() {
@@ -69,17 +70,19 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         }
     }
 
-    @Override
-    public void close() {
-        close(true);
+    public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
+        close();
+        this.memoryTag = memoryTag;
+        this.ff = ff;
+        mappedPage = -1;
+        setExtendSegmentSize(extendSegmentSize);
+        fd = TableUtils.openFileRWOrFail(ff, name, opts);
+        LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", extendSegmentSize=").$(extendSegmentSize).$(']').$();
     }
 
     @Override
-    public long getPageAddress(int page) {
-        if (page == mappedPage) {
-            return pageAddress;
-        }
-        return 0L;
+    public void close() {
+        close(true);
     }
 
     public void truncate() {
@@ -96,7 +99,15 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
-    protected long mapWritePage(int page) {
+    public long getPageAddress(int page) {
+        if (page == mappedPage) {
+            return pageAddress;
+        }
+        return 0L;
+    }
+
+    @Override
+    protected long mapWritePage(int page, long offset) {
         releaseCurrentPage();
         return pageAddress = mapPage(page);
     }
@@ -106,23 +117,23 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         ff.munmap(address, getPageSize(), memoryTag);
     }
 
-    @Override
-    public FilesFacade getFilesFacade() {
-        return ff;
-    }
-
     public long getFd() {
         return fd;
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
-        of(ff, name, extendSegmentSize, memoryTag);
+    public FilesFacade getFilesFacade() {
+        return ff;
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+        of(ff, name, extendSegmentSize, memoryTag, opts);
     }
 
     @Override
     public void wholeFile(FilesFacade ff, LPSZ name, int memoryTag) {
-        of(ff, name, ff.getMapPageSize(), memoryTag);
+        of(ff, name, ff.getMapPageSize(), memoryTag, CairoConfiguration.O_NONE);
     }
 
     public long mapPage(int page) {
@@ -130,16 +141,6 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         final long address = TableUtils.mapRW(ff, fd, getExtendSegmentSize(), pageOffset(page), memoryTag);
         mappedPage = page;
         return address;
-    }
-
-    public final void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag) {
-        close();
-        this.memoryTag = memoryTag;
-        this.ff = ff;
-        mappedPage = -1;
-        setExtendSegmentSize(extendSegmentSize);
-        fd = TableUtils.openFileRWOrFail(ff, name);
-        LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", extendSegmentSize=").$(extendSegmentSize).$(']').$();
     }
 
     void releaseCurrentPage() {

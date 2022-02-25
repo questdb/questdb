@@ -214,7 +214,7 @@ void copy_index(const index_t *index, const int64_t count, int64_t *dest) {
 }
 
 // 27
-void shift_copy(int64_t shift, int64_t *src, int64_t src_lo, int64_t src_hi, int64_t *dest) {
+void shift_copy(int64_t shift, const int64_t *src, int64_t src_lo, int64_t src_hi, int64_t *dest) {
     const int64_t count = src_hi - src_lo + 1;
     for (int64_t i = 0; i < count; i++) {
         dest[i] = src[i + src_lo] - shift;

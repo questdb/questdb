@@ -914,7 +914,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
         BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, direction);
 
-        // because out Symbol column 0 is indexed, frame has to have index.
+        // because out Symbol column 0 is indexed, frame has to have an index.
         Assert.assertNotNull(indexReader);
 
         final long hi = frame.getRowHi();
@@ -1131,12 +1131,12 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long openRW(LPSZ name) {
+                public long openRW(LPSZ name, long opts) {
                     // remember FD of the file we are targeting
                     if (Chars.endsWith(name, fileUnderAttack)) {
-                        return fd = super.openRW(name);
+                        return fd = super.openRW(name, opts);
                     }
-                    return super.openRW(name);
+                    return super.openRW(name, opts);
                 }
             };
 
@@ -1281,12 +1281,12 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long openRW(LPSZ name) {
+                public long openRW(LPSZ name, long opts) {
                     // remember FD of the file we are targeting
                     if (Chars.endsWith(name, fileUnderAttack)) {
-                        return fd = super.openRW(name);
+                        return fd = super.openRW(name, opts);
                     }
-                    return super.openRW(name);
+                    return super.openRW(name, opts);
                 }
 
                 @Override
@@ -1480,12 +1480,12 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long openRW(LPSZ name) {
+                public long openRW(LPSZ name, long opts) {
                     // remember FD of the file we are targeting
                     if (Chars.endsWith(name, fileUnderAttack)) {
-                        return fd = super.openRW(name);
+                        return fd = super.openRW(name, opts);
                     }
-                    return super.openRW(name);
+                    return super.openRW(name, opts);
                 }
             };
 
@@ -1565,7 +1565,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                         TestUtils.assertContains(e.getMessage(), "distressed");
                     }
 
-                    // test that we cannot rollback
+                    // test that we cannot perform a rollback
                     try {
                         writer.rollback();
                         Assert.fail();
@@ -1586,7 +1586,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
                 workerPool.halt();
 
-                // lets see what we can read after this catastrophe
+                // let's see what we can read after this catastrophe
                 try (TableReader reader = createTableReader(AbstractCairoTest.configuration, "ABC")) {
                     FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                     TableReaderRecord record = new TableReaderRecord();

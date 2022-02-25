@@ -460,7 +460,7 @@ public final class TableUtils {
     }
 
     public static long lock(FilesFacade ff, Path path) {
-        long fd = ff.openRW(path);
+        long fd = ff.openRW(path, CairoConfiguration.O_NONE);
         if (fd == -1) {
             LOG.error().$("cannot open '").utf8(path).$("' to lock [errno=").$(ff.errno()).$(']').$();
             return -1L;
@@ -569,8 +569,8 @@ public final class TableUtils {
         path.put("-x-").put(txn);
     }
 
-    public static long openFileRWOrFail(FilesFacade ff, LPSZ path) {
-        return openRW(ff, path, LOG);
+    public static long openFileRWOrFail(FilesFacade ff, LPSZ path, long opts) {
+        return openRW(ff, path, LOG, opts);
     }
 
     public static long openRO(FilesFacade ff, LPSZ path, Log log) {
@@ -582,8 +582,8 @@ public final class TableUtils {
         throw CairoException.instance(ff.errno()).put("could not open read-only [file=").put(path).put(']');
     }
 
-    public static long openRW(FilesFacade ff, LPSZ path, Log log) {
-        final long fd = ff.openRW(path);
+    public static long openRW(FilesFacade ff, LPSZ path, Log log, long opts) {
+        final long fd = ff.openRW(path, opts);
         if (fd > -1) {
             log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
             return fd;

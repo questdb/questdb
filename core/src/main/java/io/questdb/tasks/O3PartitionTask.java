@@ -27,6 +27,7 @@ package io.questdb.tasks;
 import io.questdb.cairo.O3Basket;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
@@ -36,7 +37,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class O3PartitionTask {
     private Path pathToTable;
     private int partitionBy;
-    private ObjList<MemoryMAR> columns;
+    private ObjList<MemoryMA> columns;
     private ObjList<MemoryCARW> o3Columns;
     private long srcOooLo;
     private long srcOooHi;
@@ -59,7 +60,7 @@ public class O3PartitionTask {
         return colTopSinkAddr;
     }
 
-    public ObjList<MemoryMAR> getColumns() {
+    public ObjList<MemoryMA> getColumns() {
         return columns;
     }
 
@@ -138,7 +139,7 @@ public class O3PartitionTask {
     public void of(
             Path path,
             int partitionBy,
-            ObjList<MemoryMAR> columns,
+            ObjList<MemoryMA> columns,
             ObjList<MemoryCARW> o3Columns,
             long srcOooLo,
             long srcOooHi,

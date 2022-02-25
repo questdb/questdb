@@ -25,8 +25,8 @@
 package io.questdb.griffin.update;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.griffin.SqlException;
@@ -47,6 +47,7 @@ public class InplaceUpdateExecution implements Closeable {
     private final IntList updateToColumnMap = new IntList();
     private final ObjList<MemoryCMARW> updateMemory = new ObjList<>();
     private final long dataAppendPageSize;
+    private final long fileOpenOpts;
     private Path path;
 
     public InplaceUpdateExecution(CairoConfiguration configuration) {
@@ -54,6 +55,7 @@ public class InplaceUpdateExecution implements Closeable {
         path = new Path().of(configuration.getRoot());
         rootLen = path.length();
         dataAppendPageSize = configuration.getDataAppendPageSize();
+        this.fileOpenOpts = configuration.getWriterFileOpenOpts();
     }
 
     @Override
@@ -133,7 +135,7 @@ public class InplaceUpdateExecution implements Closeable {
                 rowsUpdated++;
             }
         } finally {
-            for(int i = 0; i < updateMemory.size(); i++) {
+            for (int i = 0; i < updateMemory.size(); i++) {
                 updateMemory.getQuick(i).close(false);
             }
         }
@@ -219,11 +221,18 @@ public class InplaceUpdateExecution implements Closeable {
 
             for (int i = 0, n = columnMap.size(); i < n; i++) {
                 int columnIndex = columnMap.get(i);
-                CharSequence name = metadata.getColumnName(columnIndex);
+                CharSequence name = metadata.getColumnName(columnMap.get(i));
                 MemoryCMARW colMem = updateMemory.get(i);
                 colMem.close(false);
                 long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-                colMem.of(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), dataAppendPageSize, -1, MemoryTag.MMAP_TABLE_WRITER);
+                colMem.of(
+                        ff,
+                        dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
+                        dataAppendPageSize,
+                        -1,
+                        MemoryTag.MMAP_TABLE_WRITER,
+                        fileOpenOpts
+                );
             }
         } finally {
             path.trimTo(rootLen);

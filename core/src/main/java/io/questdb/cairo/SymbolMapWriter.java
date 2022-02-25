@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -85,7 +86,13 @@ public class SymbolMapWriter implements Closeable, MapWriter {
 
             // open "offset" memory and make sure we start appending from where
             // we left off. Where we left off is stored externally to symbol map
-            this.offsetMem = Vm.getWholeMARWInstance(ff, path, mapPageSize, MemoryTag.MMAP_INDEX_WRITER);
+            this.offsetMem = Vm.getWholeMARWInstance(
+                    ff,
+                    path,
+                    mapPageSize,
+                    MemoryTag.MMAP_INDEX_WRITER,
+                    configuration.getWriterFileOpenOpts()
+            );
             // formula for calculating symbol capacity needs to be in agreement with symbol reader
             final int symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
             assert symbolCapacity > 0;
@@ -104,7 +111,13 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             );
 
             // this is the place where symbol values are stored
-            this.charMem = Vm.getWholeMARWInstance(ff, charFileName(path.trimTo(plen), name, columnNameTxn), mapPageSize, MemoryTag.MMAP_INDEX_WRITER);
+            this.charMem = Vm.getWholeMARWInstance(
+                    ff,
+                    charFileName(path.trimTo(plen), name, columnNameTxn),
+                    mapPageSize,
+                    MemoryTag.MMAP_INDEX_WRITER,
+                    configuration.getWriterFileOpenOpts()
+            );
 
             // move append pointer for symbol values in the correct place
             jumpCharMemToSymbolCount(symbolCount);

@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
-import io.questdb.cairo.vm.api.MemoryMAR;
+import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -98,11 +98,11 @@ public class TableWriterTest extends AbstractCairoTest {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
         class X extends FilesFacadeImpl {
             @Override
-            public long openRW(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, abcColumnNamePattern)) {
                     return -1;
                 }
-                return super.openRW(name);
+                return super.openRW(name, opts);
             }
 
             @Override
@@ -210,11 +210,11 @@ public class TableWriterTest extends AbstractCairoTest {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
         testAddColumnRecoverableFault(new FilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, abcColumnNamePattern)) {
                     return -1;
                 }
-                return super.openRW(name);
+                return super.openRW(name, opts);
             }
         });
     }
@@ -224,11 +224,11 @@ public class TableWriterTest extends AbstractCairoTest {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.k";
         testAddColumnRecoverableFault(new FilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, abcColumnNamePattern)) {
                     return -1;
                 }
-                return super.openRW(name);
+                return super.openRW(name, opts);
             }
         });
     }
@@ -240,11 +240,11 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 1;
 
             @Override
-            public long openRW(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, abcColumnNamePattern)) {
                     return -1;
                 }
-                return super.openRW(name);
+                return super.openRW(name, opts);
             }
 
             @Override
@@ -259,11 +259,11 @@ public class TableWriterTest extends AbstractCairoTest {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
         testAddColumnRecoverableFault(new FilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, abcColumnNamePattern)) {
                     return -1;
                 }
-                return super.openRW(name);
+                return super.openRW(name, opts);
             }
         });
     }
@@ -276,11 +276,11 @@ public class TableWriterTest extends AbstractCairoTest {
             int toCount = 5;
 
             @Override
-            public long openRW(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, abcColumnNamePattern)) {
                     return -1;
                 }
-                return super.openRW(name);
+                return super.openRW(name, opts);
             }
 
             @Override
@@ -834,11 +834,11 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, "2013-03-04") && Chars.endsWith(name, "category.k")) {
-                    return kIndexFd = super.openRW(name);
+                    return kIndexFd = super.openRW(name, opts);
                 }
-                return super.openRW(name);
+                return super.openRW(name, opts);
             }
 
             @Override
@@ -1163,12 +1163,12 @@ public class TableWriterTest extends AbstractCairoTest {
                 boolean ran = false;
 
                 @Override
-                public long openRW(LPSZ name) {
+                public long openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, PRODUCT + ".lock")) {
                         ran = true;
                         return -1;
                     }
-                    return super.openRW(name);
+                    return super.openRW(name, opts);
                 }
 
                 @Override
@@ -1209,11 +1209,11 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, TableUtils.TXN_FILE_NAME) && --count == 0) {
-                    return fd = super.openRW(name);
+                    return fd = super.openRW(name, opts);
                 }
-                return super.openRW(name);
+                return super.openRW(name, opts);
             }
         });
     }
@@ -1222,11 +1222,11 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testCannotOpenColumnFile() throws Exception {
         testConstructor(new FilesFacadeImpl() {
             @Override
-            public long openRW(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "productName.i")) {
                     return -1;
                 }
-                return super.openRW(name);
+                return super.openRW(name, opts);
             }
         });
     }
@@ -1251,11 +1251,11 @@ public class TableWriterTest extends AbstractCairoTest {
             int counter = 2;
 
             @Override
-            public long openRW(LPSZ path) {
+            public long openRW(LPSZ path, long opts) {
                 if (Chars.endsWith(path, TableUtils.TODO_FILE_NAME) && --counter == 0) {
                     return -1;
                 }
-                return super.openRW(path);
+                return super.openRW(path, opts);
             }
         });
     }
@@ -1266,11 +1266,11 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 2;
 
             @Override
-            public long openRW(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, TableUtils.TXN_FILE_NAME) && --count == 0) {
                     return -1;
                 }
-                return super.openRW(name);
+                return super.openRW(name, opts);
             }
         });
     }
@@ -1292,11 +1292,11 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "supplier.d")) {
-                    return fd = super.openRW(name);
+                    return fd = super.openRW(name, opts);
                 }
-                return super.openRW(name);
+                return super.openRW(name, opts);
             }
         }, false);
     }
@@ -1310,11 +1310,11 @@ public class TableWriterTest extends AbstractCairoTest {
             long fd;
 
             @Override
-            public long openRW(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "productName.i")) {
-                    return fd = super.openRW(name);
+                    return fd = super.openRW(name, opts);
                 }
-                return super.openRW(name);
+                return super.openRW(name, opts);
             }
 
             @Override
@@ -1336,11 +1336,11 @@ public class TableWriterTest extends AbstractCairoTest {
             long fd;
 
             @Override
-            public long openRW(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "productName.i")) {
-                    return fd = super.openRW(name);
+                    return fd = super.openRW(name, opts);
                 }
-                return super.openRW(name);
+                return super.openRW(name, opts);
             }
 
             @Override
@@ -1369,11 +1369,11 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "price.d")) {
-                    return fd = super.openRW(name);
+                    return fd = super.openRW(name, opts);
                 }
-                return super.openRW(name);
+                return super.openRW(name, opts);
             }
 
             @Override
@@ -1409,11 +1409,11 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "price.d")) {
-                    return fd = super.openRW(name);
+                    return fd = super.openRW(name, opts);
                 }
-                return super.openRW(name);
+                return super.openRW(name, opts);
             }
 
             @Override
@@ -1448,11 +1448,11 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "price.d")) {
-                    return fd = super.openRW(name);
+                    return fd = super.openRW(name, opts);
                 }
-                return super.openRW(name);
+                return super.openRW(name, opts);
             }
 
             @Override
@@ -1945,12 +1945,12 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean hit = false;
 
             @Override
-            public long openRW(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, TableUtils.META_SWAP_FILE_NAME)) {
                     hit = true;
                     return -1;
                 }
-                return super.openRW(name);
+                return super.openRW(name, opts);
             }
 
             @Override
@@ -2203,12 +2203,12 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean hit = false;
 
             @Override
-            public long openRW(LPSZ name) {
+            public long openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, TableUtils.META_SWAP_FILE_NAME)) {
                     hit = true;
                     return -1;
                 }
-                return super.openRW(name);
+                return super.openRW(name, opts);
             }
 
             @Override
@@ -2617,7 +2617,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 w.commit();
 
                 for (int i = 0, n = w.columns.size(); i < n; i++) {
-                    MemoryMAR m = w.columns.getQuick(i);
+                    MemoryMA m = w.columns.getQuick(i);
                     if (m != null) {
                         Assert.assertEquals(configuration.getDataAppendPageSize(), m.getExtendSegmentSize());
                     }
@@ -3690,11 +3690,11 @@ public class TableWriterTest extends AbstractCairoTest {
                 long fd = -1;
 
                 @Override
-                public long openRW(LPSZ name) {
+                public long openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "bin.i")) {
-                        return fd = super.openRW(name);
+                        return fd = super.openRW(name, opts);
                     }
-                    return super.openRW(name);
+                    return super.openRW(name, opts);
                 }
 
                 @Override

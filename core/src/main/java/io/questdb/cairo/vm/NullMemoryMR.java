@@ -22,16 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.vm;
 
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 
-public class NullColumn implements MemoryMR {
+public class NullMemoryMR implements MemoryMR {
 
-    public static final NullColumn INSTANCE = new NullColumn();
+    public static final NullMemoryMR INSTANCE = new NullMemoryMR();
 
     @Override
     public BinarySequence getBin(long offset) {
@@ -181,7 +182,7 @@ public class NullColumn implements MemoryMR {
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
         throw new UnsupportedOperationException();
     }
 

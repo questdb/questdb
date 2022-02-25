@@ -43,9 +43,9 @@ public class Worker extends Thread {
     private final boolean haltOnError;
     private final int workerId;
     private final long sleepMs;
-    private volatile int running = 0;
     private final long yieldThreshold;
     private final long sleepThreshold;
+    private volatile int running = 0;
     private final Metrics metrics;
 
     public Worker(
@@ -108,7 +108,6 @@ public class Worker extends Thread {
                 int n = jobs.size();
                 long uselessCounter = 0;
                 while (running == 1) {
-
                     boolean useful = false;
                     for (int i = 0; i < n; i++) {
                         Unsafe.getUnsafe().loadFence();
