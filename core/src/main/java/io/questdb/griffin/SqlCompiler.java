@@ -98,7 +98,6 @@ public class SqlCompiler implements Closeable {
     private final TextLoader textLoader;
     private final FilesFacade ff;
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
-    private final ObjList<TableReader> lockedReaders = new ObjList<>();
 
     //determines how compiler parses query text
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
@@ -906,7 +905,6 @@ public class SqlCompiler implements Closeable {
         Misc.free(path);
         Misc.free(renamePath);
         Misc.free(textLoader);
-        Misc.free(lockedReaders);
     }
 
     @NotNull
@@ -2790,7 +2788,7 @@ public class SqlCompiler implements Closeable {
         CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
         if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
 
-            if (lockedReaders.size() > 0) {
+            if (engine.isSnapshotInProgress()) {
                 throw SqlException.position(lexer.lastTokenPosition()).put("Another snapshot command in progress");
             }
 
@@ -2807,6 +2805,7 @@ public class SqlCompiler implements Closeable {
             }
             path.trimTo(snapshotLen);
 
+            ObjList<TableReader> readers = new ObjList<>();
             try (
                     TableListRecordCursorFactory factory = new TableListRecordCursorFactory(configuration.getFilesFacade(), configuration.getRoot())
             ) {
@@ -2817,7 +2816,7 @@ public class SqlCompiler implements Closeable {
                         while (cursor.hasNext()) {
                             CharSequence tableName = record.getStr(tableNameIndex);
                             TableReader reader = getTableReaderForStatement(executionContext, tableName, "snapshot");
-                            lockedReaders.add(reader);
+                            readers.add(reader);
 
                             path.concat(configuration.getDbDirectory()).concat(tableName).slash$();
 
@@ -2836,12 +2835,20 @@ public class SqlCompiler implements Closeable {
 
                             path.trimTo(snapshotLen);
                         }
-                        ff.sync(); // flush dirty pages and filesystem metadata to disk
+
+                        // Flush dirty pages and filesystem metadata to disk
+                        ff.sync();
+
+                        // Try to save the readers list atomically to make sure that they lock
+                        // partitions preventing them from being deleted.
+                        if (!engine.setSnapshotReaders(readers)) {
+                            throw SqlException.position(lexer.lastTokenPosition()).put("Another snapshot command in progress");
+                        }
                     } catch (Throwable e) {
                         path.trimTo(snapshotLen).$();
                         ff.rmdir(path);
-                        Misc.freeObjList(lockedReaders);
-                        lockedReaders.clear();
+                        Misc.freeObjList(readers);
+                        readers.clear();
                         LOG.error()
                                 .$("snapshot prepare error [e=").$(e)
                                 .I$();
@@ -2849,14 +2856,15 @@ public class SqlCompiler implements Closeable {
                     }
                 }
             }
-            return compiledQuery.ofSnapshotDbPrepare();
+            return compiledQuery.ofSnapshotPrepare();
         }
 
         if (Chars.equalsLowerCaseAscii(tok, "complete")) {
-            // simply release locked readers if any
-            Misc.freeObjList(lockedReaders);
-            lockedReaders.clear();
-            return compiledQuery.ofSnapshotDbComplete();
+            // Simply try to release locked readers if any.
+            if (!engine.releaseSnapshotReaders()) {
+                throw CairoException.instance(0).put("SNAPSHOT PREPARE must be called before SNAPSHOT COMPLETE");
+            }
+            return compiledQuery.ofSnapshotComplete();
         }
 
         throw SqlException.position(lexer.lastTokenPosition()).put("'prepare' or 'complete' expected");

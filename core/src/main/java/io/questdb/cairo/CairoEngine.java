@@ -45,9 +45,11 @@ import io.questdb.std.str.Path;
 import io.questdb.tasks.TableWriterTask;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.pool.WriterPool.OWNERSHIP_REASON_NONE;
 
@@ -69,6 +71,8 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicLong alterCommandCommandCorrelationId = new AtomicLong();
     private long tableIdFd = -1;
     private long tableIdMem = 0;
+    // List of readers kept around to lock partitions while a database snapshot is being made.
+    private final AtomicReference<ObjList<TableReader>> snapshotReadersRef = new AtomicReference<>();
 
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
@@ -107,7 +111,9 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    @TestOnly
     public boolean clear() {
+        releaseSnapshotReaders();
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
         return b1 & b2;
@@ -116,6 +122,7 @@ public class CairoEngine implements Closeable, WriterSource {
     @Override
     public void close() {
         Misc.free(writerPool);
+        releaseSnapshotReaders();
         Misc.free(readerPool);
         freeTableId();
         Misc.free(messageBus);
@@ -493,6 +500,24 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void unlockWriter(CharSequence tableName) {
         writerPool.unlock(tableName);
+    }
+
+    public boolean isSnapshotInProgress() {
+        return snapshotReadersRef.get() != null;
+    }
+
+    public boolean setSnapshotReaders(ObjList<TableReader> readers) {
+        return snapshotReadersRef.compareAndSet(null, readers);
+    }
+
+    public boolean releaseSnapshotReaders() {
+        ObjList<TableReader> readers = snapshotReadersRef.getAndSet(null);
+        if (readers != null) {
+            Misc.freeObjList(readers);
+            readers.clear();
+            return true;
+        }
+        return false;
     }
 
     private void rename0(Path path, CharSequence tableName, Path otherPath, CharSequence to) {

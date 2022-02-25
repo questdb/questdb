@@ -247,11 +247,11 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(VACUUM);
     }
 
-    CompiledQuery ofSnapshotDbPrepare() {
+    CompiledQuery ofSnapshotPrepare() {
         return of(SNAPSHOT_DB_PREPARE);
     }
 
-    CompiledQuery ofSnapshotDbComplete() {
+    CompiledQuery ofSnapshotComplete() {
         return of(SNAPSHOT_DB_COMPLETE);
     }
 

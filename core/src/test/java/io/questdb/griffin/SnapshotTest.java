@@ -68,9 +68,8 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSnapshotDbPrepare() throws Exception {
+    public void testSnapshotPrepare() throws Exception {
         assertMemoryLeak(() -> {
-
             for (int i = 'a'; i < 'f'; i++) {
                 compile("create table " + i + " (ts timestamp, name symbol, val int)", sqlExecutionContext);
             }
@@ -81,7 +80,7 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSnapshotDbCheckMetadata() throws Exception {
+    public void testSnapshotCheckMetadata() throws Exception {
         assertMemoryLeak(() -> {
             snapshotDirTimestampFormat = "yyyy-MM-dd";
             try (Path path = new Path()) {
@@ -174,7 +173,7 @@ public class SnapshotTest extends AbstractGriffinTest {
             int rc = configuration.getFilesFacade().mkdirs(path.slash$(), configuration.getMkDirMode());
             Assert.assertEquals(0, rc);
 
-            compile("create table " + "test" + " (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
             try {
                 compiler.compile("snapshot prepare", sqlExecutionContext);
                 Assert.fail();
@@ -185,18 +184,22 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSilentSnapshotComplete() throws Exception {
+    public void testSnapshotCompleteWithoutPrepare() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table " + "test" + " (ts timestamp, name symbol, val int)", sqlExecutionContext);
-            compiler.compile("snapshot complete", sqlExecutionContext);
-            compiler.compile("snapshot complete", sqlExecutionContext);
+            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            try {
+                compiler.compile("snapshot complete", sqlExecutionContext);
+                Assert.fail();
+            } catch (CairoException ex) {
+                Assert.assertTrue(ex.getMessage().startsWith("[0] SNAPSHOT PREPARE must be called before SNAPSHOT COMPLETE"));
+            }
         });
     }
 
     @Test
-    public void testPrepareInflight() throws Exception {
+    public void testPrepareInFlight() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table " + "test" + " (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
             try {
                 compiler.compile("snapshot prepare", sqlExecutionContext);
                 compiler.compile("snapshot prepare", sqlExecutionContext);
@@ -213,9 +216,9 @@ public class SnapshotTest extends AbstractGriffinTest {
     @Test
     public void testUnknownSubOption() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table " + "test" + " (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
             try {
-                compiler.compile("snapshot db", sqlExecutionContext);
+                compiler.compile("snapshot commit", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException ex) {
                 Assert.assertTrue(ex.getMessage().startsWith("[9] 'prepare' or 'complete' expected"));
