@@ -343,9 +343,10 @@ public class TxReader implements Closeable, Mutable {
         mem.putInt(TX_OFFSET_MAP_WRITER_COUNT, symbolMapCount);
         for (int i = 0; i < symbolMapCount; i++) {
             long offset = getSymbolWriterIndexOffset(i);
-            mem.putInt(offset, symbolCountSnapshot.getQuick(i));
+            int symCount = symbolCountSnapshot.getQuick(i);
+            mem.putInt(offset, symCount);
             offset += Integer.BYTES;
-            mem.putInt(offset, 0);
+            mem.putInt(offset, symCount);
         }
 
         final int size = attachedPartitions.size();

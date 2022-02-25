@@ -31,7 +31,8 @@ import org.junit.*;
 
 import java.io.IOException;
 
-public class SnapshotDbTest extends AbstractGriffinTest {
+public class SnapshotTest extends AbstractGriffinTest {
+
     private final Path path = new Path();
     private int rootLen;
 
@@ -75,8 +76,7 @@ public class SnapshotDbTest extends AbstractGriffinTest {
             }
 
             compiler.compile("snapshot prepare", sqlExecutionContext);
-            compiler.compile("snapshot commit", sqlExecutionContext);
-
+            compiler.compile("snapshot complete", sqlExecutionContext);
         });
     }
 
@@ -100,7 +100,7 @@ public class SnapshotDbTest extends AbstractGriffinTest {
                 compile(sql, sqlExecutionContext);
 
                 compiler.compile("snapshot prepare", sqlExecutionContext);
-                compiler.compile("snapshot commit", sqlExecutionContext);
+                compiler.compile("snapshot complete", sqlExecutionContext);
 
                 path.concat(tableName);
                 int tableNameLen = path.length();
@@ -185,11 +185,11 @@ public class SnapshotDbTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSilentSnapshotCommit() throws Exception {
+    public void testSilentSnapshotComplete() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table " + "test" + " (ts timestamp, name symbol, val int)", sqlExecutionContext);
-            compiler.compile("snapshot commit", sqlExecutionContext);
-            compiler.compile("snapshot commit", sqlExecutionContext);
+            compiler.compile("snapshot complete", sqlExecutionContext);
+            compiler.compile("snapshot complete", sqlExecutionContext);
         });
     }
 
@@ -205,7 +205,7 @@ public class SnapshotDbTest extends AbstractGriffinTest {
                 Assert.assertTrue(ex.getMessage().startsWith("[9] Another snapshot command in progress"));
             } finally {
                 // release locked readers
-                compiler.compile("snapshot commit", sqlExecutionContext);
+                compiler.compile("snapshot complete", sqlExecutionContext);
             }
         });
     }
@@ -218,7 +218,7 @@ public class SnapshotDbTest extends AbstractGriffinTest {
                 compiler.compile("snapshot db", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException ex) {
-                Assert.assertTrue(ex.getMessage().startsWith("[9] 'prepare' or 'commit' expected"));
+                Assert.assertTrue(ex.getMessage().startsWith("[9] 'prepare' or 'complete' expected"));
             }
         });
     }

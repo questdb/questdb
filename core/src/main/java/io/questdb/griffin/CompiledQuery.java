@@ -54,7 +54,7 @@ public interface CompiledQuery {
     short ROLLBACK = 20;
     short CREATE_TABLE_AS_SELECT = 21;
     short SNAPSHOT_DB_PREPARE = 22;
-    short SNAPSHOT_DB_COMMIT = 23;
+    short SNAPSHOT_DB_COMPLETE = 23;
 
     RecordCursorFactory getRecordCursorFactory();
 

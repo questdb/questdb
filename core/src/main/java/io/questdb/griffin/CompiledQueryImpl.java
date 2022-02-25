@@ -251,8 +251,8 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(SNAPSHOT_DB_PREPARE);
     }
 
-    CompiledQuery ofSnapshotDbCommit() {
-        return of(SNAPSHOT_DB_COMMIT);
+    CompiledQuery ofSnapshotDbComplete() {
+        return of(SNAPSHOT_DB_COMPLETE);
     }
 
     private class AlterTableQueryFuture implements QueryFuture {

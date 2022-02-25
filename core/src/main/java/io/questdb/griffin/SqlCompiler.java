@@ -2787,7 +2787,7 @@ public class SqlCompiler implements Closeable {
         if (null == snapshotRoot) {
             throw CairoException.instance(0).put("Snapshots are disabled, no snapshot root directory is configured in the server configuration ['cairo.sql.snapshot.root' property]");
         }
-        CharSequence tok = expectToken(lexer, "'prepare' or 'commit'");
+        CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
         if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
 
             if (lockedReaders.size() > 0) {
@@ -2848,14 +2848,14 @@ public class SqlCompiler implements Closeable {
             return compiledQuery.ofSnapshotDbPrepare();
         }
 
-        if (Chars.equalsLowerCaseAscii(tok, "commit")) {
+        if (Chars.equalsLowerCaseAscii(tok, "complete")) {
             // simply release locked readers if any
             Misc.freeObjList(lockedReaders);
             lockedReaders.clear();
-            return compiledQuery.ofSnapshotDbCommit();
+            return compiledQuery.ofSnapshotDbComplete();
         }
 
-        throw SqlException.position(lexer.lastTokenPosition()).put("'prepare' or 'commit' expected");
+        throw SqlException.position(lexer.lastTokenPosition()).put("'prepare' or 'complete' expected");
     }
 
     private Function validateAndConsume(
