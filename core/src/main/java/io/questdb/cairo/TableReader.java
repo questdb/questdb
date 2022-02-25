@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.cairo.vm.NullMemoryMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -1098,7 +1097,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private boolean reloadColumnVersion(long columnVersion, long deadline) {
-        columnVersionReader.readSafe(configuration.getMicrosecondClock(), deadline);
+        if (columnVersionReader.getVersion() != columnVersion) {
+            columnVersionReader.readSafe(configuration.getMicrosecondClock(), deadline);
+        }
         return columnVersionReader.getVersion() == columnVersion;
     }
 
@@ -1201,15 +1202,12 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void reloadSlow(long prevStructureVersion, long prevColumnVersion, boolean reshuffle) {
         final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
-        boolean structureVersionUpdated, columnVersionUpdated;
         do {
             // Reload txn
             readTxnSlow(deadline);
-            structureVersionUpdated = prevStructureVersion != txFile.getStructureVersion();
-            columnVersionUpdated = prevColumnVersion != txFile.getColumnVersion();
             // Reload _meta if structure version updated, reload _cv if column version updated
-        } while ((columnVersionUpdated && !reloadColumnVersion(txFile.getColumnVersion(), deadline)) // Reload column versions, column version used in metadata reload column shuffle
-                || (structureVersionUpdated && !reloadMetadata(txFile.getStructureVersion(), deadline, reshuffle)) // Start again if _meta with matching structure version cannot be loaded
+        } while (!reloadColumnVersion(txFile.getColumnVersion(), deadline) // Reload column versions, column version used in metadata reload column shuffle
+                || !reloadMetadata(txFile.getStructureVersion(), deadline, reshuffle) // Start again if _meta with matching structure version cannot be loaded
         );
     }
 
