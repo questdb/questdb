@@ -2806,10 +2806,11 @@ public class SqlCompiler implements Closeable {
                 throw CairoException.instance(0).put("Snapshot dir already exists [dir=").put(path).put(']');
             }
             path.trimTo(snapshotLen);
+
             try (
                     TableListRecordCursorFactory factory = new TableListRecordCursorFactory(configuration.getFilesFacade(), configuration.getRoot())
             ) {
-                final int tableNameIndex = factory.getMetadata().getColumnIndex("table");
+                final int tableNameIndex = factory.getMetadata().getColumnIndex(TableListRecordCursorFactory.TABLE_NAME_COLUMN);
                 try (RecordCursor cursor = factory.getCursor(executionContext)) {
                     final Record record = cursor.getRecord();
                     try (MemoryCMARW mem = Vm.getCMARWInstance()) {

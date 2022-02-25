@@ -38,7 +38,9 @@ import io.questdb.std.str.StringSink;
 
 public class TableListRecordCursorFactory implements RecordCursorFactory {
 
+    public static final String TABLE_NAME_COLUMN = "table";
     private static final RecordMetadata METADATA;
+
     private final FilesFacade ff;
     private final TableListRecordCursor cursor;
     private Path path;
@@ -157,7 +159,7 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("table", 1, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata(TABLE_NAME_COLUMN, 1, ColumnType.STRING));
         METADATA = metadata;
     }
 }
