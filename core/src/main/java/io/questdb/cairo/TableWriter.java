@@ -730,10 +730,6 @@ public class TableWriter implements Closeable {
         return columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
     }
 
-    public long getColumnTopPartitionTimestamp(int columnIndex) {
-        return columnVersionWriter.getColumnTopPartitionTimestamp(columnIndex);
-    }
-
     public String getDesignatedTimestampColumnName() {
         return designatedTimestampColumnName;
     }
@@ -2206,8 +2202,21 @@ public class TableWriter implements Closeable {
         return indexers.getQuick(columnIndex).getWriter();
     }
 
-    long getColumnTop(long partitionTimestamp, int columnIndex) {
-        return columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+    long getColumnTop(long partitionTimestamp, int columnIndex, long defaultValue) {
+        // Check if there is explicit record for this partitionTimestamp / columnIndex combination
+        int recordIndex = columnVersionWriter.getRecordIndex(partitionTimestamp, columnIndex);
+        if (recordIndex > -1L) {
+            return columnVersionWriter.getColumnTopByIndex(recordIndex);
+        }
+
+        // Check if column has been already added before this partition
+        long columnTopDefaultPartition = columnVersionWriter.getColumnTopPartitionTimestamp(columnIndex);
+        if (columnTopDefaultPartition <= partitionTimestamp) {
+            return 0;
+        }
+
+        // This column does not exist in the partition
+        return defaultValue;
     }
 
     long getColumnTop(int columnIndex) {

@@ -164,7 +164,6 @@ public class Mig620 {
                 }
             }
         }
-
         // Flush column tops to the file.
         for (int i = 0; i < columnVersions.size(); i++) {
             cvMemory.putLong(Mig620.CV_HEADER_SIZE + i * 8L, columnVersions.getQuick(i));

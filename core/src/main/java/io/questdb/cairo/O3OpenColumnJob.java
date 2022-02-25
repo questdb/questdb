@@ -461,19 +461,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         }
     }
 
-    private static long getSrcDataTop(
-            TableWriter writer,
-            long partitionTimestamp,
-            int columnIndex,
-            long srcDataMax
-    ) {
-        long columnTopPartition = writer.getColumnTopPartitionTimestamp(columnIndex);
-        if (columnTopPartition <= partitionTimestamp) {
-            return writer.getColumnTop(partitionTimestamp, columnIndex);
-        }
-        return srcDataMax;
-    }
-
     private static void appendMidPartition(
             Path pathToPartition,
             int plen,
@@ -505,7 +492,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final FilesFacade ff = tableWriter.getFilesFacade();
         if (srcDataTop == -1) {
             try {
-                srcDataTop = getSrcDataTop(tableWriter, partitionTimestamp, columnIndex, srcDataMax);
+                srcDataTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, srcDataMax);
                 if (srcDataTop == srcDataMax) {
                     Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataMax);
                 }
@@ -1646,7 +1633,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         // not set, we need to check file existence and read
         if (srcDataTop == -1) {
             try {
-                srcDataTop = getSrcDataTop(tableWriter, partitionTimestamp, columnIndex, srcDataMax);
+                srcDataTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, srcDataMax);
             } catch (Throwable e) {
                 LOG.error().$("merge mid partition error 1 [table=").$(tableWriter.getTableName())
                         .$(", e=").$(e)
