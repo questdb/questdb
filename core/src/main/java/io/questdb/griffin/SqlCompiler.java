@@ -2802,17 +2802,19 @@ public class SqlCompiler implements Closeable {
                     path);
 
             int snapshotLen = path.length();
-            if (ff.exists(path.slash$())){
+            if (ff.exists(path.slash$())) {
                 throw CairoException.instance(0).put("Snapshot dir already exists [dir=").put(path).put(']');
             }
             path.trimTo(snapshotLen);
-            try (TableListRecordCursorFactory factory = new TableListRecordCursorFactory(configuration.getFilesFacade(),
-                    configuration.getRoot())) {
+            try (
+                    TableListRecordCursorFactory factory = new TableListRecordCursorFactory(configuration.getFilesFacade(), configuration.getRoot())
+            ) {
+                final int tableNameIndex = factory.getMetadata().getColumnIndex("table");
                 try (RecordCursor cursor = factory.getCursor(executionContext)) {
                     final Record record = cursor.getRecord();
-                    try {
+                    try (MemoryCMARW mem = Vm.getCMARWInstance()) {
                         while (cursor.hasNext()) {
-                            CharSequence tableName = record.getStr(0);
+                            CharSequence tableName = record.getStr(tableNameIndex);
                             TableReader reader = getTableReaderForStatement(executionContext, tableName, "snapshot");
                             lockedReaders.add(reader);
 
@@ -2823,24 +2825,25 @@ public class SqlCompiler implements Closeable {
                             }
 
                             int rootLen = path.length();
-                            try (MemoryCMARW mem = Vm.getCMARWInstance()) {
-                                mem.smallFile(ff, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                                reader.getMetadata().dumpTo(mem);
-                                mem.close(false);
-                                mem.smallFile(ff, path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                                reader.getTxFile().dumpTo(mem);
-                                mem.close(false);
-                            }
+                            mem.smallFile(ff, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                            reader.getMetadata().dumpTo(mem);
+                            mem.close(false);
+                            mem.smallFile(ff, path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                            reader.getTxFile().dumpTo(mem);
+                            mem.close(false);
+                            LOG.info().$("snapshot copied [table=").$(tableName).$(']').$();
 
                             path.trimTo(snapshotLen);
                         }
-                        ff.sync(); // commit filesystem caches to disk
+                        ff.sync(); // flush dirty pages and filesystem metadata to disk
                     } catch (Throwable e) {
-                        path.trimTo(snapshotLen);
-                        path.$();
+                        path.trimTo(snapshotLen).$();
                         ff.rmdir(path);
                         Misc.freeObjList(lockedReaders);
                         lockedReaders.clear();
+                        LOG.error()
+                                .$("snapshot prepare error [e=").$(e)
+                                .I$();
                         throw e;
                     }
                 }

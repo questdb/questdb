@@ -37,10 +37,12 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
 public class TableListRecordCursorFactory implements RecordCursorFactory {
+
     private static final RecordMetadata METADATA;
     private final FilesFacade ff;
     private final TableListRecordCursor cursor;
     private Path path;
+
     public TableListRecordCursorFactory(FilesFacade ff, CharSequence dbRoot) {
         this.ff = ff;
         path = new Path().of(dbRoot).$();
