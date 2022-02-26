@@ -4260,7 +4260,7 @@ public class IODispatcherTest {
                     peerDisconnectLatch.await();
                     // depending on how quick the CI hardware is we may end up processing different
                     // number of rows before query is interrupted
-                    MatcherAssert.assertThat(tableRowCount, greaterThanOrEqualTo(TestLatchedCounterFunctionFactory.getCount()));
+                    MatcherAssert.assertThat(tableRowCount, greaterThan(TestLatchedCounterFunctionFactory.getCount()));
                 } finally {
                     workerPool.halt();
                 }
