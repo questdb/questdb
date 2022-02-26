@@ -27,14 +27,10 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.async.PageFrameDispatchJob;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 
 import java.io.Closeable;
 
@@ -73,14 +69,7 @@ public class O3Utils {
         workerPool.assign(new O3CallbackJob(messageBus));
 
         workerPool.assign(new PageFrameDispatchJob(messageBus, workerPool.getWorkerCount()));
-        for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
-            workerPool.assign(i, new PageFrameReduceJob(
-                            messageBus,
-                            SharedRandom.getRandom(configuration)
-                    )
-            );
-        }
-
+        workerPool.assign(new PageFrameReduceJob(messageBus, new Rnd(), workerPool.getWorkerCount()));
         initBuf(workerPool.getWorkerCount() + 1);
 
         return purgeDiscoveryJob;

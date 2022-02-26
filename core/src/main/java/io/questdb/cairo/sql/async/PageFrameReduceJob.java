@@ -38,14 +38,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class PageFrameReduceJob implements Job {
 
     private final static Log LOG = LogFactory.getLog(PageFrameReduceJob.class);
-    private final PageAddressCacheRecord record;
+    private final PageAddressCacheRecord[] record;
     private final int[] shards;
     private final int shardCount;
     private final MessageBus messageBus;
 
     // Each thread should be assigned own instance of this job, making the code effectively
     // single threaded. Such assignment is necessary for threads to have their own shard walk sequence.
-    public PageFrameReduceJob(MessageBus bus, Rnd rnd) {
+    public PageFrameReduceJob(MessageBus bus, Rnd rnd, int workerCount) {
         this.messageBus = bus;
         this.shardCount = messageBus.getPageFrameReduceShardCount();
         this.shards = new int[shardCount];
@@ -67,7 +67,10 @@ public class PageFrameReduceJob implements Job {
             shards[randomIndex] = tmp;
         }
 
-        this.record = new PageAddressCacheRecord();
+        this.record = new PageAddressCacheRecord[workerCount + 1];
+        for (int i = 0, n = workerCount + 1; i < n; i++) {
+            this.record[i] = new PageAddressCacheRecord();
+        }
     }
 
     /**
@@ -136,7 +139,7 @@ public class PageFrameReduceJob implements Job {
             useful = !consumeQueue(
                     messageBus.getPageFrameReduceQueue(shard),
                     messageBus.getPageFrameReduceSubSeq(shard),
-                    record
+                    record[workerId + 1]
             ) || useful;
         }
         return useful;
