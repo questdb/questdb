@@ -62,6 +62,7 @@ import java.util.Properties;
 public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
+    private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     private final IODispatcherConfiguration httpIODispatcherConfiguration = new PropHttpIODispatcherConfiguration();
     private final WaitProcessorConfiguration httpWaitProcessorConfiguration = new PropWaitProcessorConfiguration();
@@ -138,7 +139,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final InputFormatConfiguration inputFormatConfiguration;
     private final LineProtoTimestampAdapter lineUdpTimestampAdapter;
-    private int lineUdpDefaultPartitionBy;
     private final String inputRoot;
     private final boolean lineUdpEnabled;
     private final int lineUdpOwnThreadAffinity;
@@ -239,6 +239,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoPageFrameQueueCapacity;
     private final int cairoWriterCommandQueueSlotSize;
     private final int cairoPageFrameRowsCapacity;
+    private final long writerFileOpenOpts;
+    private int lineUdpDefaultPartitionBy;
     private int httpMinNetConnectionLimit;
     private boolean httpMinNetConnectionHint;
     private boolean httpAllowDeflateBeforeSend;
@@ -365,6 +367,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinNetConnectionRcvBuf;
     private int httpMinNetConnectionSndBuf;
     private long symbolCacheWaitUsBeforeReload;
+    private boolean stringToCharCastAllowed;
+    private boolean symbolAsFieldSupported;
+    private boolean isStringAsTagSupported;
 
     public PropServerConfiguration(
             String root,
@@ -392,7 +397,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         try (Path path = new Path()) {
             ff.mkdirs(path.of(this.root).slash$(), this.mkdirMode);
             path.of(this.root).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-            final long tableIndexFd = TableUtils.openFileRWOrFail(ff, path);
+            final long tableIndexFd = TableUtils.openFileRWOrFail(ff, path, CairoConfiguration.O_NONE);
             final long fileSize = ff.length(tableIndexFd);
             if (fileSize < Long.BYTES) {
                 if (!ff.allocate(tableIndexFd, Files.PAGE_SIZE)) {
@@ -701,6 +706,17 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlJitPageAddressCacheThreshold = getIntSize(properties, env, "cairo.sql.jit.page.address.cache.threshold", 1024 * 1024);
             this.sqlJitDebugEnabled = getBoolean(properties, env, "cairo.sql.jit.debug.enabled", false);
 
+            String value = getString(properties, env, "cairo.writer.fo_opts", "o_none");
+            long lopts = CairoConfiguration.O_NONE;
+            String[] opts = value.split("\\|");
+            for (String opt : opts) {
+                int index = WRITE_FO_OPTS.keyIndex(opt.trim());
+                if (index < 0) {
+                    lopts |= WRITE_FO_OPTS.valueAt(index);
+                }
+            }
+            writerFileOpenOpts = lopts;
+
             this.inputFormatConfiguration = new InputFormatConfiguration(
                     new DateFormatFactory(),
                     DateLocaleFactory.INSTANCE,
@@ -829,7 +845,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                     this.lineTcpCommitIntervalDefault = COMMIT_INTERVAL_DEFAULT;
                 }
                 this.lineTcpAuthDbPath = getString(properties, env, "line.tcp.auth.db.path", null);
-                String defaultTcpPartitionByProperty = getString(properties, env, "line.default.partition.by", "line.tcp.default.partition.by", "DAY");
+                // obsolete
+                String defaultTcpPartitionByProperty = getString(properties, env, "line.tcp.default.partition.by", "DAY");
+                defaultTcpPartitionByProperty = getString(properties, env, "line.default.partition.by", defaultTcpPartitionByProperty);
                 this.lineTcpDefaultPartitionBy = PartitionBy.fromString(defaultTcpPartitionByProperty);
                 if (this.lineTcpDefaultPartitionBy == -1) {
                     log.info().$("invalid partition by ").$(defaultTcpPartitionByProperty).$("), will use DAY for TCP").$();
@@ -840,6 +858,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                 }
                 this.minIdleMsBeforeWriterRelease = getLong(properties, env, "line.tcp.min.idle.ms.before.writer.release", 10_000);
                 this.lineTcpDisconnectOnError = getBoolean(properties, env, "line.tcp.disconnect.on.error", true);
+                this.stringToCharCastAllowed = getBoolean(properties, env, "line.tcp.undocumented.string.to.char.cast.allowed", false);
+                this.symbolAsFieldSupported = getBoolean(properties, env, "line.tcp.undocumented.symbol.as.field.supported", false);
+                this.isStringAsTagSupported = getBoolean(properties, env, "line.tcp.undocumented.string.as.tag.supported", false);
             }
 
             this.sharedWorkerCount = getInt(properties, env, "shared.worker.count", Math.max(1, cpuAvailable / 2 - 1 - cpuUsed));
@@ -1075,14 +1096,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         return SqlJitMode.JIT_MODE_DISABLED;
-    }
-
-    private String getString(Properties properties, @Nullable Map<String, String> env, String key, String fallbackKey, String defaultValue) {
-        String value = overrideWithEnv(properties, env, key);
-        if (value == null) {
-            return getString(properties, env, fallbackKey, defaultValue);
-        }
-        return value;
     }
 
     private String getString(Properties properties, @Nullable Map<String, String> env, String key, String defaultValue) {
@@ -1601,6 +1614,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPageFrameRowsCapacity() {
             return cairoPageFrameRowsCapacity;
+        }
+
+        @Override
+        public boolean enableDevelopmentUpdates() {
+            return false;
         }
 
         @Override
@@ -2178,6 +2196,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getWriterFileOpenOpts() {
+            return writerFileOpenOpts;
+        }
+
+        @Override
         public int getWriterTickRowsCountMod() {
             return writerTickRowsCountMod;
         }
@@ -2193,8 +2216,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean enableDevelopmentUpdates() {
-            return false;
+        public boolean isSqlJitDebugEnabled() {
+            return sqlJitDebugEnabled;
         }
 
         @Override
@@ -2536,6 +2559,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSymbolCacheWaitUsBeforeReload() {
             return symbolCacheWaitUsBeforeReload;
+        }
+
+        @Override
+        public boolean isStringToCharCastAllowed() {
+            return stringToCharCastAllowed;
+        }
+
+        @Override
+        public boolean isSymbolAsFieldSupported() {
+            return symbolAsFieldSupported;
+        }
+
+        @Override
+        public boolean isStringAsTagSupported() {
+            return isStringAsTagSupported;
         }
     }
 
@@ -2942,5 +2980,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean isEnabled() {
             return metricsEnabled;
         }
+    }
+
+    static {
+        WRITE_FO_OPTS.put("o_direct", (int) CairoConfiguration.O_DIRECT);
+        WRITE_FO_OPTS.put("o_sync", (int) CairoConfiguration.O_SYNC);
+        WRITE_FO_OPTS.put("o_async", (int) CairoConfiguration.O_ASYNC);
+        WRITE_FO_OPTS.put("o_none", (int) CairoConfiguration.O_NONE);
     }
 }

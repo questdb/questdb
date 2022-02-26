@@ -25,11 +25,22 @@
 package org.questdb;
 
 import io.questdb.cutlass.line.LineTcpSender;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.std.Rnd;
 
 public class LineTCPSenderMain {
     public static void main(String[] args) {
+        int n = 3;
+        final SOCountDownLatch haltLatch = new SOCountDownLatch(n);
+        for (int i = 0; i < n; i++) {
+            int k = i;
+            new Thread(() -> doSend(k, haltLatch)).start();
+        }
+        haltLatch.await();
+    }
+
+    private static void doSend(int k, SOCountDownLatch haltLatch) {
         final long count = 30_000_000;
         String hostIPv4 = "127.0.0.1";
         int port = 9009; // 8089 influx
@@ -37,9 +48,10 @@ public class LineTCPSenderMain {
 
         final Rnd rnd = new Rnd();
         long start = System.nanoTime();
+        String tab = "weather"+k;
         try (LineTcpSender sender = new LineTcpSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
             for (int i = 0; i < count; i++) {
-                sender.metric("weather");
+                sender.metric(tab);
                 sender
                         .tag("location", "london")
                         .tag("by", "blah")
@@ -50,5 +62,6 @@ public class LineTCPSenderMain {
             sender.flush();
         }
         System.out.println("Actual rate: " + (count * 1_000_000_000L / (System.nanoTime() - start)));
+        haltLatch.countDown();
     }
 }

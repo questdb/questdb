@@ -92,6 +92,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected int nWriterThreads;
     protected long microSecondTicks;
     protected boolean disconnectOnError;
+    protected boolean stringToCharCastAllowed;
+    protected boolean symbolAsFieldSupported;
 
     @Before
     public void before() {
@@ -178,6 +180,16 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             @Override
             public boolean getDisconnectOnError() {
                 return disconnectOnError;
+            }
+
+            @Override
+            public boolean isStringToCharCastAllowed() {
+                return stringToCharCastAllowed;
+            }
+
+            @Override
+            public boolean isSymbolAsFieldSupported() {
+                return symbolAsFieldSupported;
             }
 
             @Override

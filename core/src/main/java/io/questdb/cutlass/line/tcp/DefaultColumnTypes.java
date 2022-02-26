@@ -33,6 +33,8 @@ class DefaultColumnTypes {
         // if not set it defaults to ColumnType.UNDEFINED
         DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_TAG] = ColumnType.SYMBOL;
         DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_FLOAT] = ColumnType.DOUBLE;
+        DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_DOUBLE] = ColumnType.DOUBLE;
+        DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_LONG] = ColumnType.LONG;
         DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_INTEGER] = ColumnType.LONG;
         DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_STRING] = ColumnType.STRING;
         DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_SYMBOL] = ColumnType.SYMBOL;

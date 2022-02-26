@@ -69,7 +69,14 @@ public class BinarySearchTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
                 path.of(root).concat("binsearch.d").$();
-                try (MemoryCMARW appendMem = Vm.getSmallCMARWInstance(FilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT)) {
+                try (
+                        MemoryCMARW appendMem = Vm.getSmallCMARWInstance(
+                                FilesFacadeImpl.INSTANCE,
+                                path,
+                                MemoryTag.MMAP_DEFAULT,
+                                CairoConfiguration.O_NONE
+                        )
+                ) {
                     for (int i = 0; i < 100; i++) {
                         for (int j = 0; j < 3; j++) {
                             appendMem.putLong(i);
@@ -90,7 +97,14 @@ public class BinarySearchTest extends AbstractCairoTest {
     public void testFindForwardTwoValues() {
         try (Path path = new Path()) {
             path.of(root).concat("binsearch.d").$();
-            try (MemoryMA appendMem = Vm.getSmallCMARWInstance(FilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT)) {
+            try (
+                    MemoryMA appendMem = Vm.getSmallCMARWInstance(
+                            FilesFacadeImpl.INSTANCE,
+                            path,
+                            MemoryTag.MMAP_DEFAULT,
+                            CairoConfiguration.O_NONE
+                    )
+            ) {
                 appendMem.putLong(1);
                 appendMem.putLong(3);
 
@@ -131,7 +145,14 @@ public class BinarySearchTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
                 path.of(root).concat("binsearch.d").$();
-                try (MemoryMA appendMem = Vm.getSmallCMARWInstance(FilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT)) {
+                try (
+                        MemoryMA appendMem = Vm.getSmallCMARWInstance(
+                                FilesFacadeImpl.INSTANCE,
+                                path,
+                                MemoryTag.MMAP_DEFAULT,
+                                CairoConfiguration.O_NONE
+                        )
+                ) {
                     appendMem.putLong(1);
                     appendMem.putLong(3);
 
@@ -202,7 +223,14 @@ public class BinarySearchTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
                 path.of(root).concat("binsearch.d").$();
-                try (MemoryA appendMem = Vm.getSmallMAInstance(FilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT)) {
+                try (
+                        MemoryA appendMem = Vm.getSmallMAInstance(
+                                FilesFacadeImpl.INSTANCE,
+                                path,
+                                MemoryTag.MMAP_DEFAULT,
+                                CairoConfiguration.O_NONE
+                        )
+                ) {
                     for (int i = 0; i < distinctValueCount; i++) {
                         for (int j = 0; j < repeatCount; j++) {
                             appendMem.putLong(i);

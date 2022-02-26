@@ -70,7 +70,7 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
         this.memoryTag = memoryTag;
         openFile(ff, name);
         if (size < 0) {

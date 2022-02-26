@@ -59,7 +59,9 @@ final class Mig607 {
                     path.trimTo(plen).concat(TXN_FILE_NAME).$(),
                     ff.getPageSize(),
                     ff.length(path),
-                    MemoryTag.NATIVE_DEFAULT)
+                    MemoryTag.NATIVE_DEFAULT,
+                    migrationContext.getConfiguration().getWriterFileOpenOpts()
+            )
             ) {
                 // this is a variable length file; we need to count of symbol maps before we get to the partition
                 // table data
@@ -114,7 +116,7 @@ final class Mig607 {
                         final long offset = MigrationActions.prefixedBlockOffset(SymbolMapWriter.HEADER_SIZE, symbolCount, 8L);
 
                         SymbolMapWriter.offsetFileName(path.trimTo(plen), columnName);
-                        long fd = TableUtils.openRW(ff, path, MigrationActions.LOG);
+                        long fd = TableUtils.openRW(ff, path, MigrationActions.LOG, migrationContext.getConfiguration().getWriterFileOpenOpts());
                         try {
                             long fileLen = ff.length(fd);
                             if (symbolCount > 0) {
@@ -154,14 +156,14 @@ final class Mig607 {
         // MemoryMARW now truncate to page size. To test old migrations here we simulate the migration as it is originally released
         // So trim TX and META files to their sizes
         path.trimTo(plen).concat(META_FILE_NAME).$();
-        trimFile(ff, path, metaFileSize);
+        trimFile(ff, path, metaFileSize, migrationContext.getConfiguration().getWriterFileOpenOpts());
 
         path.trimTo(plen).concat(TXN_FILE_NAME).$();
-        trimFile(ff, path, txFileSize);
+        trimFile(ff, path, txFileSize, migrationContext.getConfiguration().getWriterFileOpenOpts());
     }
 
-    private static void trimFile(FilesFacade ff, Path path, long size) {
-        long fd = TableUtils.openFileRWOrFail(ff, path);
+    private static void trimFile(FilesFacade ff, Path path, long size, long opts) {
+        long fd = TableUtils.openFileRWOrFail(ff, path, opts);
         if (!ff.truncate(fd, size)) {
             // This should never happens on migration but better to be on safe side anyway
             throw CairoException.instance(ff.errno()).put("Cannot trim to size [file=").put(path).put(']');
@@ -204,7 +206,7 @@ final class Mig607 {
                     final long columnRowCount = rowCount - columnTop;
                     long offset = columnRowCount * 8L;
                     iFile(path.trimTo(plen2), columnName);
-                    long fd = TableUtils.openRW(ff, path, MigrationActions.LOG);
+                    long fd = TableUtils.openRW(ff, path, MigrationActions.LOG, migrationContext.getConfiguration().getWriterFileOpenOpts());
                     try {
                         long fileLen = ff.length(fd);
 

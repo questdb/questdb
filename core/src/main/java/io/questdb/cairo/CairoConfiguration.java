@@ -38,6 +38,11 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface CairoConfiguration {
 
+    long O_NONE = 0;
+    long O_ASYNC = 0x40;
+    long O_SYNC = 0x80;
+    long O_DIRECT = 0x4000;
+
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
     boolean enableDevelopmentUpdates();
@@ -306,6 +311,8 @@ public interface CairoConfiguration {
 
     int getWriterCommandQueueSlotSize();
 
+    long getWriterFileOpenOpts();
+
     int getWriterTickRowsCountMod();
 
     boolean isO3QuickSortEnabled();
@@ -315,4 +322,6 @@ public interface CairoConfiguration {
     boolean isSqlJitDebugEnabled();
 
     int getPageFrameRowsCapacity();
+
+    boolean isSqlJitDebugEnabled();
 }

@@ -377,45 +377,8 @@ public final class TableUtils {
         return true;
     }
 
-    public static boolean isValidInfluxColumnName(CharSequence seq) {
-        for (int i = 0, l = seq.length(); i < l; i++) {
-            switch (seq.charAt(i)) {
-                default:
-                    break;
-                case '?':
-                case '.':
-                case ',':
-                case '\'':
-                case '\"':
-                case '\\':
-                case '/':
-                case '\0':
-                case ':':
-                case ')':
-                case '(':
-                case '+':
-                case '*':
-                case '%':
-                case '~':
-                case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
-                    return false;
-                case '_':
-                    if (i < 1) {
-                        return false;
-                    }
-                    break;
-                case '-':
-                    if (i == 0 || i == l - 1) {
-                        return false;
-                    }
-                    break;
-            }
-        }
-        return true;
-    }
-
     public static long lock(FilesFacade ff, Path path) {
-        long fd = ff.openRW(path);
+        long fd = ff.openRW(path, CairoConfiguration.O_NONE);
         if (fd == -1) {
             LOG.error().$("cannot open '").utf8(path).$("' to lock [errno=").$(ff.errno()).$(']').$();
             return -1L;
@@ -524,8 +487,8 @@ public final class TableUtils {
         path.put("-x-").put(txn);
     }
 
-    public static long openFileRWOrFail(FilesFacade ff, LPSZ path) {
-        return openRW(ff, path, LOG);
+    public static long openFileRWOrFail(FilesFacade ff, LPSZ path, long opts) {
+        return openRW(ff, path, LOG, opts);
     }
 
     public static long openRO(FilesFacade ff, LPSZ path, Log log) {
@@ -537,8 +500,8 @@ public final class TableUtils {
         throw CairoException.instance(ff.errno()).put("could not open read-only [file=").put(path).put(']');
     }
 
-    public static long openRW(FilesFacade ff, LPSZ path, Log log) {
-        final long fd = ff.openRW(path);
+    public static long openRW(FilesFacade ff, LPSZ path, Log log, long opts) {
+        final long fd = ff.openRW(path, opts);
         if (fd > -1) {
             log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
             return fd;
@@ -877,7 +840,7 @@ public final class TableUtils {
             long tempBuf
     ) {
         topFile(path, columnName);
-        long fd = openRW(ff, path, LOG);
+        long fd = openRW(ff, path, LOG, CairoConfiguration.O_NONE);
         try {
             try {
                 allocateDiskSpace(ff, fd, Long.BYTES);

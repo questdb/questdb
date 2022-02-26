@@ -22,28 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.catalogue;
+package io.questdb.cairo.sql;
 
-import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.std.Os;
-import io.questdb.test.tools.TestUtils;
-import org.junit.Test;
-
-public class DumpMemoryUsageTest extends AbstractGriffinTest {
-
-    @Test
-    public void testSimple() throws Exception {
-        assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "select dump_memory_usage",
-                sink,
-                "dump_memory_usage\n" +
-                        "true\n"
-        ));
-        // this sleep to allow async logger to print out the values,
-        // although we don't assert them it is less awkward than calling
-        // the dump and see no output in the logs
-        Os.sleep(500);
-    }
+public interface SymbolLookup {
+    int keyOf(CharSequence value);
 }

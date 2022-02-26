@@ -32,8 +32,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 
-import java.io.Closeable;
-
 public class O3Utils {
 
     private static final Log LOG = LogFactory.getLog(O3Utils.class);
@@ -60,19 +58,18 @@ public class O3Utils {
     }
 
     //TODO: maybe remove pageframe outside ?
-    public static Closeable setupWorkerPool(WorkerPool workerPool, MessageBus messageBus, CairoConfiguration configuration) {
+    public static void setupWorkerPool(WorkerPool workerPool, MessageBus messageBus, CairoConfiguration configuration) {
         O3PurgeDiscoveryJob purgeDiscoveryJob = new O3PurgeDiscoveryJob(messageBus, workerPool.getWorkerCount());
         workerPool.assign(purgeDiscoveryJob);
         workerPool.assign(new O3PartitionJob(messageBus));
         workerPool.assign(new O3OpenColumnJob(messageBus));
         workerPool.assign(new O3CopyJob(messageBus));
         workerPool.assign(new O3CallbackJob(messageBus));
+        workerPool.freeOnHalt(purgeDiscoveryJob);
 
         workerPool.assign(new PageFrameDispatchJob(messageBus, workerPool.getWorkerCount()));
         workerPool.assign(new PageFrameReduceJob(messageBus, new Rnd(), workerPool.getWorkerCount()));
         initBuf(workerPool.getWorkerCount() + 1);
-
-        return purgeDiscoveryJob;
     }
 
     static long get8ByteBuf(int worker) {

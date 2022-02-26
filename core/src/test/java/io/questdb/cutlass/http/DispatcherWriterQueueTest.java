@@ -112,12 +112,12 @@ public class DispatcherWriterQueueTest {
                 .withAlterTableMaxtWaitTimeout(50_000_000)
                 .withFilesFacade(new FilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name) {
+                    public long openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "default/s.v") || Chars.endsWith(name, "default\\s.v")) {
                             alterAckReceived.await();
                             disconnectLatch.countDown();
                         }
-                        return super.openRW(name);
+                        return super.openRW(name, opts);
                     }
                 });
 
@@ -165,11 +165,11 @@ public class DispatcherWriterQueueTest {
                 .withAlterTableMaxtWaitTimeout(50_000_000)
                 .withFilesFacade(new FilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name) {
+                    public long openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "/default/s.v") || Chars.endsWith(name, "default\\s.v")) {
                             alterAckReceived.await();
                         }
-                        return super.openRW(name);
+                        return super.openRW(name, opts);
                     }
                 });
 
@@ -201,12 +201,12 @@ public class DispatcherWriterQueueTest {
                 .withQueryFutureUpdateListener(waitUntilCommandStarted(alterAckReceived))
                 .withFilesFacade(new FilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name) {
+                    public long openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "/default/s.v") || Chars.endsWith(name, "\\default\\s.v")) {
                             alterAckReceived.await();
                             Os.sleep(1_000);
                         }
-                        return super.openRW(name);
+                        return super.openRW(name, opts);
                     }
                 });
 

@@ -146,4 +146,19 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     public long getSymbolCacheWaitUsBeforeReload() {
         return 500_000;
     }
+
+    @Override
+    public boolean isStringToCharCastAllowed() {
+        return false;
+    }
+
+    @Override
+    public boolean isSymbolAsFieldSupported() {
+        return false;
+    }
+
+    @Override
+    public boolean isStringAsTagSupported() {
+        return false;
+    }
 }

@@ -70,7 +70,7 @@ typedef struct __attribute__ ((packed)) long_256bit {
 
 DECLARE_DISPATCHER_TYPE(copy_index_timestamp, index_t *index, int64_t index_lo, int64_t index_hi, int64_t *dest);
 
-DECLARE_DISPATCHER_TYPE(shift_copy, int64_t shift, int64_t *src, int64_t src_lo, int64_t src_hi, int64_t *dest);
+DECLARE_DISPATCHER_TYPE(shift_copy, int64_t shift, const int64_t *src, int64_t src_lo, int64_t src_hi, int64_t *dest);
 
 DECLARE_DISPATCHER_TYPE(copy_index, const index_t *index, const int64_t count, int64_t *dest);
 
