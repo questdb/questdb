@@ -322,6 +322,4 @@ public interface CairoConfiguration {
     boolean isSqlJitDebugEnabled();
 
     int getPageFrameRowsCapacity();
-
-    boolean isSqlJitDebugEnabled();
 }

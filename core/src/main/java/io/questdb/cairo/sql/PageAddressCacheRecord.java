@@ -25,8 +25,8 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.NullColumn;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.NullMemoryMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.*;
@@ -66,7 +66,7 @@ public class PageAddressCacheRecord implements Record {
     public BinarySequence getBin(int columnIndex) {
         final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (dataPageAddress == 0) {
-            return NullColumn.INSTANCE.getBin(0);
+            return NullMemoryMR.INSTANCE.getBin(0);
         }
         final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
         final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + rowIndex * Long.BYTES);
@@ -78,7 +78,7 @@ public class PageAddressCacheRecord implements Record {
     public long getBinLen(int columnIndex) {
         final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (dataPageAddress == 0) {
-            return NullColumn.INSTANCE.getBinLen(0);
+            return NullMemoryMR.INSTANCE.getBinLen(0);
         }
         final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
         final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + rowIndex * Long.BYTES);
@@ -89,7 +89,7 @@ public class PageAddressCacheRecord implements Record {
     public boolean getBool(int columnIndex) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (address == 0) {
-            return NullColumn.INSTANCE.getBool(0);
+            return NullMemoryMR.INSTANCE.getBool(0);
         }
         return Unsafe.getUnsafe().getByte(address + rowIndex * Byte.BYTES) == 1;
     }
@@ -98,7 +98,7 @@ public class PageAddressCacheRecord implements Record {
     public byte getByte(int columnIndex) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (address == 0) {
-            return NullColumn.INSTANCE.getByte(0);
+            return NullMemoryMR.INSTANCE.getByte(0);
         }
         return Unsafe.getUnsafe().getByte(address + rowIndex * Byte.BYTES);
     }
@@ -107,7 +107,7 @@ public class PageAddressCacheRecord implements Record {
     public char getChar(int columnIndex) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (address == 0) {
-            return NullColumn.INSTANCE.getChar(0);
+            return NullMemoryMR.INSTANCE.getChar(0);
         }
         return Unsafe.getUnsafe().getChar(address + rowIndex * Character.BYTES);
     }
@@ -116,7 +116,7 @@ public class PageAddressCacheRecord implements Record {
     public double getDouble(int columnIndex) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (address == 0) {
-            return NullColumn.INSTANCE.getDouble(0);
+            return NullMemoryMR.INSTANCE.getDouble(0);
         }
         return Unsafe.getUnsafe().getDouble(address + rowIndex * Double.BYTES);
     }
@@ -125,7 +125,7 @@ public class PageAddressCacheRecord implements Record {
     public float getFloat(int columnIndex) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (address == 0) {
-            return NullColumn.INSTANCE.getFloat(0);
+            return NullMemoryMR.INSTANCE.getFloat(0);
         }
         return Unsafe.getUnsafe().getFloat(address + rowIndex * Float.BYTES);
     }
@@ -134,7 +134,7 @@ public class PageAddressCacheRecord implements Record {
     public int getInt(int columnIndex) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (address == 0) {
-            return NullColumn.INSTANCE.getInt(0);
+            return NullMemoryMR.INSTANCE.getInt(0);
         }
         return Unsafe.getUnsafe().getInt(address + rowIndex * Integer.BYTES);
     }
@@ -143,7 +143,7 @@ public class PageAddressCacheRecord implements Record {
     public long getLong(int columnIndex) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (address == 0) {
-            return NullColumn.INSTANCE.getLong(0);
+            return NullMemoryMR.INSTANCE.getLong(0);
         }
         return Unsafe.getUnsafe().getLong(address + rowIndex * Long.BYTES);
     }
@@ -152,7 +152,7 @@ public class PageAddressCacheRecord implements Record {
     public void getLong256(int columnIndex, CharSink sink) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (address == 0) {
-            NullColumn.INSTANCE.getLong256(0, sink);
+            NullMemoryMR.INSTANCE.getLong256(0, sink);
             return;
         }
         getLong256(address + rowIndex * Long256.BYTES, sink);
@@ -188,7 +188,7 @@ public class PageAddressCacheRecord implements Record {
     public short getShort(int columnIndex) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (address == 0) {
-            return NullColumn.INSTANCE.getShort(0);
+            return NullMemoryMR.INSTANCE.getShort(0);
         }
         return Unsafe.getUnsafe().getShort(address + rowIndex * Short.BYTES);
     }
@@ -197,7 +197,7 @@ public class PageAddressCacheRecord implements Record {
     public CharSequence getStr(int columnIndex) {
         final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (dataPageAddress == 0) {
-            return NullColumn.INSTANCE.getStr(0);
+            return NullMemoryMR.INSTANCE.getStr(0);
         }
         final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
         final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + rowIndex * Long.BYTES);
@@ -209,7 +209,7 @@ public class PageAddressCacheRecord implements Record {
     public CharSequence getStrB(int columnIndex) {
         final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (dataPageAddress == 0) {
-            return NullColumn.INSTANCE.getStr2(0);
+            return NullMemoryMR.INSTANCE.getStr2(0);
         }
         final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
         final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + rowIndex * Long.BYTES);
@@ -221,7 +221,7 @@ public class PageAddressCacheRecord implements Record {
     public int getStrLen(int columnIndex) {
         final long dataPageAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (dataPageAddress == 0) {
-            return NullColumn.INSTANCE.getStrLen(0);
+            return NullMemoryMR.INSTANCE.getStrLen(0);
         }
         final long indexPageAddress = pageAddressCache.getIndexPageAddress(frameIndex, columnIndex);
         final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + rowIndex * Long.BYTES);
@@ -231,7 +231,7 @@ public class PageAddressCacheRecord implements Record {
     @Override
     public CharSequence getSym(int columnIndex) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
-        int key = NullColumn.INSTANCE.getInt(0);
+        int key = NullMemoryMR.INSTANCE.getInt(0);
         if (address != 0) {
             key = Unsafe.getUnsafe().getInt(address + rowIndex * Integer.BYTES);
         }
@@ -249,7 +249,7 @@ public class PageAddressCacheRecord implements Record {
     public byte getGeoByte(int columnIndex) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (address == 0) {
-            return NullColumn.INSTANCE.getByte(0);
+            return NullMemoryMR.INSTANCE.getByte(0);
         }
         return Unsafe.getUnsafe().getByte(address + rowIndex * Byte.BYTES);
     }
@@ -258,7 +258,7 @@ public class PageAddressCacheRecord implements Record {
     public short getGeoShort(int columnIndex) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (address == 0) {
-            return NullColumn.INSTANCE.getShort(0);
+            return NullMemoryMR.INSTANCE.getShort(0);
         }
         return Unsafe.getUnsafe().getShort(address + rowIndex * Short.BYTES);
     }
@@ -267,7 +267,7 @@ public class PageAddressCacheRecord implements Record {
     public int getGeoInt(int columnIndex) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (address == 0) {
-            return NullColumn.INSTANCE.getInt(0);
+            return NullMemoryMR.INSTANCE.getInt(0);
         }
         return Unsafe.getUnsafe().getInt(address + rowIndex * Integer.BYTES);
     }
@@ -276,7 +276,7 @@ public class PageAddressCacheRecord implements Record {
     public long getGeoLong(int columnIndex) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (address == 0) {
-            return NullColumn.INSTANCE.getLong(0);
+            return NullMemoryMR.INSTANCE.getLong(0);
         }
         return Unsafe.getUnsafe().getLong(address + rowIndex * Long.BYTES);
     }
@@ -333,7 +333,7 @@ public class PageAddressCacheRecord implements Record {
     void getLong256(int columnIndex, Long256Acceptor sink) {
         final long columnAddress = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (columnAddress == 0) {
-            NullColumn.INSTANCE.getLong256(0, sink);
+            NullMemoryMR.INSTANCE.getLong256(0, sink);
             return;
         }
         final long addr = columnAddress + rowIndex * Long256.BYTES + Long.BYTES * 4;

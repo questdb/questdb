@@ -2219,11 +2219,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean isSqlJitDebugEnabled() {
             return sqlJitDebugEnabled;
         }
-
-        @Override
-        public boolean isSqlJitDebugEnabled() {
-            return sqlJitDebugEnabled;
-        }
     }
 
     private class PropLineUdpReceiverConfiguration implements LineUdpReceiverConfiguration {

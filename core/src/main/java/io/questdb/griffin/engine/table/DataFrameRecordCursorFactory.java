@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.cairo.NullColumn;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.NullMemoryMR;

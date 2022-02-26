@@ -485,22 +485,6 @@ public class ServerMain {
         Misc.freeObjList(instancesToClean);
     }
 
-    private static void verifyFileSystem(String kind, CharSequence dir, Path path, Log log) {
-        if (dir != null) {
-            path.of(dir).$();
-            // path will contain file system name
-            long fsStatus = Files.getFileSystemStatus(path);
-            path.seekZ();
-            LogRecord rec = log.advisory().$(kind).$(" file system magic: 0x");
-            if (fsStatus < 0) {
-                rec.$hex(-fsStatus).$(" [").$(path).$("] SUPPORTED").$();
-            } else {
-                rec.$hex(fsStatus).$(" [").$(path).$("] EXPERIMENTAL").$();
-                log.advisory().$("\n\n\n\t\t\t*** SYSTEM IS USING UNSUPPORTED FILE SYSTEM AND COULD BE UNSTABLE ***\n\n").$();
-            }
-        }
-    }
-
     protected HttpServer createHttpServer(
             final WorkerPool workerPool,
             final Log log,
