@@ -410,7 +410,7 @@ public class TableUpdateDetails implements Closeable {
         }
 
         private int resolveSymbolIndexAndName(TableReaderMetadata metadata, int colWriterIndex) {
-            colName = null;
+            symbolNameTemp = null;
             int symIndex = -1;
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 if (metadata.getWriterIndex(i) == colWriterIndex) {
