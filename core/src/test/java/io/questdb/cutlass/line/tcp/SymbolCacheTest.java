@@ -63,7 +63,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     TxReader txReader = new TxReader(ff).ofRO(path.of(configuration.getRoot()).concat("x"), PartitionBy.DAY)
             ) {
                 path.of(configuration.getRoot()).concat("x");
-                symbolCache.of(configuration, path, "b", 1, txReader, -1, 1);
+                symbolCache.of(configuration, path, "b", 1, txReader, -1);
 
                 final CyclicBarrier barrier = new CyclicBarrier(2);
                 final SOCountDownLatch haltLatch = new SOCountDownLatch(1);
@@ -183,8 +183,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                             "symCol2",
                             symColIndex2,
                             txReader,
-                            -1,
-                            symColIndex2
+                            -1
                     );
 
                     TableWriter.Row r = writer.newRow();
@@ -270,8 +269,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                             "symCol2",
                             0,
                             txReader,
-                            -1,
-                            1
+                            -1
                     );
 
                     rc = cache.keyOf("sym24");

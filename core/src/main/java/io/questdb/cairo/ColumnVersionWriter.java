@@ -59,7 +59,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
 
     @Override
     public void clear() {
-        mem.close(false);
+        throw new UnsupportedOperationException();
     }
 
     @Override

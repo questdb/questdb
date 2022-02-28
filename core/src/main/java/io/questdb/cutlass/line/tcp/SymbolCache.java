@@ -93,8 +93,7 @@ class SymbolCache implements Closeable, SymbolLookup {
             CharSequence columnName,
             int symbolIndexInTxFile,
             TxReader txReader,
-            long columnNameTxn,
-            int writerIndex
+            long columnNameTxn
     ) {
         this.symbolIndexInTxFile = symbolIndexInTxFile;
         final int plen = path.length();
