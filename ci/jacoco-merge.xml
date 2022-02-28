@@ -34,7 +34,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.jacoco</groupId>
-    <version>0.1-SNAPSHOT</version>
+    <version>0.1</version>
     <artifactId>coverage</artifactId>
 
     <name>Coverage report</name>
