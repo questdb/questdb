@@ -26,7 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;

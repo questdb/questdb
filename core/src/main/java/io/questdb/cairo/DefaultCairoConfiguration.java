@@ -89,11 +89,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public CharSequence getSnapshotRoot() {
-        return null;
-    }
-
-    @Override
     public DateFormat getSnapshotDirTimestampFormat() {
         return null;
     }

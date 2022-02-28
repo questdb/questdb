@@ -168,7 +168,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlJitDebugEnabled;
     private final DateLocale locale;
     private final String backupRoot;
-    private final String snapshotRoot;
     private final DateFormat snapshotDirTimestampFormat;
     private final DateFormat backupDirTimestampFormat;
     private final CharSequence backupTempDirName;
@@ -722,7 +721,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.inputRoot = getString(properties, env, "cairo.sql.copy.root", null);
             this.backupRoot = getString(properties, env, "cairo.sql.backup.root", null);
-            this.snapshotRoot = getString(properties, env, "cairo.sql.snapshot.root", null);
             this.snapshotDirTimestampFormat = getSnapshotTimestampFormat(properties, env);
             this.backupDirTimestampFormat = getTimestampFormat(properties, env);
             this.backupTempDirName = getString(properties, env, "cairo.sql.backup.dir.tmp.name", "tmp");
@@ -1629,11 +1627,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public CharSequence getBackupRoot() {
             return backupRoot;
-        }
-
-        @Override
-        public CharSequence getSnapshotRoot() {
-            return snapshotRoot;
         }
 
         @Override

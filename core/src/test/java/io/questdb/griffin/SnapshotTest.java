@@ -30,8 +30,6 @@ import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import org.junit.*;
 
-import java.io.IOException;
-
 public class SnapshotTest extends AbstractGriffinTest {
 
     private final Path path = new Path();
@@ -41,11 +39,6 @@ public class SnapshotTest extends AbstractGriffinTest {
     public static void setUpStatic() {
         AbstractGriffinTest.setUpStatic();
         snapshotDirTimestampFormat = "yyyy-MM-dd";
-        try {
-            snapshotRoot = AbstractGriffinTest.temp.newFolder("dbSnapshotRoot").getAbsolutePath();
-        } catch (IOException e) {
-            throw new ExceptionInInitializerError();
-        }
     }
 
     @Before
@@ -54,7 +47,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
 
         super.setUp();
-        path.of(configuration.getSnapshotRoot()).slash();
+        path.of(configuration.getRoot()).slash();
         configuration.getSnapshotDirTimestampFormat().format(
                 configuration.getMicrosecondClock().getTicks(),
                 configuration.getDefaultDateLocale(),
@@ -88,7 +81,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             snapshotDirTimestampFormat = "yyyy-MM-dd";
             try (Path path = new Path()) {
-                path.of(configuration.getSnapshotRoot()).slash();
+                path.of(configuration.getRoot()).slash();
                 configuration.getSnapshotDirTimestampFormat().format(
                         configuration.getMicrosecondClock().getTicks(),
                         configuration.getDefaultDateLocale(),

@@ -2780,19 +2780,21 @@ public class SqlCompiler implements Closeable {
 
     private CompiledQuery snapshotDatabase(SqlExecutionContext executionContext) throws SqlException {
 
-        executionContext.getCairoSecurityContext().checkWritePermission();
-        CharSequence snapshotRoot = configuration.getSnapshotRoot();
-        if (null == snapshotRoot) {
-            throw CairoException.instance(0).put("Snapshots are disabled, no snapshot root directory is configured in the server configuration ['cairo.sql.snapshot.root' property]");
+        // Windows doesn't support sync() system call.
+        if (Os.type == Os.WINDOWS) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("Snapshots are not supported on Windows");
         }
+
+        executionContext.getCairoSecurityContext().checkWritePermission();
         CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
+
         if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
 
             if (engine.isSnapshotInProgress()) {
                 throw SqlException.position(lexer.lastTokenPosition()).put("Another snapshot command in progress");
             }
 
-            path.of(configuration.getSnapshotRoot()).slash();
+            path.of(configuration.getRoot()).slash();
             configuration.getSnapshotDirTimestampFormat().format(
                     configuration.getMicrosecondClock().getTicks(),
                     configuration.getDefaultDateLocale(),

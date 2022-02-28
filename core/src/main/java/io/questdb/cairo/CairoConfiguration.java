@@ -58,8 +58,6 @@ public interface CairoConfiguration {
     // null disables backups
     CharSequence getBackupRoot();
 
-    CharSequence getSnapshotRoot();
-
     DateFormat getSnapshotDirTimestampFormat();
 
     CharSequence getBackupTempDirName();

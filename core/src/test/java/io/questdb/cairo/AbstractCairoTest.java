@@ -73,7 +73,6 @@ public class AbstractCairoTest {
     protected static int pageFrameMaxSize = -1;
     protected static int rndFunctionMemoryPageSize = -1;
     protected static int rndFunctionMemoryMaxPages = -1;
-    protected static CharSequence snapshotRoot;
     protected static CharSequence snapshotDirTimestampFormat;
 
     @Rule
@@ -197,11 +196,6 @@ public class AbstractCairoTest {
             @Override
             public int getRndFunctionMemoryMaxPages() {
                 return rndFunctionMemoryMaxPages < 0 ? super.getRndFunctionMemoryMaxPages() : rndFunctionMemoryMaxPages;
-            }
-
-            @Override
-            public CharSequence getSnapshotRoot() {
-                return snapshotRoot;
             }
 
             @Override
