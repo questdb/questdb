@@ -58,7 +58,6 @@ public class MCSequence extends AbstractMSequence {
     @Override
     public long next() {
         long cached = cache;
-        // this is a volatile read, we should have correct order for "cache" too
         long current = value;
         long next = current + 1;
 

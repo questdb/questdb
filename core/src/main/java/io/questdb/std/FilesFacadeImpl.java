@@ -214,8 +214,8 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long openRW(LPSZ name) {
-        return Files.openRW(name);
+    public long openRW(LPSZ name, long opts) {
+        return Files.openRW(name, opts);
     }
 
     @Override

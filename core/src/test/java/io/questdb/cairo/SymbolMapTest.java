@@ -47,7 +47,9 @@ public class SymbolMapTest extends AbstractCairoTest {
                     MemoryCMARW mem = Vm.getSmallCMARWInstance(
                             configuration.getFilesFacade(),
                             path.concat(name).put(".o").$(),
-                            MemoryTag.MMAP_DEFAULT)
+                            MemoryTag.MMAP_DEFAULT,
+                            configuration.getWriterFileOpenOpts()
+                    )
             ) {
                 mem.putInt(symbolCapacity);
                 mem.putBool(useCache);
@@ -109,7 +111,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                         prev = key;
                     }
 
-                    // try append first batch - this should return symbol keys starting with 0
+                    // try to append first batch - this should return symbol keys starting with 0
                     rnd.reset();
                     prev = -1;
                     for (int i = 0; i < N; i++) {

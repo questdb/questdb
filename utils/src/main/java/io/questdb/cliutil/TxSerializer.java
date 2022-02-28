@@ -26,6 +26,7 @@ package io.questdb.cliutil;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -209,7 +210,7 @@ public class TxSerializer
         long fileSize = tx.calculateFileSize();
         try (Path path = new Path()) {
             path.put(target).$();
-            try (MemoryCMARW rwTxMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT)) {
+            try (MemoryCMARW rwTxMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)) {
                 Vect.memset(rwTxMem.addressOf(0), fileSize, 0);
 
                 rwTxMem.setTruncateSize(fileSize);

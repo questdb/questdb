@@ -74,8 +74,7 @@ public class TableWriter implements Closeable {
     };
     private final static RemoveFileLambda REMOVE_OR_LOG = TableWriter::removeFileAndOrLog;
     private final static RemoveFileLambda REMOVE_OR_EXCEPTION = TableWriter::removeOrException;
-    final ObjList<MemoryMAR> columns;
-    private final ObjList<MemoryMA> logColumns;
+    final ObjList<MemoryMA> columns;
     private final ObjList<SymbolMapWriter> symbolMapWriters;
     private final ObjList<SymbolMapWriter> denseSymbolMapWriters;
     private final ObjList<ColumnIndexer> indexers;
@@ -294,7 +293,6 @@ public class TableWriter implements Closeable {
             }
             this.rowValueIsNotNull.extendAndSet(columnCount, 0);
             this.columns = new ObjList<>(columnCount * 2);
-            this.logColumns = new ObjList<>(columnCount * 2);
             this.o3Columns = new ObjList<>(columnCount * 2);
             this.o3Columns2 = new ObjList<>(columnCount * 2);
             this.activeColumns = columns;
@@ -1785,8 +1783,8 @@ public class TableWriter implements Closeable {
         for (int i = 0; i < columnCount; i++) {
             // stop calculating oversize as soon as we find first over-sized column
             setColumnSize(i, size, false);
-            Misc.free((MemoryMA) getPrimaryColumn(i));
-            Misc.free((MemoryMA) getSecondaryColumn(i));
+            Misc.free(getPrimaryColumn(i));
+            Misc.free(getSecondaryColumn(i));
         }
         Misc.freeObjList(denseIndexers);
         denseIndexers.clear();
@@ -1811,6 +1809,8 @@ public class TableWriter implements Closeable {
      * @param commitLag  if > 0 then do a partial commit, leaving the rows within the lag in a new uncommitted transaction
      */
     private void commit(int commitMode, long commitLag) {
+
+        LOG.debug().$("commit [table=").$(tableName).I$();
 
         checkDistressed();
 
@@ -1873,30 +1873,25 @@ public class TableWriter implements Closeable {
     }
 
     private void configureColumn(int type, boolean indexFlag) {
-        final MemoryMAR primary = Vm.getMARInstance();
-        final MemoryMAR secondary;
+        final MemoryMA primary =  Vm.getMAInstance();
+        final MemoryMA secondary;
         final MemoryCARW oooPrimary = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
         final MemoryCARW oooSecondary;
         final MemoryCARW oooPrimary2 = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
         final MemoryCARW oooSecondary2;
 
 
-        final MemoryMAR logPrimary = Vm.getMARInstance();
-        final MemoryMAR logSecondary;
-
         switch (ColumnType.tagOf(type)) {
             case ColumnType.BINARY:
             case ColumnType.STRING:
-                secondary = Vm.getMARInstance();
+                secondary = Vm.getMAInstance();
                 oooSecondary = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
                 oooSecondary2 = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
-                logSecondary = Vm.getMARInstance();
                 break;
             default:
                 secondary = null;
                 oooSecondary = null;
                 oooSecondary2 = null;
-                logSecondary = null;
                 break;
         }
         columns.add(primary);
@@ -1907,8 +1902,6 @@ public class TableWriter implements Closeable {
         o3Columns2.add(oooSecondary2);
         configureNullSetters(nullSetters, type, primary, secondary);
         configureNullSetters(o3NullSetters, type, oooPrimary, oooSecondary);
-        logColumns.add(logPrimary);
-        logColumns.add(logSecondary);
 
         if (indexFlag) {
             indexers.extendAndSet((columns.size() - 1) / 2, new SymbolColumnIndexer());
@@ -2163,7 +2156,6 @@ public class TableWriter implements Closeable {
         }
         Misc.freeObjListAndKeepObjects(o3Columns);
         Misc.freeObjListAndKeepObjects(o3Columns2);
-        Misc.freeObjListAndKeepObjects(logColumns);
     }
 
     private void freeIndexers() {
@@ -2248,12 +2240,12 @@ public class TableWriter implements Closeable {
         return txWriter.getPartitionSizeByIndex(index);
     }
 
-    private MemoryMAR getPrimaryColumn(int column) {
+    private MemoryMA getPrimaryColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getPrimaryColumnIndex(column));
     }
 
-    private MemoryMAR getSecondaryColumn(int column) {
+    private MemoryMA getSecondaryColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getSecondaryColumnIndex(column));
     }
@@ -2614,13 +2606,13 @@ public class TableWriter implements Closeable {
                                 final BitmapIndexWriter indexWriter = indexBlockCapacity > -1 ? getBitmapIndexWriter(i) : null;
                                 final MemoryARW oooMem1 = o3Columns.getQuick(colOffset);
                                 final MemoryARW oooMem2 = o3Columns.getQuick(colOffset + 1);
-                                final MemoryMAR mem1 = columns.getQuick(colOffset);
-                                final MemoryMAR mem2 = columns.getQuick(colOffset + 1);
+                                final MemoryMA mem1 = columns.getQuick(colOffset);
+                                final MemoryMA mem2 = columns.getQuick(colOffset + 1);
                                 final long srcDataTop = getColumnTop(i);
                                 final long srcOooFixAddr;
                                 final long srcOooVarAddr;
-                                final MemoryMAR dstFixMem;
-                                final MemoryMAR dstVarMem;
+                                final MemoryMA dstFixMem;
+                                final MemoryMA dstVarMem;
                                 if (!ColumnType.isVariableLength(columnType)) {
                                     srcOooFixAddr = oooMem1.addressOf(0);
                                     srcOooVarAddr = 0;
@@ -2843,7 +2835,7 @@ public class TableWriter implements Closeable {
         final RingQueue<O3CopyTask> copyQueue = messageBus.getO3CopyQueue();
 
         do {
-            long cursor = o3PartitionUpdateSubSeq.next();
+             long cursor = o3PartitionUpdateSubSeq.next();
             if (cursor > -1) {
                 final O3PartitionUpdateTask task = o3PartitionUpdateQueue.get(cursor);
                 final long partitionTimestamp = task.getPartitionTimestamp();
@@ -3036,7 +3028,7 @@ public class TableWriter implements Closeable {
             long transientRowsAdded
     ) {
         if (colIndex > -1) {
-            MemoryMAR srcDataMem = getPrimaryColumn(colIndex);
+            MemoryMA srcDataMem = getPrimaryColumn(colIndex);
             int shl = ColumnType.pow2SizeOf(columnType);
             long srcFixOffset;
             final MemoryARW o3DataMem = o3Columns.get(getPrimaryColumnIndex(colIndex));
@@ -3063,7 +3055,7 @@ public class TableWriter implements Closeable {
             } else {
                 // Var size
                 final int indexShl = 3; // ColumnType.pow2SizeOf(ColumnType.LONG);
-                final MemoryMAR srcFixMem = getSecondaryColumn(colIndex);
+                final MemoryMA srcFixMem = getSecondaryColumn(colIndex);
                 long sourceOffset = (committedTransientRowCount - columnTop) << indexShl;
 
                 // the size includes trailing LONG
@@ -3073,20 +3065,19 @@ public class TableWriter implements Closeable {
                 // ensure memory is available
                 o3IndexMem.jumpTo(dstAppendOffset + (transientRowsAdded << indexShl));
                 long alignedExtraLen;
-                long srcAddress;
-                boolean isMapped = srcFixMem.isMapped(sourceOffset, sourceLen);
+                long srcAddress = srcFixMem.map(sourceOffset, sourceLen);
+                boolean locallyMapped = srcAddress == 0;
 
-                if (isMapped) {
+                if (!locallyMapped) {
                     alignedExtraLen = 0;
-                    srcAddress = srcFixMem.addressOf(sourceOffset);
                 } else {
                     // Linux requires the mmap offset to be page aligned
-                    long alignedOffset = Files.floorPageSize(sourceOffset);
+                    final long alignedOffset = Files.floorPageSize(sourceOffset);
                     alignedExtraLen = sourceOffset - alignedOffset;
                     srcAddress = mapRO(ff, srcFixMem.getFd(), sourceLen + alignedExtraLen, alignedOffset, MemoryTag.MMAP_TABLE_WRITER);
                 }
 
-                long srcVarOffset = Unsafe.getUnsafe().getLong(srcAddress + alignedExtraLen);
+                final long srcVarOffset = Unsafe.getUnsafe().getLong(srcAddress + alignedExtraLen);
                 O3Utils.shiftCopyFixedSizeColumnData(
                         srcVarOffset - dstVarOffset,
                         srcAddress + alignedExtraLen + Long.BYTES,
@@ -3096,27 +3087,26 @@ public class TableWriter implements Closeable {
                         o3IndexMem.addressOf(dstAppendOffset)
                 );
 
-                if (!isMapped) {
+                if (locallyMapped) {
                     // If memory mapping was mapped specially for this move, close it
                     ff.munmap(srcAddress, sourceLen + alignedExtraLen, MemoryTag.MMAP_TABLE_WRITER);
                 }
 
-                long sourceEndOffset = srcDataMem.getAppendOffset();
-                extendedSize = sourceEndOffset - srcVarOffset;
+                extendedSize = srcDataMem.getAppendOffset() - srcVarOffset;
                 srcFixOffset = srcVarOffset;
                 srcFixMem.jumpTo(sourceOffset + Long.BYTES);
             }
 
             o3DataMem.jumpTo(dstVarOffset + extendedSize);
             long appendAddress = o3DataMem.addressOf(dstVarOffset);
-            if (srcDataMem.isMapped(srcFixOffset, extendedSize)) {
-                long sourceAddress = srcDataMem.addressOf(srcFixOffset);
+            long sourceAddress = srcDataMem.map(srcFixOffset, extendedSize);
+            if (sourceAddress != 0) {
                 Vect.memcpy(appendAddress, sourceAddress, extendedSize);
             } else {
                 // Linux requires the mmap offset to be page aligned
                 long alignedOffset = Files.floorPageSize(srcFixOffset);
                 long alignedExtraLen = srcFixOffset - alignedOffset;
-                long sourceAddress = mapRO(ff, srcDataMem.getFd(), extendedSize + alignedExtraLen, alignedOffset, MemoryTag.MMAP_TABLE_WRITER);
+                sourceAddress = mapRO(ff, srcDataMem.getFd(), extendedSize + alignedExtraLen, alignedOffset, MemoryTag.MMAP_TABLE_WRITER);
                 Vect.memcpy(appendAddress, sourceAddress + alignedExtraLen, extendedSize);
                 ff.munmap(sourceAddress, extendedSize + alignedExtraLen, MemoryTag.MMAP_TABLE_WRITER);
             }
@@ -3125,17 +3115,18 @@ public class TableWriter implements Closeable {
             // Timestamp column
             colIndex = -colIndex - 1;
             int shl = ColumnType.pow2SizeOf(ColumnType.TIMESTAMP);
-            MemoryMAR srcDataMem = getPrimaryColumn(colIndex);
+            MemoryMA srcDataMem = getPrimaryColumn(colIndex);
             // this cannot have "top"
             long srcFixOffset = committedTransientRowCount << shl;
             long srcFixLen = transientRowsAdded << shl;
-            boolean isMapped = srcDataMem.isMapped(srcFixOffset, srcFixLen);
             long alignedExtraLen;
-            long address;
+            long address = srcDataMem.map(srcFixOffset, srcFixLen);
+            boolean locallyMapped = address == 0;
 
-            if (isMapped) {
+            // column could not provide necessary length of buffer
+            // because perhaps its internal buffer is not big enough
+            if (!locallyMapped) {
                 alignedExtraLen = 0;
-                address = srcDataMem.addressOf(srcFixOffset);
             } else {
                 // Linux requires the mmap offset to be page aligned
                 long alignedOffset = Files.floorPageSize(srcFixOffset);
@@ -3148,7 +3139,7 @@ public class TableWriter implements Closeable {
                 o3TimestampMem.putLong128(ts, o3RowCount + n);
             }
 
-            if (!isMapped) {
+            if (locallyMapped) {
                 ff.munmap(address, srcFixLen + alignedExtraLen, MemoryTag.MMAP_TABLE_WRITER);
             }
 
@@ -3606,13 +3597,26 @@ public class TableWriter implements Closeable {
     }
 
     private void openColumnFiles(CharSequence name, int columnIndex, int pathTrimToLen) {
-        MemoryMAR mem1 = getPrimaryColumn(columnIndex);
-        MemoryMAR mem2 = getSecondaryColumn(columnIndex);
+        MemoryMA mem1 = getPrimaryColumn(columnIndex);
+        MemoryMA mem2 = getSecondaryColumn(columnIndex);
 
         try {
-            mem1.of(ff, dFile(path.trimTo(pathTrimToLen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
+            mem1.of(ff, dFile(
+                    path.trimTo(pathTrimToLen), name),
+                    configuration.getDataAppendPageSize(),
+                    -1,
+                    MemoryTag.MMAP_TABLE_WRITER,
+                    configuration.getWriterFileOpenOpts()
+            );
             if (mem2 != null) {
-                mem2.of(ff, iFile(path.trimTo(pathTrimToLen), name), configuration.getDataAppendPageSize(), -1, MemoryTag.MMAP_TABLE_WRITER);
+                mem2.of(
+                        ff,
+                        iFile(path.trimTo(pathTrimToLen), name),
+                        configuration.getDataAppendPageSize(),
+                        -1,
+                        MemoryTag.MMAP_TABLE_WRITER,
+                        configuration.getWriterFileOpenOpts()
+                );
             }
         } finally {
             path.trimTo(pathTrimToLen);
@@ -4660,7 +4664,7 @@ public class TableWriter implements Closeable {
         final boolean async = commitMode == CommitMode.ASYNC;
         for (int i = 0; i < columnCount; i++) {
             columns.getQuick(i * 2).sync(async);
-            final MemoryMAR m2 = columns.getQuick(i * 2 + 1);
+            final MemoryMA m2 = columns.getQuick(i * 2 + 1);
             if (m2 != null) {
                 m2.sync(false);
             }

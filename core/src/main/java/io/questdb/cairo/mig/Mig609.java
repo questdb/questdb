@@ -57,7 +57,9 @@ final class Mig609 {
                     path.trimTo(plen).concat(TXN_FILE_NAME).$(),
                     ff.getPageSize(),
                     ff.length(path),
-                    MemoryTag.NATIVE_DEFAULT)
+                    MemoryTag.NATIVE_DEFAULT,
+                    migrationContext.getConfiguration().getWriterFileOpenOpts()
+            )
             ) {
                 // this is a variable length file; we need to count of symbol maps before we get to the partition
                 // table data

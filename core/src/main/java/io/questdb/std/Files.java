@@ -131,6 +131,20 @@ public final class Files {
 
     public static native int sync();
 
+    /**
+     * Detects if filesystem is supported by QuestDB. The function returns both FS magic and name. Both
+     * can be presented to user even if file system is not supported.
+     *
+     * @param lpszName existing path on the file system. The name of the filesystem is written to this
+     *                 address, therefore name should have at least 128 byte capacity
+     * @return 0 when OS call failed, errno should be checked. Negative number is file system magic that is supported
+     * positive number is magic that is not supported.
+     */
+    public static int getFileSystemStatus(LPSZ lpszName) {
+        assert lpszName.capacity() > 127;
+        return getFileSystemStatus(lpszName.address());
+    }
+
     public static long getLastModified(LPSZ lpsz) {
         return getLastModified(lpsz.address());
     }
@@ -163,20 +177,6 @@ public final class Files {
 
     public static boolean isDots(CharSequence name) {
         return Chars.equals(name, '.') || Chars.equals(name, "..");
-    }
-
-    /**
-     * Detects if filesystem is supported by QuestDB. The function returns both FS magic and name. Both
-     * can be presented to user even if file system is not supported.
-     *
-     * @param lpszName existing path on the file system. The name of the filesystem is written to this
-     *                 address, therefore name should have at least 128 byte capacity
-     * @return 0 when OS call failed, errno should be checked. Negative number is file system magic that is supported
-     * positive number is magic that is not supported.
-     */
-    public static int getFileSystemStatus(LPSZ lpszName) {
-        assert lpszName.capacity() > 127;
-        return getFileSystemStatus(lpszName.address());
     }
 
     public static long length(LPSZ lpsz) {
@@ -286,6 +286,10 @@ public final class Files {
         return bumpFileCount(openRW(lpsz.address()));
     }
 
+    public static long openRW(LPSZ lpsz, long opts) {
+        return bumpFileCount(openRWOpts(lpsz.address(), opts));
+    }
+
     public native static long read(long fd, long address, long len, long offset);
 
     public native static long readULong(long fd, long offset);
@@ -391,6 +395,8 @@ public final class Files {
     private native static long openRO(long lpszName);
 
     private native static long openRW(long lpszName);
+
+    private native static long openRWOpts(long lpszName, long opts);
 
     private native static long openAppend(long lpszName);
 

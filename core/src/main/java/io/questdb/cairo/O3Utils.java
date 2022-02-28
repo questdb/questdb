@@ -33,8 +33,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
-import java.io.Closeable;
-
 public class O3Utils {
 
     private static final Log LOG = LogFactory.getLog(O3Utils.class);
@@ -60,15 +58,15 @@ public class O3Utils {
         }
     }
 
-    public static Closeable setupWorkerPool(WorkerPool workerPool, MessageBus messageBus) {
+    public static void setupWorkerPool(WorkerPool workerPool, MessageBus messageBus) {
         O3PurgeDiscoveryJob purgeDiscoveryJob = new O3PurgeDiscoveryJob(messageBus, workerPool.getWorkerCount());
         workerPool.assign(purgeDiscoveryJob);
         workerPool.assign(new O3PartitionJob(messageBus));
         workerPool.assign(new O3OpenColumnJob(messageBus));
         workerPool.assign(new O3CopyJob(messageBus));
         workerPool.assign(new O3CallbackJob(messageBus));
+        workerPool.freeOnHalt(purgeDiscoveryJob);
         initBuf(workerPool.getWorkerCount() + 1);
-        return purgeDiscoveryJob;
     }
 
     static long get8ByteBuf(int worker) {

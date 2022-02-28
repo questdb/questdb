@@ -61,7 +61,7 @@ public class WriteAndReadSyncTest extends AbstractCairoTest {
                     // barrier to make sure both threads kick in at the same time;
                     final CyclicBarrier barrier = new CyclicBarrier(2);
                     final AtomicInteger errorCount = new AtomicInteger();
-                    long fd1 = TableUtils.openRW(ff, path, LOG);
+                    long fd1 = TableUtils.openRW(ff, path, LOG, configuration.getWriterFileOpenOpts());
                     long size = longCount * 8 / Files.PAGE_SIZE + 1;
 
                     // have this thread write another page

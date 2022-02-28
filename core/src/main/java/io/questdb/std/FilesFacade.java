@@ -92,7 +92,7 @@ public interface FilesFacade {
 
     long openRO(LPSZ name);
 
-    long openRW(LPSZ name);
+    long openRW(LPSZ name, long opts);
 
     long openCleanRW(LPSZ name, long size);
 

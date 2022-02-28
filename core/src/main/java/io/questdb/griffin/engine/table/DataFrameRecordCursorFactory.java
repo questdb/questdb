@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.vm.NullMemoryMR;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -224,7 +225,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                 final int readerColIndex = TableReader.getPrimaryColumnIndex(base, columnIndex);
                 final MemoryR col = reader.getColumn(readerColIndex);
                 // when the entire column is NULL we make it skip the whole of the data frame
-                final long top = col instanceof NullColumn ? adjustedHi : reader.getColumnTop(base, columnIndex);
+                final long top = col instanceof NullMemoryMR ? adjustedHi : reader.getColumnTop(base, columnIndex);
                 final long partitionLoAdjusted = partitionLo - top;
                 final long partitionHiAdjusted = adjustedHi - top;
                 final int sh = columnSizes.getQuick(i);
