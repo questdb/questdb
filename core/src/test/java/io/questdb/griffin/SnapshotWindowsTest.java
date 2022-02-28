@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import org.junit.*;
@@ -73,7 +72,7 @@ public class SnapshotWindowsTest extends AbstractGriffinTest {
             try {
                 compiler.compile("snapshot prepare", sqlExecutionContext);
                 Assert.fail();
-            } catch (CairoException ex) {
+            } catch (SqlException ex) {
                 Assert.assertTrue(ex.getMessage().startsWith("[0] Snapshots are not supported on Windows"));
             }
         });
@@ -86,7 +85,7 @@ public class SnapshotWindowsTest extends AbstractGriffinTest {
             try {
                 compiler.compile("snapshot complete", sqlExecutionContext);
                 Assert.fail();
-            } catch (CairoException ex) {
+            } catch (SqlException ex) {
                 Assert.assertTrue(ex.getMessage().startsWith("[0] Snapshots are not supported on Windows"));
             }
         });
