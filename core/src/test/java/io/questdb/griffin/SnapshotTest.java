@@ -39,9 +39,6 @@ public class SnapshotTest extends AbstractGriffinTest {
 
     @BeforeClass
     public static void setUpStatic() {
-        // sync() system call is not available on Windows, so we skip the whole test suite there.
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
-
         AbstractGriffinTest.setUpStatic();
         snapshotDirTimestampFormat = "yyyy-MM-dd";
         try {
@@ -53,6 +50,9 @@ public class SnapshotTest extends AbstractGriffinTest {
 
     @Before
     public void setUp() {
+        // sync() system call is not available on Windows, so we skip the whole test suite there.
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+
         super.setUp();
         path.of(configuration.getSnapshotRoot()).slash();
         configuration.getSnapshotDirTimestampFormat().format(
