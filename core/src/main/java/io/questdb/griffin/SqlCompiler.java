@@ -2837,7 +2837,9 @@ public class SqlCompiler implements Closeable {
                         }
 
                         // Flush dirty pages and filesystem metadata to disk
-                        ff.sync();
+                        if (ff.sync() != 0) {
+                            throw CairoException.instance(ff.errno()).put("Could not sync [errno=").put(ff.errno()).put(']');
+                        }
 
                         // Try to save the readers list atomically to make sure that they lock
                         // partitions preventing them from being deleted.

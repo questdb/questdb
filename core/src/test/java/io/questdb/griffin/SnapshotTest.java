@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import org.junit.*;
 
@@ -38,6 +39,9 @@ public class SnapshotTest extends AbstractGriffinTest {
 
     @BeforeClass
     public static void setUpStatic() {
+        // sync() system call is not available on Windows, so we skip the whole test suite there.
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+
         AbstractGriffinTest.setUpStatic();
         snapshotDirTimestampFormat = "yyyy-MM-dd";
         try {
