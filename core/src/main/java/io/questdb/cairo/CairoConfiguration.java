@@ -58,8 +58,6 @@ public interface CairoConfiguration {
     // null disables backups
     CharSequence getBackupRoot();
 
-    DateFormat getSnapshotDirTimestampFormat();
-
     CharSequence getBackupTempDirName();
 
     int getBinaryEncodingMaxLength();
@@ -83,6 +81,17 @@ public interface CairoConfiguration {
     int getCommitMode();
 
     CharSequence getConfRoot(); // same as root/../conf
+
+    CharSequence getSnapshotRoot(); // same as root/../snapshot
+
+    /**
+     * Returns database instance id. The instance id is used by the snapshot recovery mechanism:
+     * on database start the id is compared with the id stored in a snapshot, if any. If the ids
+     * are different, snapshot recovery is being triggered.
+     *
+     * @return instance id.
+     */
+    CharSequence getSnapshotInstanceId();
 
     int getCopyPoolCapacity();
 

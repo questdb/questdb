@@ -36,25 +36,13 @@ public class SnapshotWindowsTest extends AbstractGriffinTest {
     private final Path path = new Path();
     private int rootLen;
 
-    @BeforeClass
-    public static void setUpStatic() {
-        AbstractGriffinTest.setUpStatic();
-        snapshotDirTimestampFormat = "yyyy-MM-dd";
-    }
-
     @Before
     public void setUp() {
         // Windows-only tests.
         Assume.assumeTrue(Os.type == Os.WINDOWS);
 
         super.setUp();
-        path.of(configuration.getRoot()).slash();
-        configuration.getSnapshotDirTimestampFormat().format(
-                configuration.getMicrosecondClock().getTicks(),
-                configuration.getDefaultDateLocale(),
-                null,
-                path);
-
+        path.of(configuration.getSnapshotRoot()).slash();
         rootLen = path.length();
     }
 

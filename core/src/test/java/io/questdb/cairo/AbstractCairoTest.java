@@ -34,10 +34,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -73,7 +71,7 @@ public class AbstractCairoTest {
     protected static int pageFrameMaxSize = -1;
     protected static int rndFunctionMemoryPageSize = -1;
     protected static int rndFunctionMemoryMaxPages = -1;
-    protected static CharSequence snapshotDirTimestampFormat;
+    protected static String snapshotInstanceId = null;
 
     @Rule
     public TestName testName = new TestName();
@@ -199,8 +197,11 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public DateFormat getSnapshotDirTimestampFormat() {
-                return new TimestampFormatCompiler().compile(snapshotDirTimestampFormat);
+            public CharSequence getSnapshotInstanceId() {
+                if (snapshotInstanceId == null) {
+                    return super.getSnapshotInstanceId();
+                }
+                return snapshotInstanceId;
             }
         };
         engine = new CairoEngine(configuration, metrics);
@@ -237,6 +238,7 @@ public class AbstractCairoTest {
         writerAsyncCommandMaxTimeout = -1;
         pageFrameMaxSize = -1;
         spinLockTimeoutUs = -1;
+        snapshotInstanceId = null;
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {

@@ -2794,18 +2794,23 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.position(lexer.lastTokenPosition()).put("Another snapshot command in progress");
             }
 
-            path.of(configuration.getRoot()).slash();
-            configuration.getSnapshotDirTimestampFormat().format(
-                    configuration.getMicrosecondClock().getTicks(),
-                    configuration.getDefaultDateLocale(),
-                    null,
-                    path);
-
+            path.of(configuration.getSnapshotRoot()).$();
             int snapshotLen = path.length();
+            // Delete all contents of the snapshot dir.
             if (ff.exists(path.slash$())) {
-                throw CairoException.instance(0).put("Snapshot dir already exists [dir=").put(path).put(']');
+                path.trimTo(snapshotLen);
+                if (ff.rmdir(path) != 0) {
+                    throw CairoException.instance(ff.errno()).put("Could not remove snapshot dir [dir=").put(path).put(']');
+                }
             }
             path.trimTo(snapshotLen);
+            // Recreate the snapshot dir.
+            if (ff.mkdirs(path.slash$(), configuration.getMkDirMode()) != 0) {
+                throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(path).put(']');
+            }
+            path.trimTo(snapshotLen);
+            // We need directory's fd to fsync it later.
+            final long snapshotDirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path, LOG) : 0;
 
             ObjList<TableReader> readers = new ObjList<>();
             try (
@@ -2840,7 +2845,24 @@ public class SqlCompiler implements Closeable {
 
                         // Flush dirty pages and filesystem metadata to disk
                         if (ff.sync() != 0) {
-                            throw CairoException.instance(ff.errno()).put("Could not sync [errno=").put(ff.errno()).put(']');
+                            throw CairoException.instance(ff.errno()).put("Could not sync");
+                        }
+
+                        // Write instance id to the snapshot metadata file.
+                        mem.smallFile(ff, path.trimTo(snapshotLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                        final CharSequence instanceId = configuration.getSnapshotInstanceId();
+                        mem.putStr(0, instanceId != null ? instanceId : "");
+                        mem.sync(false);
+                        mem.close(false);
+                        // It is important to fsync parent directory's metadata to make sure that
+                        // the snapshot metadata file is included into the snapshot.
+                        if (snapshotDirFd > 0) {
+                            if (ff.fsync(snapshotDirFd) != 0) {
+                                LOG.error()
+                                        .$("could not fsync [fd=").$(snapshotDirFd)
+                                        .$(", errno=").$(ff.errno())
+                                        .$(']').$();
+                            }
                         }
 
                         // Try to save the readers list atomically to make sure that they lock
@@ -2849,14 +2871,16 @@ public class SqlCompiler implements Closeable {
                             throw SqlException.position(lexer.lastTokenPosition()).put("Another snapshot command in progress");
                         }
                     } catch (Throwable e) {
-                        path.trimTo(snapshotLen).$();
-                        ff.rmdir(path);
                         Misc.freeObjList(readers);
                         readers.clear();
                         LOG.error()
                                 .$("snapshot prepare error [e=").$(e)
                                 .I$();
                         throw e;
+                    } finally {
+                        if (snapshotDirFd > 0) {
+                            ff.close(snapshotDirFd);
+                        }
                     }
                 }
             }
@@ -2864,10 +2888,15 @@ public class SqlCompiler implements Closeable {
         }
 
         if (Chars.equalsLowerCaseAscii(tok, "complete")) {
-            // Simply try to release locked readers if any.
-            if (!engine.releaseSnapshotReaders()) {
-                throw CairoException.instance(0).put("SNAPSHOT PREPARE must be called before SNAPSHOT COMPLETE");
+            if (!engine.isSnapshotInProgress()) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("SNAPSHOT PREPARE must be called before SNAPSHOT COMPLETE");
             }
+
+            // Delete snapshot directory.
+            path.of(configuration.getSnapshotRoot()).$();
+            ff.rmdir(path); // it's fine to ignore errors here
+            // Simply try to release locked readers if any.
+            engine.releaseSnapshotReaders();
             return compiledQuery.ofSnapshotComplete();
         }
 

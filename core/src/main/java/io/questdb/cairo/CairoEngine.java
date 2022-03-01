@@ -510,14 +510,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return snapshotReadersRef.compareAndSet(null, readers);
     }
 
-    public boolean releaseSnapshotReaders() {
+    public void releaseSnapshotReaders() {
         ObjList<TableReader> readers = snapshotReadersRef.getAndSet(null);
         if (readers != null) {
             Misc.freeObjList(readers);
             readers.clear();
-            return true;
         }
-        return false;
     }
 
     private void rename0(Path path, CharSequence tableName, Path otherPath, CharSequence to) {

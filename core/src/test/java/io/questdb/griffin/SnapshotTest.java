@@ -25,8 +25,9 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Os;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import org.junit.*;
 
@@ -35,25 +36,13 @@ public class SnapshotTest extends AbstractGriffinTest {
     private final Path path = new Path();
     private int rootLen;
 
-    @BeforeClass
-    public static void setUpStatic() {
-        AbstractGriffinTest.setUpStatic();
-        snapshotDirTimestampFormat = "yyyy-MM-dd";
-    }
-
     @Before
     public void setUp() {
         // sync() system call is not available on Windows, so we skip the whole test suite there.
         Assume.assumeTrue(Os.type != Os.WINDOWS);
 
         super.setUp();
-        path.of(configuration.getRoot()).slash();
-        configuration.getSnapshotDirTimestampFormat().format(
-                configuration.getMicrosecondClock().getTicks(),
-                configuration.getDefaultDateLocale(),
-                null,
-                path);
-
+        path.of(configuration.getSnapshotRoot()).slash();
         rootLen = path.length();
     }
 
@@ -77,18 +66,13 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSnapshotCheckMetadata() throws Exception {
+    public void testSnapshotCheckTableMetadata() throws Exception {
         assertMemoryLeak(() -> {
-            snapshotDirTimestampFormat = "yyyy-MM-dd";
-            try (Path path = new Path()) {
-                path.of(configuration.getRoot()).slash();
-                configuration.getSnapshotDirTimestampFormat().format(
-                        configuration.getMicrosecondClock().getTicks(),
-                        configuration.getDefaultDateLocale(),
-                        null,
-                        path);
+            snapshotInstanceId = "foobar";
 
-                int rootLen = path.length();
+            try (Path path = new Path()) {
+                path.of(configuration.getSnapshotRoot()).slash();
+
                 path.concat(configuration.getDbDirectory());
 
                 String tableName = "t";
@@ -96,7 +80,6 @@ public class SnapshotTest extends AbstractGriffinTest {
                 compile(sql, sqlExecutionContext);
 
                 compiler.compile("snapshot prepare", sqlExecutionContext);
-                compiler.compile("snapshot complete", sqlExecutionContext);
 
                 path.concat(tableName);
                 int tableNameLen = path.length();
@@ -157,8 +140,45 @@ public class SnapshotTest extends AbstractGriffinTest {
                         }
                     }
                 }
-                path.trimTo(rootLen);
-                configuration.getFilesFacade().rmdir(path);
+
+                compiler.compile("snapshot complete", sqlExecutionContext);
+            }
+        });
+    }
+
+    @Test
+    public void testSnapshotCheckMetadataForDefaultInstanceId() throws Exception {
+        testSnapshotCheckMetadata(null);
+    }
+
+    @Test
+    public void testSnapshotCheckMetadataForNonDefaultInstanceId() throws Exception {
+        testSnapshotCheckMetadata("foobar");
+    }
+
+    private void testSnapshotCheckMetadata(String expectedId) throws Exception {
+        assertMemoryLeak(() -> {
+            snapshotInstanceId = expectedId;
+
+            try (Path path = new Path()) {
+                String sql = "create table x as (select * from (select rnd_str(5,10,2) a, x b from long_sequence(20)))";
+                compile(sql, sqlExecutionContext);
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+
+                path.of(configuration.getSnapshotRoot());
+                FilesFacade ff = configuration.getFilesFacade();
+                try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+                    mem.smallFile(ff, path.concat(TableUtils.SNAPSHOT_META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+
+                    CharSequence actualId = mem.getStr(0);
+                    if (expectedId != null) {
+                        Assert.assertTrue(Chars.equals(actualId, expectedId));
+                    } else {
+                        Assert.assertEquals(0, actualId.length());
+                    }
+                }
+
+                compiler.compile("snapshot complete", sqlExecutionContext);
             }
         });
     }
@@ -170,13 +190,29 @@ public class SnapshotTest extends AbstractGriffinTest {
             int rc = configuration.getFilesFacade().mkdirs(path.slash$(), configuration.getMkDirMode());
             Assert.assertEquals(0, rc);
 
+            // Create a test file.
+            path.trimTo(rootLen).concat("test.txt").$();
+            Assert.assertTrue(Files.touch(path));
+
             compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
-            try {
-                compiler.compile("snapshot prepare", sqlExecutionContext);
-                Assert.fail();
-            } catch (CairoException ex) {
-                Assert.assertTrue(ex.getMessage().startsWith("[0] Snapshot dir already exists"));
-            }
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+
+            // The test file should be deleted by SNAPSHOT PREPARE.
+            Assert.assertFalse(configuration.getFilesFacade().exists(path));
+
+            compiler.compile("snapshot complete", sqlExecutionContext);
+        });
+    }
+
+    @Test
+    public void testSnapshotCompleteDeletesSnapshotDir() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+            compiler.compile("snapshot complete", sqlExecutionContext);
+
+            path.trimTo(rootLen);
+            Assert.assertFalse(configuration.getFilesFacade().exists(path));
         });
     }
 
@@ -187,8 +223,8 @@ public class SnapshotTest extends AbstractGriffinTest {
             try {
                 compiler.compile("snapshot complete", sqlExecutionContext);
                 Assert.fail();
-            } catch (CairoException ex) {
-                Assert.assertTrue(ex.getMessage().startsWith("[0] SNAPSHOT PREPARE must be called before SNAPSHOT COMPLETE"));
+            } catch (SqlException ex) {
+                Assert.assertTrue(ex.getMessage().startsWith("[9] SNAPSHOT PREPARE must be called before SNAPSHOT COMPLETE"));
             }
         });
     }
