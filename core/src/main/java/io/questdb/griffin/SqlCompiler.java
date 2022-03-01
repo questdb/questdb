@@ -2378,7 +2378,7 @@ public class SqlCompiler implements Closeable {
 
             final RecordMetadata cursorMetadata = factory.getMetadata();
             // Convert sparse writer metadata into dense
-            final BaseRecordMetadata writerMetadata = GenericRecordMetadata.copyOf(writer.getMetadata());
+            final BaseRecordMetadata writerMetadata = writer.getMetadata().copyDense();
             final int writerTimestampIndex = writerMetadata.getTimestampIndex();
             final int cursorTimestampIndex = cursorMetadata.getTimestampIndex();
             final int cursorColumnCount = cursorMetadata.getColumnCount();

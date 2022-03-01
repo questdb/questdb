@@ -38,53 +38,37 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
         this.timestampIndex = -1;
     }
 
+    public static void copyColumns(RecordMetadata from, GenericRecordMetadata to) {
+        if (from instanceof BaseRecordMetadata) {
+            final BaseRecordMetadata gm = (BaseRecordMetadata) from;
+            for (int i = 0, n = gm.getColumnCount(); i < n; i++) {
+                to.add(gm.getColumnQuick(i));
+            }
+        } else {
+            for (int i = 0, n = from.getColumnCount(); i < n; i++) {
+                to.add(new TableColumnMetadata(
+                        from.getColumnName(i),
+                        from.getColumnHash(i),
+                        from.getColumnType(i),
+                        from.isColumnIndexed(i),
+                        from.getIndexValueBlockCapacity(i),
+                        from.isSymbolTableStatic(i),
+                        GenericRecordMetadata.copyOf(from.getMetadata(i))
+                ));
+            }
+        }
+    }
+
     public static GenericRecordMetadata copyOf(RecordMetadata that) {
         if (that != null) {
             if (that instanceof GenericRecordMetadata) {
                 return (GenericRecordMetadata) that;
             }
-            GenericRecordMetadata metadata = new GenericRecordMetadata();
-            metadata.setTimestampIndex(copyColumns(that, metadata));
+            GenericRecordMetadata metadata = copyOfSansTimestamp(that);
+            metadata.setTimestampIndex(that.getTimestampIndex());
             return metadata;
         }
         return null;
-    }
-
-    private static int copyColumns(RecordMetadata from, GenericRecordMetadata to) {
-        int timestampIndex = -1;
-        int fromTimestampIndex = from.getTimestampIndex();
-        if (from instanceof BaseRecordMetadata) {
-            final BaseRecordMetadata gm = (BaseRecordMetadata) from;
-            for (int i = 0, n = gm.getColumnCount(); i < n; i++) {
-                TableColumnMetadata column = gm.getColumnQuick(i);
-                if (column.getType() >= 0) {
-                    to.add(column);
-                    if (i == fromTimestampIndex) {
-                        timestampIndex = to.getColumnCount() - 1;
-                    }
-                }
-            }
-        } else {
-            for (int i = 0, n = from.getColumnCount(); i < n; i++) {
-                int columnType = from.getColumnType(i);
-                if (columnType >= 0) {
-                    to.add(new TableColumnMetadata(
-                            from.getColumnName(i),
-                            from.getColumnHash(i),
-                            columnType,
-                            from.isColumnIndexed(i),
-                            from.getIndexValueBlockCapacity(i),
-                            from.isSymbolTableStatic(i),
-                            GenericRecordMetadata.copyOf(from.getMetadata(i)),
-                            from.getWriterIndex(i)
-                    ));
-                    if (i == fromTimestampIndex) {
-                        timestampIndex = to.getColumnCount() - 1;
-                    }
-                }
-            }
-        }
-        return timestampIndex;
     }
 
     public static GenericRecordMetadata copyOfSansTimestamp(RecordMetadata that) {

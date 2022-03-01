@@ -135,6 +135,20 @@ public class TableWriterMetadata extends BaseRecordMetadata {
         version = ColumnType.VERSION;
     }
 
+    public GenericRecordMetadata copyDense() {
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        for (int i = 0; i < columnCount; i++) {
+            TableColumnMetadata column = columnMetadata.getQuick(i);
+            if (column.getType() >= 0) {
+                metadata.add(column);
+                if (i == timestampIndex) {
+                    metadata.setTimestampIndex(metadata.getColumnCount() - 1);
+                }
+            }
+        }
+        return metadata;
+    }
+
     void addColumn(CharSequence name, long hash, int type, boolean indexFlag, int indexValueBlockCapacity, int columnIndex) {
         String str = name.toString();
         columnNameIndexMap.put(str, columnMetadata.size());
