@@ -92,7 +92,7 @@ public class TxSerializer {
         TxFileStruct tx = des.fromJson(json, TxFileStruct.class);
 
         long version = tx.TX_OFFSET_TXN;
-        boolean isA = version % 2 == 0;
+        boolean isA = (version & 1L) == 0L;
         long baseOffset = TX_BASE_HEADER_SIZE;
         long offsetOffset = isA ? TX_BASE_OFFSET_A_32 : TX_BASE_OFFSET_B_32;
         long symbolSizeOffset = isA ? TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 : TX_BASE_OFFSET_SYMBOLS_SIZE_B_32;
@@ -169,7 +169,7 @@ public class TxSerializer {
             try (MemoryMR roTxMem = Vm.getMRInstance(ff, path, ff.length(path), MemoryTag.MMAP_DEFAULT)) {
                 roTxMem.growToFileSize();
                 long version = roTxMem.getLong(TX_BASE_OFFSET_VERSION_64);
-                boolean isA = version % 2 == 0;
+                boolean isA = (version & 1L) == 0L;
                 long baseOffset = isA ? roTxMem.getInt(TX_BASE_OFFSET_A_32) : roTxMem.getInt(TX_BASE_OFFSET_B_32);
                 tx.TX_OFFSET_TXN = roTxMem.getLong(baseOffset + TX_OFFSET_TXN);
                 tx.TX_OFFSET_TRANSIENT_ROW_COUNT = roTxMem.getLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT);

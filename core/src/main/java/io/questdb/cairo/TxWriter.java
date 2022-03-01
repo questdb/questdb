@@ -32,7 +32,6 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.cairo.TableUtils.TX_BASE_OFFSET_PARTITIONS_SIZE_A_32;
 
 public final class TxWriter extends TxReader implements Closeable, Mutable, SymbolValueCountCollector {
     private final FilesFacade ff;
@@ -375,7 +374,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     private int calculateWriteOffset() {
         int areaSize = calculateTxRecordSize(symbolColumnCount * 8, attachedPartitions.size() * 8);
-        boolean currentIsA = baseVersion % 2 == 0;
+        boolean currentIsA = (baseVersion & 1L) == 0L;
         int currentOffset = currentIsA ? txMemBase.getInt(TX_BASE_OFFSET_A_32) : txMemBase.getInt(TX_BASE_OFFSET_B_32);
         if (TX_BASE_HEADER_SIZE + areaSize <= currentOffset) {
             return TX_BASE_HEADER_SIZE;
@@ -395,7 +394,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     private void finishABHeader(int areaOffset, int bytesSymbols, int bytesPartitions, int commitMode) {
-        boolean currentIsA = baseVersion % 2 == 0;
+        boolean currentIsA = (baseVersion & 1L) == 0L;
 
         // When current is A, write to B
         long offsetOffset = currentIsA ? TX_BASE_OFFSET_B_32 : TX_BASE_OFFSET_A_32;

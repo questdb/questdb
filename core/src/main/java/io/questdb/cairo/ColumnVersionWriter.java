@@ -232,7 +232,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     }
 
     private boolean isCurrentA() {
-        return version % 2 == 0;
+        return (version & 1L) == 0L;
     }
 
     private void store(int entryCount, long offset) {

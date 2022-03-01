@@ -143,7 +143,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
             final long offset;
             final long size;
 
-            final boolean areaA = version % 2 == 0;
+            final boolean areaA = (version & 1L) == 0;
             if (areaA) {
                 offset = mem.getLong(OFFSET_OFFSET_A_64);
                 size = mem.getLong(OFFSET_SIZE_A_64);
@@ -206,7 +206,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
     long readUnsafe() {
         long version = mem.getLong(OFFSET_VERSION_64);
 
-        boolean areaA = version % 2 == 0;
+        boolean areaA = (version & 1L) == 0L;
         long offset = areaA ? mem.getLong(OFFSET_OFFSET_A_64) : mem.getLong(OFFSET_OFFSET_B_64);
         long size = areaA ? mem.getLong(OFFSET_SIZE_A_64) : mem.getLong(OFFSET_SIZE_B_64);
         mem.resize(offset + size);
