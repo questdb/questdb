@@ -71,9 +71,7 @@ public class SnapshotTest extends AbstractGriffinTest {
             snapshotInstanceId = "foobar";
 
             try (Path path = new Path()) {
-                path.of(configuration.getSnapshotRoot()).slash();
-
-                path.concat(configuration.getDbDirectory());
+                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
 
                 String tableName = "t";
                 String sql = "create table " + tableName + " as (select * from (select rnd_str(5,10,2) a, x b from long_sequence(20)))";
@@ -156,9 +154,9 @@ public class SnapshotTest extends AbstractGriffinTest {
         testSnapshotCheckMetadata("foobar");
     }
 
-    private void testSnapshotCheckMetadata(String expectedId) throws Exception {
+    private void testSnapshotCheckMetadata(String snapshotId) throws Exception {
         assertMemoryLeak(() -> {
-            snapshotInstanceId = expectedId;
+            snapshotInstanceId = snapshotId;
 
             try (Path path = new Path()) {
                 String sql = "create table x as (select * from (select rnd_str(5,10,2) a, x b from long_sequence(20)))";
@@ -170,12 +168,9 @@ public class SnapshotTest extends AbstractGriffinTest {
                 try (MemoryCMARW mem = Vm.getCMARWInstance()) {
                     mem.smallFile(ff, path.concat(TableUtils.SNAPSHOT_META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
 
+                    CharSequence expectedId = configuration.getSnapshotInstanceId();
                     CharSequence actualId = mem.getStr(0);
-                    if (expectedId != null) {
-                        Assert.assertTrue(Chars.equals(actualId, expectedId));
-                    } else {
-                        Assert.assertEquals(0, actualId.length());
-                    }
+                    Assert.assertTrue(Chars.equals(actualId, expectedId));
                 }
 
                 compiler.compile("snapshot complete", sqlExecutionContext);
@@ -256,6 +251,40 @@ public class SnapshotTest extends AbstractGriffinTest {
             } catch (SqlException ex) {
                 Assert.assertTrue(ex.getMessage().startsWith("[9] 'prepare' or 'complete' expected"));
             }
+        });
+    }
+
+    @Test
+    public void testSnapshotRecovery() throws Exception {
+        assertMemoryLeak(() -> {
+            snapshotInstanceId = "id1";
+
+            String tableName = "t";
+            String sql = "create table " + tableName + " as (select * from (select rnd_str(5,10,2) a, x b from long_sequence(20)))";
+            compile(sql, sqlExecutionContext);
+
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+
+            // Insert more data into the table.
+            sql = "insert into " + tableName + " select * from (select rnd_str(3,6,2) a, x+20 b from long_sequence(20))";
+            compile(sql, sqlExecutionContext);
+
+            // Release readers, but keep the snapshot dir around.
+            snapshotAgent.releaseReaders();
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            snapshotInstanceId = "id2";
+
+            DatabaseSnapshotAgent.recoverSnapshot(engine);
+
+            // Data inserted after PREPARE SNAPSHOT should be discarded.
+            assertSql("select count() from " + tableName, "count\n" +
+                    "20\n");
+
+            // Recovery should delete the snapshot dir.
+            path.trimTo(rootLen);
+            Assert.assertFalse(configuration.getFilesFacade().exists(path));
         });
     }
 }

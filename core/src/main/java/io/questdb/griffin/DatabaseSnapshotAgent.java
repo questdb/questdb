@@ -34,8 +34,10 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -64,7 +66,11 @@ public class DatabaseSnapshotAgent implements Closeable {
     @Override
     public void close() {
         Misc.free(path);
+        releaseReaders();
+    }
 
+    @TestOnly
+    public void releaseReaders() {
         lock.lock();
         try {
             Misc.freeObjList(snapshotReaders);
@@ -142,8 +148,7 @@ public class DatabaseSnapshotAgent implements Closeable {
 
                         // Write instance id to the snapshot metadata file.
                         mem.smallFile(ff, path.trimTo(snapshotLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                        final CharSequence instanceId = configuration.getSnapshotInstanceId();
-                        mem.putStr(0, instanceId != null ? instanceId : "");
+                        mem.putStr(0, configuration.getSnapshotInstanceId());
                         mem.sync(false);
                         mem.close(false);
                         // It is important to fsync parent directory's metadata to make sure that
@@ -193,6 +198,110 @@ public class DatabaseSnapshotAgent implements Closeable {
             snapshotInProgress = false;
         } finally {
             lock.unlock();
+        }
+    }
+
+    public static void recoverSnapshot(CairoEngine engine) {
+        final CairoConfiguration configuration = engine.getConfiguration();
+        final FilesFacade ff = configuration.getFilesFacade();
+        final CharSequence root = configuration.getRoot();
+        final CharSequence snapshotRoot = configuration.getSnapshotRoot();
+
+        try (Path path = new Path(); Path copyPath = new Path()) {
+            path.of(snapshotRoot).$();
+            final int snapshotRootLen = path.length();
+            copyPath.of(root).$();
+            final int rootLen = copyPath.length();
+
+            // Check if the snapshot dir exists.
+            if (!ff.exists(path.slash$())) {
+                return;
+            }
+            path.trimTo(snapshotRootLen);
+
+            // Check if the snapshot metadata file exists.
+            path.concat(TableUtils.SNAPSHOT_META_FILE_NAME).$();
+            if (!ff.exists(path)) {
+                return;
+            }
+
+            // Check if the snapshot instance id is different from what's in the snapshot.
+            try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+
+                final CharSequence currentInstanceId = configuration.getSnapshotInstanceId();
+                final CharSequence snapshotInstanceId = mem.getStr(0);
+                if (Chars.equals(currentInstanceId, snapshotInstanceId)) {
+                    return;
+                }
+
+                LOG.info()
+                        .$("starting snapshot recovery [currentId=`").$(currentInstanceId)
+                        .$("`, snapshotId=`").$(snapshotInstanceId)
+                        .$("`]").$();
+            }
+            path.trimTo(snapshotRootLen);
+
+            // OK, we need to recover from the snapshot.
+            AtomicInteger recoveredMetaFiles = new AtomicInteger();
+            AtomicInteger recoveredTxnFiles = new AtomicInteger();
+            path.concat(configuration.getDbDirectory()).$();
+            final int snapshotDbLen = path.length();
+            ff.iterateDir(path, (pUtf8NameZ, type) -> {
+                if (Files.isDir(pUtf8NameZ, type)) {
+                    path.trimTo(snapshotDbLen);
+                    path.concat(pUtf8NameZ);
+                    copyPath.trimTo(rootLen);
+                    copyPath.concat(pUtf8NameZ);
+                    final int plen = path.length();
+                    final int cplen = copyPath.length();
+
+                    path.concat(TableUtils.META_FILE_NAME).$();
+                    copyPath.concat(TableUtils.META_FILE_NAME).$();
+                    if (ff.exists(path) && ff.exists(copyPath)) {
+                        if (ff.copy(path, copyPath) < 0) {
+                            LOG.error()
+                                    .$("could not copy snapshot _meta file [src=").$(path)
+                                    .$(", dst=").$(copyPath)
+                                    .$(", errno=").$(ff.errno())
+                                    .$(']').$();
+                        } else {
+                            recoveredMetaFiles.incrementAndGet();
+                        }
+                    }
+                    path.trimTo(plen);
+                    copyPath.trimTo(cplen);
+
+                    path.concat(TableUtils.TXN_FILE_NAME).$();
+                    copyPath.concat(TableUtils.TXN_FILE_NAME).$();
+                    if (ff.exists(path) && ff.exists(copyPath)) {
+                        if (ff.copy(path, copyPath) < 0) {
+                            LOG.error()
+                                    .$("could not copy snapshot _txn file [src=").$(path)
+                                    .$(", dst=").$(copyPath)
+                                    .$(", errno=").$(ff.errno())
+                                    .$(']').$();
+                        } else {
+                            recoveredTxnFiles.incrementAndGet();
+                        }
+                    }
+                    path.trimTo(plen);
+                    copyPath.trimTo(cplen);
+                }
+            });
+            LOG.info()
+                    .$("snapshot recovery finished [metaFilesCount=").$(recoveredMetaFiles.get())
+                    .$(", txnFilesCount=").$(recoveredTxnFiles.get())
+                    .$(']').$();
+
+            // Delete snapshot directory to avoid recovery on next restart.
+            path.trimTo(snapshotRootLen);
+            if (ff.rmdir(path) != 0) {
+                LOG.error()
+                        .$("could not remove snapshot dir [dir=").$(path)
+                        .$(", errno=").$(ff.errno())
+                        .$(']').$();
+            }
         }
     }
 }

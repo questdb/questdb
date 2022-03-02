@@ -35,6 +35,7 @@ import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.AlterStatement;
+import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -96,11 +97,19 @@ public class CairoEngine implements Closeable, WriterSource {
             this.telemetrySubSeq = null;
         }
         this.tableIdMemSize = Files.PAGE_SIZE;
-        // subscribe to table writer commands to provide cold command handling
+        // Subscribe to table writer commands to provide cold command handling.
         this.tableWriterCmdQueue = messageBus.getTableWriterCommandQueue();
         final FanOut fanOut = messageBus.getTableWriterCommandFanOut();
         fanOut.and(tableWriterCmdSubSeq = new MCSequence(fanOut.current(), tableWriterCmdQueue.getCycle()));
         openTableId();
+        // Recover snapshot, if necessary.
+        try {
+            DatabaseSnapshotAgent.recoverSnapshot(this);
+        } catch (Throwable e) {
+            close();
+            throw e;
+        }
+        // Migrate database files.
         try {
             EngineMigration.migrateEngineTo(this, ColumnType.VERSION, false);
         } catch (Throwable e) {

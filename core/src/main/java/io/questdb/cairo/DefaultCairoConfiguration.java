@@ -142,7 +142,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public CharSequence getSnapshotInstanceId() {
-        return null;
+        return "";
     }
 
     @Override
