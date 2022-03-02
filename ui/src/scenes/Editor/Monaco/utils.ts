@@ -241,12 +241,17 @@ export const insertTextAtCursor = (
   editor.focus()
 }
 
-export const insertTextAtPosition = (
-  editor: IStandaloneCodeEditor,
-  lineNumber: number,
-  column: number,
-  text: string,
-) => {
+const insertText = ({
+  editor,
+  lineNumber,
+  column,
+  text,
+}: {
+  editor: IStandaloneCodeEditor
+  lineNumber: number
+  column: number
+  text: string
+}) => {
   editor.executeEdits("", [
     {
       range: {
@@ -260,24 +265,108 @@ export const insertTextAtPosition = (
   ])
 }
 
+/** `getTextFixes` is used to create correct prefix and suffix for the text that is inserted in the editor.
+ * When inserting text, we want it to be neatly aligned with surrounding empty lines.
+ * For example, appending text at the last line should add one new line, whereas in other cases it should add two.
+ * This function defines these rules.
+ */
+const getTextFixes = ({
+  model,
+  position,
+}: {
+  model: ReturnType<typeof editor.getModel>
+  position: IPosition
+}) => {
+  const isLastLine = position.lineNumber === model?.getLineCount()
+  const lineAtCursor = model?.getLineContent(position.lineNumber)
+
+  const char = "\n"
+
+  type Rule = {
+    when: () => boolean
+    then: () => { prefix: number; suffix: number }
+  }
+
+  const rules: Rule[] = [
+    // editor is empty
+    {
+      when: () => model?.getValue() === "",
+      then: () => ({ prefix: 0, suffix: 1 }),
+    },
+
+    // cursor in middle of the code, but the current line is empty
+    {
+      when: () => !isLastLine && lineAtCursor === "",
+      then: () => ({ prefix: 0, suffix: 2 }),
+    },
+
+    // cursor is in middle of the code, and current line is not empty
+    {
+      when: () => !isLastLine && lineAtCursor !== "",
+      then: () => ({ prefix: 1, suffix: 2 }),
+    },
+
+    // cursor is at the last line, which is empty
+    {
+      when: () => isLastLine && lineAtCursor === "",
+      then: () => ({ prefix: 1, suffix: 1 }),
+    },
+
+    // cursor is at the last line, which is not empty
+    {
+      when: () => isLastLine && lineAtCursor !== "",
+      then: () => ({ prefix: 2, suffix: 1 }),
+    },
+  ]
+
+  const defaultThen = {
+    then: () => ({ prefix: 0, suffix: 0 }),
+  }
+
+  const { prefix, suffix } = (
+    rules.find(({ when }) => when()) ?? defaultThen
+  ).then()
+
+  return { prefix: char.repeat(prefix), suffix: char.repeat(suffix) }
+}
+
 export const appendQuery = (editor: IStandaloneCodeEditor, query: string) => {
   const model = editor.getModel()
   if (model) {
-    const firstLine = model.getLineContent(1)
     const position = editor.getPosition()
+
     if (position) {
-      insertTextAtPosition(
+      const isLineEmpty = model.getLineContent(position.lineNumber) === ""
+      const newLines = query.split("\n")
+
+      const positionInsert = {
+        lineStart: position.lineNumber + 1,
+        lineEnd: position.lineNumber + newLines.length,
+        columnStart: 0,
+        columnEnd: newLines.sort((a, b) => b.length - a.length)[0].length + 1,
+      }
+
+      const positionSelect = {
+        lineStart: positionInsert.lineStart + (isLineEmpty ? 0 : 1),
+        lineEnd: positionInsert.lineEnd + (isLineEmpty ? 0 : 1),
+        columnStart: 0,
+        columnEnd: positionInsert.columnEnd,
+      }
+
+      const { prefix, suffix } = getTextFixes({ model, position })
+
+      insertText({
         editor,
-        position.lineNumber + 1,
-        0,
-        firstLine === "" ? query : `\n\n${query}`,
-      )
+        lineNumber: positionInsert.lineStart,
+        column: positionInsert.columnStart,
+        text: `${prefix}${query}${suffix}`,
+      })
 
       editor.setSelection({
-        startColumn: 0,
-        endColumn: model.getLineContent(position.lineNumber + 2).length + 1,
-        startLineNumber: position.lineNumber + 2,
-        endLineNumber: position.lineNumber + 2,
+        startColumn: positionSelect.columnStart,
+        endColumn: positionSelect.columnEnd,
+        startLineNumber: positionSelect.lineStart,
+        endLineNumber: positionSelect.lineEnd,
       })
     }
     editor.focus()
