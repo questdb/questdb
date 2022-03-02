@@ -35,6 +35,7 @@ import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.AlterStatement;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -49,7 +50,6 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.pool.WriterPool.OWNERSHIP_REASON_NONE;
 
@@ -71,8 +71,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicLong alterCommandCommandCorrelationId = new AtomicLong();
     private long tableIdFd = -1;
     private long tableIdMem = 0;
-    // List of readers kept around to lock partitions while a database snapshot is being made.
-    private final AtomicReference<ObjList<TableReader>> snapshotReadersRef = new AtomicReference<>();
 
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
@@ -113,7 +111,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @TestOnly
     public boolean clear() {
-        releaseSnapshotReaders();
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
         return b1 & b2;
@@ -122,7 +119,6 @@ public class CairoEngine implements Closeable, WriterSource {
     @Override
     public void close() {
         Misc.free(writerPool);
-        releaseSnapshotReaders();
         Misc.free(readerPool);
         freeTableId();
         Misc.free(messageBus);
@@ -241,6 +237,31 @@ public class CairoEngine implements Closeable, WriterSource {
             CharSequence tableName
     ) {
         return getReader(securityContext, tableName, TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION);
+    }
+
+    public TableReader getReaderForStatement(SqlExecutionContext executionContext, CharSequence tableName, CharSequence statement) {
+        try {
+            return getReader(executionContext.getCairoSecurityContext(), tableName);
+        } catch (CairoException ex) {
+            // Cannot open reader on existing table is pretty bad.
+            LOG.error().$("error opening reader for ").$(statement)
+                    .$(" statement [table=").$(tableName)
+                    .$(",errno=").$(ex.getErrno())
+                    .$(",error=").$(ex.getMessage()).I$();
+            // In some messed states, for example after _meta file swap failure Reader cannot be opened
+            // but writer can be. Opening writer fixes the table mess.
+            try (TableWriter ignored = getWriter(executionContext.getCairoSecurityContext(), tableName, statement + " statement")) {
+                return getReader(executionContext.getCairoSecurityContext(), tableName);
+            } catch (EntryUnavailableException wrOpEx) {
+                // This is fine, writer is busy. Throw back origin error.
+                throw ex;
+            } catch (Throwable th) {
+                LOG.error().$("error preliminary opening writer for ").$(statement)
+                        .$(" statement [table=").$(tableName)
+                        .$(",error=").$(ex.getMessage()).I$();
+                throw ex;
+            }
+        }
     }
 
     public TableReader getReader(
@@ -372,10 +393,12 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    @TestOnly
     public boolean releaseAllReaders() {
         return readerPool.releaseAll();
     }
 
+    @TestOnly
     public void releaseAllWriters() {
         writerPool.releaseAll();
     }
@@ -500,22 +523,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void unlockWriter(CharSequence tableName) {
         writerPool.unlock(tableName);
-    }
-
-    public boolean isSnapshotInProgress() {
-        return snapshotReadersRef.get() != null;
-    }
-
-    public boolean setSnapshotReaders(ObjList<TableReader> readers) {
-        return snapshotReadersRef.compareAndSet(null, readers);
-    }
-
-    public void releaseSnapshotReaders() {
-        ObjList<TableReader> readers = snapshotReadersRef.getAndSet(null);
-        if (readers != null) {
-            Misc.freeObjList(readers);
-            readers.clear();
-        }
     }
 
     private void rename0(Path path, CharSequence tableName, Path otherPath, CharSequence to) {

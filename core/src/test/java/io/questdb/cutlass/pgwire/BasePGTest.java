@@ -48,6 +48,7 @@ public class BasePGTest extends AbstractGriffinTest {
                 LOG,
                 engine,
                 compiler.getFunctionFactoryCache(),
+                snapshotAgent,
                 metrics
         );
     }

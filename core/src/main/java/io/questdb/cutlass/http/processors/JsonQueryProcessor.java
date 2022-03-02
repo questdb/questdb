@@ -46,13 +46,15 @@ import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
 public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
-    private static final LocalValue<JsonQueryProcessorState> LV = new LocalValue<>();
 
+    private static final LocalValue<JsonQueryProcessorState> LV = new LocalValue<>();
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessor.class);
+
     protected final ObjList<QueryExecutor> queryExecutors = new ObjList<>();
     private final SqlCompiler compiler;
     private final JsonQueryProcessorConfiguration configuration;
@@ -64,21 +66,23 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final long alterStartTimeout;
     private final long alterStartFullTimeoutNs;
 
+    @TestOnly
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
             int workerCount
     ) {
-        this(configuration, engine, workerCount, null);
+        this(configuration, engine, workerCount, null, null);
     }
 
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
             int workerCount,
-            @Nullable FunctionFactoryCache functionFactoryCache
+            @Nullable FunctionFactoryCache functionFactoryCache,
+            @Nullable DatabaseSnapshotAgent snapshotAgent
     ) {
-        this(configuration, engine, new SqlCompiler(engine, functionFactoryCache), new SqlExecutionContextImpl(engine, workerCount));
+        this(configuration, engine, new SqlCompiler(engine, functionFactoryCache, snapshotAgent), new SqlExecutionContextImpl(engine, workerCount));
     }
 
     public JsonQueryProcessor(

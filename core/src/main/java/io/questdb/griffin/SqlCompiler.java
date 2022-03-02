@@ -31,7 +31,6 @@ import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.cutlass.text.TextException;
@@ -84,6 +83,7 @@ public class SqlCompiler implements Closeable {
     private final CairoConfiguration configuration;
     private final Path renamePath = new Path();
     private final DatabaseBackupAgent backupAgent;
+    private final DatabaseSnapshotAgent snapshotAgent;
     private final MemoryMARW mem = Vm.getMARWInstance();
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final MessageBus messageBus;
@@ -115,14 +115,15 @@ public class SqlCompiler implements Closeable {
         }
     };
 
-    //helper var used to pass back count in cases it can't be done via method result
+    // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
 
+    // Exposed for embedded API users.
     public SqlCompiler(CairoEngine engine) {
-        this(engine, null);
+        this(engine, null, null);
     }
 
-    public SqlCompiler(CairoEngine engine, @Nullable FunctionFactoryCache functionFactoryCache) {
+    public SqlCompiler(CairoEngine engine, @Nullable FunctionFactoryCache functionFactoryCache, @Nullable DatabaseSnapshotAgent snapshotAgent) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
@@ -148,6 +149,7 @@ public class SqlCompiler implements Closeable {
         functionParser.setSqlCodeGenerator(codeGenerator);
 
         this.backupAgent = new DatabaseBackupAgent();
+        this.snapshotAgent = snapshotAgent;
 
         // For each 'this::method' reference java compiles a class
         // We need to minimize repetition of this syntax as each site generates garbage
@@ -1156,7 +1158,7 @@ public class SqlCompiler implements Closeable {
             tableExistsOrFail(tableNamePosition, tok, executionContext);
 
             CharSequence name = GenericLexer.immutableOf(tok);
-            try (TableReader reader = getTableReaderForStatement(executionContext, name, "alter table")) {
+            try (TableReader reader = engine.getReaderForStatement(executionContext, name, "alter table")) {
                 String tableName = reader.getTableName();
                 TableReaderMetadata tableMetadata = reader.getMetadata();
                 tok = expectToken(lexer, "'add', 'alter' or 'drop'");
@@ -2240,32 +2242,6 @@ public class SqlCompiler implements Closeable {
         return codeGenerator.generate(queryModel, executionContext);
     }
 
-    private TableReader getTableReaderForStatement(SqlExecutionContext executionContext, CharSequence tableName, CharSequence statement) {
-        try {
-            return engine.getReader(executionContext.getCairoSecurityContext(), tableName);
-        } catch (CairoException ex) {
-            // Cannot open reader on existing table is pretty bad
-            LOG.error().$("error opening reader for ").$(statement)
-                    .$(" statement [table=").$(tableName)
-                    .$(",errno=").$(ex.getErrno())
-                    .$(",error=").$(ex.getMessage()).I$();
-            // In some messed states, for example after _meta file swap failure Reader cannot be opened
-            // but writer can be
-            // Opening writer fixes the table mess
-            try (TableWriter ignored = engine.getWriter(executionContext.getCairoSecurityContext(), tableName, statement + " statement")) {
-                return engine.getReader(executionContext.getCairoSecurityContext(), tableName);
-            } catch (EntryUnavailableException wrOpEx) {
-                // This is fine, writer is busy. Throw back origin error
-                throw ex;
-            } catch (Throwable th) {
-                LOG.error().$("error preliminary opening writer for ").$(statement)
-                        .$(" statement [table=").$(tableName)
-                        .$(",error=").$(ex.getMessage()).I$();
-                throw ex;
-            }
-        }
-    }
-
     private CompiledQuery insert(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
         final InsertModel model = (InsertModel) executionModel;
         final ExpressionNode name = model.getTableName();
@@ -2779,124 +2755,22 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery snapshotDatabase(SqlExecutionContext executionContext) throws SqlException {
-
-        // Windows doesn't support sync() system call.
-        if (Os.type == Os.WINDOWS) {
-            throw SqlException.position(lexer.lastTokenPosition()).put("Snapshots are not supported on Windows");
-        }
-
         executionContext.getCairoSecurityContext().checkWritePermission();
         CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
 
         if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
-
-            if (engine.isSnapshotInProgress()) {
-                throw SqlException.position(lexer.lastTokenPosition()).put("Another snapshot command in progress");
+            if (snapshotAgent == null) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("Snapshot agent is not configured. Try using different embedded API");
             }
-
-            path.of(configuration.getSnapshotRoot()).$();
-            int snapshotLen = path.length();
-            // Delete all contents of the snapshot dir.
-            if (ff.exists(path.slash$())) {
-                path.trimTo(snapshotLen);
-                if (ff.rmdir(path) != 0) {
-                    throw CairoException.instance(ff.errno()).put("Could not remove snapshot dir [dir=").put(path).put(']');
-                }
-            }
-            path.trimTo(snapshotLen);
-            // Recreate the snapshot dir.
-            if (ff.mkdirs(path.slash$(), configuration.getMkDirMode()) != 0) {
-                throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(path).put(']');
-            }
-            path.trimTo(snapshotLen);
-            // We need directory's fd to fsync it later.
-            final long snapshotDirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path, LOG) : 0;
-
-            ObjList<TableReader> readers = new ObjList<>();
-            try (
-                    TableListRecordCursorFactory factory = new TableListRecordCursorFactory(configuration.getFilesFacade(), configuration.getRoot())
-            ) {
-                final int tableNameIndex = factory.getMetadata().getColumnIndex(TableListRecordCursorFactory.TABLE_NAME_COLUMN);
-                try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                    final Record record = cursor.getRecord();
-                    try (MemoryCMARW mem = Vm.getCMARWInstance()) {
-                        while (cursor.hasNext()) {
-                            CharSequence tableName = record.getStr(tableNameIndex);
-                            TableReader reader = getTableReaderForStatement(executionContext, tableName, "snapshot");
-                            readers.add(reader);
-
-                            path.concat(configuration.getDbDirectory()).concat(tableName).slash$();
-
-                            if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
-                                throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(path).put(']');
-                            }
-
-                            int rootLen = path.length();
-                            mem.smallFile(ff, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                            reader.getMetadata().dumpTo(mem);
-                            mem.close(false);
-                            mem.smallFile(ff, path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                            reader.getTxFile().dumpTo(mem);
-                            mem.close(false);
-                            LOG.info().$("snapshot copied [table=").$(tableName).$(']').$();
-
-                            path.trimTo(snapshotLen);
-                        }
-
-                        // Flush dirty pages and filesystem metadata to disk
-                        if (ff.sync() != 0) {
-                            throw CairoException.instance(ff.errno()).put("Could not sync");
-                        }
-
-                        // Write instance id to the snapshot metadata file.
-                        mem.smallFile(ff, path.trimTo(snapshotLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                        final CharSequence instanceId = configuration.getSnapshotInstanceId();
-                        mem.putStr(0, instanceId != null ? instanceId : "");
-                        mem.sync(false);
-                        mem.close(false);
-                        // It is important to fsync parent directory's metadata to make sure that
-                        // the snapshot metadata file is included into the snapshot.
-                        if (snapshotDirFd > 0) {
-                            if (ff.fsync(snapshotDirFd) != 0) {
-                                LOG.error()
-                                        .$("could not fsync [fd=").$(snapshotDirFd)
-                                        .$(", errno=").$(ff.errno())
-                                        .$(']').$();
-                            }
-                        }
-
-                        // Try to save the readers list atomically to make sure that they lock
-                        // partitions preventing them from being deleted.
-                        if (!engine.setSnapshotReaders(readers)) {
-                            throw SqlException.position(lexer.lastTokenPosition()).put("Another snapshot command in progress");
-                        }
-                    } catch (Throwable e) {
-                        Misc.freeObjList(readers);
-                        readers.clear();
-                        LOG.error()
-                                .$("snapshot prepare error [e=").$(e)
-                                .I$();
-                        throw e;
-                    } finally {
-                        if (snapshotDirFd > 0) {
-                            ff.close(snapshotDirFd);
-                        }
-                    }
-                }
-            }
+            snapshotAgent.prepareSnapshot(executionContext);
             return compiledQuery.ofSnapshotPrepare();
         }
 
         if (Chars.equalsLowerCaseAscii(tok, "complete")) {
-            if (!engine.isSnapshotInProgress()) {
-                throw SqlException.position(lexer.lastTokenPosition()).put("SNAPSHOT PREPARE must be called before SNAPSHOT COMPLETE");
+            if (snapshotAgent == null) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("Snapshot agent is not configured. Try using different embedded API");
             }
-
-            // Delete snapshot directory.
-            path.of(configuration.getSnapshotRoot()).$();
-            ff.rmdir(path); // it's fine to ignore errors here
-            // Simply try to release locked readers if any.
-            engine.releaseSnapshotReaders();
+            snapshotAgent.completeSnapshot();
             return compiledQuery.ofSnapshotComplete();
         }
 

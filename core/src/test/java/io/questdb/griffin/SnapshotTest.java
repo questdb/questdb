@@ -224,7 +224,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                 compiler.compile("snapshot complete", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException ex) {
-                Assert.assertTrue(ex.getMessage().startsWith("[9] SNAPSHOT PREPARE must be called before SNAPSHOT COMPLETE"));
+                Assert.assertTrue(ex.getMessage().startsWith("[0] SNAPSHOT PREPARE must be called before SNAPSHOT COMPLETE"));
             }
         });
     }
@@ -238,7 +238,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                 compiler.compile("snapshot prepare", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException ex) {
-                Assert.assertTrue(ex.getMessage().startsWith("[9] Another snapshot command in progress"));
+                Assert.assertTrue(ex.getMessage().startsWith("[0] Another snapshot command in progress"));
             } finally {
                 // release locked readers
                 compiler.compile("snapshot complete", sqlExecutionContext);

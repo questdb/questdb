@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -59,6 +60,7 @@ public class AbstractCairoTest {
     protected final static MicrosecondClock testMicrosClock =
             () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
     protected static CairoEngine engine;
+    protected static DatabaseSnapshotAgent snapshotAgent;
     protected static String inputRoot = null;
     protected static FilesFacade ff;
     protected static long configOverrideCommitLagMicros = -1;
@@ -205,11 +207,13 @@ public class AbstractCairoTest {
             }
         };
         engine = new CairoEngine(configuration, metrics);
+        snapshotAgent = new DatabaseSnapshotAgent(engine);
         messageBus = engine.getMessageBus();
     }
 
     @AfterClass
     public static void tearDownStatic() {
+        snapshotAgent = Misc.free(snapshotAgent);
         engine = Misc.free(engine);
     }
 
