@@ -30,46 +30,47 @@ public class NullMapWriter implements MapWriter {
     public static final MapWriter INSTANCE = new NullMapWriter();
 
     @Override
-    public void appendSymbolCharsBlock(long blockSize, long sourceAddress) {
-    }
-
-    @Override
     public boolean isCached() {
         return true;
     }
 
     @Override
+    public int getSymbolCount() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public int put(char c) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int put(CharSequence symbol) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void rollback(int symbolCount) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setSymbolIndexInTxWriter(int symbolIndexInTxWriter) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void truncate() {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void updateCacheFlag(boolean flag) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void updateNullFlag(boolean flag) {
-    }
-
-    @Override
-    public int getSymbolCount() {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 }

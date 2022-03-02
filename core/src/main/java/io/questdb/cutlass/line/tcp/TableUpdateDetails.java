@@ -322,6 +322,7 @@ public class TableUpdateDetails implements Closeable {
                 }
 
                 long columnNameTxn = reader.getColumnVersionReader().getDefaultColumnNameTxn(colWriterIndex);
+                assert symIndex <= colWriterIndex;
                 symCache.of(engine.getConfiguration(), path, symbolNameTemp, symIndex, txReader, columnNameTxn);
                 symbolCacheByColumnIndex.extendAndSet(colWriterIndex, symCache);
                 return symCache;

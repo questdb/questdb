@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -146,17 +145,6 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             throw e;
         } finally {
             path.trimTo(plen);
-        }
-    }
-
-    @Override
-    public void appendSymbolCharsBlock(long blockSize, long sourceAddress) {
-        long appendOffset = charMem.getAppendOffset();
-        try {
-            charMem.jumpTo(appendOffset);
-            charMem.putBlockOfBytes(sourceAddress, blockSize);
-        } finally {
-            charMem.jumpTo(appendOffset);
         }
     }
 

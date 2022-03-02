@@ -63,8 +63,6 @@ public interface MapWriter extends SymbolCountProvider {
         }
     }
 
-    void appendSymbolCharsBlock(long blockSize, long sourceAddress);
-
     boolean isCached();
 
     int put(char c);

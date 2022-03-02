@@ -36,8 +36,6 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     private final MemoryCMARW mem;
     private long version;
     private long size;
-    private long transientOffset;
-    private long transientSize;
     private boolean hasChanges;
 
     // size should be read from the transaction file
@@ -75,20 +73,12 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         hasChanges = false;
     }
 
-    public long getOffset() {
-        return transientOffset;
-    }
-
     public long getOffsetA() {
         return mem.getLong(OFFSET_OFFSET_A_64);
     }
 
     public long getOffsetB() {
         return mem.getLong(OFFSET_OFFSET_B_64);
-    }
-
-    public long getSize() {
-        return transientSize;
     }
 
     public void removeColumnTop(long partitionTimestamp, int columnIndex) {
@@ -254,15 +244,11 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     private void updateA(long aOffset, long aSize) {
         mem.putLong(OFFSET_OFFSET_A_64, aOffset);
         mem.putLong(OFFSET_SIZE_A_64, aSize);
-        this.transientOffset = aOffset;
-        this.transientSize = aSize;
     }
 
     private void updateB(long bOffset, long bSize) {
         mem.putLong(OFFSET_OFFSET_B_64, bOffset);
         mem.putLong(OFFSET_SIZE_B_64, bSize);
-        this.transientOffset = bOffset;
-        this.transientSize = bSize;
     }
 
     static {

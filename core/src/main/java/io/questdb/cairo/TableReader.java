@@ -103,7 +103,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     .I$();
             this.txFile = new TxReader(ff).ofRO(path, partitionBy);
             path.trimTo(rootLen);
-            reloadSlow(metadata.getStructureVersion(), columnVersionReader.getVersion(), false);
+            reloadSlow(false);
             openSymbolMaps();
             partitionCount = txFile.getPartitionCount();
             partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
@@ -460,7 +460,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         final long prevPartitionVersion = this.txFile.getPartitionTableVersion();
         try {
-            reloadSlow(this.txFile.getStructureVersion(), this.columnVersionReader.getVersion(), true);
+            reloadSlow(true);
             // partition reload will apply truncate if necessary
             // applyTruncate for non-partitioned tables only
             reconcileOpenPartitions(prevPartitionVersion);
@@ -1200,7 +1200,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void reloadSlow(long prevStructureVersion, long prevColumnVersion, boolean reshuffle) {
+    private void reloadSlow(boolean reshuffle) {
         final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
         do {
             // Reload txn
