@@ -65,17 +65,4 @@ public class SnapshotWindowsTest extends AbstractGriffinTest {
             }
         });
     }
-
-    @Test
-    public void testSnapshotComplete() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
-            try {
-                compiler.compile("snapshot complete", sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException ex) {
-                Assert.assertTrue(ex.getMessage().startsWith("[0] Snapshots are not supported on Windows"));
-            }
-        });
-    }
 }

@@ -84,7 +84,6 @@ public class DatabaseSnapshotAgent implements Closeable {
         if (snapshotInProgress) {
             throw SqlException.position(0).put("Another snapshot command in progress");
         }
-        snapshotInProgress = true;
 
         path.of(configuration.getSnapshotRoot());
         int snapshotLen = path.length();
@@ -157,6 +156,8 @@ public class DatabaseSnapshotAgent implements Closeable {
                                     .$(']').$();
                         }
                     }
+
+                    snapshotInProgress = true;
                 } catch (Throwable e) {
                     Misc.freeObjList(snapshotReaders);
                     snapshotReaders.clear();

@@ -33,9 +33,9 @@ import org.junit.*;
 
 public class SnapshotTest extends AbstractGriffinTest {
 
+    private static final TestFilesFacadeImpl testFilesFacade = new TestFilesFacadeImpl();
     private final Path path = new Path();
     private int rootLen;
-    private static TestFilesFacadeImpl testFilesFacade = new TestFilesFacadeImpl();
 
     @BeforeClass
     public static void setUpStatic() {
@@ -263,18 +263,21 @@ public class SnapshotTest extends AbstractGriffinTest {
 
     @Test
     public void testSnapshotPrepareFailsOnSyncError() throws Exception {
-        testFilesFacade.errorOnSync = true;
-
         assertMemoryLeak(() -> {
             compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+
+            testFilesFacade.errorOnSync = true;
             try {
                 compiler.compile("snapshot prepare", sqlExecutionContext);
                 Assert.fail();
             } catch (CairoException ex) {
                 Assert.assertTrue(ex.getMessage().startsWith("[0] Could not sync"));
-            } finally {
-                compiler.compile("snapshot complete", sqlExecutionContext);
             }
+
+            // Once the error is gone, subsequent PREPARE/COMPLETE statements should execute successfully.
+            testFilesFacade.errorOnSync = false;
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+            compiler.compile("snapshot complete", sqlExecutionContext);
         });
     }
 
@@ -335,7 +338,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore("locked readers do not prevent from column file deletion")
+    @Ignore("Enable when table readers start preventing from column file deletion. This could be done along with column versioning.")
     @Test
     public void testRecoverSnapshotRestoresDroppedColumns() throws Exception {
         final String snapshotId = "00000000-0000-0000-0000-000000000000";
