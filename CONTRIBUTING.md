@@ -116,9 +116,12 @@ also need `JAVA_HOME` to be set. The following commands will compile on
 Linux/OSX.
 
 ```text
-cmake .
-make
+cd core
+cmake -B build/release -DCMAKE_BUILD_TYPE=Release .
+cmake --build build/release --config Release
 ```
+
+For more details, see [CMake build instructions](core/CMAKE_README.md).
 
 For C/С++ development we use CLion. This IDE "understands" cmake files and makes
 compilation easier.
