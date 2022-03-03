@@ -9,9 +9,13 @@ required.
 To build in ./core run
 
 ```bash
-cmake .
-make
+cmake -B build/release -DCMAKE_BUILD_TYPE=Release .
+cmake --build build/release --config Release
 ```
+
+Building the native code will update dynamic link libraries under
+`core/src/main/resources/io/questdb/bin/**` which will in turn be loaded by
+Java through JNI.
 
 ### Installing and compiling on FreeBSD
 
