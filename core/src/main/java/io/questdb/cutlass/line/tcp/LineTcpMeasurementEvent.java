@@ -219,18 +219,18 @@ class LineTcpMeasurementEvent implements Closeable {
         }
     }
 
-    private CairoException boundsError(long entityValue, int colIndex, int colType) {
+    private CairoException boundsError(long entityValue, int columnWriterIndex, int colType) {
         return CairoException.instance(0)
                 .put("line protocol integer is out of ").put(ColumnType.nameOf(colType))
-                .put(" bounds [columnIndex=").put(colIndex)
+                .put(" bounds [columnWriterIndex=").put(columnWriterIndex)
                 .put(", value=").put(entityValue)
                 .put(']');
     }
 
-    private CairoException castError(String ilpType, int colIndex, int colType) {
+    private CairoException castError(String ilpType, int columnWriterIndex, int colType) {
         return CairoException.instance(0)
                 .put("cast error for line protocol ").put(ilpType)
-                .put(" [columnIndex=").put(colIndex)
+                .put(" [columnWriterIndex=").put(columnWriterIndex)
                 .put(", columnType=").put(ColumnType.nameOf(colType))
                 .put(']');
     }
