@@ -265,10 +265,10 @@ public class DatabaseSnapshotAgent implements Closeable {
             // Delete snapshot directory to avoid recovery on next restart.
             path.trimTo(snapshotRootLen).$();
             if (ff.rmdir(path) != 0) {
-                LOG.error()
-                        .$("could not remove snapshot dir [dir=").$(path)
-                        .$(", errno=").$(ff.errno())
-                        .$(']').$();
+                throw CairoException.instance(ff.errno())
+                        .put("could not remove snapshot dir [dir=").put(path)
+                        .put(", errno=").put(ff.errno())
+                        .put(']');
             }
         }
     }
