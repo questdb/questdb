@@ -201,6 +201,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String confRoot;
     private final String snapshotRoot;
     private final String snapshotInstanceId;
+    private final boolean snapshotRecoveryEnabled;
     private final long maxRerunWaitCapMs;
     private final double rerunExponentialWaitMultiplier;
     private final int rerunInitialWaitQueueSize;
@@ -393,6 +394,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         this.snapshotInstanceId = getString(properties, env, "cairo.snapshot.instance.id", "");
+        this.snapshotRecoveryEnabled = getBoolean(properties, env, "cairo.snapshot.recovery.enabled", true);
 
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuUsed = 0;
@@ -1677,6 +1679,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public CharSequence getSnapshotInstanceId() {
             return snapshotInstanceId;
+        }
+
+        @Override
+        public boolean isSnapshotRecoveryEnabled() {
+            return snapshotRecoveryEnabled;
         }
 
         @Override

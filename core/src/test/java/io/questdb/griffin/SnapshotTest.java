@@ -282,21 +282,27 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testRecoverSnapshotDiscardsNewDataForDifferentInstanceIds() throws Exception {
-        testRecoverSnapshotDiscardsNewData("id1", "id2", true);
+    public void testRecoverSnapshotForDifferentInstanceIds() throws Exception {
+        testRecoverSnapshot("id1", "id2", true);
     }
 
     @Test
-    public void testRecoverSnapshotDiscardsNewDataForEqualInstanceIds() throws Exception {
-        testRecoverSnapshotDiscardsNewData("id1", "id1", false);
+    public void testRecoverSnapshotForDifferentInstanceIdsWhenRecoveryIsDisabled() throws Exception {
+        snapshotRecoveryEnabled = false;
+        testRecoverSnapshot("id1", "id2", false);
     }
 
     @Test
-    public void testRecoverSnapshotDiscardsNewDataForDefaultInstanceIds() throws Exception {
-        testRecoverSnapshotDiscardsNewData(null, null, false);
+    public void testRecoverSnapshotForEqualInstanceIds() throws Exception {
+        testRecoverSnapshot("id1", "id1", false);
     }
 
-    private void testRecoverSnapshotDiscardsNewData(String snapshotId, String restartedId, boolean expectRecovery) throws Exception {
+    @Test
+    public void testRecoverSnapshotForDefaultInstanceIds() throws Exception {
+        testRecoverSnapshot(null, null, false);
+    }
+
+    private void testRecoverSnapshot(String snapshotId, String restartedId, boolean expectRecovery) throws Exception {
         assertMemoryLeak(() -> {
             snapshotInstanceId = snapshotId;
 

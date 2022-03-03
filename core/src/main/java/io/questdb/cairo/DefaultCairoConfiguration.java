@@ -146,6 +146,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSnapshotRecoveryEnabled() {
+        return true;
+    }
+
+    @Override
     public int getCopyPoolCapacity() {
         return 16;
     }

@@ -192,6 +192,10 @@ public class DatabaseSnapshotAgent implements Closeable {
 
     public static void recoverSnapshot(CairoEngine engine) {
         final CairoConfiguration configuration = engine.getConfiguration();
+        if (!configuration.isSnapshotRecoveryEnabled()) {
+            return;
+        }
+
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getRoot();
         final CharSequence snapshotRoot = configuration.getSnapshotRoot();

@@ -74,6 +74,7 @@ public class AbstractCairoTest {
     protected static int rndFunctionMemoryPageSize = -1;
     protected static int rndFunctionMemoryMaxPages = -1;
     protected static String snapshotInstanceId = null;
+    protected static Boolean snapshotRecoveryEnabled = null;
 
     @Rule
     public TestName testName = new TestName();
@@ -205,6 +206,11 @@ public class AbstractCairoTest {
                 }
                 return snapshotInstanceId;
             }
+
+            @Override
+            public boolean isSnapshotRecoveryEnabled() {
+                return snapshotRecoveryEnabled == null ? super.isSnapshotRecoveryEnabled() : snapshotRecoveryEnabled;
+            }
         };
         engine = new CairoEngine(configuration, metrics);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
@@ -244,6 +250,7 @@ public class AbstractCairoTest {
         pageFrameMaxSize = -1;
         spinLockTimeoutUs = -1;
         snapshotInstanceId = null;
+        snapshotRecoveryEnabled = null;
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {

@@ -93,6 +93,13 @@ public interface CairoConfiguration {
      */
     CharSequence getSnapshotInstanceId();
 
+    /**
+     * A flag to enable/disable snapshot recovery mechanism. Defaults to {@code true}.
+     *
+     * @return enable/disable snapshot recovery flag
+     */
+    boolean isSnapshotRecoveryEnabled();
+
     int getCopyPoolCapacity();
 
     int getCreateAsSelectRetryCount();
