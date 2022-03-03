@@ -35,6 +35,13 @@ public class SnapshotTest extends AbstractGriffinTest {
 
     private final Path path = new Path();
     private int rootLen;
+    private static TestFilesFacadeImpl testFilesFacade = new TestFilesFacadeImpl();
+
+    @BeforeClass
+    public static void setUpStatic() {
+        ff = testFilesFacade;
+        AbstractGriffinTest.setUpStatic();
+    }
 
     @Before
     public void setUp() {
@@ -44,6 +51,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         super.setUp();
         path.of(configuration.getSnapshotRoot()).slash();
         rootLen = path.length();
+        testFilesFacade.errorOnSync = false;
     }
 
     @After
@@ -235,7 +243,6 @@ public class SnapshotTest extends AbstractGriffinTest {
             } catch (SqlException ex) {
                 Assert.assertTrue(ex.getMessage().startsWith("[0] Another snapshot command in progress"));
             } finally {
-                // release locked readers
                 compiler.compile("snapshot complete", sqlExecutionContext);
             }
         });
@@ -250,6 +257,23 @@ public class SnapshotTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException ex) {
                 Assert.assertTrue(ex.getMessage().startsWith("[9] 'prepare' or 'complete' expected"));
+            }
+        });
+    }
+
+    @Test
+    public void testSnapshotPrepareFailsOnSyncError() throws Exception {
+        testFilesFacade.errorOnSync = true;
+
+        assertMemoryLeak(() -> {
+            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            try {
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+                Assert.fail();
+            } catch (CairoException ex) {
+                Assert.assertTrue(ex.getMessage().startsWith("[0] Could not sync"));
+            } finally {
+                compiler.compile("snapshot complete", sqlExecutionContext);
             }
         });
     }
@@ -350,5 +374,18 @@ public class SnapshotTest extends AbstractGriffinTest {
             // Dropped column should be there.
             assertSql("select * from " + tableName, expectedAllColumns);
         });
+    }
+
+    private static class TestFilesFacadeImpl extends FilesFacadeImpl {
+
+        boolean errorOnSync = false;
+
+        @Override
+        public int sync() {
+            if (!errorOnSync) {
+                return super.sync();
+            }
+            return -1;
+        }
     }
 }
