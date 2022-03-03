@@ -392,7 +392,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.snapshotRoot = new File(root, SNAPSHOT_DIRECTORY).getAbsolutePath();
         }
 
-        this.snapshotInstanceId = getString(properties, env, "snapshot.instance.id", "");
+        this.snapshotInstanceId = getString(properties, env, "cairo.snapshot.instance.id", "");
 
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuUsed = 0;

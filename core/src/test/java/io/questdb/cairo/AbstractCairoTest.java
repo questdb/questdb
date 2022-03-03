@@ -230,6 +230,7 @@ public class AbstractCairoTest {
     @After
     public void tearDown() {
         LOG.info().$("Tearing down test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
+        snapshotAgent.clear();
         engine.freeTableId();
         engine.clear();
         TestUtils.removeTestPath(root);

@@ -66,7 +66,7 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSnapshotCheckTableMetadata() throws Exception {
+    public void testSnapshotPrepareCopiesValidTableMetadata() throws Exception {
         assertMemoryLeak(() -> {
             snapshotInstanceId = "foobar";
 
@@ -145,16 +145,16 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSnapshotCheckMetadataForDefaultInstanceId() throws Exception {
-        testSnapshotCheckMetadata(null);
+    public void testSnapshotPrepareCreatesMetadataFileForDefaultInstanceId() throws Exception {
+        testSnapshotPrepareCreatesMetadataFile(null);
     }
 
     @Test
-    public void testSnapshotCheckMetadataForNonDefaultInstanceId() throws Exception {
-        testSnapshotCheckMetadata("foobar");
+    public void testSnapshotPrepareCreatesMetadataFileForNonDefaultInstanceId() throws Exception {
+        testSnapshotPrepareCreatesMetadataFile("foobar");
     }
 
-    private void testSnapshotCheckMetadata(String snapshotId) throws Exception {
+    private void testSnapshotPrepareCreatesMetadataFile(String snapshotId) throws Exception {
         assertMemoryLeak(() -> {
             snapshotInstanceId = snapshotId;
 
@@ -179,7 +179,7 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSnapshotDirExists() throws Exception {
+    public void testSnapshotPrepareCleansUpSnapshotDir() throws Exception {
         assertMemoryLeak(() -> {
             path.trimTo(rootLen);
             int rc = configuration.getFilesFacade().mkdirs(path.slash$(), configuration.getMkDirMode());
@@ -206,13 +206,13 @@ public class SnapshotTest extends AbstractGriffinTest {
             compiler.compile("snapshot prepare", sqlExecutionContext);
             compiler.compile("snapshot complete", sqlExecutionContext);
 
-            path.trimTo(rootLen);
+            path.trimTo(rootLen).slash$();
             Assert.assertFalse(configuration.getFilesFacade().exists(path));
         });
     }
 
     @Test
-    public void testSnapshotCompleteWithoutPrepare() throws Exception {
+    public void testSnapshotCompleteWithoutPrepareFails() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
             try {
@@ -225,7 +225,7 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testPrepareInFlight() throws Exception {
+    public void testSnapshotPrepareSubsequentCallFails() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
             try {
@@ -242,7 +242,7 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testUnknownSubOption() throws Exception {
+    public void testSnapshotUnknownSubOption() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
             try {
@@ -255,36 +255,100 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSnapshotRecovery() throws Exception {
-        assertMemoryLeak(() -> {
-            snapshotInstanceId = "id1";
+    public void testRecoverSnapshotDiscardsNewDataForDifferentInstanceIds() throws Exception {
+        testRecoverSnapshotDiscardsNewData("id1", "id2", true);
+    }
 
-            String tableName = "t";
-            String sql = "create table " + tableName + " as (select * from (select rnd_str(5,10,2) a, x b from long_sequence(20)))";
-            compile(sql, sqlExecutionContext);
+    @Test
+    public void testRecoverSnapshotDiscardsNewDataForEqualInstanceIds() throws Exception {
+        testRecoverSnapshotDiscardsNewData("id1", "id1", false);
+    }
+
+    @Test
+    public void testRecoverSnapshotDiscardsNewDataForDefaultInstanceIds() throws Exception {
+        testRecoverSnapshotDiscardsNewData(null, null, false);
+    }
+
+    private void testRecoverSnapshotDiscardsNewData(String snapshotId, String restartedId, boolean expectRecovery) throws Exception {
+        assertMemoryLeak(() -> {
+            snapshotInstanceId = snapshotId;
+
+            final String nonPartitionedTable = "npt";
+            compile("create table " + nonPartitionedTable + " as " +
+                    "(select rnd_str(5,10,2) a, x b from long_sequence(20))",
+                    sqlExecutionContext);
+            final String partitionedTable = "pt";
+            compile("create table " + partitionedTable + " as " +
+                    "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by hour",
+                    sqlExecutionContext);
 
             compiler.compile("snapshot prepare", sqlExecutionContext);
 
-            // Insert more data into the table.
-            sql = "insert into " + tableName + " select * from (select rnd_str(3,6,2) a, x+20 b from long_sequence(20))";
-            compile(sql, sqlExecutionContext);
+            compile("insert into " + nonPartitionedTable +
+                    " select rnd_str(3,6,2) a, x+20 b from long_sequence(20)", sqlExecutionContext);
+            compile("insert into " + partitionedTable +
+                    " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(20)", sqlExecutionContext);
 
-            // Release readers, but keep the snapshot dir around.
+            // Release all readers and writers, but keep the snapshot dir around.
             snapshotAgent.releaseReaders();
             engine.releaseAllReaders();
             engine.releaseAllWriters();
 
-            snapshotInstanceId = "id2";
+            snapshotInstanceId = restartedId;
 
             DatabaseSnapshotAgent.recoverSnapshot(engine);
 
-            // Data inserted after PREPARE SNAPSHOT should be discarded.
-            assertSql("select count() from " + tableName, "count\n" +
-                    "20\n");
+            // In case of recovery, data inserted after PREPARE SNAPSHOT should be discarded.
+            int expectedCount = expectRecovery ? 20 : 40;
+            assertSql("select count() from " + nonPartitionedTable, "count\n" +
+                    expectedCount + "\n");
+            assertSql("select count() from " + partitionedTable, "count\n" +
+                    expectedCount + "\n");
 
-            // Recovery should delete the snapshot dir.
-            path.trimTo(rootLen);
-            Assert.assertFalse(configuration.getFilesFacade().exists(path));
+            // Recovery should delete the snapshot dir. Otherwise, the dir should be kept as is.
+            path.trimTo(rootLen).slash$();
+            Assert.assertEquals(!expectRecovery, configuration.getFilesFacade().exists(path));
+        });
+    }
+
+    @Ignore("locked readers do not prevent from column file deletion")
+    @Test
+    public void testRecoverSnapshotRestoresDroppedColumns() throws Exception {
+        final String snapshotId = "00000000-0000-0000-0000-000000000000";
+        final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
+        assertMemoryLeak(() -> {
+            snapshotInstanceId = snapshotId;
+
+            final String tableName = "t";
+            compile("create table " + tableName + " as " +
+                            "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))",
+                    sqlExecutionContext);
+
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+
+            final String expectedAllColumns = "a\tb\tc\n" +
+                    "JW\tC\t1\n" +
+                    "WH\tB\t2\n" +
+                    "PE\tB\t3\n";
+            assertSql("select * from " + tableName, expectedAllColumns);
+
+            compile("alter table " + tableName + " drop column b", sqlExecutionContext);
+            assertSql("select * from " + tableName, "a\tc\n" +
+                    "JW\t1\n" +
+                    "WH\t2\n" +
+                    "PE\t3\n");
+
+            // Release all readers and writers, but keep the snapshot dir around.
+            snapshotAgent.releaseReaders();
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            snapshotInstanceId = restartedId;
+
+            DatabaseSnapshotAgent.recoverSnapshot(engine);
+
+            // Dropped column should be there.
+            assertSql("select * from " + tableName, expectedAllColumns);
         });
     }
 }
