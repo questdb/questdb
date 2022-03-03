@@ -29,6 +29,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -70,42 +71,47 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
     @Test
     public void test416() throws IOException, SqlException {
-        doMigration("/migration/data_416.zip", false, false, false);
+        doMigration("/migration/data_416.zip", false, false, false, false);
     }
 
     @Test
     public void test417() throws IOException, SqlException {
-        doMigration("/migration/data_417.zip", true, false, false);
+        doMigration("/migration/data_417.zip", true, false, false, false);
     }
 
     @Test
     public void test419() throws IOException, SqlException {
-        doMigration("/migration/data_419.zip", true, false, false);
+        doMigration("/migration/data_419.zip", true, false, false, false);
     }
 
     @Test
     public void test420() throws IOException, SqlException {
-        doMigration("/migration/data_420.zip", true, false, false);
+        doMigration("/migration/data_420.zip", true, false, false, false);
     }
 
     @Test
     public void test421() throws IOException, SqlException {
-        doMigration("/migration/data_421.zip", true, true, false);
+        doMigration("/migration/data_421.zip", true, true, false, false);
     }
 
     @Test
     public void test422() throws IOException, SqlException {
-        doMigration("/migration/data_422.zip", true, true, false);
+        doMigration("/migration/data_422.zip", true, true, false, false);
     }
 
     @Test
     public void test423() throws IOException, SqlException {
-        doMigration("/migration/data_423.zip", true, true, false);
+        doMigration("/migration/data_423.zip", true, true, false, false);
     }
 
     @Test
     public void test424() throws IOException, SqlException {
-        doMigration("/migration/data_424.zip", true, true, true);
+        doMigration("/migration/data_424.zip", true, true, true, false);
+    }
+
+    @Test
+    public void test425() throws IOException, SqlException {
+        doMigration("/migration/data_425.zip", true, true, true, true);
     }
 
     @Test
@@ -113,7 +119,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
     public void testGenerateTables() throws SqlException, NumericException {
         generateMigrationTables();
         engine.releaseAllWriters();
-        assertData(true, true);
+        assertData(true, true, true);
     }
 
     private static void copyInputStream(byte[] buffer, File out, InputStream is) throws IOException {
@@ -146,7 +152,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 " rnd_bin(2,10, 2) o";
     }
 
-    private void appendData() throws SqlException {
+    private void appendData(boolean withColTopO3) throws SqlException {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
 
@@ -161,9 +167,34 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 appendCommonColumns() +
                 ", timestamp_sequence('2020-01-01', 200000000L) ts" +
                 " from long_sequence(5)", sqlExecutionContext);
+
+        if (withColTopO3) {
+            compiler.compile(
+                    "insert into t_col_top_ooo_day " +
+                            "select " +
+                            " x" +
+                            ", rnd_symbol('a', 'b', 'c', null) m" +
+                            ", timestamp_sequence('1970-01-05T04:25', " + Timestamps.HOUR_MICROS + "L) ts" +
+                            ", rnd_symbol('a', 'b', 'c', null)" +
+                            ", rnd_str()" +
+                            " from long_sequence(10),",
+                    sqlExecutionContext
+            );
+            compiler.compile(
+                    "insert into t_col_top_ooo_day " +
+                            "select " +
+                            " x" +
+                            ", rnd_symbol('a', 'b', 'c', null) m" +
+                            ", timestamp_sequence('1970-01-01T01:27', " + Timestamps.HOUR_MICROS + "L) ts" +
+                            ", rnd_symbol('a', 'b', 'c', null)" +
+                            ", rnd_str()" +
+                            " from long_sequence(36)",
+                    sqlExecutionContext
+            );
+        }
     }
 
-    private void assertAppendedData() throws SqlException {
+    private void assertAppendedData(boolean withColTopO3) throws SqlException {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
         assertSql("select * FROM t_year LIMIT -10",
@@ -178,6 +209,32 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "20\tM\t-7043\t251501\t-85499\t0.9403\t0.9135840078861264\t1977-05-12T19:20:06.113Z\t1969-12-31T23:59:54.045277Z\tHOXL\tbbbbbb\tfalse\tbbbbbb\t0xc3b0de059fff72dbd7b99af08ac0d1cddb2990725a3338e377155edb531cb644\t\t2141-02-13T00:03:20.000000Z\n" +
                         "26\tG\t-24830\t-56840\t-32956\t0.8282\t0.017280895313585898\t1982-07-16T03:52:53.454Z\t1969-12-31T23:59:54.115165Z\tJEJH\taaa\tfalse\tbbbbbb\t0x16f70de9c6af11071d35d9faec5d18fd1cf3bbbc825b72a92ecb8ff0286bf649\t00000000 c2 62 f8 53 7d 05 65\t2147-06-16T19:36:40.000000Z\n" +
                         "127\tY\t19592\t224361\t37963\t0.6930\t0.006817672510656014\t1975-11-29T09:47:45.706Z\t1969-12-31T23:59:56.186242Z\t\t\ttrue\taaa\t0x88926dd483caaf4031096402997f21c833b142e887fa119e380dc9b54493ff70\t00000000 23 c3 9d 75 26 f2 0d b5 7a 3f\t2153-10-17T15:10:00.000000Z\n");
+
+        if (withColTopO3) {
+            TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_ooo_day where день = 'a'", sink,
+                    "x\tm\tts\tдень\tstr\n" +
+                            "1\t\t1970-01-01T01:27:00.000000Z\ta\tTLQZSLQ\n" +
+                            "6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI\n" +
+                            "12\ta\t1970-01-01T12:30:00.000000Z\ta\tJNOXB\n" +
+                            "14\t\t1970-01-01T14:30:00.000000Z\ta\tLJYFXSBNVN\n" +
+                            "16\tb\t1970-01-01T16:30:00.000000Z\ta\tTPUL\n" +
+                            "19\tb\t1970-01-01T19:27:00.000000Z\ta\tTZODWKOCPF\n" +
+                            "21\tb\t1970-01-01T21:30:00.000000Z\ta\tGQWSZMUMXM\n" +
+                            "24\t\t1970-01-02T00:30:00.000000Z\ta\tNTPYXUB\n" +
+                            "31\ta\t1970-01-02T07:27:00.000000Z\ta\tGFI\n" +
+                            "32\ta\t1970-01-02T08:27:00.000000Z\ta\tVZWEV\n" +
+                            "33\tb\t1970-01-02T09:30:00.000000Z\ta\tFLNGCEFBTD\n" +
+                            "34\tb\t1970-01-02T10:30:00.000000Z\ta\tTIGUTKI\n" +
+                            "35\t\t1970-01-02T11:27:00.000000Z\ta\tPTYXYGYFUX\n" +
+                            "1\t\t1970-01-05T02:30:00.000000Z\ta\tHQJHN\n" +
+                            "4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH\n" +
+                            "5\t\t1970-01-05T06:30:00.000000Z\ta\tFVFFOB\n" +
+                            "7\tb\t1970-01-05T10:25:00.000000Z\ta\tHFLPBNH\n" +
+                            "9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD\n" +
+                            "8\t\t1970-01-05T11:25:00.000000Z\ta\tCCNGTNLE\n" +
+                            "10\t\t1970-01-05T11:30:00.000000Z\ta\tKNHV\n" +
+                            "9\ta\t1970-01-05T12:25:00.000000Z\ta\tHIUG\n");
+        }
     }
 
     private void assertColTops() throws SqlException {
@@ -258,7 +315,77 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         "30\td\t1970-01-03T15:23:20.000000Z\t30\n");
     }
 
-    private void assertData(boolean withO3, boolean withColTops) throws SqlException {
+    private void assertColTopsO3() throws SqlException {
+        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_ooo_day where m = 'c' and день = 'a'", sink,
+                "x\tm\tts\tдень\tstr\n" +
+                        "6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI\n" +
+                        "4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH\n" +
+                        "9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD\n");
+
+        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_ooo_day where m != null limit -20", sink,
+                "x\tm\tts\tдень\tstr\n" +
+                        "55\tc\t1970-01-03T07:00:00.000000Z\t\t\n" +
+                        "56\ta\t1970-01-03T08:00:00.000000Z\t\t\n" +
+                        "57\ta\t1970-01-03T09:00:00.000000Z\t\t\n" +
+                        "58\tb\t1970-01-03T10:00:00.000000Z\t\t\n" +
+                        "61\ta\t1970-01-03T13:00:00.000000Z\t\t\n" +
+                        "62\tc\t1970-01-03T14:00:00.000000Z\t\t\n" +
+                        "63\tb\t1970-01-03T15:00:00.000000Z\t\t\n" +
+                        "64\ta\t1970-01-03T16:00:00.000000Z\t\t\n" +
+                        "65\ta\t1970-01-03T17:00:00.000000Z\t\t\n" +
+                        "66\tb\t1970-01-03T18:00:00.000000Z\t\t\n" +
+                        "67\ta\t1970-01-03T19:00:00.000000Z\t\t\n" +
+                        "68\tc\t1970-01-03T20:00:00.000000Z\t\t\n" +
+                        "69\tc\t1970-01-03T21:00:00.000000Z\t\t\n" +
+                        "70\ta\t1970-01-03T22:00:00.000000Z\t\t\n" +
+                        "71\tc\t1970-01-03T23:00:00.000000Z\t\t\n" +
+                        "72\tb\t1970-01-04T00:00:00.000000Z\t\t\n" +
+                        "76\tc\t1970-01-04T04:00:00.000000Z\t\t\n" +
+                        "77\tc\t1970-01-04T05:00:00.000000Z\t\t\n" +
+                        "78\tb\t1970-01-04T06:00:00.000000Z\t\t\n" +
+                        "79\ta\t1970-01-04T07:00:00.000000Z\t\t\n");
+
+        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_ooo_day where день = null and m != null limit -20", sink,
+                "x\tm\tts\tдень\tstr\n" +
+                        "71\tc\t1970-01-03T23:00:00.000000Z\t\t\n" +
+                        "72\tb\t1970-01-04T00:00:00.000000Z\t\t\n" +
+                        "76\tc\t1970-01-04T04:00:00.000000Z\t\t\n" +
+                        "77\tc\t1970-01-04T05:00:00.000000Z\t\t\n" +
+                        "78\tb\t1970-01-04T06:00:00.000000Z\t\t\n" +
+                        "79\ta\t1970-01-04T07:00:00.000000Z\t\t\n" +
+                        "81\tc\t1970-01-04T09:00:00.000000Z\t\t\n" +
+                        "82\tc\t1970-01-04T10:00:00.000000Z\t\t\n" +
+                        "84\ta\t1970-01-04T12:00:00.000000Z\t\t\n" +
+                        "85\tb\t1970-01-04T13:00:00.000000Z\t\t\n" +
+                        "86\tb\t1970-01-04T14:00:00.000000Z\t\t\n" +
+                        "87\tb\t1970-01-04T15:00:00.000000Z\t\t\n" +
+                        "88\tc\t1970-01-04T16:00:00.000000Z\t\t\n" +
+                        "89\tc\t1970-01-04T17:00:00.000000Z\t\t\n" +
+                        "90\ta\t1970-01-04T18:00:00.000000Z\t\t\n" +
+                        "92\ta\t1970-01-04T20:00:00.000000Z\t\t\n" +
+                        "93\tb\t1970-01-04T21:00:00.000000Z\t\t\n" +
+                        "94\ta\t1970-01-04T22:00:00.000000Z\t\t\n" +
+                        "96\ta\t1970-01-05T00:00:00.000000Z\t\t\n" +
+                        "7\tc\t1970-01-05T08:30:00.000000Z\t\tGNVZWJR\n");
+
+        TestUtils.assertSql(compiler, sqlExecutionContext, "t_col_top_ooo_day where день = 'a'", sink,
+                "x\tm\tts\tдень\tstr\n" +
+                        "6\tc\t1970-01-01T06:30:00.000000Z\ta\tSFCI\n" +
+                        "12\ta\t1970-01-01T12:30:00.000000Z\ta\tJNOXB\n" +
+                        "14\t\t1970-01-01T14:30:00.000000Z\ta\tLJYFXSBNVN\n" +
+                        "16\tb\t1970-01-01T16:30:00.000000Z\ta\tTPUL\n" +
+                        "21\tb\t1970-01-01T21:30:00.000000Z\ta\tGQWSZMUMXM\n" +
+                        "24\t\t1970-01-02T00:30:00.000000Z\ta\tNTPYXUB\n" +
+                        "33\tb\t1970-01-02T09:30:00.000000Z\ta\tFLNGCEFBTD\n" +
+                        "34\tb\t1970-01-02T10:30:00.000000Z\ta\tTIGUTKI\n" +
+                        "1\t\t1970-01-05T02:30:00.000000Z\ta\tHQJHN\n" +
+                        "4\tc\t1970-01-05T05:30:00.000000Z\ta\tXRGUOXFH\n" +
+                        "5\t\t1970-01-05T06:30:00.000000Z\ta\tFVFFOB\n" +
+                        "9\tc\t1970-01-05T10:30:00.000000Z\ta\tLEQD\n" +
+                        "10\t\t1970-01-05T11:30:00.000000Z\ta\tKNHV\n");
+    }
+
+    private void assertData(boolean withO3, boolean withColTops, boolean withColTopO3) throws SqlException {
         assertNoneNts();
         assertNone();
         assertDay();
@@ -271,6 +398,9 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         }
         if (withColTops) {
             assertColTops();
+        }
+        if (withColTopO3) {
+            assertColTopsO3();
         }
     }
 
@@ -1090,15 +1220,15 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                 " rnd_bin(2,10, 2) o";
     }
 
-    private void doMigration(String dataZip, boolean freeTableId, boolean withO3, boolean withColTops) throws IOException, SqlException {
+    private void doMigration(String dataZip, boolean freeTableId, boolean withO3, boolean withColTops, boolean withColTopO3) throws IOException, SqlException {
         if (freeTableId) {
             engine.freeTableId();
         }
         replaceDbContent(dataZip);
         EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, true);
-        assertData(withO3, withColTops);
-        appendData();
-        assertAppendedData();
+        assertData(withO3, withColTops, withColTopO3);
+        appendData(withColTopO3);
+        assertAppendedData(withColTopO3);
     }
 
     private void generateMigrationTables() throws SqlException, NumericException {
@@ -1295,6 +1425,41 @@ public class EngineMigrationTest extends AbstractGriffinTest {
                         ", timestamp_sequence(200000000L + 10 * 20000000000L, 2000000000L) ts" +
                         ", x + 15 as y" +
                         " from long_sequence(15)",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table t_col_top_ooo_day as (" +
+                        "select " +
+                        " x" +
+                        ", rnd_symbol('a', 'b', 'c', null) m" +
+                        ", timestamp_sequence('1970-01-01T01', " + Timestamps.HOUR_MICROS + "L) ts" +
+                        " from long_sequence(96)," +
+                        "), index(m) timestamp(ts) partition by DAY",
+                sqlExecutionContext
+        );
+        compiler.compile("alter table t_col_top_ooo_day add column день symbol", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table t_col_top_ooo_day add column str string", sqlExecutionContext).execute(null).await();
+        compiler.compile(
+                "insert into t_col_top_ooo_day " +
+                        "select " +
+                        " x" +
+                        ", rnd_symbol('a', 'b', 'c', null) m" +
+                        ", timestamp_sequence('1970-01-05T02:30', " + Timestamps.HOUR_MICROS + "L) ts" +
+                        ", rnd_symbol('a', 'b', 'c', null)" +
+                        ", rnd_str()" +
+                        " from long_sequence(10),",
+                sqlExecutionContext
+        );
+        compiler.compile(
+                "insert into t_col_top_ooo_day " +
+                        "select " +
+                        " x" +
+                        ", rnd_symbol('a', 'b', 'c', null) m" +
+                        ", timestamp_sequence('1970-01-01T01:30', " + Timestamps.HOUR_MICROS + "L) ts" +
+                        ", rnd_symbol('a', 'b', 'c', null)" +
+                        ", rnd_str()" +
+                        " from long_sequence(36)",
                 sqlExecutionContext
         );
     }

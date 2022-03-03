@@ -22,41 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.vm;
 
-import io.questdb.cairo.vm.api.MemoryMA;
-import io.questdb.cairo.vm.api.MemoryR;
-import io.questdb.std.str.Path;
+import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
 
-public interface ColumnIndexer {
-    void distress();
+public class MemoryFMCRImpl extends MemoryFCRImpl implements MemoryMR {
+    @Override
+    public boolean isMapped(long offset, long len) {
+        return false;
+    }
 
-    long getFd();
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+        throw new UnsupportedOperationException();
+    }
 
-    long getSequence();
-
-    void refreshSourceAndIndex(long loRow, long hiRow);
-
-    void index(MemoryR mem, long loRow, long hiRow);
-
-    BitmapIndexWriter getWriter();
-
-    boolean isDistressed();
-
-    void configureFollowerAndWriter(
-            CairoConfiguration configuration,
-            Path path,
-            CharSequence name,
-            long columnNameTxn,
-            MemoryMA columnMem,
-            long columnTop
-    );
-
-    void configureWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long columnTop);
-
-    void closeSlider();
-
-    void rollback(long maxRow);
-
-    boolean tryLock(long expectedSequence);
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
+        throw new UnsupportedOperationException();
+    }
 }

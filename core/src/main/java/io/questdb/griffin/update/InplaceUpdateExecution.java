@@ -144,38 +144,6 @@ public class InplaceUpdateExecution implements Closeable {
         }
     }
 
-    private void initUpdateMemory(int columnCount) {
-        for (int i = updateMemory.size(); i < columnCount; i++) {
-            updateMemory.add(Vm.getCMARWInstance());
-        }
-    }
-
-    private void openPartitionColumnsForUpdate(TableWriter tableWriter, ObjList<MemoryCMARW> updateMemory, int partitionIndex, IntList columnMap) {
-        long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
-        RecordMetadata metadata = tableWriter.getMetadata();
-        try {
-            path.concat(tableWriter.getTableName());
-            TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, false);
-            int pathTrimToLen = path.length();
-
-            for (int i = 0, n = columnMap.size(); i < n; i++) {
-                CharSequence name = metadata.getColumnName(columnMap.get(i));
-                MemoryCMARW colMem = updateMemory.get(i);
-                colMem.close(false);
-                colMem.of(
-                        ff,
-                        dFile(path.trimTo(pathTrimToLen), name),
-                        dataAppendPageSize,
-                        -1,
-                        MemoryTag.MMAP_TABLE_WRITER,
-                        fileOpenOpts
-                );
-            }
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
     private void updateColumnValues(
             RecordMetadata metadata,
             IntList updateToColumnMap,
@@ -234,6 +202,40 @@ public class InplaceUpdateExecution implements Closeable {
                             .put(ColumnType.nameOf(columnType))
                             .put(" not supported for updates");
             }
+        }
+    }
+
+    private void initUpdateMemory(int columnCount) {
+        for(int i = updateMemory.size(); i < columnCount; i++) {
+            updateMemory.add(Vm.getCMARWInstance());
+        }
+    }
+
+    private void openPartitionColumnsForUpdate(TableWriter tableWriter, ObjList<MemoryCMARW> updateMemory, int partitionIndex, IntList columnMap) {
+        long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
+        RecordMetadata metadata = tableWriter.getMetadata();
+        try {
+            path.concat(tableWriter.getTableName());
+            TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, false);
+            int pathTrimToLen = path.length();
+
+            for (int i = 0, n = columnMap.size(); i < n; i++) {
+                int columnIndex = columnMap.get(i);
+                CharSequence name = metadata.getColumnName(columnMap.get(i));
+                MemoryCMARW colMem = updateMemory.get(i);
+                colMem.close(false);
+                long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+                colMem.of(
+                        ff,
+                        dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
+                        dataAppendPageSize,
+                        -1,
+                        MemoryTag.MMAP_TABLE_WRITER,
+                        fileOpenOpts
+                );
+            }
+        } finally {
+            path.trimTo(rootLen);
         }
     }
 }

@@ -194,7 +194,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                             .$("purging [ts=")
                             .$ts(partitionTimestamp)
                             .$(", nameTxn=").$(previousNameVersion - 1)
-                            .$(", nameTxnNext=").$(nextNameVersion)
+                            .$(", nameTxnNext=").$(nextNameVersion - 1)
                             .$(", lastCommittedPartitionName=").$(lastCommittedPartitionName)
                             .I$();
                     deletePartitionDirectory(
