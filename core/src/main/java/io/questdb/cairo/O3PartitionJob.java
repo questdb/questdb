@@ -769,7 +769,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         final TableWriterMetadata metadata = tableWriter.getMetadata();
         final int columnCount = metadata.getColumnCount();
-        columnCounter.set(metadata.getDenseColumnCounter());
+        columnCounter.set(metadata.getDenseColumnCount());
         int columnsInFlight = columnCount;
         if (openColumnMode == OPEN_LAST_PARTITION_FOR_MERGE || openColumnMode == OPEN_MID_PARTITION_FOR_MERGE) {
             // Partition will be re-written. Jobs will set new column top values but by default they are 0

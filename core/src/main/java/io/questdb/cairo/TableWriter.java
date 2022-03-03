@@ -2619,7 +2619,7 @@ public class TableWriter implements Closeable {
                                 throw e;
                             }
 
-                            columnCounter.set(metadata.getDenseColumnCounter());
+                            columnCounter.set(metadata.getDenseColumnCount());
                             Path pathToPartition = Path.getThreadLocal(this.path);
                             TableUtils.setPathForPartition(pathToPartition, partitionBy, o3TimestampMin, false);
                             TableUtils.txnPartitionConditionally(pathToPartition, srcNameTxn);

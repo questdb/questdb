@@ -89,7 +89,6 @@ public class ColumnVersionReader implements Closeable, Mutable {
 
     public long getColumnTopPartitionTimestamp(int columnIndex) {
         int index = getRecordIndex(COL_TOP_DEFAULT_PARTITION, columnIndex);
-        // Column top place is used to store partition timestamp when column is added in COL_TOP_DEFAULT_PARTITION record
         return index > -1 ? getColumnTopByIndex(index) : Long.MIN_VALUE;
     }
 

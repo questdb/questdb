@@ -85,7 +85,7 @@ public class TableWriterMetadata extends BaseRecordMetadata {
         return commitLag;
     }
 
-    public int getDenseColumnCounter() {
+    public int getDenseColumnCount() {
         int count = 0;
         for (int i = 0; i < columnCount; i++) {
             if (columnMetadata.getQuick(i).getType() > 0) {
