@@ -38,10 +38,14 @@ public class DefaultTextConfiguration implements TextConfiguration {
     private final InputFormatConfiguration inputFormatConfiguration;
 
     public DefaultTextConfiguration() {
-        this("/text_loader.json");
+        this(null);
     }
 
-    public DefaultTextConfiguration(String resourceName) {
+    public DefaultTextConfiguration(String confRoot) {
+        this(confRoot, "/text_loader.json");
+    }
+
+    public DefaultTextConfiguration(String confRoot, String resourceName) {
         this.inputFormatConfiguration = new InputFormatConfiguration(
                 new DateFormatFactory(),
                 DateLocaleFactory.INSTANCE,
@@ -50,7 +54,7 @@ public class DefaultTextConfiguration implements TextConfiguration {
         );
 
         try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
-            inputFormatConfiguration.parseConfiguration(lexer, resourceName);
+            inputFormatConfiguration.parseConfiguration(lexer, confRoot, resourceName);
         } catch (JsonException e) {
             throw new CairoError(e);
         }
