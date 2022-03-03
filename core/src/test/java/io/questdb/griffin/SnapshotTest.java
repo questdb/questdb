@@ -271,7 +271,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                 compiler.compile("snapshot prepare", sqlExecutionContext);
                 Assert.fail();
             } catch (CairoException ex) {
-                Assert.assertTrue(ex.getMessage().startsWith("[0] Could not sync"));
+                Assert.assertTrue(ex.getMessage().contains("Could not sync"));
             }
 
             // Once the error is gone, subsequent PREPARE/COMPLETE statements should execute successfully.

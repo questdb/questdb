@@ -106,10 +106,8 @@ public class DatabaseSnapshotAgent implements Closeable {
             final int tableNameIndex = factory.getMetadata().getColumnIndex(TableListRecordCursorFactory.TABLE_NAME_COLUMN);
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 final Record record = cursor.getRecord();
-                // We need directory's fd to fsync it later.
-                path.trimTo(snapshotLen).$();
-                final long snapshotDirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path, LOG) : 0;
                 try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+                    // Copy metadata files for all tables.
                     while (cursor.hasNext()) {
                         CharSequence tableName = record.getStr(tableNameIndex);
                         TableReader reader = engine.getReaderForStatement(executionContext, tableName, "snapshot");
@@ -134,30 +132,19 @@ public class DatabaseSnapshotAgent implements Closeable {
                         LOG.info().$("snapshot copied [table=").$(tableName).$(']').$();
                     }
 
+                    // Write instance id to the snapshot metadata file.
+                    path.trimTo(snapshotLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME).$();
+                    mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                    mem.putStr(0, configuration.getSnapshotInstanceId());
+                    mem.close(false);
+
                     // Flush dirty pages and filesystem metadata to disk
                     if (ff.sync() != 0) {
                         throw CairoException.instance(ff.errno()).put("Could not sync");
                     }
 
-                    // Write instance id to the snapshot metadata file.
-                    path.trimTo(snapshotLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME).$();
-                    mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-                    mem.putStr(0, configuration.getSnapshotInstanceId());
-                    mem.sync(false);
-                    mem.close(false);
-
-                    // It is important to fsync parent directory's metadata to make sure that
-                    // the snapshot metadata file is included into the snapshot.
-                    if (snapshotDirFd > 0) {
-                        if (ff.fsync(snapshotDirFd) != 0) {
-                            LOG.error()
-                                    .$("could not fsync [fd=").$(snapshotDirFd)
-                                    .$(", errno=").$(ff.errno())
-                                    .$(']').$();
-                        }
-                    }
-
                     snapshotInProgress = true;
+                    LOG.info().$("snapshot copying finished").$();
                 } catch (Throwable e) {
                     Misc.freeObjList(snapshotReaders);
                     snapshotReaders.clear();
@@ -165,10 +152,6 @@ public class DatabaseSnapshotAgent implements Closeable {
                             .$("snapshot prepare error [e=").$(e)
                             .I$();
                     throw e;
-                } finally {
-                    if (snapshotDirFd > 0) {
-                        ff.close(snapshotDirFd);
-                    }
                 }
             }
         }
