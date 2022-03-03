@@ -66,7 +66,7 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSnapshotPrepareCopiesValidTableMetadata() throws Exception {
+    public void testSnapshotPrepareCheckTableMetadata() throws Exception {
         assertMemoryLeak(() -> {
             snapshotInstanceId = "foobar";
 
@@ -145,16 +145,16 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSnapshotPrepareCreatesMetadataFileForDefaultInstanceId() throws Exception {
-        testSnapshotPrepareCreatesMetadataFile(null);
+    public void testSnapshotPrepareCheckMetadataFileForDefaultInstanceId() throws Exception {
+        testSnapshotPrepareCheckMetadataFile(null);
     }
 
     @Test
-    public void testSnapshotPrepareCreatesMetadataFileForNonDefaultInstanceId() throws Exception {
-        testSnapshotPrepareCreatesMetadataFile("foobar");
+    public void testSnapshotPrepareCheckMetadataFileForNonDefaultInstanceId() throws Exception {
+        testSnapshotPrepareCheckMetadataFile("foobar");
     }
 
-    private void testSnapshotPrepareCreatesMetadataFile(String snapshotId) throws Exception {
+    private void testSnapshotPrepareCheckMetadataFile(String snapshotId) throws Exception {
         assertMemoryLeak(() -> {
             snapshotInstanceId = snapshotId;
 
@@ -242,7 +242,7 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSnapshotUnknownSubOption() throws Exception {
+    public void testSnapshotUnknownSubOptionFails() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
             try {
