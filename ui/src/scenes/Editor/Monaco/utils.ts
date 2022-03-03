@@ -277,57 +277,93 @@ const getTextFixes = ({
   model: ReturnType<typeof editor.getModel>
   position: IPosition
 }) => {
-  const isLastLine = position.lineNumber === model?.getLineCount()
+  const isFirstLine = position.lineNumber === 1
+  const isLastLine =
+    position.lineNumber === model?.getValue().split("\n").length
   const lineAtCursor = model?.getLineContent(position.lineNumber)
-
-  const char = "\n"
+  const nextLine = isLastLine
+    ? undefined
+    : model?.getLineContent(position.lineNumber + 1)
+  const inMiddle = !isFirstLine && !isLastLine
 
   type Rule = {
     when: () => boolean
-    then: () => { prefix: number; suffix: number }
+    then: () => {
+      prefix?: number
+      suffix?: number
+      lineStartOffset?: number
+      selectStartOffset?: number
+    }
+  }
+
+  const defaultResult = {
+    prefix: 1,
+    suffix: 2,
+    lineStartOffset: 1,
+    selectStartOffset: 0,
   }
 
   const rules: Rule[] = [
-    // editor is empty
     {
       when: () => model?.getValue() === "",
-      then: () => ({ prefix: 0, suffix: 1 }),
+      then: () => ({ prefix: 0, suffix: 1, lineStartOffset: 0 }),
     },
 
-    // cursor in middle of the code, but the current line is empty
     {
-      when: () => !isLastLine && lineAtCursor === "",
-      then: () => ({ prefix: 0, suffix: 2 }),
+      when: () => isFirstLine && lineAtCursor === "",
+      then: () => ({
+        prefix: 0,
+        lineStartOffset: 0,
+        suffix: nextLine === "" ? 0 : 1,
+      }),
     },
 
-    // cursor is in middle of the code, and current line is not empty
     {
-      when: () => !isLastLine && lineAtCursor !== "",
+      when: () => isFirstLine && lineAtCursor !== "",
+      then: () => ({
+        prefix: 1,
+        suffix: 1,
+        selectStartOffset: 1,
+      }),
+    },
+
+    {
+      when: () => inMiddle && lineAtCursor === "",
+      then: () => ({
+        prefix: 0,
+        suffix: nextLine === "" ? 1 : 2,
+      }),
+    },
+
+    {
+      when: () => inMiddle && lineAtCursor !== "" && nextLine !== "",
       then: () => ({ prefix: 1, suffix: 2 }),
     },
 
-    // cursor is at the last line, which is empty
     {
-      when: () => isLastLine && lineAtCursor === "",
+      when: () => inMiddle && lineAtCursor !== "",
       then: () => ({ prefix: 1, suffix: 1 }),
     },
 
-    // cursor is at the last line, which is not empty
     {
-      when: () => isLastLine && lineAtCursor !== "",
-      then: () => ({ prefix: 2, suffix: 1 }),
+      when: () => isLastLine,
+      then: () => ({
+        prefix: lineAtCursor === "" ? 1 : 2,
+        suffix: 1,
+        lineStartOffset: 1,
+        selectStartOffset: lineAtCursor === "" ? 0 : 1,
+      }),
     },
   ]
 
-  const defaultThen = {
-    then: () => ({ prefix: 0, suffix: 0 }),
-  }
-
-  const { prefix, suffix } = (
-    rules.find(({ when }) => when()) ?? defaultThen
+  const result = (
+    rules.find(({ when }) => when()) ?? { then: () => defaultResult }
   ).then()
 
-  return { prefix: char.repeat(prefix), suffix: char.repeat(suffix) }
+  return {
+    ...defaultResult,
+    ...result,
+  }
 }
 
 export const appendQuery = (editor: IStandaloneCodeEditor, query: string) => {
@@ -339,34 +375,56 @@ export const appendQuery = (editor: IStandaloneCodeEditor, query: string) => {
       const isLineEmpty = model.getLineContent(position.lineNumber) === ""
       const newLines = query.split("\n")
 
+      const {
+        prefix,
+        suffix,
+        lineStartOffset,
+        selectStartOffset,
+      } = getTextFixes({
+        model,
+        position,
+      })
+
       const positionInsert = {
-        lineStart: position.lineNumber + 1,
-        lineEnd: position.lineNumber + newLines.length,
+        lineStart: position.lineNumber + lineStartOffset,
+        lineEnd: position.lineNumber + (isLineEmpty ? 0 : 1) + newLines.length,
         columnStart: 0,
         columnEnd: newLines.sort((a, b) => b.length - a.length)[0].length + 1,
       }
 
       const positionSelect = {
-        lineStart: positionInsert.lineStart + (isLineEmpty ? 0 : 1),
-        lineEnd: positionInsert.lineEnd + (isLineEmpty ? 0 : 1),
+        lineStart: position.lineNumber + lineStartOffset + selectStartOffset,
+        lineEnd:
+          position.lineNumber +
+          lineStartOffset +
+          selectStartOffset +
+          (newLines.length - 1),
         columnStart: 0,
         columnEnd: positionInsert.columnEnd,
       }
 
-      const { prefix, suffix } = getTextFixes({ model, position })
+      const [prefixString, suffixString] = [
+        "\n".repeat(prefix),
+        "\n".repeat(suffix),
+      ]
+
+      const newQuery = `${prefixString}${query}${suffixString}`
+
+      console.log(JSON.stringify({ positionInsert, positionSelect }))
+      console.log(newQuery)
 
       insertText({
         editor,
         lineNumber: positionInsert.lineStart,
         column: positionInsert.columnStart,
-        text: `${prefix}${query}${suffix}`,
+        text: newQuery,
       })
 
       editor.setSelection({
-        startColumn: positionSelect.columnStart,
-        endColumn: positionSelect.columnEnd,
         startLineNumber: positionSelect.lineStart,
         endLineNumber: positionSelect.lineEnd,
+        startColumn: positionSelect.columnStart,
+        endColumn: positionSelect.columnEnd,
       })
     }
     editor.focus()
