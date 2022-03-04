@@ -82,6 +82,7 @@ public class TableSyncModel implements Mutable, Sinkable {
     }
 
     public void addColumnMetadata(TableColumnMetadata columnMetadata) {
+        assert columnMetadata.getType() > 0;
         this.addedColumnMetadata.add(columnMetadata);
     }
 

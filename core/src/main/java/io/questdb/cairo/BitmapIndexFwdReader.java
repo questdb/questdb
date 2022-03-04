@@ -40,10 +40,11 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
             CairoConfiguration configuration,
             Path path,
             CharSequence name,
+            long columnNameTxn,
             long unIndexedNullCount,
             long partitionTxn
     ) {
-        of(configuration, path, name, unIndexedNullCount, partitionTxn);
+        of(configuration, path, name, columnNameTxn, unIndexedNullCount, partitionTxn);
     }
 
     // test only
@@ -51,9 +52,10 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
             CairoConfiguration configuration,
             Path path,
             CharSequence name,
+            long columnNameTxn,
             long unIndexedNullCount
     ) {
-        of(configuration, path, name, unIndexedNullCount, -1);
+        of(configuration, path, name, columnNameTxn, unIndexedNullCount, -1);
     }
 
     @Override

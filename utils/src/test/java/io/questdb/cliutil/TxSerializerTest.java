@@ -140,7 +140,6 @@ public class TxSerializerTest {
         testRoundTxnSerialization(createTableSql, true);
     }
 
-
     @Test
     public void testPartitionedNoneWithTimestamp() throws SqlException {
         String createTableSql = "create table xxx as (" +

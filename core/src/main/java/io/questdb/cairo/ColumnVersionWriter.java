@@ -25,36 +25,68 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 
-import java.io.Closeable;
-
-public class ColumnVersionWriter implements Closeable {
-    public static final int OFFSET_AREA = 0;
-    public static final int OFFSET_OFFSET_A = 8;
-    public static final int OFFSET_SIZE_A = 16;
-    public static final int OFFSET_OFFSET_B = 24;
-    public static final int OFFSET_SIZE_B = 32;
-    public static final int BLOCK_SIZE = 4;
-    public static final int BLOCK_SIZE_BYTES = BLOCK_SIZE * Long.BYTES;
-    public static final int BLOCK_SIZE_MSB = Numbers.msb(BLOCK_SIZE);
-    private final MemoryMARW mem;
-    private final LongList cachedList = new LongList();
+public class ColumnVersionWriter extends ColumnVersionReader {
+    private final MemoryCMARW mem;
+    private long version;
     private long size;
-    private long transientOffset;
-    private long transientSize;
+    private boolean hasChanges;
 
     // size should be read from the transaction file
     // it can be zero when there are no columns deviating from the main
     // data branch
     public ColumnVersionWriter(FilesFacade ff, LPSZ fileName, long size) {
         this.mem = Vm.getCMARWInstance(ff, fileName, ff.getPageSize(), size, MemoryTag.MMAP_TABLE_READER, CairoConfiguration.O_NONE);
-        this.size = size;
+        this.size = this.mem.size();
+        super.ofRO(mem);
+        if (this.size > 0) {
+            this.version = super.readUnsafe();
+        }
+    }
+
+    @Override
+    public void close() {
+        mem.close(false);
+    }
+
+    @Override
+    public void clear() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getVersion() {
+        return version;
+    }
+
+    public void commit() {
+        if (!hasChanges) {
+            return;
+        }
+        doCommit();
+        hasChanges = false;
+    }
+
+    public long getOffsetA() {
+        return mem.getLong(OFFSET_OFFSET_A_64);
+    }
+
+    public long getOffsetB() {
+        return mem.getLong(OFFSET_OFFSET_B_64);
+    }
+
+    public void removeColumnTop(long partitionTimestamp, int columnIndex) {
+        int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);
+        if (recordIndex >= 0) {
+            getCachedList().setQuick(recordIndex + 3, 0);
+            hasChanges = true;
+        }
     }
 
     /**
@@ -62,11 +94,13 @@ public class ColumnVersionWriter implements Closeable {
      * commit() call. In cache and on disk entries are maintained in ascending chronological order of partition
      * timestamps and ascending column index order within each timestamp.
      *
-     * @param timestamp     partition timestamp
-     * @param columnIndex   column index
-     * @param columnVersion column version.
+     * @param timestamp   partition timestamp
+     * @param columnIndex column index
+     * @param txn         column file txn name
+     * @param columnTop   column top
      */
-    public void upsert(long timestamp, int columnIndex, long columnVersion) {
+    public void upsert(long timestamp, int columnIndex, long txn, long columnTop) {
+        LongList cachedList = getCachedList();
         final int sz = cachedList.size();
         int index = cachedList.binarySearchBlock(BLOCK_SIZE_MSB, timestamp, BinarySearch.SCAN_UP);
         boolean insert = true;
@@ -76,7 +110,10 @@ public class ColumnVersionWriter implements Closeable {
                 final long thisIndex = cachedList.getQuick(index + 1);
 
                 if (thisIndex == columnIndex) {
-                    cachedList.setQuick(index + 2, columnVersion);
+                    if (txn > -1) {
+                        cachedList.setQuick(index + 2, txn);
+                    }
+                    cachedList.setQuick(index + 3, columnTop);
                     insert = false;
                     break;
                 }
@@ -100,116 +137,40 @@ public class ColumnVersionWriter implements Closeable {
             }
             cachedList.setQuick(index, timestamp);
             cachedList.setQuick(index + 1, columnIndex);
-            cachedList.setQuick(index + 2, columnVersion);
+            cachedList.setQuick(index + 2, txn);
+            cachedList.setQuick(index + 3, columnTop);
         }
+        hasChanges = true;
     }
 
-    @Override
-    public void close() {
-        mem.close();
-    }
-
-    public void commit() {
-        // + 8 is the A/B switch at top of the file, it is 8 bytes to keep data aligned
-        // + 8 is the offset of A area
-        // + 8 is the length of A area
-        // + 8 is the offset of B area
-        // + 8 is the length of B area
-        final long headerSize = 8 + 8 + 8 + 8 + 8;
-        // calculate the area size required to store the versions
-        // we're assuming that 'columnVersions' contains 4 longs per entry
-        final int entryCount = cachedList.size() / BLOCK_SIZE;
-        // We're storing 4 longs per entry in the file
-        final long areaSize = entryCount * 4 * 8L;
-
-        if (size == 0) {
-            // This is initial write, include header size into the resize
-            bumpFileSize(headerSize + areaSize);
-            // writing A group
-            store(entryCount, headerSize);
-            // We update transient offset and size here
-            // the important values are for area 'A'.
-            // This is the reason 'B' is updated first so that
-            // 'A' overwrites transient values
-            updateB(headerSize + areaSize, 0);
-            updateA(headerSize, areaSize);
-            switchToA();
-            this.size = areaSize + headerSize;
+    public void upsertColumnTop(long partitionTimestamp, int columnIndex, long colTop) {
+        int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);
+        LongList cachedList = getCachedList();
+        if (recordIndex > -1L) {
+            cachedList.setQuick(recordIndex + 3, colTop);
+            hasChanges = true;
         } else {
-            long aOffset = getOffsetA();
-            final long aSize = getSizeA();
-            long bOffset = getOffsetB();
-            final long bSize = getSizeB();
-
-            if (isB()) {
-                // we have to write 'A' area, which may not be big enough
-
-                // is area 'A' above 'B' ?
-                if (aOffset < bOffset) {
-                    if (aSize <= bOffset - headerSize) {
-                        aOffset = headerSize;
-                    } else {
-                        aOffset = bOffset + bSize;
-                        bumpFileSize(aOffset + areaSize);
-                    }
+            // This is a 0 column top record we need to store it
+            // to mark that the column is written in O3 even before the partition the column was originally added
+            int defaultRecordIndex = getRecordIndex(COL_TOP_DEFAULT_PARTITION, columnIndex);
+            if (defaultRecordIndex >= 0) {
+                long columnNameTxn = cachedList.getQuick(defaultRecordIndex + 2);
+                long defaultPartitionTimestamp = cachedList.getQuick(defaultRecordIndex + 3);
+                // Do not add 0 column top if the default parttion
+                if (defaultPartitionTimestamp > partitionTimestamp || colTop > 0) {
+                    upsert(partitionTimestamp, columnIndex, columnNameTxn, colTop);
                 }
-                store(entryCount, aOffset);
-                // update offsets of 'A'
-                updateA(aOffset, areaSize);
-                // switch to 'A'
-                switchToA();
-            } else {
-                // current is 'A'
-                // check if 'A' wound up below 'B'
-                if (aOffset > bOffset) {
-                    // check if 'B' bits between top and 'A'
-                    if (areaSize <= aOffset - headerSize) {
-                        bOffset = headerSize;
-                    } else {
-                        // 'B' does not fit between top and 'A'
-                        bOffset = aOffset + aSize;
-                        bumpFileSize(bOffset + areaSize);
-                    }
-                } else {
-                    // check if file is big enough
-                    if (bSize < areaSize) {
-                        bumpFileSize(bOffset + areaSize);
-                    }
-                }
-                // if 'B' is last we just overwrite it
-                store(entryCount, bOffset);
-                updateB(bOffset, areaSize);
-                switchToB();
+            } else if (colTop > 0) {
+                // Store non-zero column tops only, zero is default
+                // for columns added on the table creation
+                upsert(partitionTimestamp, columnIndex, -1L, colTop);
             }
         }
     }
 
-    public long getOffset() {
-        return transientOffset;
-    }
-
-    public long getOffsetA() {
-        return mem.getLong(OFFSET_OFFSET_A);
-    }
-
-    public long getOffsetB() {
-        return mem.getLong(OFFSET_OFFSET_B);
-    }
-
-    public long getSize() {
-        return transientSize;
-    }
-
-    public long getSizeA() {
-        return mem.getLong(OFFSET_SIZE_A);
-    }
-
-    public long getSizeB() {
-        return mem.getLong(OFFSET_SIZE_B);
-    }
-
-    public boolean isB() {
-        return (char) mem.getByte(OFFSET_AREA) == 'B';
+    public void upsertDefaultTxnName(int columnIndex, long columnNameTxn, long partitionTimestamp) {
+        // When table is partitioned, use columnTop place to store the timestamp of the partition where the column added
+        upsert(COL_TOP_DEFAULT_PARTITION, columnIndex, columnNameTxn, partitionTimestamp);
     }
 
     private void bumpFileSize(long size) {
@@ -217,11 +178,55 @@ public class ColumnVersionWriter implements Closeable {
         this.size = size;
     }
 
-    LongList getCachedList() {
-        return cachedList;
+    private long calculateSize(int entryCount) {
+        // calculate the area size required to store the versions
+        // we're assuming that 'columnVersions' contains 4 longs per entry
+        // We're storing 4 longs per entry in the file
+        return (long) entryCount * BLOCK_SIZE_BYTES;
+    }
+
+    private long calculateWriteOffset(long areaSize) {
+        boolean currentIsA = isCurrentA();
+        long currentOffset = currentIsA ? getOffsetA() : getOffsetB();
+        currentOffset = Math.max(currentOffset, HEADER_SIZE);
+        if (HEADER_SIZE + areaSize <= currentOffset) {
+            return HEADER_SIZE;
+        }
+        long currentSize = currentIsA ? getSizeA() : getSizeB();
+        return currentOffset + currentSize;
+    }
+
+    private void doCommit() {
+        LongList cachedList = getCachedList();
+        int entryCount = cachedList.size() / BLOCK_SIZE;
+        long areaSize = calculateSize(entryCount);
+        long writeOffset = calculateWriteOffset(areaSize);
+        bumpFileSize(writeOffset + areaSize);
+        store(entryCount, writeOffset);
+        if (isCurrentA()) {
+            updateB(writeOffset, areaSize);
+        } else {
+            updateA(writeOffset, areaSize);
+        }
+
+        Unsafe.getUnsafe().storeFence();
+        storeNewVersion();
+    }
+
+    private long getSizeA() {
+        return mem.getLong(OFFSET_SIZE_A_64);
+    }
+
+    private long getSizeB() {
+        return mem.getLong(OFFSET_SIZE_B_64);
+    }
+
+    private boolean isCurrentA() {
+        return (version & 1L) == 0L;
     }
 
     private void store(int entryCount, long offset) {
+        LongList cachedList = getCachedList();
         for (int i = 0; i < entryCount; i++) {
             int x = i * BLOCK_SIZE;
             mem.putLong(offset, cachedList.getQuick(x));
@@ -232,25 +237,21 @@ public class ColumnVersionWriter implements Closeable {
         }
     }
 
-    private void switchToA() {
-        mem.putLong(OFFSET_AREA, (byte) 'A');
-    }
-
-    private void switchToB() {
-        mem.putLong(OFFSET_AREA, (byte) 'B');
+    private void storeNewVersion() {
+        mem.putLong(OFFSET_VERSION_64, ++this.version);
     }
 
     private void updateA(long aOffset, long aSize) {
-        mem.putLong(OFFSET_OFFSET_A, aOffset);
-        mem.putLong(OFFSET_SIZE_A, aSize);
-        this.transientOffset = aOffset;
-        this.transientSize = aSize;
+        mem.putLong(OFFSET_OFFSET_A_64, aOffset);
+        mem.putLong(OFFSET_SIZE_A_64, aSize);
     }
 
     private void updateB(long bOffset, long bSize) {
-        mem.putLong(OFFSET_OFFSET_B, bOffset);
-        mem.putLong(OFFSET_SIZE_B, bSize);
-        this.transientOffset = bOffset;
-        this.transientSize = bSize;
+        mem.putLong(OFFSET_OFFSET_B_64, bOffset);
+        mem.putLong(OFFSET_SIZE_B_64, bSize);
+    }
+
+    static {
+        assert HEADER_SIZE == TableUtils.COLUMN_VERSION_FILE_HEADER_SIZE;
     }
 }

@@ -38,13 +38,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
     private MemoryMR metaMem;
-    private int partitionBy;
-    private int version;
-    private int tableId;
-    private int maxUncommittedRows;
-    private long commitLag;
-    private long structureVersion;
-
+    private int id;
     private MemoryMR transitionMeta;
 
     public TableReaderMetadata(FilesFacade ff) {
@@ -60,96 +54,83 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         of(path, ColumnType.VERSION);
     }
 
-    public void applyTransitionIndex(long pTransitionIndex) {
+    public void applyTransitionIndex() {
         //  swap meta and transitionMeta
         MemoryMR temp = this.metaMem;
         this.metaMem = this.transitionMeta;
         transitionMeta = temp;
         transitionMeta.close(); // Memory is safe to double close, do not assign null to transitionMeta
-
         this.columnNameIndexMap.clear();
-        final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
-        final long index = pTransitionIndex + 8;
-        final long stateAddress = index + columnCount * 8L;
+        int existingColumnCount = this.columnCount;
 
-        if (columnCount > this.columnCount) {
-            columnMetadata.setPos(columnCount);
-            this.columnCount = columnCount;
-        }
+        int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+        assert columnCount >= existingColumnCount;
+        columnMetadata.setPos(columnCount);
+        int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
+        this.id = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
+        long offset = TableUtils.getColumnNameOffset(columnCount);
 
-        Vect.memset(stateAddress, columnCount, 0);
+        int shiftLeft = 0, existingIndex = 0;
+        for (int metaIndex = 0; metaIndex < columnCount; metaIndex++) {
+            CharSequence name = metaMem.getStr(offset);
+            offset += Vm.getStorageLength(name);
+            assert name != null;
+            int columnType = TableUtils.getColumnType(metaMem, metaIndex);
+            boolean isIndexed = TableUtils.isColumnIndexed(metaMem, metaIndex);
+            int indexBlockCapacity = TableUtils.getIndexBlockCapacity(metaMem, metaIndex);
+            TableColumnMetadata existing = null;
+            String newName;
 
-        // this is a silly exercise in walking the index
-        for (int i = 0; i < columnCount; i++) {
+            if (existingIndex < existingColumnCount) {
+                existing = columnMetadata.getQuick(existingIndex);
 
-            // prevent writing same entry once
-            if (Unsafe.getUnsafe().getByte(stateAddress + i) == -1) {
-                continue;
-            }
-
-            Unsafe.getUnsafe().putByte(stateAddress + i, (byte) -1);
-
-            int copyFrom = Unsafe.getUnsafe().getInt(index + i * 8L);
-
-            // don't copy entries to themselves
-            if (copyFrom == i + 1) {
-                columnNameIndexMap.put(columnMetadata.getQuick(i).getName(), i);
-                continue;
-            }
-
-            // check where we source entry:
-            // 1. from another entry
-            // 2. create new instance
-            TableColumnMetadata tmp;
-            if (copyFrom > 0) {
-                tmp = moveMetadata(copyFrom - 1, null);
-                columnNameIndexMap.put(tmp.getName(), i);
-                tmp = moveMetadata(i, tmp);
-
-                int copyTo = Unsafe.getUnsafe().getInt(index + i * 8L + 4);
-
-                // now we copied entry, what do we do with value that was already there?
-                // do we copy it somewhere else?
-                while (copyTo > 0) {
-
-                    // Yeah, we do. This can get recursive!
-
-                    // prevent writing same entry twice
-                    if (Unsafe.getUnsafe().getByte(stateAddress + copyTo - 1) == -1) {
-                        break;
-                    }
-                    Unsafe.getUnsafe().putByte(stateAddress + copyTo - 1, (byte) -1);
-
-                    columnNameIndexMap.put(tmp.getName(), copyTo - 1);
-                    tmp = moveMetadata(copyTo - 1, tmp);
-                    copyTo = Unsafe.getUnsafe().getInt(index + (copyTo - 1) * 8L + 4);
+                if (existing.getWriterIndex() > metaIndex) {
+                    // This column must be deleted so existing dense columns do not contain it
+                    assert columnType < 0;
+                    continue;
                 }
-            } else {
-                // new instance
-                TableColumnMetadata m = newInstance(i, columnCount);
-                moveMetadata(i, m);
-                columnNameIndexMap.put(m.getName(), i);
             }
+            assert existing == null || existing.getWriterIndex() == metaIndex; // Same column
+
+            // exiting column
+            if (columnType < 0) {
+                shiftLeft++;
+            } else {
+                boolean rename = existing != null && !Chars.equals(existing.getName(), name);
+                newName = rename || existing == null ? Chars.toString(name) : existing.getName();
+                if (rename
+                        || existing == null
+                        || existing.isIndexed() != isIndexed
+                        || existing.getIndexValueBlockCapacity() != indexBlockCapacity
+                ) {
+                    columnMetadata.setQuick(existingIndex - shiftLeft,
+                            new TableColumnMetadata(
+                                    newName,
+                                    TableUtils.getColumnHash(metaMem, metaIndex),
+                                    columnType,
+                                    isIndexed,
+                                    indexBlockCapacity,
+                                    true,
+                                    null,
+                                    metaIndex
+                            )
+                    );
+                } else if (shiftLeft > 0) {
+                    columnMetadata.setQuick(existingIndex - shiftLeft, existing);
+                }
+                this.columnNameIndexMap.put(newName, existingIndex - shiftLeft);
+                if (timestampIndex == metaIndex) {
+                    this.timestampIndex = existingIndex - shiftLeft;
+                }
+            }
+            existingIndex++;
+        }
+        columnMetadata.setPos(existingIndex - shiftLeft);
+        this.columnCount = columnMetadata.size();
+        if (timestampIndex < 0) {
+            this.timestampIndex = timestampIndex;
         }
 
-        // ended up with fewer columns than before?
-        // good idea to resize array and may be drop timestamp index
-        if (columnCount < this.columnCount) {
-            // there is assertion further in the code that
-            // new metadata does not suddenly displace non-null object
-            // to make sure all fine and dandy we need to remove
-            // all metadata objects from tail of the list
-            columnMetadata.set(columnCount, this.columnCount, null);
-            // and set metadata list to correct length
-            columnMetadata.setPos(columnCount);
-            // we are done
-            this.columnCount = columnCount;
-        }
-
-        this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
-        this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
-        this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
-        this.commitLag = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
     }
 
     public void cloneTo(MemoryMA mem) {
@@ -160,42 +141,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     }
 
     public void dumpTo(MemoryCMARW mem) {
-        mem.putInt(TableUtils.META_OFFSET_COUNT, columnCount);
-        mem.putInt(TableUtils.META_OFFSET_PARTITION_BY, partitionBy);
-        mem.putInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX, timestampIndex);
-        mem.putInt(TableUtils.META_OFFSET_VERSION, version);
-        mem.putInt(TableUtils.META_OFFSET_TABLE_ID, tableId);
-        mem.putInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS, maxUncommittedRows);
-        mem.putLong(TableUtils.META_OFFSET_COMMIT_LAG, commitLag);
-        mem.putLong(TableUtils.META_OFFSET_STRUCTURE_VERSION, structureVersion);
-
-        long offset = TableUtils.META_OFFSET_COLUMN_TYPES;
-        for (int i = 0; i < columnCount; i++) {
-            TableColumnMetadata col = columnMetadata.getQuick(i);
-            mem.putInt(offset, col.getType());
-            offset += Integer.BYTES;
-            long flags = 0;
-            if (col.isIndexed()) {
-                flags |= TableUtils.META_FLAG_BIT_INDEXED;
-            }
-            // ignore META_FLAG_BIT_SEQUENTIAL flag for now
-
-            mem.putLong(offset, flags);
-            offset += Long.BYTES;
-            mem.putInt(offset, col.getIndexValueBlockCapacity());
-            offset += Integer.BYTES;
-            mem.putLong(offset, col.getHash());
-            offset += Long.BYTES;
-            // reserve some space for a padding
-            offset += Long.BYTES;
-        }
-
-        for (int i = 0; i < columnCount; i++) {
-            TableColumnMetadata col = columnMetadata.getQuick(i);
-            String columnName = col.getName();
-            mem.putStr(offset, columnName);
-            offset += Vm.getStorageLength(columnName.length());
-        }
+        // no-op for merge
     }
 
     @Override
@@ -220,7 +166,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
 
         tmpValidationMap.clear();
         TableUtils.validate(transitionMeta, tmpValidationMap, ColumnType.VERSION);
-        return TableUtils.createTransitionIndex(transitionMeta, this.metaMem, this.columnCount, this.columnNameIndexMap);
+        return TableUtils.createTransitionIndex(transitionMeta, this);
     }
 
     @Override
@@ -229,27 +175,27 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     }
 
     public long getCommitLag() {
-        return commitLag;
+        return metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
     }
 
     public int getId() {
-        return tableId;
+        return id;
     }
 
     public int getMaxUncommittedRows() {
-        return maxUncommittedRows;
+        return metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
     }
 
     public int getPartitionBy() {
-        return partitionBy;
+        return metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
     }
 
     public long getStructureVersion() {
-        return structureVersion;
+        return metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
     }
 
     public int getVersion() {
-        return version;
+        return metaMem.getInt(TableUtils.META_OFFSET_VERSION);
     }
 
     public TableReaderMetadata of(Path path, int expectedVersion) {
@@ -258,61 +204,42 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
             this.metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
             this.columnNameIndexMap.clear();
             TableUtils.validate(metaMem, this.columnNameIndexMap, expectedVersion);
-
-            this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
-            this.partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
-            this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
-            this.version = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
-            this.tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
-            this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
-            this.commitLag = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
-            this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
-
+            int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+            int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
+            this.id = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
             this.columnMetadata.clear();
             long offset = TableUtils.getColumnNameOffset(columnCount);
+            this.timestampIndex = -1;
 
             // don't create strings in this loop, we already have them in columnNameIndexMap
             for (int i = 0; i < columnCount; i++) {
                 CharSequence name = metaMem.getStr(offset);
                 assert name != null;
-                columnMetadata.add(
-                        new TableColumnMetadata(
-                                Chars.toString(name),
-                                TableUtils.getColumnHash(metaMem, i),
-                                TableUtils.getColumnType(metaMem, i),
-                                TableUtils.isColumnIndexed(metaMem, i),
-                                TableUtils.getIndexBlockCapacity(metaMem, i),
-                                true,
-                                null)
-                );
+                int columnType = TableUtils.getColumnType(metaMem, i);
+                if (columnType > 0) {
+                    columnMetadata.add(
+                            new TableColumnMetadata(
+                                    Chars.toString(name),
+                                    TableUtils.getColumnHash(metaMem, i),
+                                    columnType,
+                                    TableUtils.isColumnIndexed(metaMem, i),
+                                    TableUtils.getIndexBlockCapacity(metaMem, i),
+                                    true,
+                                    null,
+                                    i
+                            )
+                    );
+                    if (i == timestampIndex) {
+                        this.timestampIndex = columnMetadata.size() - 1;
+                    }
+                }
                 offset += Vm.getStorageLength(name);
             }
+            this.columnCount = columnMetadata.size();
         } catch (Throwable e) {
             close();
             throw e;
         }
         return this;
-    }
-
-    private TableColumnMetadata moveMetadata(int index, TableColumnMetadata metadata) {
-        return columnMetadata.getAndSetQuick(index, metadata);
-    }
-
-    private TableColumnMetadata newInstance(int index, int columnCount) {
-        long offset = TableUtils.getColumnNameOffset(columnCount);
-        CharSequence name = null;
-        for (int i = 0; i <= index; i++) {
-            name = metaMem.getStr(offset);
-            offset += Vm.getStorageLength(name);
-        }
-        assert name != null;
-        return new TableColumnMetadata(
-                Chars.toString(name),
-                TableUtils.getColumnHash(metaMem, index),
-                TableUtils.getColumnType(metaMem, index),
-                TableUtils.isColumnIndexed(metaMem, index),
-                TableUtils.getIndexBlockCapacity(metaMem, index),
-                true,
-                null);
     }
 }

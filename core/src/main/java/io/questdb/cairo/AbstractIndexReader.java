@@ -90,14 +90,14 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
         return blockValueCountMod;
     }
 
-    public void of(CairoConfiguration configuration, Path path, CharSequence name, long unIndexedNullCount, long partitionTxn) {
+    public void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long unIndexedNullCount, long partitionTxn) {
         this.unIndexedNullCount = unIndexedNullCount;
         TableUtils.txnPartitionConditionally(path, partitionTxn);
         final int plen = path.length();
         this.spinLockTimeoutUs = configuration.getSpinLockTimeoutUs();
 
         try {
-            this.keyMem.wholeFile(configuration.getFilesFacade(), BitmapIndexUtils.keyFileName(path, name), MemoryTag.MMAP_INDEX_READER);
+            this.keyMem.wholeFile(configuration.getFilesFacade(), BitmapIndexUtils.keyFileName(path, name, columnNameTxn), MemoryTag.MMAP_INDEX_READER);
             this.clock = configuration.getMicrosecondClock();
 
             // key file should already be created at least with header
@@ -149,7 +149,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
             if (unIndexedNullCount > 0) {
                 this.keyCountIncludingNulls++;
             }
-            this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), valueMemSize, valueMemSize, MemoryTag.MMAP_INDEX_READER);
+            this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name, columnNameTxn), valueMemSize, valueMemSize, MemoryTag.MMAP_INDEX_READER);
         } catch (Throwable e) {
             close();
             throw e;

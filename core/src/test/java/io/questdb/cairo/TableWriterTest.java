@@ -74,55 +74,6 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnAndFailToReadTopFile() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            int N = 10000;
-            create(FF, PartitionBy.DAY, N);
-            try (TableWriter writer = new TableWriter(configuration, PRODUCT, metrics)) {
-                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
-                Rnd rnd = new Rnd();
-                populateProducts(writer, rnd, ts, N, 60000 * 1000L);
-                writer.addColumn("xyz", ColumnType.STRING);
-                Assert.assertEquals(N, writer.size());
-            }
-
-            class X extends FilesFacadeImpl {
-                long fd = -1;
-
-                @Override
-                public long openRO(LPSZ name) {
-                    if (Chars.endsWith(name, "xyz.top")) {
-                        return this.fd = super.openRO(name);
-                    }
-                    return super.openRO(name);
-                }
-
-                @Override
-                public long readULong(long fd, long offset) {
-                    if (fd == this.fd) {
-                        this.fd = -1;
-                        return -1;
-                    }
-                    return super.readULong(fd, offset);
-                }
-            }
-
-            final X ff = new X();
-            try {
-                new TableWriter(new DefaultCairoConfiguration(root) {
-                    @Override
-                    public FilesFacade getFilesFacade() {
-                        return ff;
-                    }
-                }, PRODUCT, metrics);
-                Assert.fail();
-            } catch (CairoException ignore) {
-
-            }
-        });
-    }
-
-    @Test
     public void testAddColumnAndOpenWriterByDay() throws Exception {
         testAddColumnAndOpenWriter(PartitionBy.DAY, 1000);
     }
@@ -144,10 +95,11 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnCannotRemoveMeta() throws Exception {
+        String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
         class X extends FilesFacadeImpl {
             @Override
             public long openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "abc.d")) {
+                if (Chars.contains(name, abcColumnNamePattern)) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -186,13 +138,14 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnCannotTouchSymbolMapFile() throws Exception {
+        String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
         FilesFacade ff = new FilesFacadeImpl() {
             @Override
             public boolean touch(LPSZ path) {
-                return !Chars.endsWith(path, "abc.c") && super.touch(path);
+                return !Chars.contains(path, abcColumnNamePattern) && super.touch(path);
             }
         };
-        testAddColumnRecoverableFault(ff);
+        testAddColumnRecoverableNoFault(ff);
     }
 
     @Test
@@ -237,28 +190,28 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnFailToRemoveSymbolMapFiles() throws Exception {
-        // simulate existence of _meta.swp
-        testAddColumnRecoverableFault(new FilesFacadeImpl() {
+        String abcColumnNamePatternK = Files.SEPARATOR + "abc.k";
+        testAddColumnRecoverableNoFault(new FilesFacadeImpl() {
 
             @Override
             public boolean exists(LPSZ path) {
-                return Chars.endsWith(path, "abc.k") || super.exists(path);
+                return Chars.contains(path, abcColumnNamePatternK) || super.exists(path);
             }
 
             @Override
             public boolean remove(LPSZ name) {
-                return !Chars.endsWith(name, "abc.k") && super.remove(name);
+                return !Chars.contains(name, abcColumnNamePatternK) && super.remove(name);
             }
         });
     }
 
     @Test
     public void testAddColumnFileOpenFail() throws Exception {
-        // simulate existence of _meta.swp
+        String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
         testAddColumnRecoverableFault(new FilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "abc.d")) {
+                if (Chars.contains(name, abcColumnNamePattern)) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -268,10 +221,11 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnFileOpenFail2() throws Exception {
+        String abcColumnNamePattern = Files.SEPARATOR + "abc.k";
         testAddColumnRecoverableFault(new FilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "abc.k")) {
+                if (Chars.contains(name, abcColumnNamePattern)) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -281,13 +235,13 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnFileOpenFail3() throws Exception {
-        // simulate existence of _meta.swp
+        String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
         testUnrecoverableAddColumn(new FilesFacadeImpl() {
             int count = 1;
 
             @Override
             public long openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "abc.d")) {
+                if (Chars.contains(name, abcColumnNamePattern)) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -302,10 +256,11 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnFileOpenFail4() throws Exception {
+        String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
         testAddColumnRecoverableFault(new FilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "abc.d")) {
+                if (Chars.contains(name, abcColumnNamePattern)) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -315,14 +270,14 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnFileOpenFailAndIndexedPrev() throws Exception {
-        // simulate existence of _meta.swp
+        String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
         testUnrecoverableAddColumn(new FilesFacadeImpl() {
             int count = 2;
             int toCount = 5;
 
             @Override
             public long openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "abc.d")) {
+                if (Chars.contains(name, abcColumnNamePattern)) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -531,31 +486,6 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnTopFileWriteFail() throws Exception {
-        // simulate existence of _meta.swp
-        testAddColumnRecoverableFault(new FilesFacadeImpl() {
-            long fd = -1;
-
-            @Override
-            public long openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "abc.top")) {
-                    return fd = super.openRW(name, opts);
-                }
-                return super.openRW(name, opts);
-            }
-
-            @Override
-            public long write(long fd, long address, long len, long offset) {
-                if (fd == this.fd) {
-                    this.fd = -1;
-                    return -1;
-                }
-                return super.write(fd, address, len, offset);
-            }
-        });
-    }
-
-    @Test
     public void testAddIndexAndFailOnceByDay() throws Exception {
 
         final FilesFacade ff = new FilesFacadeImpl() {
@@ -698,7 +628,6 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAppendO3PartitionedNewerFirst() throws Exception {
-        O3Utils.initBuf();
         int N = 10000;
         create(FF, PartitionBy.DAY, N);
         testO3RecordsNewerThanOlder(N, configuration);
@@ -3310,6 +3239,36 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
+    private void testAddColumnRecoverableNoFault(FilesFacade ff) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            long ts = populateTable();
+            Rnd rnd = new Rnd();
+            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+            };
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT, metrics)) {
+                Assert.assertEquals(20, writer.columns.size());
+                ts = populateProducts(writer, rnd, ts, 10000, 60000L * 1000L);
+                writer.commit();
+                writer.addColumn("abc", ColumnType.SYMBOL);
+
+                // ignore error and add more rows
+                ts = populateProducts(writer, rnd, ts, 10000, 60000L * 1000L);
+                writer.commit();
+                Assert.assertEquals(30000, writer.size());
+            }
+
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT, metrics)) {
+                populateProducts(writer, rnd, ts, 10000, 60000L * 1000L);
+                writer.commit();
+                Assert.assertEquals(40000, writer.size());
+            }
+        });
+    }
+
     private void testAddIndexAndFailToIndexHalfWay(CairoConfiguration configuration, int partitionBy, int N) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
@@ -3639,7 +3598,6 @@ public class TableWriterTest extends AbstractCairoTest {
                         if (Files.isDir(pUtf8NameZ, type)) {
                             Assert.assertFalse(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("supplier.i").$()));
                             Assert.assertFalse(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("supplier.d").$()));
-                            Assert.assertFalse(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("supplier.top").$()));
                             Assert.assertTrue(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("sup.d").$()));
                             if (columnTypeTag == ColumnType.BINARY || columnTypeTag == ColumnType.STRING) {
                                 Assert.assertTrue(FF.exists(path.trimTo(plen).concat(pUtf8NameZ).concat("sup.i").$()));

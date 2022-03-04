@@ -26,43 +26,162 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.LongList;
-import io.questdb.std.MemoryTag;
+import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
 
-public class ColumnVersionReader implements Closeable {
-    private final MemoryCMR mem;
-    private final LongList cachedList = new LongList();
+public class ColumnVersionReader implements Closeable, Mutable {
+    public static final int OFFSET_VERSION_64 = 0;
+    public static final int OFFSET_OFFSET_A_64 = OFFSET_VERSION_64 + 8;
+    public static final int OFFSET_SIZE_A_64 = OFFSET_OFFSET_A_64 + 8;
+    public static final int OFFSET_OFFSET_B_64 = OFFSET_SIZE_A_64 + 8;
+    public static final int OFFSET_SIZE_B_64 = OFFSET_OFFSET_B_64 + 8;
+    public static final int HEADER_SIZE = OFFSET_SIZE_B_64 + 8;
+    public static final int BLOCK_SIZE = 4;
+    public static final int BLOCK_SIZE_BYTES = BLOCK_SIZE * Long.BYTES;
+    public static final int BLOCK_SIZE_MSB = Numbers.msb(BLOCK_SIZE);
+    public static final long COL_TOP_DEFAULT_PARTITION = Long.MIN_VALUE;
 
-    // size should be read from the transaction file
-    // it can be zero when there are no columns deviating from the main
-    // data branch
-    public ColumnVersionReader(FilesFacade ff, LPSZ fileName, long size) {
-        this.mem = Vm.getCMRInstance(ff, fileName, size, MemoryTag.MMAP_TABLE_READER);
+    private final static Log LOG = LogFactory.getLog(ColumnVersionReader.class);
+    private final LongList cachedList = new LongList();
+    private MemoryCMR mem;
+    private boolean ownMem;
+    private long version;
+
+    @Override
+    public void clear() {
+        if (ownMem) {
+            mem.close();
+        }
     }
 
     @Override
     public void close() {
-        mem.close();
+        clear();
     }
 
     public LongList getCachedList() {
         return cachedList;
     }
 
-    public void readUnsafe(long offset, long areaSize) {
-        resize(offset + areaSize);
+    public long getColumnNameTxn(long partitionTimestamp, int columnIndex) {
+        int versionRecordIndex = getRecordIndex(partitionTimestamp, columnIndex);
+        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + 2) : getDefaultColumnNameTxn(columnIndex);
+    }
 
+    public long getColumnNameTxnByIndex(int versionRecordIndex) {
+        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + 2) : -1L;
+    }
+
+    public long getColumnTop(long partitionTimestamp, int columnIndex) {
+        int index = getRecordIndex(partitionTimestamp, columnIndex);
+        return getColumnTopByIndex(index);
+    }
+
+    public long getColumnTopByIndex(int versionRecordIndex) {
+        return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + 3) : 0L;
+    }
+
+    public long getColumnTopPartitionTimestamp(int columnIndex) {
+        int index = getRecordIndex(COL_TOP_DEFAULT_PARTITION, columnIndex);
+        return index > -1 ? getColumnTopByIndex(index) : Long.MIN_VALUE;
+    }
+
+    public long getDefaultColumnNameTxn(int columnIndex) {
+        int index = getRecordIndex(COL_TOP_DEFAULT_PARTITION, columnIndex);
+        return index > -1 ? getColumnNameTxnByIndex(index) : -1L;
+    }
+
+    public int getRecordIndex(long partitionTimestamp, int columnIndex) {
+        int index = cachedList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
+        if (index > -1) {
+            final int sz = cachedList.size();
+            for (; index < sz && cachedList.getQuick(index) == partitionTimestamp; index += BLOCK_SIZE) {
+                final long thisIndex = cachedList.getQuick(index + 1);
+
+                if (thisIndex == columnIndex) {
+                    return index;
+                }
+
+                if (thisIndex > columnIndex) {
+                    break;
+                }
+            }
+        }
+        return -1;
+    }
+
+    public long getVersion() {
+        return version;
+    }
+
+    public ColumnVersionReader ofRO(FilesFacade ff, LPSZ fileName) {
+        version = -1;
+        if (this.mem == null || !ownMem) {
+            this.mem = Vm.getCMRInstance();
+        }
+        this.mem.of(ff, fileName, 0, HEADER_SIZE, MemoryTag.MMAP_TABLE_READER);
+        ownMem = true;
+        return this;
+    }
+
+    public void readSafe(MicrosecondClock microsecondClock, long spinLockTimeoutUs) {
+        final long tick = microsecondClock.getTicks();
+        while (true) {
+            long version = unsafeGetVersion();
+            if (version == this.version) {
+                return;
+            }
+            Unsafe.getUnsafe().loadFence();
+
+            final long offset;
+            final long size;
+
+            final boolean areaA = (version & 1L) == 0;
+            if (areaA) {
+                offset = mem.getLong(OFFSET_OFFSET_A_64);
+                size = mem.getLong(OFFSET_SIZE_A_64);
+            } else {
+                offset = mem.getLong(OFFSET_OFFSET_B_64);
+                size = mem.getLong(OFFSET_SIZE_B_64);
+            }
+
+            Unsafe.getUnsafe().loadFence();
+            if (version == unsafeGetVersion()) {
+                mem.resize(offset + size);
+                readUnsafe(offset, size, cachedList, mem);
+
+                Unsafe.getUnsafe().loadFence();
+                if (version == unsafeGetVersion()) {
+                    this.version = version;
+                    LOG.debug().$("read clean version ").$(version).$(", offset ").$(offset).$(", size ").$(size).$();
+                    return;
+                }
+            }
+
+            if (microsecondClock.getTicks() - tick > spinLockTimeoutUs) {
+                LOG.error().$("Column Version read timeout [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
+                throw CairoException.instance(0).put("Column Version read timeout");
+            }
+            Os.pause();
+            LOG.debug().$("read dirty version ").$(version).$(", retrying").$();
+        }
+    }
+
+    private static void readUnsafe(long offset, long areaSize, LongList cachedList, MemoryR mem) {
+        mem.extend(offset + areaSize);
         int i = 0;
         long p = offset;
         long lim = offset + areaSize;
 
         assert areaSize % ColumnVersionWriter.BLOCK_SIZE_BYTES == 0;
 
-        cachedList.setPos((int) ((areaSize / (ColumnVersionWriter.BLOCK_SIZE_BYTES)) * 4));
+        cachedList.setPos((int) ((areaSize / (ColumnVersionWriter.BLOCK_SIZE_BYTES)) * BLOCK_SIZE));
 
         while (p < lim) {
             cachedList.setQuick(i, mem.getLong(p));
@@ -74,7 +193,27 @@ public class ColumnVersionReader implements Closeable {
         }
     }
 
-    public void resize(long size) {
-        mem.resize(size);
+    void ofRO(MemoryCMR mem) {
+        if (this.mem != null && ownMem) {
+            this.mem.close();
+        }
+        this.mem = mem;
+        ownMem = false;
+        version = -1;
+    }
+
+    long readUnsafe() {
+        long version = mem.getLong(OFFSET_VERSION_64);
+
+        boolean areaA = (version & 1L) == 0L;
+        long offset = areaA ? mem.getLong(OFFSET_OFFSET_A_64) : mem.getLong(OFFSET_OFFSET_B_64);
+        long size = areaA ? mem.getLong(OFFSET_SIZE_A_64) : mem.getLong(OFFSET_SIZE_B_64);
+        mem.resize(offset + size);
+        readUnsafe(offset, size, cachedList, mem);
+        return version;
+    }
+
+    private long unsafeGetVersion() {
+        return mem.getLong(OFFSET_VERSION_64);
     }
 }
