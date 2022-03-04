@@ -303,6 +303,7 @@ const getTextFixes = ({
     selectStartOffset: 0,
   }
 
+  console.log(position)
   const rules: Rule[] = [
     {
       when: () => model?.getValue() === "",
@@ -341,8 +342,8 @@ const getTextFixes = ({
     },
 
     {
-      when: () => inMiddle && lineAtCursor !== "",
-      then: () => ({ prefix: 1, suffix: 1 }),
+      when: () => inMiddle && lineAtCursor !== "" && nextLine === "",
+      then: () => ({ prefix: 1, suffix: 1, selectStartOffset: 1 }),
     },
 
     {
