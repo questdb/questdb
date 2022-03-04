@@ -133,7 +133,7 @@ public class TypeManagerTest {
 
     @Test
     public void testResourceNotFound() {
-        assertFailure("/textloader/types/not_found.json", 0, "could not find [resource=/textloader/types/not_found.json]");
+        assertFailure("/textloader/types/not_found.json", 0, "could not find input format config [confRoot=, configFileName=/textloader/types/not_found.json]");
     }
 
     @Test
@@ -209,8 +209,8 @@ public class TypeManagerTest {
                 DateFormatUtils.enLocale
         );
 
-        inputFormatConfiguration.parseConfiguration(jsonLexer, fileResource);
-        return new TypeManager(new DefaultTextConfiguration(fileResource), utf8Sink);
+        inputFormatConfiguration.parseConfiguration(jsonLexer, null, fileResource);
+        return new TypeManager(new DefaultTextConfiguration(null, fileResource), utf8Sink);
     }
 
     private void testIllegalParameterForGetTypeAdapter(int columnType) {
