@@ -96,8 +96,6 @@ public class SnapshotTest extends AbstractGriffinTest {
 
     private void testSnapshotPrepareCheckTableMetadata(boolean generateColTops, boolean dropColumns) throws Exception {
         assertMemoryLeak(() -> {
-            snapshotInstanceId = "foobar";
-
             try (Path path = new Path()) {
                 path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
 
@@ -190,6 +188,43 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSnapshotPrepareCheckTableMetadataFiles() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path(); Path copyPath = new Path()) {
+                path.of(configuration.getRoot());
+                copyPath.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
+
+                String tableName = "t";
+                compile("create table " + tableName + " as " +
+                                "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(3)) timestamp(ts) partition by day",
+                        sqlExecutionContext);
+
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+
+                path.concat(tableName);
+                int tableNameLen = path.length();
+                copyPath.concat(tableName);
+                int copyTableNameLen = copyPath.length();
+
+                // _meta
+                path.concat(TableUtils.META_FILE_NAME).$();
+                copyPath.concat(TableUtils.META_FILE_NAME).$();
+                TestUtils.assertFileContentsEquals(path, copyPath);
+                // _txn
+                path.trimTo(tableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
+                copyPath.trimTo(copyTableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
+                TestUtils.assertFileContentsEquals(path, copyPath);
+                // _cv
+                path.trimTo(tableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                copyPath.trimTo(copyTableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                TestUtils.assertFileContentsEquals(path, copyPath);
+
+                compiler.compile("snapshot complete", sqlExecutionContext);
+            }
+        });
+    }
+
+    @Test
     public void testSnapshotPrepareCheckMetadataFileForDefaultInstanceId() throws Exception {
         testSnapshotPrepareCheckMetadataFile(null);
     }
@@ -226,7 +261,8 @@ public class SnapshotTest extends AbstractGriffinTest {
     public void testSnapshotPrepareCleansUpSnapshotDir() throws Exception {
         assertMemoryLeak(() -> {
             path.trimTo(rootLen);
-            int rc = configuration.getFilesFacade().mkdirs(path.slash$(), configuration.getMkDirMode());
+            FilesFacade ff = configuration.getFilesFacade();
+            int rc = ff.mkdirs(path.slash$(), configuration.getMkDirMode());
             Assert.assertEquals(0, rc);
 
             // Create a test file.
@@ -237,7 +273,7 @@ public class SnapshotTest extends AbstractGriffinTest {
             compiler.compile("snapshot prepare", sqlExecutionContext);
 
             // The test file should be deleted by SNAPSHOT PREPARE.
-            Assert.assertFalse(configuration.getFilesFacade().exists(path));
+            Assert.assertFalse(ff.exists(path));
 
             compiler.compile("snapshot complete", sqlExecutionContext);
         });
@@ -324,7 +360,8 @@ public class SnapshotTest extends AbstractGriffinTest {
             compile("create table " + tableName + " (ts timestamp, name symbol, val int)", sqlExecutionContext);
 
             // Corrupt the table by removing _txn file.
-            Assert.assertTrue(configuration.getFilesFacade().remove(path.of(root).concat(tableName).concat(TableUtils.TXN_FILE_NAME).$()));
+            FilesFacade ff = configuration.getFilesFacade();
+            Assert.assertTrue(ff.remove(path.of(root).concat(tableName).concat(TableUtils.TXN_FILE_NAME).$()));
 
             try {
                 compiler.compile("snapshot prepare", sqlExecutionContext);
