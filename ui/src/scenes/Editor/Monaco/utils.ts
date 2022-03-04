@@ -373,7 +373,6 @@ export const appendQuery = (editor: IStandaloneCodeEditor, query: string) => {
     const position = editor.getPosition()
 
     if (position) {
-      const isLineEmpty = model.getLineContent(position.lineNumber) === ""
       const newLines = query.split("\n")
 
       const {
@@ -388,37 +387,24 @@ export const appendQuery = (editor: IStandaloneCodeEditor, query: string) => {
 
       const positionInsert = {
         lineStart: position.lineNumber + lineStartOffset,
-        lineEnd: position.lineNumber + (isLineEmpty ? 0 : 1) + newLines.length,
+        lineEnd: position.lineNumber + newLines.length,
         columnStart: 0,
-        columnEnd: newLines.sort((a, b) => b.length - a.length)[0].length + 1,
+        columnEnd: newLines[newLines.length - 1].length + 1,
       }
 
       const positionSelect = {
-        lineStart: position.lineNumber + lineStartOffset + selectStartOffset,
+        lineStart: positionInsert.lineStart + selectStartOffset,
         lineEnd:
-          position.lineNumber +
-          lineStartOffset +
-          selectStartOffset +
-          (newLines.length - 1),
+          positionInsert.lineStart + selectStartOffset + (newLines.length - 1),
         columnStart: 0,
         columnEnd: positionInsert.columnEnd,
       }
-
-      const [prefixString, suffixString] = [
-        "\n".repeat(prefix),
-        "\n".repeat(suffix),
-      ]
-
-      const newQuery = `${prefixString}${query}${suffixString}`
-
-      console.log(JSON.stringify({ positionInsert, positionSelect }))
-      console.log(newQuery)
 
       insertText({
         editor,
         lineNumber: positionInsert.lineStart,
         column: positionInsert.columnStart,
-        text: newQuery,
+        text: `${"\n".repeat(prefix)}${query}${"\n".repeat(suffix)}`,
       })
 
       editor.setSelection({
@@ -428,6 +414,7 @@ export const appendQuery = (editor: IStandaloneCodeEditor, query: string) => {
         endColumn: positionSelect.columnEnd,
       })
     }
+
     editor.focus()
   }
 }
