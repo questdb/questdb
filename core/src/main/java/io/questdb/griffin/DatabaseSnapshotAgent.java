@@ -122,7 +122,7 @@ public class DatabaseSnapshotAgent implements Closeable {
                         // Copy _meta file.
                         path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
                         mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-                        reader.getMetadata().cloneTo(mem);
+                        reader.getMetadata().dumpTo(mem);
                         mem.close(false);
                         // Copy _txn file.
                         path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$();

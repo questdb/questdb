@@ -3179,7 +3179,7 @@ public class SqlCompiler implements Closeable {
             TableReaderMetadata sourceMetaData = reader.getMetadata();
             try {
                 mem.smallFile(ff, srcPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                sourceMetaData.cloneTo(mem);
+                sourceMetaData.dumpTo(mem);
 
                 // create symbol maps
                 srcPath.trimTo(rootLen).$();
