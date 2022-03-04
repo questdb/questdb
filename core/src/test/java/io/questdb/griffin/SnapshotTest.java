@@ -188,16 +188,67 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSnapshotPrepareCheckTableMetadataFiles() throws Exception {
+    public void testSnapshotPrepareCheckTableMetadataFilesForNonPartitionedTable() throws Exception {
+        final String tableName = "test";
+        testSnapshotPrepareCheckTableMetadataFiles(
+                "create table " + tableName + " (a symbol, b double, c long)",
+                null,
+                tableName
+        );
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataFilesForTableWithIndex() throws Exception {
+        final String tableName = "test";
+        testSnapshotPrepareCheckTableMetadataFiles(
+                "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
+                null,
+                tableName
+        );
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataFilesForTableWithDroppedColumns() throws Exception {
+        final String tableName = "test";
+        testSnapshotPrepareCheckTableMetadataFiles(
+                "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
+                "alter table " + tableName + " drop column c",
+                tableName
+        );
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataFilesForPartitionedTable() throws Exception {
+        final String tableName = "test";
+        testSnapshotPrepareCheckTableMetadataFiles(
+                "create table " + tableName + " as " +
+                        " (select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by day",
+                null,
+                tableName
+        );
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataFilesForWithParameters() throws Exception {
+        final String tableName = "test";
+        testSnapshotPrepareCheckTableMetadataFiles(
+                "create table " + tableName +
+                        " (a symbol, b double, c long, ts timestamp) timestamp(ts) partition by hour with maxUncommittedRows=250000, commitLag = 240s",
+                null,
+                tableName
+        );
+    }
+
+    private void testSnapshotPrepareCheckTableMetadataFiles(String ddl, String ddl2, String tableName) throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path(); Path copyPath = new Path()) {
                 path.of(configuration.getRoot());
                 copyPath.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
 
-                String tableName = "t";
-                compile("create table " + tableName + " as " +
-                                "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(3)) timestamp(ts) partition by day",
-                        sqlExecutionContext);
+                compile(ddl, sqlExecutionContext);
+                if (ddl2 != null) {
+                    compile(ddl2, sqlExecutionContext);
+                }
 
                 compiler.compile("snapshot prepare", sqlExecutionContext);
 
