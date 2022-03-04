@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.log.Log;
@@ -52,6 +53,8 @@ public class ColumnVersionReader implements Closeable, Mutable {
     private MemoryCMR mem;
     private boolean ownMem;
     private long version;
+    private long offset;
+    private long size;
 
     @Override
     public void clear() {
@@ -63,6 +66,26 @@ public class ColumnVersionReader implements Closeable, Mutable {
     @Override
     public void close() {
         clear();
+    }
+
+    public void dumpTo(MemoryCMARW mem) {
+        mem.putLong(OFFSET_VERSION_64, version);
+        boolean areaA = (version & 1L) == 0L;
+        mem.putLong(areaA ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64, offset);
+        mem.putLong(areaA ? OFFSET_SIZE_A_64 : OFFSET_SIZE_B_64, size);
+
+        int i = 0;
+        long p = offset;
+        long lim = offset + size;
+
+        while (p < lim) {
+            mem.putLong(p, cachedList.getQuick(i));
+            mem.putLong(p + Long.BYTES, cachedList.getQuick(i + 1));
+            mem.putLong(p + 2 * Long.BYTES, cachedList.getQuick(i + 2));
+            mem.putLong(p + 3 * Long.BYTES, cachedList.getQuick(i + 3));
+            i += ColumnVersionWriter.BLOCK_SIZE;
+            p += ColumnVersionWriter.BLOCK_SIZE_BYTES;
+        }
     }
 
     public LongList getCachedList() {
@@ -122,6 +145,8 @@ public class ColumnVersionReader implements Closeable, Mutable {
 
     public ColumnVersionReader ofRO(FilesFacade ff, LPSZ fileName) {
         version = -1;
+        offset = 0;
+        size = 0;
         if (this.mem == null || !ownMem) {
             this.mem = Vm.getCMRInstance();
         }
@@ -159,6 +184,8 @@ public class ColumnVersionReader implements Closeable, Mutable {
                 Unsafe.getUnsafe().loadFence();
                 if (version == unsafeGetVersion()) {
                     this.version = version;
+                    this.offset = offset;
+                    this.size = size;
                     LOG.debug().$("read clean version ").$(version).$(", offset ").$(offset).$(", size ").$(size).$();
                     return;
                 }
@@ -185,9 +212,9 @@ public class ColumnVersionReader implements Closeable, Mutable {
 
         while (p < lim) {
             cachedList.setQuick(i, mem.getLong(p));
-            cachedList.setQuick(i + 1, mem.getLong(p + 8));
-            cachedList.setQuick(i + 2, mem.getLong(p + 16));
-            cachedList.setQuick(i + 3, mem.getLong(p + 24));
+            cachedList.setQuick(i + 1, mem.getLong(p + Long.BYTES));
+            cachedList.setQuick(i + 2, mem.getLong(p + 2 * Long.BYTES));
+            cachedList.setQuick(i + 3, mem.getLong(p + 3 * Long.BYTES));
             i += ColumnVersionWriter.BLOCK_SIZE;
             p += ColumnVersionWriter.BLOCK_SIZE_BYTES;
         }
@@ -200,6 +227,8 @@ public class ColumnVersionReader implements Closeable, Mutable {
         this.mem = mem;
         ownMem = false;
         version = -1;
+        offset = 0;
+        size = 0;
     }
 
     long readUnsafe() {

@@ -29,6 +29,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
 public class SnapshotTest extends AbstractGriffinTest {
@@ -75,6 +76,25 @@ public class SnapshotTest extends AbstractGriffinTest {
 
     @Test
     public void testSnapshotPrepareCheckTableMetadata() throws Exception {
+        testSnapshotPrepareCheckTableMetadata(false, false);
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataWithColTops() throws Exception {
+        testSnapshotPrepareCheckTableMetadata(true, false);
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataWithDroppedColumns() throws Exception {
+        testSnapshotPrepareCheckTableMetadata(true, true);
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataWithColTopsAndDroppedColumns() throws Exception {
+        testSnapshotPrepareCheckTableMetadata(true, true);
+    }
+
+    private void testSnapshotPrepareCheckTableMetadata(boolean generateColTops, boolean dropColumns) throws Exception {
         assertMemoryLeak(() -> {
             snapshotInstanceId = "foobar";
 
@@ -82,8 +102,14 @@ public class SnapshotTest extends AbstractGriffinTest {
                 path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
 
                 String tableName = "t";
-                String sql = "create table " + tableName + " as (select * from (select rnd_str(5,10,2) a, x b from long_sequence(20)))";
-                compile(sql, sqlExecutionContext);
+                compile("create table " + tableName + " as " +
+                        "(select * from (select rnd_str(5,10,2) a, x b from long_sequence(20)))", sqlExecutionContext);
+                if (generateColTops) {
+                    compile("alter table " + tableName + " add column c int", sqlExecutionContext);
+                }
+                if (dropColumns) {
+                    compile("alter table " + tableName + " drop column a", sqlExecutionContext);
+                }
 
                 compiler.compile("snapshot prepare", sqlExecutionContext);
 
@@ -94,6 +120,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                     try (TableReaderMetadata metadata0 = tableReader.getMetadata()) {
 
                         try (TableReaderMetadata metadata1 = new TableReaderMetadata(ff)) {
+                            // Assert _meta contents.
                             path.concat(TableUtils.META_FILE_NAME).$();
                             metadata1.of(path, ColumnType.VERSION);
 
@@ -117,9 +144,8 @@ public class SnapshotTest extends AbstractGriffinTest {
                                 Assert.assertEquals(columnMetadata0.isSymbolTableStatic(), columnMetadata1.isSymbolTableStatic());
                             }
 
-                            path.trimTo(tableNameLen);
-                            path.concat(TableUtils.TXN_FILE_NAME).$();
-
+                            // Assert _txn contents.
+                            path.trimTo(tableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
                             try (TxReader txReader0 = tableReader.getTxFile()) {
                                 try (TxReader txReader1 = new TxReader(ff).ofRO(path, metadata1.getPartitionBy())) {
                                     TableUtils.safeReadTxn(txReader1, configuration.getMicrosecondClock(), configuration.getSpinLockTimeoutUs());
@@ -141,6 +167,17 @@ public class SnapshotTest extends AbstractGriffinTest {
                                         Assert.assertEquals(txReader0.getPartitionTimestamp(i), txReader1.getPartitionTimestamp(i));
                                         Assert.assertEquals(txReader0.getPartitionDataTxn(i), txReader1.getPartitionDataTxn(i));
                                     }
+                                }
+                            }
+
+                            // Assert _cv contents.
+                            path.trimTo(tableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                            try (ColumnVersionReader cvReader0 = tableReader.getColumnVersionReader()) {
+                                try (ColumnVersionReader cvReader1 = new ColumnVersionReader().ofRO(ff, path)) {
+                                    cvReader1.readSafe(configuration.getMicrosecondClock(), configuration.getSpinLockTimeoutUs());
+
+                                    Assert.assertEquals(cvReader0.getVersion(), cvReader1.getVersion());
+                                    TestUtils.assertEquals(cvReader0.getCachedList(), cvReader1.getCachedList());
                                 }
                             }
                         }
@@ -167,8 +204,7 @@ public class SnapshotTest extends AbstractGriffinTest {
             snapshotInstanceId = snapshotId;
 
             try (Path path = new Path()) {
-                String sql = "create table x as (select * from (select rnd_str(5,10,2) a, x b from long_sequence(20)))";
-                compile(sql, sqlExecutionContext);
+                compile("create table x as (select * from (select rnd_str(5,10,2) a, x b from long_sequence(20)))", sqlExecutionContext);
                 compiler.compile("snapshot prepare", sqlExecutionContext);
 
                 path.of(configuration.getSnapshotRoot());

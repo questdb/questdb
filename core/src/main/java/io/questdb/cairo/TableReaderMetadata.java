@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
@@ -38,7 +37,12 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
     private MemoryMR metaMem;
-    private int id;
+    private int partitionBy;
+    private int version;
+    private int tableId;
+    private int maxUncommittedRows;
+    private long commitLag;
+    private long structureVersion;
     private MemoryMR transitionMeta;
 
     public TableReaderMetadata(FilesFacade ff) {
@@ -55,7 +59,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     }
 
     public void applyTransitionIndex() {
-        //  swap meta and transitionMeta
+        // swap meta and transitionMeta
         MemoryMR temp = this.metaMem;
         this.metaMem = this.transitionMeta;
         transitionMeta = temp;
@@ -67,7 +71,10 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         assert columnCount >= existingColumnCount;
         columnMetadata.setPos(columnCount);
         int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
-        this.id = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
+        this.tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
+        this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
+        this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
+        this.commitLag = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
         long offset = TableUtils.getColumnNameOffset(columnCount);
 
         int shiftLeft = 0, existingIndex = 0;
@@ -130,18 +137,17 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         if (timestampIndex < 0) {
             this.timestampIndex = timestampIndex;
         }
-
     }
 
     public void cloneTo(MemoryMA mem) {
+        // Since _meta files are immutable and get updated with a single atomic rename
+        // operation replacing the old file with the new one, it's ok to clone the metadata
+        // by copying metaMem's contents. Even if _meta file was already replaced, the file
+        // should be still kept on disk until inode's ref counter is above zero.
         long len = ff.length(metaMem.getFd());
         for (long p = 0; p < len; p++) {
             mem.putByte(metaMem.getByte(p));
         }
-    }
-
-    public void dumpTo(MemoryCMARW mem) {
-        // no-op for merge
     }
 
     @Override
@@ -175,27 +181,27 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     }
 
     public long getCommitLag() {
-        return metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
+        return commitLag;
     }
 
     public int getId() {
-        return id;
+        return tableId;
     }
 
     public int getMaxUncommittedRows() {
-        return metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
+        return maxUncommittedRows;
     }
 
     public int getPartitionBy() {
-        return metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
+        return partitionBy;
     }
 
     public long getStructureVersion() {
-        return metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
+        return structureVersion;
     }
 
     public int getVersion() {
-        return metaMem.getInt(TableUtils.META_OFFSET_VERSION);
+        return version;
     }
 
     public TableReaderMetadata of(Path path, int expectedVersion) {
@@ -206,7 +212,12 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
             TableUtils.validate(metaMem, this.columnNameIndexMap, expectedVersion);
             int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
-            this.id = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
+            this.partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
+            this.version = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
+            this.tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
+            this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
+            this.commitLag = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
+            this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
             this.columnMetadata.clear();
             long offset = TableUtils.getColumnNameOffset(columnCount);
             this.timestampIndex = -1;

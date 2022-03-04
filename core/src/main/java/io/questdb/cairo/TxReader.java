@@ -218,7 +218,6 @@ public class TxReader implements Closeable, Mutable {
             if (version == unsafeReadVersion()) {
                 return true;
             }
-
         }
 
         clearData();
@@ -401,7 +400,7 @@ public class TxReader implements Closeable, Mutable {
     private void unsafeLoadPartitions0(int txAttachedPartitionsSize, int max) {
         attachedPartitions.setPos(txAttachedPartitionsSize);
         for (int i = max; i < txAttachedPartitionsSize; i++) {
-            attachedPartitions.setQuick(i, getLong(getPartitionTableIndexOffset(symbolColumnCount, i)));
+            attachedPartitions.setQuick(i, getLong(TableUtils.getPartitionTableIndexOffset(symbolColumnCount, i)));
         }
         attachedPartitionsSize = txAttachedPartitionsSize;
     }
@@ -420,11 +419,40 @@ public class TxReader implements Closeable, Mutable {
     }
 
     protected int unsafeReadSymbolWriterIndexOffset(int denseSymbolIndex) {
-        return getInt(getSymbolWriterIndexOffset(denseSymbolIndex));
+        return getInt(TableUtils.getSymbolWriterIndexOffset(denseSymbolIndex));
     }
 
     public void dumpTo(MemoryCMARW mem) {
-        // no-op for merge
-    }
+        mem.putLong(TX_BASE_OFFSET_VERSION_64, version);
+        boolean isA = (version & 1L) == 0L;
+        mem.putInt(isA ? TX_BASE_OFFSET_A_32 : TX_BASE_OFFSET_B_32, baseOffset);
+        mem.putInt(isA ? TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 : TX_BASE_OFFSET_SYMBOLS_SIZE_B_32, symbolsSize);
+        mem.putInt(isA ? TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 : TX_BASE_OFFSET_PARTITIONS_SIZE_B_32, partitionSegmentSize);
 
+        mem.putLong(baseOffset + TX_OFFSET_TXN_64, txn);
+        mem.putLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT_64, transientRowCount);
+        mem.putLong(baseOffset + TX_OFFSET_FIXED_ROW_COUNT_64, fixedRowCount);
+        mem.putLong(baseOffset + TX_OFFSET_MIN_TIMESTAMP_64, minTimestamp);
+        mem.putLong(baseOffset + TX_OFFSET_MAX_TIMESTAMP_64, maxTimestamp);
+        mem.putLong(baseOffset + TX_OFFSET_DATA_VERSION_64, dataVersion);
+        mem.putLong(baseOffset + TX_OFFSET_STRUCT_VERSION_64, structureVersion);
+        mem.putLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION_64, partitionTableVersion);
+
+        int symbolMapCount = symbolCountSnapshot.size();
+        for (int i = 0; i < symbolMapCount; i++) {
+            long offset = TableUtils.getSymbolWriterIndexOffset(i);
+            int symCount = symbolCountSnapshot.getQuick(i);
+            mem.putInt(baseOffset + offset, symCount);
+            offset += Integer.BYTES;
+            mem.putInt(baseOffset + offset, symCount);
+        }
+
+        final int size = attachedPartitions.size();
+        final long partitionTableOffset = TableUtils.getPartitionTableSizeOffset(symbolMapCount);
+        mem.putInt(partitionTableOffset, size * Long.BYTES);
+        for (int i = 0; i < size; i++) {
+            long offset = TableUtils.getPartitionTableIndexOffset(partitionTableOffset, i);
+            mem.putLong(baseOffset + offset, attachedPartitions.getQuick(i));
+        }
+    }
 }

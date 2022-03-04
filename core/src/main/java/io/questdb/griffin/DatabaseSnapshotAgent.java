@@ -122,13 +122,19 @@ public class DatabaseSnapshotAgent implements Closeable {
                         // Copy _meta file.
                         path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
                         mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-                        reader.getMetadata().dumpTo(mem);
+                        reader.getMetadata().cloneTo(mem);
                         mem.close(false);
                         // Copy _txn file.
                         path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$();
                         mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
                         reader.getTxFile().dumpTo(mem);
                         mem.close(false);
+                        // Copy _cv file.
+                        path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                        mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                        reader.getColumnVersionReader().dumpTo(mem);
+                        mem.close(false);
+
                         LOG.info().$("snapshot copied [table=").$(tableName).$(']').$();
                     }
 
@@ -219,6 +225,7 @@ public class DatabaseSnapshotAgent implements Closeable {
             // OK, we need to recover from the snapshot.
             AtomicInteger recoveredMetaFiles = new AtomicInteger();
             AtomicInteger recoveredTxnFiles = new AtomicInteger();
+            AtomicInteger recoveredCVFiles = new AtomicInteger();
             path.trimTo(snapshotRootLen).concat(configuration.getDbDirectory()).$();
             final int snapshotDbLen = path.length();
             ff.iterateDir(path, (pUtf8NameZ, type) -> {
@@ -255,11 +262,26 @@ public class DatabaseSnapshotAgent implements Closeable {
                             recoveredTxnFiles.incrementAndGet();
                         }
                     }
+
+                    path.trimTo(plen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                    copyPath.trimTo(cplen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                    if (ff.exists(path) && ff.exists(copyPath)) {
+                        if (ff.copy(path, copyPath) < 0) {
+                            LOG.error()
+                                    .$("could not copy snapshot _cv file [src=").$(path)
+                                    .$(", dst=").$(copyPath)
+                                    .$(", errno=").$(ff.errno())
+                                    .$(']').$();
+                        } else {
+                            recoveredCVFiles.incrementAndGet();
+                        }
+                    }
                 }
             });
             LOG.info()
                     .$("snapshot recovery finished [metaFilesCount=").$(recoveredMetaFiles.get())
                     .$(", txnFilesCount=").$(recoveredTxnFiles.get())
+                    .$(", cvFilesCount=").$(recoveredCVFiles.get())
                     .$(']').$();
 
             // Delete snapshot directory to avoid recovery on next restart.
