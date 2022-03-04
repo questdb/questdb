@@ -318,6 +318,24 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSnapshotPrepareFailsOnCorruptedTable() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "t";
+            compile("create table " + tableName + " (ts timestamp, name symbol, val int)", sqlExecutionContext);
+
+            // Corrupt the table by removing _txn file.
+            Assert.assertTrue(configuration.getFilesFacade().remove(path.of(root).concat(tableName).concat(TableUtils.TXN_FILE_NAME).$()));
+
+            try {
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+                Assert.fail();
+            } catch (CairoException ex) {
+                Assert.assertTrue(ex.getMessage().contains("Cannot append. File does not exist"));
+            }
+        });
+    }
+
+    @Test
     public void testRecoverSnapshotForDifferentInstanceIds() throws Exception {
         testRecoverSnapshot("id1", "id2", true);
     }
