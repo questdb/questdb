@@ -25,8 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.cairo.vm.api.MemoryW;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
@@ -422,9 +422,10 @@ public class TxReader implements Closeable, Mutable {
         return getInt(TableUtils.getSymbolWriterIndexOffset(denseSymbolIndex));
     }
 
-    public void dumpTo(MemoryCMARW mem) {
+    public void dumpTo(MemoryW mem) {
         mem.putLong(TX_BASE_OFFSET_VERSION_64, version);
         boolean isA = (version & 1L) == 0L;
+        int baseOffset = TX_BASE_HEADER_SIZE;
         mem.putInt(isA ? TX_BASE_OFFSET_A_32 : TX_BASE_OFFSET_B_32, baseOffset);
         mem.putInt(isA ? TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 : TX_BASE_OFFSET_SYMBOLS_SIZE_B_32, symbolsSize);
         mem.putInt(isA ? TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 : TX_BASE_OFFSET_PARTITIONS_SIZE_B_32, partitionSegmentSize);
@@ -437,6 +438,8 @@ public class TxReader implements Closeable, Mutable {
         mem.putLong(baseOffset + TX_OFFSET_DATA_VERSION_64, dataVersion);
         mem.putLong(baseOffset + TX_OFFSET_STRUCT_VERSION_64, structureVersion);
         mem.putLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION_64, partitionTableVersion);
+        mem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, columnVersion);
+        mem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
 
         int symbolMapCount = symbolCountSnapshot.size();
         for (int i = 0; i < symbolMapCount; i++) {
@@ -449,7 +452,7 @@ public class TxReader implements Closeable, Mutable {
 
         final int size = attachedPartitions.size();
         final long partitionTableOffset = TableUtils.getPartitionTableSizeOffset(symbolMapCount);
-        mem.putInt(partitionTableOffset, size * Long.BYTES);
+        mem.putInt(baseOffset + partitionTableOffset, size * Long.BYTES);
         for (int i = 0; i < size; i++) {
             long offset = TableUtils.getPartitionTableIndexOffset(partitionTableOffset, i);
             mem.putLong(baseOffset + offset, attachedPartitions.getQuick(i));

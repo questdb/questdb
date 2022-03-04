@@ -38,6 +38,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class DatabaseSnapshotAgent implements Closeable {
 
@@ -46,6 +47,7 @@ public class DatabaseSnapshotAgent implements Closeable {
     private final CairoEngine engine;
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
+    private final ReentrantLock lock = new ReentrantLock(); // protects below fields
     private final Path path = new Path();
     private boolean snapshotInProgress;
     // List of readers kept around to lock partitions while a database snapshot is being made.
@@ -58,125 +60,158 @@ public class DatabaseSnapshotAgent implements Closeable {
     }
 
     @Override
-    public synchronized void close() {
-        Misc.free(path);
-        releaseReaders();
+    public void close() {
+        lock.lock();
+        try {
+            Misc.free(path);
+            unsafeReleaseReaders();
+        } finally {
+            lock.unlock();
+        }
     }
 
     @TestOnly
-    public synchronized void clear() {
-        snapshotInProgress = false;
-        releaseReaders();
+    public void clear() {
+        lock.lock();
+        try {
+            snapshotInProgress = false;
+            unsafeReleaseReaders();
+        } finally {
+            lock.unlock();
+        }
     }
 
     @TestOnly
-    public synchronized void releaseReaders() {
+    public void releaseReaders() {
+        lock.lock();
+        try {
+            unsafeReleaseReaders();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void unsafeReleaseReaders() {
         Misc.freeObjList(snapshotReaders);
         snapshotReaders.clear();
     }
 
-    public synchronized void prepareSnapshot(SqlExecutionContext executionContext) throws SqlException {
+    public void prepareSnapshot(SqlExecutionContext executionContext) throws SqlException {
         // Windows doesn't support sync() system call.
         if (Os.type == Os.WINDOWS) {
             throw SqlException.position(0).put("Snapshots are not supported on Windows");
         }
 
-        if (snapshotInProgress) {
+        if (!lock.tryLock()) {
             throw SqlException.position(0).put("Another snapshot command in progress");
         }
-
-        path.of(configuration.getSnapshotRoot());
-        int snapshotLen = path.length();
-        // Delete all contents of the snapshot dir.
-        if (ff.exists(path.slash$())) {
-            path.trimTo(snapshotLen).$();
-            if (ff.rmdir(path) != 0) {
-                throw CairoException.instance(ff.errno()).put("Could not remove snapshot dir [dir=").put(path).put(']');
+        try {
+            if (snapshotInProgress) {
+                throw SqlException.position(0).put("Waiting for SNAPSHOT COMPLETE to be called");
             }
-        }
-        // Recreate the snapshot dir.
-        path.trimTo(snapshotLen).slash$();
-        if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
-            throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(path).put(']');
-        }
 
-        try (
-                TableListRecordCursorFactory factory = new TableListRecordCursorFactory(configuration.getFilesFacade(), configuration.getRoot())
-        ) {
-            final int tableNameIndex = factory.getMetadata().getColumnIndex(TableListRecordCursorFactory.TABLE_NAME_COLUMN);
-            try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                final Record record = cursor.getRecord();
-                try (MemoryCMARW mem = Vm.getCMARWInstance()) {
-                    // Copy metadata files for all tables.
-                    while (cursor.hasNext()) {
-                        CharSequence tableName = record.getStr(tableNameIndex);
-                        TableReader reader = engine.getReaderForStatement(executionContext, tableName, "snapshot");
-                        snapshotReaders.add(reader);
-
-                        path.trimTo(snapshotLen).concat(configuration.getDbDirectory()).concat(tableName).slash$();
-                        if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
-                            throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(path).put(']');
-                        }
-
-                        int rootLen = path.length();
-                        // Copy _meta file.
-                        path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
-                        mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-                        reader.getMetadata().dumpTo(mem);
-                        mem.close(false);
-                        // Copy _txn file.
-                        path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$();
-                        mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-                        reader.getTxFile().dumpTo(mem);
-                        mem.close(false);
-                        // Copy _cv file.
-                        path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
-                        mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-                        reader.getColumnVersionReader().dumpTo(mem);
-                        mem.close(false);
-
-                        LOG.info().$("snapshot copied [table=").$(tableName).$(']').$();
-                    }
-
-                    // Write instance id to the snapshot metadata file.
-                    path.trimTo(snapshotLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME).$();
-                    mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-                    mem.putStr(0, configuration.getSnapshotInstanceId());
-                    mem.close(false);
-
-                    // Flush dirty pages and filesystem metadata to disk
-                    if (ff.sync() != 0) {
-                        throw CairoException.instance(ff.errno()).put("Could not sync");
-                    }
-
-                    snapshotInProgress = true;
-                    LOG.info().$("snapshot copying finished").$();
-                } catch (Throwable e) {
-                    Misc.freeObjList(snapshotReaders);
-                    snapshotReaders.clear();
-                    LOG.error()
-                            .$("snapshot prepare error [e=").$(e)
-                            .I$();
-                    throw e;
+            path.of(configuration.getSnapshotRoot());
+            int snapshotLen = path.length();
+            // Delete all contents of the snapshot dir.
+            if (ff.exists(path.slash$())) {
+                path.trimTo(snapshotLen).$();
+                if (ff.rmdir(path) != 0) {
+                    throw CairoException.instance(ff.errno()).put("Could not remove snapshot dir [dir=").put(path).put(']');
                 }
             }
+            // Recreate the snapshot dir.
+            path.trimTo(snapshotLen).slash$();
+            if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
+                throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(path).put(']');
+            }
+
+            try (
+                    TableListRecordCursorFactory factory = new TableListRecordCursorFactory(configuration.getFilesFacade(), configuration.getRoot())
+            ) {
+                final int tableNameIndex = factory.getMetadata().getColumnIndex(TableListRecordCursorFactory.TABLE_NAME_COLUMN);
+                try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                    final Record record = cursor.getRecord();
+                    try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+                        // Copy metadata files for all tables.
+                        while (cursor.hasNext()) {
+                            CharSequence tableName = record.getStr(tableNameIndex);
+                            TableReader reader = engine.getReaderForStatement(executionContext, tableName, "snapshot");
+                            snapshotReaders.add(reader);
+
+                            path.trimTo(snapshotLen).concat(configuration.getDbDirectory()).concat(tableName).slash$();
+                            if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
+                                throw CairoException.instance(ff.errno()).put("Could not create [dir=").put(path).put(']');
+                            }
+
+                            int rootLen = path.length();
+                            // Copy _meta file.
+                            path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
+                            mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                            reader.getMetadata().dumpTo(mem);
+                            mem.close(false);
+                            // Copy _txn file.
+                            path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$();
+                            mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                            reader.getTxFile().dumpTo(mem);
+                            mem.close(false);
+                            // Copy _cv file.
+                            path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                            mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                            reader.getColumnVersionReader().dumpTo(mem);
+                            mem.close(false);
+
+                            LOG.info().$("snapshot copied [table=").$(tableName).$(']').$();
+                        }
+
+                        // Write instance id to the snapshot metadata file.
+                        path.trimTo(snapshotLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME).$();
+                        mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                        mem.putStr(configuration.getSnapshotInstanceId());
+                        mem.close();
+
+                        // Flush dirty pages and filesystem metadata to disk
+                        if (ff.sync() != 0) {
+                            throw CairoException.instance(ff.errno()).put("Could not sync");
+                        }
+
+                        snapshotInProgress = true;
+                        LOG.info().$("snapshot copying finished").$();
+                    } catch (Throwable e) {
+                        Misc.freeObjList(snapshotReaders);
+                        snapshotReaders.clear();
+                        LOG.error()
+                                .$("snapshot prepare error [e=").$(e)
+                                .I$();
+                        throw e;
+                    }
+                }
+            }
+        } finally {
+            lock.unlock();
         }
     }
 
-    public synchronized void completeSnapshot() throws SqlException {
-        if (!snapshotInProgress) {
-            throw SqlException.position(0).put("SNAPSHOT PREPARE must be called before SNAPSHOT COMPLETE");
+    public void completeSnapshot() throws SqlException {
+        if (!lock.tryLock()) {
+            throw SqlException.position(0).put("Another snapshot command in progress");
         }
+        try {
+            if (!snapshotInProgress) {
+                throw SqlException.position(0).put("SNAPSHOT PREPARE must be called before SNAPSHOT COMPLETE");
+            }
 
-        // Delete snapshot directory.
-        path.of(configuration.getSnapshotRoot()).$();
-        ff.rmdir(path); // it's fine to ignore errors here
+            // Delete snapshot directory.
+            path.of(configuration.getSnapshotRoot()).$();
+            ff.rmdir(path); // it's fine to ignore errors here
 
-        // Release locked readers if any.
-        Misc.freeObjList(snapshotReaders);
-        snapshotReaders.clear();
+            // Release locked readers if any.
+            Misc.freeObjList(snapshotReaders);
+            snapshotReaders.clear();
 
-        snapshotInProgress = false;
+            snapshotInProgress = false;
+        } finally {
+            lock.unlock();
+        }
     }
 
     public static void recoverSnapshot(CairoEngine engine) {
@@ -212,7 +247,7 @@ public class DatabaseSnapshotAgent implements Closeable {
 
                 final CharSequence currentInstanceId = configuration.getSnapshotInstanceId();
                 final CharSequence snapshotInstanceId = mem.getStr(0);
-                if (Chars.equals(currentInstanceId, snapshotInstanceId)) {
+                if (!Chars.nonEmpty(currentInstanceId) || !Chars.nonEmpty(snapshotInstanceId) || Chars.equals(currentInstanceId, snapshotInstanceId)) {
                     return;
                 }
 
@@ -240,12 +275,16 @@ public class DatabaseSnapshotAgent implements Closeable {
                     if (ff.exists(path) && ff.exists(copyPath)) {
                         if (ff.copy(path, copyPath) < 0) {
                             LOG.error()
-                                    .$("could not copy snapshot _meta file [src=").$(path)
+                                    .$("could not copy _meta file [src=").$(path)
                                     .$(", dst=").$(copyPath)
                                     .$(", errno=").$(ff.errno())
                                     .$(']').$();
                         } else {
                             recoveredMetaFiles.incrementAndGet();
+                            LOG.info()
+                                    .$("recovered _meta file [src=").$(path)
+                                    .$(", dst=").$(copyPath)
+                                    .$(']').$();
                         }
                     }
 
@@ -254,12 +293,16 @@ public class DatabaseSnapshotAgent implements Closeable {
                     if (ff.exists(path) && ff.exists(copyPath)) {
                         if (ff.copy(path, copyPath) < 0) {
                             LOG.error()
-                                    .$("could not copy snapshot _txn file [src=").$(path)
+                                    .$("could not copy _txn file [src=").$(path)
                                     .$(", dst=").$(copyPath)
                                     .$(", errno=").$(ff.errno())
                                     .$(']').$();
                         } else {
                             recoveredTxnFiles.incrementAndGet();
+                            LOG.info()
+                                    .$("recovered _txn file [src=").$(path)
+                                    .$(", dst=").$(copyPath)
+                                    .$(']').$();
                         }
                     }
 
@@ -268,12 +311,16 @@ public class DatabaseSnapshotAgent implements Closeable {
                     if (ff.exists(path) && ff.exists(copyPath)) {
                         if (ff.copy(path, copyPath) < 0) {
                             LOG.error()
-                                    .$("could not copy snapshot _cv file [src=").$(path)
+                                    .$("could not copy _cv file [src=").$(path)
                                     .$(", dst=").$(copyPath)
                                     .$(", errno=").$(ff.errno())
                                     .$(']').$();
                         } else {
                             recoveredCVFiles.incrementAndGet();
+                            LOG.info()
+                                    .$("recovered _cv file [src=").$(path)
+                                    .$(", dst=").$(copyPath)
+                                    .$(']').$();
                         }
                     }
                 }

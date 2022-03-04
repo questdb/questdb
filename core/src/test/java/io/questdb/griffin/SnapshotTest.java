@@ -364,7 +364,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                 compiler.compile("snapshot prepare", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException ex) {
-                Assert.assertTrue(ex.getMessage().startsWith("[0] Another snapshot command in progress"));
+                Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for SNAPSHOT COMPLETE to be called"));
             } finally {
                 compiler.compile("snapshot complete", sqlExecutionContext);
             }
@@ -442,6 +442,16 @@ public class SnapshotTest extends AbstractGriffinTest {
     @Test
     public void testRecoverSnapshotForDefaultInstanceIds() throws Exception {
         testRecoverSnapshot(null, null, false);
+    }
+
+    @Test
+    public void testRecoverSnapshotForDefaultSnapshotId() throws Exception {
+        testRecoverSnapshot(null, "id1", false);
+    }
+
+    @Test
+    public void testRecoverSnapshotForDefaultRestartedId() throws Exception {
+        testRecoverSnapshot("id1", null, false);
     }
 
     private void testRecoverSnapshot(String snapshotId, String restartedId, boolean expectRecovery) throws Exception {

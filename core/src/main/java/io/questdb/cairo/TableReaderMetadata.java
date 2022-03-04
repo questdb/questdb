@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
@@ -139,7 +139,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         }
     }
 
-    public void dumpTo(MemoryMARW mem) {
+    public void dumpTo(MemoryMA mem) {
         // Since _meta files are immutable and get updated with a single atomic rename
         // operation replacing the old file with the new one, it's ok to clone the metadata
         // by copying metaMem's contents. Even if _meta file was already replaced, the file
