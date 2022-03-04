@@ -398,6 +398,39 @@ public class SnapshotTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testRecoverSnapshotLargePartitionCount() throws Exception {
+        final int partitionCount = 2000;
+        final String snapshotId = "id1";
+        final String restartedId = "id2";
+        assertMemoryLeak(() -> {
+            snapshotInstanceId = snapshotId;
+
+            final String tableName = "t";
+            compile("create table " + tableName + " as " +
+                            "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(" + partitionCount + ")) timestamp(ts) partition by day",
+                    sqlExecutionContext);
+
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+
+            compile("insert into " + tableName +
+                    " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(3)", sqlExecutionContext);
+
+            // Release all readers and writers, but keep the snapshot dir around.
+            snapshotAgent.releaseReaders();
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            snapshotInstanceId = restartedId;
+
+            DatabaseSnapshotAgent.recoverSnapshot(engine);
+
+            // Data inserted after PREPARE SNAPSHOT should be discarded.
+            assertSql("select count() from " + tableName, "count\n" +
+                    partitionCount + "\n");
+        });
+    }
+
     @Ignore("Enable when table readers start preventing from column file deletion. This could be done along with column versioning.")
     @Test
     public void testRecoverSnapshotRestoresDroppedColumns() throws Exception {
