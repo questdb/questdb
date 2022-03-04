@@ -34,12 +34,12 @@ public class SharedRandom {
     // not disturb the existing tests
     public static final ThreadLocal<Rnd> ASYNC_RANDOM = new ThreadLocal<>();
 
-    public static Rnd getRandom(CairoConfiguration configuration) {
-        return getRnd(configuration, RANDOM);
-    }
-
     public static Rnd getAsyncRandom(CairoConfiguration configuration) {
         return getRnd(configuration, ASYNC_RANDOM);
+    }
+
+    public static Rnd getRandom(CairoConfiguration configuration) {
+        return getRnd(configuration, RANDOM);
     }
 
     @NotNull
@@ -47,8 +47,9 @@ public class SharedRandom {
         Rnd rnd = tlRnd.get();
         if (rnd == null) {
             tlRnd.set(rnd = new Rnd(
-                    configuration.getMillisecondClock().getTicks(),
-                    configuration.getMicrosecondClock().getTicks())
+                            configuration.getNanosecondClock().getTicks(),
+                            configuration.getMicrosecondClock().getTicks()
+                    )
             );
         }
         return rnd;

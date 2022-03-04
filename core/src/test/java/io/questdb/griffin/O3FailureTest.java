@@ -3602,7 +3602,7 @@ public class O3FailureTest extends AbstractO3Test {
         }
     }
 
-    private void executeWithoutPool(O3Runnable runnable, FilesFacade ff) throws Exception {
+    private void executeWithoutPool(CustomisableRunnable runnable, FilesFacade ff) throws Exception {
         executeVanilla(() -> {
             final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                 @Override
@@ -3610,7 +3610,7 @@ public class O3FailureTest extends AbstractO3Test {
                     return ff;
                 }
             };
-            execute(null, runnable, configuration);
+            TestUtils.execute(null, runnable, configuration);
         });
     }
 }

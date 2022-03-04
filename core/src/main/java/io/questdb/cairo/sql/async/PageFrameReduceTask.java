@@ -37,9 +37,9 @@ import java.io.Closeable;
 public class PageFrameReduceTask implements Closeable {
     private static final Log LOG = LogFactory.getLog(PageFrameReduceTask.class);
     private final DirectLongList rows;
-    private int frameIndex;
-    private PageFrameSequence<?> frameSequence;
     private final long pageFrameQueueCapacity;
+    private int frameIndex = Integer.MAX_VALUE;
+    private PageFrameSequence<?> frameSequence;
 
     public PageFrameReduceTask(CairoConfiguration configuration, int pageFrameQueueCapacity) {
         this.rows = new DirectLongList(configuration.getPageFrameRowsCapacity(), MemoryTag.NATIVE_LONG_LIST);
@@ -49,32 +49,6 @@ public class PageFrameReduceTask implements Closeable {
     @Override
     public void close() {
         Misc.free(rows);
-    }
-
-    public long getFrameRowCount() {
-        return this.frameSequence.getFrameRowCount(frameIndex);
-    }
-
-    public PageFrameSequence<?> getFrameSequence() {
-        return frameSequence;
-    }
-
-    @SuppressWarnings({"unchecked", "unused"})
-    public <T extends StatefulAtom> PageFrameSequence<T> getFrameSequence(Class<T> unused) {
-        return (PageFrameSequence<T>) frameSequence;
-    }
-
-    public int getFrameIndex() {
-        return frameIndex;
-    }
-
-    public DirectLongList getRows() {
-        return rows;
-    }
-
-    public void of(PageFrameSequence<?> frameSequence, int frameIndex) {
-        this.frameSequence = frameSequence;
-        this.frameIndex = frameIndex;
     }
 
     public void collected() {
@@ -91,11 +65,37 @@ public class PageFrameReduceTask implements Closeable {
         // we assume that frame indexes are published in ascending order
         // and when we see the last index, we would free up the remaining resources
         if (frameIndex + 1 == frameCount) {
-            LOG.info()
+            LOG.debug()
                     .$("cleanup [shard=").$(shard)
                     .$(", id=").$(frameSequence.getId())
                     .I$();
             frameSequence.reset();
         }
+    }
+
+    public int getFrameIndex() {
+        return frameIndex;
+    }
+
+    public long getFrameRowCount() {
+        return this.frameSequence.getFrameRowCount(frameIndex);
+    }
+
+    public PageFrameSequence<?> getFrameSequence() {
+        return frameSequence;
+    }
+
+    @SuppressWarnings({"unchecked", "unused"})
+    public <T extends StatefulAtom> PageFrameSequence<T> getFrameSequence(Class<T> unused) {
+        return (PageFrameSequence<T>) frameSequence;
+    }
+
+    public DirectLongList getRows() {
+        return rows;
+    }
+
+    public void of(PageFrameSequence<?> frameSequence, int frameIndex) {
+        this.frameSequence = frameSequence;
+        this.frameIndex = frameIndex;
     }
 }

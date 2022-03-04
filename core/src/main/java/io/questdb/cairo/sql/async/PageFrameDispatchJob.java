@@ -57,6 +57,37 @@ public class PageFrameDispatchJob implements Job {
         }
     }
 
+    public static boolean stealWork(
+            RingQueue<PageFrameReduceTask> queue,
+            MCSequence reduceSubSeq,
+            PageAddressCacheRecord record
+    ) {
+        if (PageFrameReduceJob.consumeQueue(queue, reduceSubSeq, record)) {
+            LockSupport.parkNanos(1);
+            return false;
+        }
+        return true;
+    }
+
+    @Override
+    public boolean run(int workerId) {
+        final long dispatchCursor = dispatchSubSeq.next();
+        if (dispatchCursor > -1) {
+            try {
+                handleTask(
+                        dispatchQueue.get(dispatchCursor).getFrameSequence(),
+                        records[workerId],
+                        messageBus,
+                        false
+                );
+            } finally {
+                dispatchSubSeq.done(dispatchCursor);
+            }
+            return true;
+        }
+        return false;
+    }
+
     /**
      * In work stealing mode this method is re enterable. It has to be in case queue capacity
      * is smaller than number of frames to be dispatched. When it is the case, frame count published so far
@@ -65,12 +96,12 @@ public class PageFrameDispatchJob implements Job {
      * mode the method will publish all frames. It has no responsibility to deal with "collect" stage hence it
      * deals with everything to unblock the collect stage.
      *
-     * @param frameSequence
-     * @param record
-     * @param messageBus
-     * @param workStealingMode
+     * @param frameSequence frame sequence instance
+     * @param record pass-through instance to be used by the reducer
+     * @param messageBus message bus with all the wires
+     * @param workStealingMode a flag, see method description
      */
-    public static void handleTask(
+    static void handleTask(
             PageFrameSequence<?> frameSequence,
             PageAddressCacheRecord record,
             MessageBus messageBus,
@@ -106,12 +137,13 @@ public class PageFrameDispatchJob implements Job {
                     cursor = reducePubSeq.next();
                     if (cursor > -1) {
                         queue.get(cursor).of(frameSequence, i);
-                        LOG.info()
+                        LOG.debug()
                                 .$("dispatched [shard=").$(shard)
                                 .$(", id=").$(frameSequence.getId())
                                 .$(", staling=").$(workStealingMode)
                                 .$(", frameIndex=").$(i)
                                 .$(", frameCount=").$(frameCount)
+                                .$(", cursor=").$(cursor)
                                 .I$();
                         reducePubSeq.done(cursor);
                         break;
@@ -140,36 +172,5 @@ public class PageFrameDispatchJob implements Job {
         if (idle && workStealingMode) {
             stealWork(queue, reduceSubSeq, record);
         }
-    }
-
-    public static boolean stealWork(
-            RingQueue<PageFrameReduceTask> queue,
-            MCSequence reduceSubSeq,
-            PageAddressCacheRecord record
-    ) {
-        if (PageFrameReduceJob.consumeQueue(queue, reduceSubSeq, record)) {
-            LockSupport.parkNanos(1);
-            return false;
-        }
-        return true;
-    }
-
-    @Override
-    public boolean run(int workerId) {
-        final long dispatchCursor = dispatchSubSeq.next();
-        if (dispatchCursor > -1) {
-            try {
-                handleTask(
-                        dispatchQueue.get(dispatchCursor).getFrameSequence(),
-                        records[workerId],
-                        messageBus,
-                        false
-                );
-            } finally {
-                dispatchSubSeq.done(dispatchCursor);
-            }
-            return true;
-        }
-        return false;
     }
 }

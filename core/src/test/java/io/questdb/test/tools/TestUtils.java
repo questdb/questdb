@@ -27,13 +27,12 @@ package io.questdb.test.tools;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.*;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
+import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
@@ -43,6 +42,7 @@ import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
 import java.io.*;
@@ -56,6 +56,7 @@ public final class TestUtils {
     private static final StringSink sink = new StringSink();
 
     private static final RecordCursorPrinter printerWithTypes = new RecordCursorPrinter().withTypes(true);
+    private static final Log LOG = LogFactory.getLog(TestUtils.class);
 
     private TestUtils() {
     }
@@ -637,12 +638,41 @@ public final class TestUtils {
         return useful;
     }
 
+    public static void execute(
+            @Nullable WorkerPool pool,
+            CustomisableRunnable runnable,
+            CairoConfiguration configuration
+    ) throws Exception {
+        final int workerCount = pool != null ? pool.getWorkerCount() : 1;
+        try (
+                final CairoEngine engine = new CairoEngine(configuration);
+                final SqlCompiler compiler = new SqlCompiler(engine);
+                final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
+        ) {
+            try {
+                if (pool != null) {
+                    pool.assignCleaner(Path.CLEANER);
+                    O3Utils.setupWorkerPool(pool, engine.getMessageBus());
+                    pool.start(LOG);
+                } else {
+                    O3Utils.initBuf();
+                }
+
+                runnable.run(engine, compiler, sqlExecutionContext);
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+            } finally {
+                if (pool != null) {
+                    pool.halt();
+                }
+                O3Utils.freeBuf();
+            }
+        }
+    }
+
     @NotNull
-    public static Rnd generateRandom(Log log) {
-        long s0 = System.nanoTime();
-        long s1 = System.currentTimeMillis();
-        System.out.println("random seed " + s0 + ", " + s1);
-        return new Rnd(s0, s1);
+    public static Rnd generateRandom() {
+        return new Rnd(System.nanoTime(), System.currentTimeMillis());
     }
 
     public static int getJavaVersion() {

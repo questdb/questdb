@@ -27,6 +27,6 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoEngine;
 
 @FunctionalInterface
-interface O3Runnable {
+public interface CustomisableRunnable {
     void run(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception;
 }

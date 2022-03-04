@@ -34,11 +34,11 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
 import io.questdb.std.Rnd;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 
 public class PageFrameSequence<T extends StatefulAtom> {
@@ -74,7 +74,7 @@ public class PageFrameSequence<T extends StatefulAtom> {
     }
 
     public void await() {
-        LOG.info()
+        LOG.debug()
                 .$("awaiting completion [shard=").$(shard)
                 .$(", id=").$(id)
                 .$(", frameCount=").$(frameCount)
@@ -296,6 +296,16 @@ public class PageFrameSequence<T extends StatefulAtom> {
     }
 
     private void dispatch() {
+        // We need to subscribe publisher sequence before we return
+        // control to the caller of this method. However, this sequence
+        // will be unsubscribed asynchronously.
+        messageBus.getPageFrameCollectFanOut(shard).and(collectSubSeq);
+        LOG.debug()
+                .$("added [shard=").$(shard)
+                .$(", id=").$(id)
+                .$(", seqCurrent=").$(collectSubSeq.current())
+                .I$();
+
         long dispatchCursor;
         do {
             dispatchCursor = dispatchPubSeq.next();
@@ -306,16 +316,6 @@ public class PageFrameSequence<T extends StatefulAtom> {
                 break;
             }
         } while (true);
-
-        // We need to subscribe publisher sequence before we return
-        // control to the caller of this method. However, this sequence
-        // will be unsubscribed asynchronously.
-        messageBus.getPageFrameCollectFanOut(shard).and(collectSubSeq);
-        LOG.info()
-                .$("added [shard=").$(shard)
-                .$(", id=").$(id)
-                .$(", seq=").$(collectSubSeq)
-                .I$();
 
         PageFrameDispatchTask dispatchTask = pageFrameDispatchQueue.get(dispatchCursor);
         dispatchTask.of(this);
@@ -331,6 +331,8 @@ public class PageFrameSequence<T extends StatefulAtom> {
         }
     }
 
+    private static final AtomicLong ID_SEQ = new AtomicLong();
+
     private void prepareForDispatch(
             Rnd rnd,
             int frameCount,
@@ -338,7 +340,7 @@ public class PageFrameSequence<T extends StatefulAtom> {
             T atom,
             SCSequence collectSubSeq
     ) {
-        this.id = rnd.nextLong();
+        this.id = ID_SEQ.incrementAndGet();
         this.doneLatch.reset();
         this.valid.set(true);
         this.reduceCounter.set(0);

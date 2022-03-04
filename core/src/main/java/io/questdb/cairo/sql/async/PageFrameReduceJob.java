@@ -67,8 +67,8 @@ public class PageFrameReduceJob implements Job {
             shards[randomIndex] = tmp;
         }
 
-        this.record = new PageAddressCacheRecord[workerCount + 1];
-        for (int i = 0, n = workerCount + 1; i < n; i++) {
+        this.record = new PageAddressCacheRecord[workerCount];
+        for (int i = 0; i < workerCount; i++) {
             this.record[i] = new PageAddressCacheRecord();
         }
     }
@@ -97,12 +97,13 @@ public class PageFrameReduceJob implements Job {
                 try {
                     final AtomicInteger framesReducedCounter = frameSequence.getReduceCounter();
                     try {
-                        LOG.info()
+                        LOG.debug()
                                 .$("reducing [shard=").$(frameSequence.getShard())
                                 .$(", id=").$(frameSequence.getId())
                                 .$(", frameIndex=").$(task.getFrameIndex())
                                 .$(", frameCount=").$(frameSequence.getFrameCount())
                                 .$(", valid=").$(frameSequence.isValid())
+                                .$(", cursor=").$(cursor)
                                 .I$();
                         if (frameSequence.isValid()) {
                             // we deliberately hold the queue item because
@@ -139,7 +140,7 @@ public class PageFrameReduceJob implements Job {
             useful = !consumeQueue(
                     messageBus.getPageFrameReduceQueue(shard),
                     messageBus.getPageFrameReduceSubSeq(shard),
-                    record[workerId + 1]
+                    record[workerId]
             ) || useful;
         }
         return useful;

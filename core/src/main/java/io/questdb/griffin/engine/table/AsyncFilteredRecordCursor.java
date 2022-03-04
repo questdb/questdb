@@ -59,7 +59,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     @Override
     public void close() {
-        LOG.info()
+        LOG.debug()
                 .$("closing [shard=").$(frameSequence.getShard())
                 .$(", id=").$(frameSequence.getId())
                 .$(", frameIndex=").$(frameIndex)
@@ -160,17 +160,19 @@ class AsyncFilteredRecordCursor implements RecordCursor {
             this.cursor = collectSubSeq.next();
             if (cursor > -1) {
                 PageFrameReduceTask task = queue.get(cursor);
+                LOG.debug()
+                        .$("collected [shard=").$(frameSequence.getShard())
+                        .$(", id=").$(id)
+                        .$(", taskId=").$(task.getFrameSequence().getId())
+                        .$(", frameIndex=").$(task.getFrameIndex())
+                        .$(", frameCount=").$(frameSequence.getFrameCount())
+                        .$(", valid=").$(frameSequence.isValid())
+                        .$(", cursor=").$(cursor)
+                        .I$();
                 if (task.getFrameSequence().getId() == id) {
                     this.rows = task.getRows();
                     this.frameRowCount = rows.size();
                     this.frameIndex = task.getFrameIndex();
-                    LOG.info()
-                            .$("collected [shard=").$(frameSequence.getShard())
-                            .$(", id=").$(frameSequence.getId())
-                            .$(", frameIndex=").$(task.getFrameIndex())
-                            .$(", frameCount=").$(frameSequence.getFrameCount())
-                            .$(", valid=").$(frameSequence.isValid())
-                            .I$();
                     if (this.frameRowCount > 0) {
                         this.frameRowIndex = 0;
                         record.setFrameIndex(task.getFrameIndex());

@@ -64,6 +64,8 @@ abstract class AbstractSSequence extends AbstractSequence implements Sequence, M
     @Override
     public void clear() {
         setBarrier(OpenBarrier.INSTANCE);
+        value = -1;
+        cache = -1;
     }
 
     @Override
@@ -74,7 +76,6 @@ abstract class AbstractSSequence extends AbstractSequence implements Sequence, M
     @Override
     public void setBarrier(Barrier barrier) {
         this.barrier = barrier;
-        setCurrent(barrier.current());
     }
 
     @Override

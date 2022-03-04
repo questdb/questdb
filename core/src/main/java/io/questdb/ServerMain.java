@@ -25,9 +25,6 @@
 package io.questdb;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.async.PageFrameDispatchJob;
-import io.questdb.cairo.sql.async.PageFrameReduceJob;
-import io.questdb.cairo.*;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
@@ -36,7 +33,6 @@ import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
-import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -189,7 +185,7 @@ public class ServerMain {
         }
 
         workerPool.assignCleaner(Path.CLEANER);
-        O3Utils.setupWorkerPool(workerPool, cairoEngine.getMessageBus(), configuration.getCairoConfiguration());
+        O3Utils.setupWorkerPool(workerPool, cairoEngine.getMessageBus());
 
         try {
             initQuestDb(workerPool, cairoEngine, log);

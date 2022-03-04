@@ -25,7 +25,6 @@
 package io.questdb.mp;
 
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectFactory;
 import io.questdb.std.Unsafe;
 
 public class FanOut implements Barrier {
@@ -46,11 +45,6 @@ public class FanOut implements Barrier {
         holder = h;
     }
 
-    @Override
-    public long current() {
-        return barrier.current();
-    }
-
     public static FanOut to(Barrier barrier) {
         return new FanOut().and(barrier);
     }
@@ -58,6 +52,9 @@ public class FanOut implements Barrier {
     public FanOut and(Barrier barrier) {
         Holder _new;
         boolean barrierNotSetUp = true;
+
+        final long current = this.barrier != null ? this.barrier.current() : -1;
+        Unsafe.getUnsafe().loadFence();
 
         do {
             Holder h = this.holder;
@@ -69,10 +66,12 @@ public class FanOut implements Barrier {
 
             if (this.barrier != null) {
                 if (barrierNotSetUp) {
-                    barrier.root().setBarrier(this.barrier);
+                    Barrier b = barrier.root();
+                    b.setBarrier(this.barrier);
+                    b.setCurrent(current);
                     barrierNotSetUp = false;
+                    Unsafe.getUnsafe().storeFence();
                 }
-                barrier.setCurrent(this.barrier.current());
             }
             _new = new Holder();
             _new.barriers.addAll(h.barriers);
@@ -107,6 +106,19 @@ public class FanOut implements Barrier {
     }
 
     @Override
+    public long current() {
+        return barrier.current();
+    }
+
+    @Override
+    public void setCurrent(long value) {
+        ObjList<Barrier> barriers = holder.barriers;
+        for (int i = 0, n = barriers.size(); i < n; i++) {
+            barriers.getQuick(i).setCurrent(value);
+        }
+    }
+
+    @Override
     public WaitStrategy getWaitStrategy() {
         return holder.waitStrategy;
     }
@@ -121,14 +133,6 @@ public class FanOut implements Barrier {
         ObjList<Barrier> barriers = holder.barriers;
         for (int i = 0, n = barriers.size(); i < n; i++) {
             barriers.getQuick(i).root().setBarrier(barrier);
-        }
-    }
-
-    @Override
-    public void setCurrent(long value) {
-        ObjList<Barrier> barriers = holder.barriers;
-        for (int i = 0, n = barriers.size(); i < n; i++) {
-            barriers.getQuick(i).setCurrent(value);
         }
     }
 
@@ -222,48 +226,6 @@ public class FanOut implements Barrier {
                     waitStrategies.getQuick(i).signal();
                 }
             }
-        }
-    }
-
-    public static void main(String[] args) {
-        class Q {
-
-        };
-
-        RingQueue<Q> q = new RingQueue<>(Q::new, 32);
-        SPSequence pub = new SPSequence(q.getCycle());
-        FanOut fo = new FanOut();
-        pub.then(fo).then(pub);
-
-
-        SCSequence sub = new SCSequence();
-
-        fo.and(sub);
-
-        long c;
-        for (int i = 0; i < 10; i++) {
-            c = pub.next();
-            assert c > -1;
-            pub.done(c);
-        }
-
-        int max = 4;
-        while (max-- > 0 && (c = sub.next()) > -1) {
-            System.out.println("ok");
-            sub.done(c);
-        }
-
-        fo.remove(sub);
-        sub.clear();
-
-        fo.and(sub);
-
-
-        for (int i = 0; i < 64; i++) {
-            c = pub.next();
-            assert c > -1;
-            pub.done(c);
-            System.out.println("+");
         }
     }
 }

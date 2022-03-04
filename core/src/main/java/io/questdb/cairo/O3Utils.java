@@ -57,8 +57,7 @@ public class O3Utils {
         }
     }
 
-    //TODO: maybe remove pageframe outside ?
-    public static void setupWorkerPool(WorkerPool workerPool, MessageBus messageBus, CairoConfiguration configuration) {
+    public static void setupWorkerPool(WorkerPool workerPool, MessageBus messageBus) {
         O3PurgeDiscoveryJob purgeDiscoveryJob = new O3PurgeDiscoveryJob(messageBus, workerPool.getWorkerCount());
         workerPool.assign(purgeDiscoveryJob);
         workerPool.assign(new O3PartitionJob(messageBus));
@@ -66,7 +65,6 @@ public class O3Utils {
         workerPool.assign(new O3CopyJob(messageBus));
         workerPool.assign(new O3CallbackJob(messageBus));
         workerPool.freeOnHalt(purgeDiscoveryJob);
-
         workerPool.assign(new PageFrameDispatchJob(messageBus, workerPool.getWorkerCount()));
         workerPool.assign(new PageFrameReduceJob(messageBus, new Rnd(), workerPool.getWorkerCount()));
         initBuf(workerPool.getWorkerCount() + 1);

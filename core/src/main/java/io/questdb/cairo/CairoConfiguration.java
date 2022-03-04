@@ -179,7 +179,7 @@ public interface CairoConfiguration {
         Rnd rnd = RANDOM.get();
         if (rnd == null) {
             RANDOM.set(rnd = new Rnd(
-                    getMillisecondClock().getTicks(),
+                    getNanosecondClock().getTicks(),
                     getMicrosecondClock().getTicks())
             );
         }
