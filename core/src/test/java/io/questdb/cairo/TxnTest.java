@@ -285,7 +285,7 @@ public class TxnTest extends AbstractCairoTest {
                         MicrosecondClock microClock = engine.getConfiguration().getMicrosecondClock();
                         long duration = 5_000_000;
                         start.await();
-                        while (done.get() == 0 || partitionCountCheck.get() != txReader.getPartitionCount() - 1) {
+                        while (done.get() == 0) {
                             TableUtils.safeReadTxn(txReader, microClock, duration);
                             reloadCount.incrementAndGet();
                             Assert.assertTrue(txReader.getPartitionCount() <= maxPartitionCount);
@@ -323,6 +323,8 @@ public class TxnTest extends AbstractCairoTest {
                                 txReader.ofRO(path, PartitionBy.HOUR);
                             }
                         }
+                        TableUtils.safeReadTxn(txReader, microClock, duration);
+                        Assert.assertEquals(partitionCountCheck.get(), txReader.getPartitionCount() - 1);
 
                     } catch (Throwable e) {
                         exceptions.add(e);
@@ -428,6 +430,10 @@ public class TxnTest extends AbstractCairoTest {
                     if (rnd.nextBoolean()) {
                         // Reopen txn file for writing
                         txWriter.ofRW(path, PartitionBy.HOUR);
+                    }
+
+                    if (exceptions.size() > 0) {
+                        break;
                     }
                 }
             } catch (Throwable e) {

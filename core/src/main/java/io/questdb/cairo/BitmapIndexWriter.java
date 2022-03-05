@@ -48,18 +48,19 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     private long seekValueBlockOffset;
     private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seek;
 
-    public BitmapIndexWriter(CairoConfiguration configuration, Path path, CharSequence name) {
+    public BitmapIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn) {
         of(
                 configuration,
                 path,
                 name,
+                columnNameTxn,
                 configuration.getDataIndexKeyAppendPageSize(),
                 configuration.getDataIndexValueAppendPageSize()
         );
     }
 
-    public BitmapIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, long keyAppendPageSize, long valueAppendPageSize) {
-        of(configuration, path, name, keyAppendPageSize, valueAppendPageSize);
+    public BitmapIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long keyAppendPageSize, long valueAppendPageSize) {
+        of(configuration, path, name, columnNameTxn, keyAppendPageSize, valueAppendPageSize);
     }
 
     public BitmapIndexWriter() {
@@ -250,12 +251,12 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         }
     }
 
-    final public void of(CairoConfiguration configuration, Path path, CharSequence name, long keyAppendPageSize, long valueAppendPageSize) {
+    final public void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long keyAppendPageSize, long valueAppendPageSize) {
         close();
         final int plen = path.length();
         final FilesFacade ff = configuration.getFilesFacade();
         try {
-            boolean exists = ff.exists(BitmapIndexUtils.keyFileName(path, name));
+            boolean exists = ff.exists(BitmapIndexUtils.keyFileName(path, name, columnNameTxn));
             this.keyMem.of(ff, path, keyAppendPageSize, ff.length(path), MemoryTag.MMAP_INDEX_WRITER);
             if (!exists) {
                 LOG.error().$(path).$(" not found").$();
@@ -291,7 +292,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
             this.valueMem.of(
                     ff,
-                    BitmapIndexUtils.valueFileName(path.trimTo(plen), name),
+                    BitmapIndexUtils.valueFileName(path.trimTo(plen), name, columnNameTxn),
                     valueAppendPageSize,
                     this.valueMemSize,
                     MemoryTag.MMAP_INDEX_WRITER

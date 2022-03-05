@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -38,7 +37,9 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-public class SymbolMapWriter implements Closeable, SymbolCountProvider {
+import static io.questdb.cairo.TableUtils.*;
+
+public class SymbolMapWriter implements Closeable, MapWriter {
     public static final int HEADER_SIZE = 64;
     public static final int HEADER_CAPACITY = 0;
     public static final int HEADER_CACHE_ENABLED = 4;
@@ -57,6 +58,7 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
             CairoConfiguration configuration,
             Path path,
             CharSequence name,
+            long columnNameTxn,
             int symbolCount,
             int symbolIndexInTxWriter,
             @NotNull SymbolValueCountCollector valueCountCollector
@@ -68,7 +70,7 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
 
             // this constructor does not create index. Index must exist,
             // and we use "offset" file to store "header"
-            offsetFileName(path.trimTo(plen), name);
+            offsetFileName(path.trimTo(plen), name, columnNameTxn);
             if (!ff.exists(path)) {
                 LOG.error().$(path).$(" is not found").$();
                 throw CairoException.instance(0).put("SymbolMap does not exist: ").put(path);
@@ -102,6 +104,7 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
                     configuration,
                     path.trimTo(plen),
                     name,
+                    columnNameTxn,
                     configuration.getDataIndexKeyAppendPageSize(),
                     configuration.getDataIndexKeyAppendPageSize() * 2
             );
@@ -109,7 +112,7 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
             // this is the place where symbol values are stored
             this.charMem = Vm.getWholeMARWInstance(
                     ff,
-                    charFileName(path.trimTo(plen), name),
+                    charFileName(path.trimTo(plen), name, columnNameTxn),
                     mapPageSize,
                     MemoryTag.MMAP_INDEX_WRITER,
                     configuration.getWriterFileOpenOpts()
@@ -145,44 +148,6 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
         }
     }
 
-    public static Path charFileName(Path path, CharSequence columnName) {
-        return path.concat(columnName).put(".c").$();
-    }
-
-    public static void createSymbolMapFiles(
-            FilesFacade ff,
-            MemoryMA mem,
-            Path path,
-            CharSequence columnName,
-            int symbolCapacity,
-            boolean symbolCacheFlag
-    ) {
-        int plen = path.length();
-        try {
-            mem.wholeFile(ff, offsetFileName(path.trimTo(plen), columnName), MemoryTag.MMAP_INDEX_WRITER);
-            mem.jumpTo(0);
-            mem.putInt(symbolCapacity);
-            mem.putBool(symbolCacheFlag);
-            mem.jumpTo(HEADER_SIZE);
-            mem.close();
-
-            if (!ff.touch(charFileName(path.trimTo(plen), columnName))) {
-                throw CairoException.instance(ff.errno()).put("Cannot create ").put(path);
-            }
-
-            mem.smallFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName), MemoryTag.MMAP_INDEX_WRITER);
-            BitmapIndexWriter.initKeyMemory(mem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
-            ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName));
-        } finally {
-            mem.close();
-            path.trimTo(plen);
-        }
-    }
-
-    public static Path offsetFileName(Path path, CharSequence columnName) {
-        return path.concat(columnName).put(".o").$();
-    }
-
     @Override
     public void close() {
         Misc.free(indexWriter);
@@ -199,10 +164,16 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
         return offsetToKey(offsetMem.getAppendOffset() - Long.BYTES);
     }
 
+    public boolean isCached() {
+        return cache != null;
+    }
+
+    @Override
     public int put(char c) {
         return put(SingleCharCharSequence.get(c));
     }
 
+    @Override
     public int put(CharSequence symbol) {
 
         if (symbol == null) {
@@ -220,6 +191,7 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
         return lookupAndPut(symbol);
     }
 
+    @Override
     public void rollback(int symbolCount) {
         indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
         offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
@@ -230,16 +202,22 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
         }
     }
 
+    @Override
     public void setSymbolIndexInTxWriter(int symbolIndexInTxWriter) {
         this.symbolIndexInTxWriter = symbolIndexInTxWriter;
     }
 
-    public void updateCacheFlag(boolean flag) {
-        offsetMem.putBool(HEADER_CACHE_ENABLED, flag);
-    }
-
-    public void updateNullFlag(boolean flag) {
-        offsetMem.putBool(HEADER_NULL_FLAG, flag);
+    @Override
+    public void truncate() {
+        final int symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
+        offsetMem.truncate();
+        offsetMem.putInt(HEADER_CAPACITY, symbolCapacity);
+        offsetMem.jumpTo(keyToOffset(0) + Long.BYTES);
+        charMem.truncate();
+        indexWriter.truncate();
+        if (cache != null) {
+            cache.clear();
+        }
     }
 
     static int offsetToKey(long offset) {
@@ -250,8 +228,9 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
         return HEADER_SIZE + key * 8L;
     }
 
-    boolean isCached() {
-        return cache != null;
+    @Override
+    public void updateCacheFlag(boolean flag) {
+        offsetMem.putBool(HEADER_CACHE_ENABLED, flag);
     }
 
     private void jumpCharMemToSymbolCount(int symbolCount) {
@@ -290,15 +269,8 @@ public class SymbolMapWriter implements Closeable, SymbolCountProvider {
         return symIndex;
     }
 
-    void truncate() {
-        final int symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
-        offsetMem.truncate();
-        offsetMem.putInt(HEADER_CAPACITY, symbolCapacity);
-        offsetMem.jumpTo(keyToOffset(0) + Long.BYTES);
-        charMem.truncate();
-        indexWriter.truncate();
-        if (cache != null) {
-            cache.clear();
-        }
+    @Override
+    public void updateNullFlag(boolean flag) {
+        offsetMem.putBool(HEADER_NULL_FLAG, flag);
     }
 }

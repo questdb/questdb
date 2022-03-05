@@ -36,6 +36,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
+
 public class SymbolMapTest extends AbstractCairoTest {
     private final static SymbolValueCountCollector NOOP_COLLECTOR = (symbolIndexInTxWriter, count) -> {
     };
@@ -76,6 +78,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 configuration,
                                 path,
                                 "x",
+                                COLUMN_NAME_TXN_NONE,
                                 0,
                                 -1,
                                 NOOP_COLLECTOR
@@ -96,6 +99,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 configuration,
                                 path,
                                 "x",
+                                COLUMN_NAME_TXN_NONE,
                                 N,
                                 -1,
                                 NOOP_COLLECTOR
@@ -139,6 +143,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 configuration,
                                 path,
                                 "x",
+                                COLUMN_NAME_TXN_NONE,
                                 0,
                                 -1,
                                 NOOP_COLLECTOR
@@ -174,6 +179,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                             configuration,
                             path,
                             "x",
+                            COLUMN_NAME_TXN_NONE,
                             0,
                             -1,
                             NOOP_COLLECTOR
@@ -192,7 +198,7 @@ public class SymbolMapTest extends AbstractCairoTest {
             int N = 10000;
             try (Path path = new Path().of(configuration.getRoot())) {
                 create(path, "x", N, true);
-                try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", 0)) {
+                try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0)) {
                     Assert.assertEquals(N, reader.getSymbolCapacity());
                     Assert.assertNull(reader.valueOf(-1));
                     Assert.assertEquals(SymbolTable.VALUE_IS_NULL, reader.keyOf(null));
@@ -206,7 +212,7 @@ public class SymbolMapTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getRoot())) {
                 try {
-                    new SymbolMapReaderImpl(configuration, path, "x", 0);
+                    new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0);
                     Assert.fail();
                 } catch (CairoException e) {
                     Assert.assertTrue(Chars.contains(e.getMessage(), "does not exist"));
@@ -222,7 +228,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                 int plen = path.length();
                 Assert.assertTrue(configuration.getFilesFacade().touch(path.concat("x").put(".o").$()));
                 try {
-                    new SymbolMapReaderImpl(configuration, path.trimTo(plen), "x", 0);
+                    new SymbolMapReaderImpl(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0);
                     Assert.fail();
                 } catch (CairoException e) {
                     Assert.assertTrue(Chars.contains(e.getMessage(), "too short"));
@@ -242,6 +248,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 configuration,
                                 path,
                                 "x",
+                                COLUMN_NAME_TXN_NONE,
                                 0,
                                 -1,
                                 NOOP_COLLECTOR
@@ -284,6 +291,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 configuration,
                                 path,
                                 "x",
+                                COLUMN_NAME_TXN_NONE,
                                 0,
                                 -1,
                                 NOOP_COLLECTOR
@@ -325,6 +333,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                             configuration,
                             path.trimTo(plen),
                             "x",
+                            COLUMN_NAME_TXN_NONE,
                             0,
                             -1,
                             NOOP_COLLECTOR
@@ -347,6 +356,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                         configuration,
                         path,
                         "x",
+                        COLUMN_NAME_TXN_NONE,
                         0,
                         -1,
                         NOOP_COLLECTOR
@@ -378,6 +388,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 configuration,
                                 path,
                                 "x",
+                                COLUMN_NAME_TXN_NONE,
                                 0,
                                 -1,
                                 NOOP_COLLECTOR
@@ -392,7 +403,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                     }
                 }
                 rnd.reset();
-                try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", N)) {
+                try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, N)) {
                     for (int i = 0; i < N; i++) {
                         CharSequence cs = rnd.nextChars(10);
                         TestUtils.assertEquals(cs, reader.valueOf(i));
@@ -420,6 +431,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 configuration,
                                 path,
                                 "x",
+                                COLUMN_NAME_TXN_NONE,
                                 0,
                                 -1,
                                 NOOP_COLLECTOR
@@ -434,7 +446,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                     }
 
                     rnd.reset();
-                    try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", N)) {
+                    try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, N)) {
                         for (int i = 0; i < N; i++) {
                             CharSequence cs = rnd.nextChars(10);
                             TestUtils.assertEquals(cs, reader.valueOf(i));
@@ -469,6 +481,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 configuration,
                                 path,
                                 "x",
+                                COLUMN_NAME_TXN_NONE,
                                 0,
                                 -1,
                                 NOOP_COLLECTOR

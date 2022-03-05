@@ -225,5 +225,6 @@ public class EngineMigration {
         MIGRATIONS.put(423, Mig608::migrate);
         MIGRATIONS.put(424, Mig609::migrate);
         MIGRATIONS.put(425, Mig614::migrate);
+        MIGRATIONS.put(426, Mig620::migrate);
     }
 }

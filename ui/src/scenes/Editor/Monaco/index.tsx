@@ -189,6 +189,18 @@ const MonacoEditor = () => {
     }
 
     loadPreferences(editor)
+
+    // Insert query, if one is found in the URL
+    const params = new URLSearchParams(window.location.search)
+    const query = params.get("query")
+    if (query) {
+      appendQuery(editor, query)
+    }
+
+    const executeQuery = params.get("executeQuery")
+    if (executeQuery) {
+      toggleRunning()
+    }
   }
 
   useEffect(() => {

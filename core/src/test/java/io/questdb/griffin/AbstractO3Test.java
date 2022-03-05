@@ -207,12 +207,7 @@ public class AbstractO3Test {
     }
 
     static void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
-        O3Utils.initBuf();
-        try {
-            AbstractO3Test.assertMemoryLeak(code);
-        } finally {
-            O3Utils.freeBuf();
-        }
+        AbstractO3Test.assertMemoryLeak(code);
     }
 
     protected static void executeWithPool(

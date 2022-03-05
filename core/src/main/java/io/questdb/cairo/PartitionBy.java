@@ -124,6 +124,21 @@ public final class PartitionBy {
         }
     }
 
+    public static long getPartitionTimeIntervalFloor(int partitionBy) {
+        switch (partitionBy) {
+            case DAY:
+                return Timestamps.DAY_MICROS;
+            case MONTH:
+                return Timestamps.DAY_MICROS * 28;
+            case YEAR:
+                return Timestamps.DAY_MICROS * 365;
+            case HOUR:
+                return Timestamps.HOUR_MICROS;
+            default:
+                throw new UnsupportedOperationException();
+        }
+    }
+
     public static boolean isPartitioned(int partitionBy) {
         return partitionBy != NONE;
     }
