@@ -475,7 +475,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                     " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(20)", sqlExecutionContext);
 
             // Release all readers and writers, but keep the snapshot dir around.
-            snapshotAgent.releaseReaders();
+            snapshotAgent.clear();
             engine.releaseAllReaders();
             engine.releaseAllWriters();
 
@@ -515,7 +515,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                     " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(3)", sqlExecutionContext);
 
             // Release all readers and writers, but keep the snapshot dir around.
-            snapshotAgent.releaseReaders();
+            snapshotAgent.clear();
             engine.releaseAllReaders();
             engine.releaseAllWriters();
 
@@ -557,7 +557,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                     "PE\t3\n");
 
             // Release all readers and writers, but keep the snapshot dir around.
-            snapshotAgent.releaseReaders();
+            snapshotAgent.clear();
             engine.releaseAllReaders();
             engine.releaseAllWriters();
 

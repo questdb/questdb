@@ -49,7 +49,6 @@ public class DatabaseSnapshotAgent implements Closeable {
     private final FilesFacade ff;
     private final ReentrantLock lock = new ReentrantLock(); // protects below fields
     private final Path path = new Path();
-    private boolean snapshotInProgress;
     // List of readers kept around to lock partitions while a database snapshot is being made.
     private final ObjList<TableReader> snapshotReaders = new ObjList<>();
 
@@ -74,17 +73,6 @@ public class DatabaseSnapshotAgent implements Closeable {
     public void clear() {
         lock.lock();
         try {
-            snapshotInProgress = false;
-            unsafeReleaseReaders();
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    @TestOnly
-    public void releaseReaders() {
-        lock.lock();
-        try {
             unsafeReleaseReaders();
         } finally {
             lock.unlock();
@@ -106,7 +94,7 @@ public class DatabaseSnapshotAgent implements Closeable {
             throw SqlException.position(0).put("Another snapshot command in progress");
         }
         try {
-            if (snapshotInProgress) {
+            if (snapshotReaders.size() > 0) {
                 throw SqlException.position(0).put("Waiting for SNAPSHOT COMPLETE to be called");
             }
 
@@ -174,11 +162,9 @@ public class DatabaseSnapshotAgent implements Closeable {
                             throw CairoException.instance(ff.errno()).put("Could not sync");
                         }
 
-                        snapshotInProgress = true;
                         LOG.info().$("snapshot copying finished").$();
                     } catch (Throwable e) {
-                        Misc.freeObjList(snapshotReaders);
-                        snapshotReaders.clear();
+                        unsafeReleaseReaders();
                         LOG.error()
                                 .$("snapshot prepare error [e=").$(e)
                                 .I$();
@@ -196,7 +182,7 @@ public class DatabaseSnapshotAgent implements Closeable {
             throw SqlException.position(0).put("Another snapshot command in progress");
         }
         try {
-            if (!snapshotInProgress) {
+            if (snapshotReaders.size() == 0) {
                 throw SqlException.position(0).put("SNAPSHOT PREPARE must be called before SNAPSHOT COMPLETE");
             }
 
@@ -205,10 +191,7 @@ public class DatabaseSnapshotAgent implements Closeable {
             ff.rmdir(path); // it's fine to ignore errors here
 
             // Release locked readers if any.
-            Misc.freeObjList(snapshotReaders);
-            snapshotReaders.clear();
-
-            snapshotInProgress = false;
+            unsafeReleaseReaders();
         } finally {
             lock.unlock();
         }
