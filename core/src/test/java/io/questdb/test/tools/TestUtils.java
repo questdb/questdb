@@ -654,8 +654,6 @@ public final class TestUtils {
                     pool.assignCleaner(Path.CLEANER);
                     O3Utils.setupWorkerPool(pool, engine.getMessageBus());
                     pool.start(LOG);
-                } else {
-                    O3Utils.initBuf();
                 }
 
                 runnable.run(engine, compiler, sqlExecutionContext);
@@ -665,7 +663,6 @@ public final class TestUtils {
                 if (pool != null) {
                     pool.halt();
                 }
-                O3Utils.freeBuf();
             }
         }
     }

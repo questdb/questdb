@@ -62,7 +62,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bin:BINARY\n" +
                 "date:DATE\n" +
                 "xyz:STRING\n";
-        assertThat(expected, 12, (w) -> w.addColumn("xyz", ColumnType.STRING));
+        assertThat(expected, (w) -> w.addColumn("xyz", ColumnType.STRING));
     }
 
     @Test
@@ -132,7 +132,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "date:DATE\n" +
                 "int:INT\n";
 
-        assertThat(expected, 11,
+        assertThat(expected,
                 w -> w.addColumn("bin2", ColumnType.BINARY),
                 w -> w.removeColumn("bin2"),
                 w -> w.removeColumn("int"),
@@ -177,7 +177,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bin:BINARY\n" +
                 "date:DATE\n" +
                 "xyz:STRING\n";
-        assertThat(expected, 10, (w) -> {
+        assertThat(expected, (w) -> {
             w.removeColumn("double");
             w.removeColumn("str");
             w.addColumn("xyz", ColumnType.STRING);
@@ -193,7 +193,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     @Test
     public void testRemoveAllColumns() throws Exception {
         final String expected = "";
-        assertThat(expected, 0, (w) -> {
+        assertThat(expected, (w) -> {
             w.removeColumn("int");
             w.removeColumn("short");
             w.removeColumn("byte");
@@ -221,7 +221,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bin:BINARY\n" +
                 "date:DATE\n" +
                 "str:STRING\n";
-        assertThat(expected, 11,
+        assertThat(expected,
                 w -> w.removeColumn("str"),
                 w -> w.addColumn("str", ColumnType.STRING)
         );
@@ -240,7 +240,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "str:STRING\n" +
                 "short:INT\n";
 
-        assertThat(expected, 10,
+        assertThat(expected,
                 w -> w.removeColumn("short"),
                 w -> w.removeColumn("str"),
                 w -> w.removeColumn("int"),
@@ -261,7 +261,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
                 "date:DATE\n";
-        assertThat(expected, 9,
+        assertThat(expected,
                 w -> w.removeColumn("double"),
                 w -> w.removeColumn("float")
         );
@@ -278,7 +278,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "sym:SYMBOL\n" +
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n";
-        assertThat(expected, 9,
+        assertThat(expected,
                 w -> w.removeColumn("date"),
                 w -> w.removeColumn("int")
         );
@@ -297,7 +297,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                         "bool:BOOLEAN\n" +
                         "bin:BINARY\n" +
                         "date:DATE\n";
-        assertThat(expected, 10, (w) -> w.removeColumn("int"));
+        assertThat(expected, (w) -> w.removeColumn("int"));
     }
 
     @Test
@@ -312,12 +312,12 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "sym:SYMBOL\n" +
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n";
-        assertThat(expected, 10, (w) -> w.removeColumn("date"));
+        assertThat(expected, (w) -> w.removeColumn("date"));
     }
 
     @Test
     public void testRemoveRandomColumns() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
+        Rnd rnd = TestUtils.generateRandom();
         final String allColumns = "int:INT\n" +
                 "short:SHORT\n" +
                 "byte:BYTE\n" +
@@ -344,7 +344,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                     expected += "\n";
                 }
 
-                runWithManipulators(expected, lines.size(), w -> w.removeColumn(name));
+                runWithManipulators(expected, w -> w.removeColumn(name));
             }
         }
     }
@@ -361,7 +361,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bin:BINARY\n" +
                 "date:DATE\n";
 
-        assertThat(expected, 9,
+        assertThat(expected,
                 w -> w.removeColumn("double"),
                 w -> w.removeColumn("str"));
     }
@@ -379,26 +379,26 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
                 "date:DATE\n";
-        assertThat(expected, 11, (w) -> w.renameColumn("str", "str1"));
+        assertThat(expected, (w) -> w.renameColumn("str", "str1"));
     }
 
-    private void assertThat(String expected, int columnCount, ColumnManipulator... manipulators) throws Exception {
+    private void assertThat(String expected, ColumnManipulator... manipulators) throws Exception {
         // Test one by one
-        runWithManipulators(expected, columnCount, manipulators);
+        runWithManipulators(expected, manipulators);
         try (Path path = new Path()) {
             engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "all");
         }
         CairoTestUtils.createAllTable(configuration, PartitionBy.DAY);
 
         // Test in one go
-        runWithManipulators(expected, columnCount, w -> {
+        runWithManipulators(expected, w -> {
             for (ColumnManipulator manipulator : manipulators) {
                 manipulator.restructure(w);
             }
         });
     }
 
-    private void runWithManipulators(String expected, int columnCount, ColumnManipulator... manipulators) throws Exception {
+    private void runWithManipulators(String expected, ColumnManipulator... manipulators) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(root).concat("all")) {
                 int tableId;

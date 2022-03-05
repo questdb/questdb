@@ -4504,7 +4504,7 @@ public class TableWriter implements Closeable {
         if (o3ColumnTopSink == null) {
             o3ColumnTopSink = new DirectLongList(size, MemoryTag.NATIVE_O3);
         }
-        o3ColumnTopSink.extend(size);
+        o3ColumnTopSink.setCapacity(size);
         o3ColumnTopSink.setPos(size);
         o3ColumnTopSink.zero(-1L);
     }
