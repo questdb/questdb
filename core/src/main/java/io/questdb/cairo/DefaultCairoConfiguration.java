@@ -42,7 +42,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     private final CharSequence confRoot;
     private final CharSequence snapshotRoot;
 
-    private final TextConfiguration textConfiguration = new DefaultTextConfiguration();
+    private final TextConfiguration textConfiguration;
 
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
 
@@ -54,6 +54,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public DefaultCairoConfiguration(CharSequence root) {
         this.root = Chars.toString(root);
         this.confRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CONFIG_DIRECTORY);
+        this.textConfiguration = new DefaultTextConfiguration(Chars.toString(confRoot));
         this.snapshotRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.SNAPSHOT_DIRECTORY);
         Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
         this.databaseIdLo = rnd.nextLong();

@@ -47,7 +47,9 @@ export const fromFetch = <T extends Record<string, any>>(
   return rxFromFetch(url, init).pipe(
     switchMap((response) => {
       if (response.ok) {
-        if (response.headers.get("content-type") === "application/json") {
+        if (
+          response.headers.get("content-type")?.startsWith("application/json")
+        ) {
           return response.json()
         }
 
