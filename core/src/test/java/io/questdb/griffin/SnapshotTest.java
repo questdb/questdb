@@ -351,15 +351,11 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSnapshotCompleteWithoutPrepareFails() throws Exception {
+    public void testSnapshotCompleteWithoutPrepareIsIgnored() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
-            try {
-                compiler.compile("snapshot complete", sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException ex) {
-                Assert.assertTrue(ex.getMessage().startsWith("[0] SNAPSHOT PREPARE must be called before SNAPSHOT COMPLETE"));
-            }
+            // Verify that SNAPSHOT COMPLETE doesn't return errors.
+            compiler.compile("snapshot complete", sqlExecutionContext);
         });
     }
 
