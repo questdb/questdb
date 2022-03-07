@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.Misc;
 
 public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
     private static final PageFrameReducer REDUCER_ASC = AsyncFilteredRecordCursorFactory::filterAsc;
@@ -64,8 +65,9 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public void close() {
-        base.close();
-        filter.close();
+        Misc.free(base);
+        Misc.free(filter);
+        Misc.free(frameSequence);
     }
 
     @Override

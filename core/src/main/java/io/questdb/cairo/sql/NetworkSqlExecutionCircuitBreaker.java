@@ -22,9 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.griffin.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -53,7 +54,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public void powerUp() {
+    public void setState() {
         final long ticks = clock.getTicks();
         // test for overflow
         if ((maxTime > 0) && (ticks > Long.MAX_VALUE - maxTime)) {
@@ -71,7 +72,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public void test() {
+    public void statefulThrowExceptionWhenTripped() {
         if (testCount < throttle) {
             testCount++;
         } else {

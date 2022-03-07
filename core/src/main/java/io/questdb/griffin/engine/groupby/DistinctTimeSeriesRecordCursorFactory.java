@@ -35,7 +35,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
@@ -138,7 +138,7 @@ public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactor
         public boolean hasNext() {
             if (state == COMPUTE_NEXT) {
                 while (baseCursor.hasNext()) {
-                    circuitBreaker.test();
+                    circuitBreaker.statefulThrowExceptionWhenTripped();
                     final long timestamp = record.getTimestamp(timestampIndex);
                     if (timestamp != prevTimestamp) {
                         prevTimestamp = timestamp;

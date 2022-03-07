@@ -64,6 +64,14 @@ public final class Misc {
         }
     }
 
+    public static <T> void free(T[] list) {
+        if (list != null) {
+            for (int i = 0, n = list.length; i < n; i++) {
+                list[i] = Misc.free(list[i]);
+            }
+        }
+    }
+
     public static <T> void freeObjListAndKeepObjects(ObjList<T> list) {
         if (list != null) {
             for (int i = 0, n = list.size(); i < n; i++) {

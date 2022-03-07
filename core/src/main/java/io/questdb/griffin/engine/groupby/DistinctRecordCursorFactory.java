@@ -35,7 +35,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
@@ -129,7 +129,7 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
         @Override
         public boolean hasNext() {
             while (baseCursor.hasNext()) {
-                circuitBreaker.test();
+                circuitBreaker.statefulThrowExceptionWhenTripped();
                 MapKey key = dataMap.withKey();
                 recordSink.copy(record, key);
                 if (key.create()) {

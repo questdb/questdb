@@ -32,11 +32,13 @@ import io.questdb.mp.Job;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
+import io.questdb.std.Misc;
 
+import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
-public class PageFrameDispatchJob implements Job {
+public class PageFrameDispatchJob implements Job, Closeable {
 
     private final static Log LOG = LogFactory.getLog(PageFrameDispatchJob.class);
 
@@ -45,6 +47,7 @@ public class PageFrameDispatchJob implements Job {
     private final RingQueue<PageFrameDispatchTask> dispatchQueue;
     // work stealing records
     private final PageAddressCacheRecord[] records;
+    private final PageFrameCircuitBreaker[] circuitBreakers;
 
     public PageFrameDispatchJob(MessageBus messageBus, int workerCount) {
         this.messageBus = messageBus;
@@ -52,21 +55,29 @@ public class PageFrameDispatchJob implements Job {
         this.dispatchQueue = messageBus.getPageFrameDispatchQueue();
 
         this.records = new PageAddressCacheRecord[workerCount];
+        this.circuitBreakers = new PageFrameCircuitBreaker[workerCount];
         for (int i = 0; i < workerCount; i++) {
             records[i] = new PageAddressCacheRecord();
+            circuitBreakers[i] = new PageFrameCircuitBreakerImpl();
         }
     }
 
     public static boolean stealWork(
             RingQueue<PageFrameReduceTask> queue,
             MCSequence reduceSubSeq,
-            PageAddressCacheRecord record
+            PageAddressCacheRecord record,
+            PageFrameCircuitBreaker circuitBreaker
     ) {
-        if (PageFrameReduceJob.consumeQueue(queue, reduceSubSeq, record)) {
+        if (PageFrameReduceJob.consumeQueue(queue, reduceSubSeq, record, circuitBreaker)) {
             LockSupport.parkNanos(1);
             return false;
         }
         return true;
+    }
+
+    @Override
+    public void close() {
+        Misc.free(circuitBreakers);
     }
 
     @Override
@@ -78,7 +89,8 @@ public class PageFrameDispatchJob implements Job {
                         dispatchQueue.get(dispatchCursor).getFrameSequence(),
                         records[workerId],
                         messageBus,
-                        false
+                        false,
+                        circuitBreakers[workerId]
                 );
             } finally {
                 dispatchSubSeq.done(dispatchCursor);
@@ -96,16 +108,17 @@ public class PageFrameDispatchJob implements Job {
      * mode the method will publish all frames. It has no responsibility to deal with "collect" stage hence it
      * deals with everything to unblock the collect stage.
      *
-     * @param frameSequence frame sequence instance
-     * @param record pass-through instance to be used by the reducer
-     * @param messageBus message bus with all the wires
+     * @param frameSequence    frame sequence instance
+     * @param record           pass-through instance to be used by the reducer
+     * @param messageBus       message bus with all the wires
      * @param workStealingMode a flag, see method description
      */
     static void handleTask(
             PageFrameSequence<?> frameSequence,
             PageAddressCacheRecord record,
             MessageBus messageBus,
-            boolean workStealingMode
+            boolean workStealingMode,
+            PageFrameCircuitBreaker circuitBreaker
     ) {
         boolean idle = true;
         final int shard = frameSequence.getShard();
@@ -150,7 +163,7 @@ public class PageFrameDispatchJob implements Job {
                     } else {
                         idle = false;
                         // start stealing work to unload the queue
-                        if (stealWork(queue, reduceSubSeq, record) || !workStealingMode) {
+                        if (stealWork(queue, reduceSubSeq, record, circuitBreaker) || !workStealingMode) {
                             continue;
                         }
                         frameSequence.setDispatchStartIndex(i);
@@ -162,7 +175,7 @@ public class PageFrameDispatchJob implements Job {
             // join the gang to consume published tasks
             while (framesReducedCounter.get() < frameCount) {
                 idle = false;
-                if (stealWork(queue, reduceSubSeq, record) || !workStealingMode) {
+                if (stealWork(queue, reduceSubSeq, record, circuitBreaker) || !workStealingMode) {
                     continue;
                 }
                 break;
@@ -170,7 +183,7 @@ public class PageFrameDispatchJob implements Job {
         }
 
         if (idle && workStealingMode) {
-            stealWork(queue, reduceSubSeq, record);
+            stealWork(queue, reduceSubSeq, record, circuitBreaker);
         }
     }
 }

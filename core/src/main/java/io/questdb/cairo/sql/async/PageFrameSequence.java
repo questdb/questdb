@@ -36,12 +36,14 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 
-public class PageFrameSequence<T extends StatefulAtom> {
+public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private static final int OWNER_NONE = 0;
     private static final int OWNER_WORK_STEALING = 1;
     private static final int OWNER_ASYNC = 2;
@@ -66,13 +68,22 @@ public class PageFrameSequence<T extends StatefulAtom> {
     private MPSequence dispatchPubSeq;
     private RingQueue<PageFrameDispatchTask> pageFrameDispatchQueue;
     private int dispatchStartIndex = 0;
+    private PageFrameCircuitBreaker[] circuitBreakers;
 
-    public PageFrameSequence(CairoConfiguration configuration, MessageBus messageBus, PageFrameReducer reducer) {
+    public PageFrameSequence(
+            CairoConfiguration configuration,
+            MessageBus messageBus,
+            PageFrameReducer reducer
+    ) {
         this.pageAddressCache = new PageAddressCache(configuration);
         this.messageBus = messageBus;
         this.reducer = reducer;
     }
 
+    /**
+     * Waits for frame sequence completion, fetches remaining pieces of the
+     * frame sequence from the queues. This method is not thread safe.
+     */
     public void await() {
         LOG.debug()
                 .$("awaiting completion [shard=").$(shard)
@@ -80,12 +91,14 @@ public class PageFrameSequence<T extends StatefulAtom> {
                 .$(", frameCount=").$(frameCount)
                 .I$();
 
-        final RingQueue<PageFrameReduceTask> queue = messageBus.getPageFrameReduceQueue(shard);
+        final RingQueue<PageFrameReduceTask> queue = getPageFrameReduceQueue();
         final MCSequence pageFrameReduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
         while (doneLatch.getCount() == 0) {
-            final PageAddressCacheRecord rec = records[getWorkerId()];
-            // we were asked to steal work from dispatch queue and beyond, as much as we can
-            if (PageFrameReduceJob.consumeQueue(queue, pageFrameReduceSubSeq, rec)) {
+            final int workerId = getWorkerId();
+            final PageAddressCacheRecord rec = records[workerId];
+            final PageFrameCircuitBreaker circuitBreaker = circuitBreakers[getWorkerId()];
+            // we were asked to steal work from dispatch0 queue and beyond, as much as we can
+            if (PageFrameReduceJob.consumeQueue(queue, pageFrameReduceSubSeq, rec, circuitBreaker)) {
                 long cursor = collectSubSeq.next();
                 if (cursor > -1) {
                     // discard collect items
@@ -133,13 +146,13 @@ public class PageFrameSequence<T extends StatefulAtom> {
             // this method sets a lot of state of the page sequence
             prepareForDispatch(rnd, frameCount, pageFrameCursor, atom, collectSubSeq);
 
-            // It is essential to init the atom after we prepared sequence for dispatch.
+            // It is essential to init the atom after we prepared sequence for dispatch0.
             // If atom is to fail, we will be releasing whatever we prepared.
             atom.init(pageFrameCursor, executionContext);
 
-            // dispatch message only if there is anything to dispatch
+            // dispatch0 message only if there is anything to dispatch0
             if (frameCount > 0) {
-                dispatch();
+                dispatch0();
             }
         } catch (Throwable e) {
             this.symbolTableSource = Misc.free(this.symbolTableSource);
@@ -200,7 +213,7 @@ public class PageFrameSequence<T extends StatefulAtom> {
      * Async owner is allowed to enter only once. The expectation is that all frames will be dispatched
      * in the first attempt.
      *
-     * @return true if this sequence dispatch belongs to async owner, work stealing must not touch this.
+     * @return true if this sequence dispatch0 belongs to async owner, work stealing must not touch this.
      */
     public boolean isAsyncOwner() {
         return owner.compareAndSet(OWNER_NONE, OWNER_ASYNC);
@@ -217,7 +230,7 @@ public class PageFrameSequence<T extends StatefulAtom> {
     /**
      * Work stealing is re-enterable, hence subsequence invocations can yield true.
      *
-     * @return true is this sequence dispatch is owned by work stealing algo.
+     * @return true is this sequence dispatch0 is owned by work stealing algo.
      */
     public boolean isWorkStealingOwner() {
         return owner.get() == OWNER_WORK_STEALING || owner.compareAndSet(OWNER_NONE, OWNER_WORK_STEALING);
@@ -233,11 +246,13 @@ public class PageFrameSequence<T extends StatefulAtom> {
     }
 
     public void stealWork() {
-        final PageAddressCacheRecord rec = records[getWorkerId()];
-        // we were asked to steal work from dispatch queue and beyond, as much as we can
-        PageFrameDispatchJob.handleTask(this, rec, messageBus, true);
+        final int workerId = getWorkerId();
+        final PageAddressCacheRecord rec = records[workerId];
+        final PageFrameCircuitBreaker circuitBreaker = circuitBreakers[workerId];
+        // we were asked to steal work from dispatch0 queue and beyond, as much as we can
+        PageFrameDispatchJob.handleTask(this, rec, messageBus, true, circuitBreaker);
 
-        // now we need to steal all dispatch work from the queue until we reach either:
+        // now we need to steal all dispatch0 work from the queue until we reach either:
         // - end of the queue
         // - find out publisher id
         final MCSequence dispatchSubSeq = messageBus.getPageFrameDispatchSubSeq();
@@ -254,13 +269,17 @@ public class PageFrameSequence<T extends StatefulAtom> {
                 // We are entering all frame sequences in work stealing mode, which means
                 // they can end up being partially dispatched. This is done because we
                 // cannot afford to enter infinite loop here
-                PageFrameDispatchJob.handleTask(s, rec, messageBus, true);
+                PageFrameDispatchJob.handleTask(s, rec, messageBus, true, circuitBreaker);
             } else {
                 break;
             }
         }
     }
 
+    /**
+     * Prepares page frame sequence for retrieving the same data set again. The method
+     * is not thread-safe.
+     */
     public void toTop() {
         if (frameCount > 0) {
             LOG.info().$("toTop [shard=").$(shard)
@@ -299,7 +318,7 @@ public class PageFrameSequence<T extends StatefulAtom> {
         return workerId;
     }
 
-    private void dispatch() {
+    private void dispatch0() {
         // We need to subscribe publisher sequence before we return
         // control to the caller of this method. However, this sequence
         // will be unsubscribed asynchronously.
@@ -329,8 +348,10 @@ public class PageFrameSequence<T extends StatefulAtom> {
     private void initWorkerRecords(int workerCount) {
         if (records == null || records.length < workerCount) {
             this.records = new PageAddressCacheRecord[workerCount];
+            this.circuitBreakers = new PageFrameCircuitBreaker[workerCount];
             for (int i = 0; i < workerCount; i++) {
                 this.records[i] = new PageAddressCacheRecord();
+                this.circuitBreakers[i] = new PageFrameCircuitBreakerImpl();
             }
         }
     }
@@ -369,5 +390,10 @@ public class PageFrameSequence<T extends StatefulAtom> {
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
         }
         return frameIndex;
+    }
+
+    @Override
+    public void close() {
+        Misc.free(circuitBreakers);
     }
 }

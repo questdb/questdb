@@ -37,15 +37,19 @@ public class O3Utils {
     private static final Log LOG = LogFactory.getLog(O3Utils.class);
 
     public static void setupWorkerPool(WorkerPool workerPool, MessageBus messageBus) {
-        O3PurgeDiscoveryJob purgeDiscoveryJob = new O3PurgeDiscoveryJob(messageBus, workerPool.getWorkerCount());
+        final O3PurgeDiscoveryJob purgeDiscoveryJob = new O3PurgeDiscoveryJob(messageBus, workerPool.getWorkerCount());
+        final PageFrameDispatchJob pageFrameDispatchJob = new PageFrameDispatchJob(messageBus, workerPool.getWorkerCount());
+        final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(messageBus, new Rnd(), workerPool.getWorkerCount());
         workerPool.assign(purgeDiscoveryJob);
         workerPool.assign(new O3PartitionJob(messageBus));
         workerPool.assign(new O3OpenColumnJob(messageBus));
         workerPool.assign(new O3CopyJob(messageBus));
         workerPool.assign(new O3CallbackJob(messageBus));
+        workerPool.assign(pageFrameDispatchJob);
+        workerPool.assign(pageFrameReduceJob);
         workerPool.freeOnHalt(purgeDiscoveryJob);
-        workerPool.assign(new PageFrameDispatchJob(messageBus, workerPool.getWorkerCount()));
-        workerPool.assign(new PageFrameReduceJob(messageBus, new Rnd(), workerPool.getWorkerCount()));
+        workerPool.freeOnHalt(pageFrameDispatchJob);
+        workerPool.freeOnHalt(pageFrameReduceJob);
     }
 
     static long getVarColumnLength(long srcLo, long srcHi, long srcFixAddr) {

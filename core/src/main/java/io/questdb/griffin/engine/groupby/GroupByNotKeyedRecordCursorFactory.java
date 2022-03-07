@@ -28,7 +28,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -136,7 +136,7 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
                 GroupByUtils.updateNew(groupByFunctions, n, simpleMapValue, baseRecord);
 
                 while (baseCursor.hasNext()) {
-                    circuitBreaker.test();
+                    circuitBreaker.statefulThrowExceptionWhenTripped();
                     GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
                 }
             } else {

@@ -92,7 +92,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
                 final MapKey key = map.withKey();
                 keyMapSink.copy(baseRecord, key);
                 GroupByUtils.updateFunctions(groupByFunctions, n, key.createValue(), baseRecord);
-                circuitBreaker.test();
+                circuitBreaker.statefulThrowExceptionWhenTripped();
             } else {
                 // map value is conditional and only required when clock goes back
                 // we override base method for when this happens

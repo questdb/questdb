@@ -31,17 +31,20 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
+import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 
+import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class PageFrameReduceJob implements Job {
+public class PageFrameReduceJob implements Job, Closeable {
 
     private final static Log LOG = LogFactory.getLog(PageFrameReduceJob.class);
     private final PageAddressCacheRecord[] record;
     private final int[] shards;
     private final int shardCount;
     private final MessageBus messageBus;
+    private final PageFrameCircuitBreaker[] circuitBreakers;
 
     // Each thread should be assigned own instance of this job, making the code effectively
     // single threaded. Such assignment is necessary for threads to have their own shard walk sequence.
@@ -68,8 +71,10 @@ public class PageFrameReduceJob implements Job {
         }
 
         this.record = new PageAddressCacheRecord[workerCount];
+        this.circuitBreakers = new PageFrameCircuitBreaker[workerCount];
         for (int i = 0; i < workerCount; i++) {
             this.record[i] = new PageAddressCacheRecord();
+            this.circuitBreakers[i] = new PageFrameCircuitBreakerImpl();
         }
     }
 
@@ -86,7 +91,8 @@ public class PageFrameReduceJob implements Job {
     public static boolean consumeQueue(
             RingQueue<PageFrameReduceTask> queue,
             MCSequence subSeq,
-            PageAddressCacheRecord record
+            PageAddressCacheRecord record,
+            PageFrameCircuitBreaker circuitBreaker
     ) {
         // loop is required to deal with CAS errors, cursor == -2
         do {
@@ -109,10 +115,14 @@ public class PageFrameReduceJob implements Job {
                             // we deliberately hold the queue item because
                             // processing is daisy-chained. If we were to release item before
                             // finishing reduction, next step (job) will be processing an incomplete task
-                            record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
-                            record.setFrameIndex(task.getFrameIndex());
-                            assert frameSequence.doneLatch.getCount() == 0;
-                            frameSequence.getReducer().reduce(record, task);
+                            if (circuitBreaker.isValid()) {
+                                record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
+                                record.setFrameIndex(task.getFrameIndex());
+                                assert frameSequence.doneLatch.getCount() == 0;
+                                frameSequence.getReducer().reduce(record, task);
+                            } else {
+                                frameSequence.setValid(false);
+                            }
                         }
                     } catch (Throwable e) {
                         frameSequence.setValid(false);
@@ -133,6 +143,11 @@ public class PageFrameReduceJob implements Job {
     }
 
     @Override
+    public void close() {
+        Misc.free(circuitBreakers);
+    }
+
+    @Override
     public boolean run(int workerId) {
         boolean useful = false;
         for (int i = 0; i < shardCount; i++) {
@@ -140,7 +155,8 @@ public class PageFrameReduceJob implements Job {
             useful = !consumeQueue(
                     messageBus.getPageFrameReduceQueue(shard),
                     messageBus.getPageFrameReduceSubSeq(shard),
-                    record[workerId]
+                    record[workerId],
+                    circuitBreakers[workerId]
             ) || useful;
         }
         return useful;

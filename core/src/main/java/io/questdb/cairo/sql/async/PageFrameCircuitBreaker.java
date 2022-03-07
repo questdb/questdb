@@ -22,20 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.cairo.sql.async;
 
-public interface SqlExecutionCircuitBreaker {
-    SqlExecutionCircuitBreaker NOOP_CIRCUIT_BREAKER = new SqlExecutionCircuitBreaker() {
-        @Override
-        public void test() {
-        }
-
-        @Override
-        public void powerUp() {
-        }
-    };
-
-    void test();
-
-    void powerUp();
+public interface PageFrameCircuitBreaker {
+    boolean isValid();
 }

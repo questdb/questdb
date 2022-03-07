@@ -31,6 +31,7 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
@@ -96,7 +97,7 @@ public class SecurityTest extends AbstractGriffinTest {
         SqlExecutionCircuitBreaker dummyCircuitBreaker = new SqlExecutionCircuitBreaker() {
             private  long deadline;
             @Override
-            public void test() {
+            public void statefulThrowExceptionWhenTripped() {
                 int nCalls = nCheckInterruptedCalls.incrementAndGet();
                 long max = circuitBreakerCallLimit;
                 if (nCalls > max || MicrosecondClockImpl.INSTANCE.getTicks() > deadline) {
@@ -105,7 +106,7 @@ public class SecurityTest extends AbstractGriffinTest {
             }
 
             @Override
-            public void powerUp() {
+            public void setState() {
                 deadline = circuitBreakerTimeoutDeadline;
             }
         };
