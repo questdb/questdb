@@ -26,7 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -51,7 +50,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     @BeforeClass
     public static void setUpStatic() {
         AbstractCairoTest.setUpStatic();
-        compiler = new SqlCompiler(engine);
+        compiler = new SqlCompiler(engine, null, snapshotAgent);
         bindVariableService = new BindVariableServiceImpl(configuration);
         sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                 .with(

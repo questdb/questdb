@@ -25,6 +25,7 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
@@ -73,13 +74,14 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
             CairoEngine cairoEngine,
             ServerFactory<T, C> factory,
             FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
     ) {
         final T server;
         if (configuration.isEnabled()) {
             final WorkerPool localPool = configureWorkerPool(configuration, sharedWorkerPool, metrics);
             final boolean local = localPool != sharedWorkerPool;
-            server = factory.create(configuration, cairoEngine, localPool, local, functionFactoryCache, metrics);
+            server = factory.create(configuration, cairoEngine, localPool, local, functionFactoryCache, snapshotAgent, metrics);
 
             if (local) {
                 localPool.assignCleaner(Path.CLEANER);
@@ -101,6 +103,7 @@ public interface WorkerPoolAwareConfiguration extends WorkerPoolConfiguration {
                 WorkerPool workerPool,
                 boolean local,
                 @Nullable FunctionFactoryCache functionFactoryCache,
+                @Nullable DatabaseSnapshotAgent snapshotAgent,
                 Metrics metrics
         );
     }

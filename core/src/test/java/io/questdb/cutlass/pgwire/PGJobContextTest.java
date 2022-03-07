@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableReader;
@@ -2679,6 +2678,7 @@ nodejs code:
                     LOG,
                     engine,
                     compiler.getFunctionFactoryCache(),
+                    snapshotAgent,
                     metrics
             )) {
                 Properties properties = new Properties();
@@ -4709,6 +4709,7 @@ create table tab as (
                         LOG,
                         engine,
                         compiler.getFunctionFactoryCache(),
+                        snapshotAgent,
                         metrics,
                         createPGConnectionContextFactory(conf, workerCount, queryStartedCountDownLatch)
                 )
