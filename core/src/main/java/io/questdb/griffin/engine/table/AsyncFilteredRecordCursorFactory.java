@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
+import io.questdb.mp.Sequence;
 import io.questdb.std.DirectLongList;
 
 public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
@@ -69,7 +70,10 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(executionContext, collectSubSeq, execute(executionContext, collectSubSeq));
+        cursor.of(
+                collectSubSeq,
+                execute(executionContext, collectSubSeq)
+        );
         return cursor;
     }
 
@@ -79,7 +83,7 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public PageFrameSequence<Function> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq) throws SqlException {
+    public PageFrameSequence<Function> execute(SqlExecutionContext executionContext, Sequence collectSubSeq) throws SqlException {
         return frameSequence.dispatch(base, executionContext, collectSubSeq, filter);
     }
 
@@ -89,8 +93,18 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
+    public boolean supportsUpdateRowId(CharSequence tableName) {
+        return base.supportsUpdateRowId(tableName);
+    }
+
+    @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
+    }
+
+    @Override
+    public boolean hasDescendingOrder() {
+        return base.hasDescendingOrder();
     }
 
     private static void filterAsc(PageAddressCacheRecord record, PageFrameReduceTask task) {
@@ -119,15 +133,5 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
                 rows.add(r);
             }
         }
-    }
-
-    @Override
-    public boolean hasDescendingOrder() {
-        return base.hasDescendingOrder();
-    }
-
-    @Override
-    public boolean supportsUpdateRowId(CharSequence tableName) {
-        return base.supportsUpdateRowId(tableName);
     }
 }

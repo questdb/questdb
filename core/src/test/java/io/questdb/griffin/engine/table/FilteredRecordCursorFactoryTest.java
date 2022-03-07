@@ -80,15 +80,13 @@ public class FilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                     SCSequence subSeq = new SCSequence();
                     PageFrameSequence<?> frameSequence = f.execute(sqlExecutionContext, subSeq);
 
-                    final long frameSequenceId = frameSequence.getId();
-                    final int shard = frameSequence.getShard();
-                    final RingQueue<PageFrameReduceTask> queue = messageBus.getPageFrameReduceQueue(shard);
+                    final RingQueue<PageFrameReduceTask> queue = frameSequence.getPageFrameReduceQueue();
                     int frameCount = 0;
 
                     while (true) {
                         long cursor = subSeq.nextBully();
                         PageFrameReduceTask task = queue.get(cursor);
-                        if (task.getFrameSequence().getId() == frameSequenceId) {
+                        if (task.getFrameSequence() == frameSequence) {
                             frameCount++;
                             task.collected();
                             if (frameCount == task.getFrameSequence().getFrameCount()) {

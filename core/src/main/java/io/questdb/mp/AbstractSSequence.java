@@ -24,10 +24,8 @@
 
 package io.questdb.mp;
 
-import io.questdb.std.Mutable;
-
-//single consumer or producer sequence 
-abstract class AbstractSSequence extends AbstractSequence implements Sequence, Mutable {
+//single consumer or producer sequence
+abstract class AbstractSSequence extends AbstractSequence implements Sequence {
 
     AbstractSSequence(WaitStrategy waitStrategy) {
         super(waitStrategy);

@@ -24,12 +24,11 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
@@ -43,7 +42,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     private final PageAddressCacheRecord record;
     private PageAddressCacheRecord recordB;
     private SCSequence collectSubSeq;
-    private RingQueue<PageFrameReduceTask> queue;
+    private RingQueue<PageFrameReduceTask> reduceQueue;
     private DirectLongList rows;
     private long cursor = -1;
     private long frameRowIndex;
@@ -61,7 +60,6 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     public void close() {
         LOG.debug()
                 .$("closing [shard=").$(frameSequence.getShard())
-                .$(", id=").$(frameSequence.getId())
                 .$(", frameIndex=").$(frameIndex)
                 .$(", frameCount=").$(frameLimit)
                 .$(", cursor=").$(cursor)
@@ -149,27 +147,27 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     private void unsafeCollectCursor() {
-        queue.get(cursor).collected();
+        reduceQueue.get(cursor).collected();
         collectSubSeq.done(cursor);
         cursor = -1;
     }
 
     private void fetchNextFrame() {
-        final long id = frameSequence.getId();
         do {
             this.cursor = collectSubSeq.next();
             if (cursor > -1) {
-                PageFrameReduceTask task = queue.get(cursor);
-                LOG.debug()
-                        .$("collected [shard=").$(frameSequence.getShard())
-                        .$(", id=").$(id)
-                        .$(", taskId=").$(task.getFrameSequence().getId())
-                        .$(", frameIndex=").$(task.getFrameIndex())
-                        .$(", frameCount=").$(frameSequence.getFrameCount())
-                        .$(", valid=").$(frameSequence.isValid())
-                        .$(", cursor=").$(cursor)
-                        .I$();
-                if (task.getFrameSequence().getId() == id) {
+                PageFrameReduceTask task = reduceQueue.get(cursor);
+                PageFrameSequence<?> thatFrameSequence = task.getFrameSequence();
+                if (thatFrameSequence == this.frameSequence) {
+
+                    LOG.debug()
+                            .$("collected [shard=").$(frameSequence.getShard())
+                            .$(", frameIndex=").$(task.getFrameIndex())
+                            .$(", frameCount=").$(frameSequence.getFrameCount())
+                            .$(", valid=").$(frameSequence.isValid())
+                            .$(", cursor=").$(cursor)
+                            .I$();
+
                     this.rows = task.getRows();
                     this.frameRowCount = rows.size();
                     this.frameIndex = task.getFrameIndex();
@@ -195,15 +193,13 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         } while (this.frameIndex < frameLimit);
     }
 
-    void of(SqlExecutionContext executionContext, SCSequence collectSubSeq, PageFrameSequence<?> frameSequence) throws SqlException {
-        this.frameSequence = frameSequence;
+    void of(SCSequence collectSubSeq, PageFrameSequence<?> frameSequence) throws SqlException {
         this.collectSubSeq = collectSubSeq;
-        final int shard = frameSequence.getShard();
-        this.queue = executionContext.getMessageBus().getPageFrameReduceQueue(shard);
-        PageAddressCache pageAddressCache = frameSequence.getPageAddressCache();
+        this.frameSequence = frameSequence;
+        this.reduceQueue = frameSequence.getPageFrameReduceQueue();
         this.frameIndex = -1;
         this.frameLimit = frameSequence.getFrameCount() - 1;
-        record.of(frameSequence.getSymbolTableSource(), pageAddressCache);
+        record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
         // when frameCount is 0 our collect sequence is not subscribed
         // we should not be attempting to fetch queue using it
         if (frameLimit > -1) {

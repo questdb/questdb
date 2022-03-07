@@ -46,7 +46,7 @@ public class PageFrameSequence<T extends StatefulAtom> {
     private static final int OWNER_WORK_STEALING = 1;
     private static final int OWNER_ASYNC = 2;
     private final static Log LOG = LogFactory.getLog(PageFrameSequence.class);
-
+    private static final AtomicLong ID_SEQ = new AtomicLong();
     public final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final AtomicBoolean valid = new AtomicBoolean(true);
     private final AtomicInteger reduceCounter = new AtomicInteger(0);
@@ -58,8 +58,8 @@ public class PageFrameSequence<T extends StatefulAtom> {
     private long id;
     private int shard;
     private int frameCount;
-    private SCSequence collectSubSeq;
-    private PageFrameCursor pageFrameCursor;
+    private Sequence collectSubSeq;
+    private SymbolTableSource symbolTableSource;
     private T atom;
     private PageAddressCacheRecord[] records;
     // we need this to restart execution for `toTop`
@@ -68,9 +68,9 @@ public class PageFrameSequence<T extends StatefulAtom> {
     private int dispatchStartIndex = 0;
 
     public PageFrameSequence(CairoConfiguration configuration, MessageBus messageBus, PageFrameReducer reducer) {
-        this.reducer = reducer;
         this.pageAddressCache = new PageAddressCache(configuration);
         this.messageBus = messageBus;
+        this.reducer = reducer;
     }
 
     public void await() {
@@ -90,7 +90,7 @@ public class PageFrameSequence<T extends StatefulAtom> {
                 if (cursor > -1) {
                     // discard collect items
                     final PageFrameReduceTask tsk = queue.get(cursor);
-                    if (tsk.getFrameSequence().getId() == id) {
+                    if (tsk.getFrameSequence() == this) {
                         tsk.collected();
                     }
                     collectSubSeq.done(cursor);
@@ -105,7 +105,7 @@ public class PageFrameSequence<T extends StatefulAtom> {
         // prepare different frame sequence using the same object instance
         this.frameCount = 0;
         pageAddressCache.clear();
-        pageFrameCursor = Misc.free(pageFrameCursor);
+        symbolTableSource = Misc.free(symbolTableSource);
         // collect sequence mau not be set here when
         // factory is closed without using cursor
         if (collectSubSeq != null) {
@@ -118,7 +118,7 @@ public class PageFrameSequence<T extends StatefulAtom> {
     public PageFrameSequence<T> dispatch(
             RecordCursorFactory base,
             SqlExecutionContext executionContext,
-            SCSequence collectSubSeq,
+            Sequence collectSubSeq,
             T atom
     ) throws SqlException {
 
@@ -130,6 +130,7 @@ public class PageFrameSequence<T extends StatefulAtom> {
             final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext);
             final int frameCount = setupAddressCache(base, pageFrameCursor);
 
+            // this method sets a lot of state of the page sequence
             prepareForDispatch(rnd, frameCount, pageFrameCursor, atom, collectSubSeq);
 
             // It is essential to init the atom after we prepared sequence for dispatch.
@@ -141,7 +142,7 @@ public class PageFrameSequence<T extends StatefulAtom> {
                 dispatch();
             }
         } catch (Throwable e) {
-            this.pageFrameCursor = Misc.free(this.pageFrameCursor);
+            this.symbolTableSource = Misc.free(this.symbolTableSource);
             throw e;
         }
         return this;
@@ -175,6 +176,10 @@ public class PageFrameSequence<T extends StatefulAtom> {
         return pageAddressCache;
     }
 
+    public RingQueue<PageFrameReduceTask> getPageFrameReduceQueue() {
+        return messageBus.getPageFrameReduceQueue(shard);
+    }
+
     public AtomicInteger getReduceCounter() {
         return reduceCounter;
     }
@@ -188,7 +193,7 @@ public class PageFrameSequence<T extends StatefulAtom> {
     }
 
     public SymbolTableSource getSymbolTableSource() {
-        return pageFrameCursor;
+        return symbolTableSource;
     }
 
     /**
@@ -268,7 +273,6 @@ public class PageFrameSequence<T extends StatefulAtom> {
             doneLatch.reset();
             dispatchStartIndex = 0;
             reduceCounter.set(0);
-            this.pageFrameCursor.toTop();
             long dispatchCursor;
             do {
                 dispatchCursor = dispatchPubSeq.next();
@@ -331,14 +335,12 @@ public class PageFrameSequence<T extends StatefulAtom> {
         }
     }
 
-    private static final AtomicLong ID_SEQ = new AtomicLong();
-
     private void prepareForDispatch(
             Rnd rnd,
             int frameCount,
-            PageFrameCursor pageFrameCursor,
+            SymbolTableSource symbolTableSource,
             T atom,
-            SCSequence collectSubSeq
+            Sequence collectSubSeq
     ) {
         this.id = ID_SEQ.incrementAndGet();
         this.doneLatch.reset();
@@ -346,8 +348,8 @@ public class PageFrameSequence<T extends StatefulAtom> {
         this.reduceCounter.set(0);
         this.shard = rnd.nextInt(messageBus.getPageFrameReduceShardCount());
         this.frameCount = frameCount;
-        assert this.pageFrameCursor == null;
-        this.pageFrameCursor = pageFrameCursor;
+        assert this.symbolTableSource == null;
+        this.symbolTableSource = symbolTableSource;
         this.atom = atom;
         this.collectSubSeq = collectSubSeq;
         this.dispatchPubSeq = messageBus.getPageFrameDispatchPubSeq();

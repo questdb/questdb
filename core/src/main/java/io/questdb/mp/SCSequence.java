@@ -95,12 +95,6 @@ public class SCSequence extends AbstractSSequence {
         return next0(next + 1);
     }
 
-    @Override
-    public void clear() {
-        super.clear();
-        cache = value;
-    }
-
     private long next0(long next) {
         cache = barrier.availableIndex(next);
         return next > cache ? -1 : next;

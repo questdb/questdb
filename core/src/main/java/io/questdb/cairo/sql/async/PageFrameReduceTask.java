@@ -26,8 +26,6 @@ package io.questdb.cairo.sql.async;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.StatefulAtom;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -35,7 +33,6 @@ import io.questdb.std.Misc;
 import java.io.Closeable;
 
 public class PageFrameReduceTask implements Closeable {
-    private static final Log LOG = LogFactory.getLog(PageFrameReduceTask.class);
     private final DirectLongList rows;
     private final long pageFrameQueueCapacity;
     private int frameIndex = Integer.MAX_VALUE;
@@ -53,7 +50,6 @@ public class PageFrameReduceTask implements Closeable {
 
     public void collected() {
         final long frameCount = frameSequence.getFrameCount();
-        final int shard = frameSequence.getShard();
         // We have to reset capacity only on max all queue items
         // What we are avoiding here is resetting capacity on 1000 frames given our queue size
         // is 32 items. If our particular producer resizes queue items to 10x of the initial size
@@ -65,10 +61,6 @@ public class PageFrameReduceTask implements Closeable {
         // we assume that frame indexes are published in ascending order
         // and when we see the last index, we would free up the remaining resources
         if (frameIndex + 1 == frameCount) {
-            LOG.debug()
-                    .$("cleanup [shard=").$(shard)
-                    .$(", id=").$(frameSequence.getId())
-                    .I$();
             frameSequence.reset();
         }
     }
