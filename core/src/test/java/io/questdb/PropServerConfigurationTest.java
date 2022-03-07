@@ -237,6 +237,11 @@ public class PropServerConfigurationTest {
         Assert.assertEquals("http-server", configuration.getHttpServerConfiguration().getDispatcherConfiguration().getDispatcherLogName());
 
         TestUtils.assertEquals(new File(root, "db").getAbsolutePath(), configuration.getCairoConfiguration().getRoot());
+        TestUtils.assertEquals(new File(root, "conf").getAbsolutePath(), configuration.getCairoConfiguration().getConfRoot());
+        TestUtils.assertEquals(new File(root, "snapshot").getAbsolutePath(), configuration.getCairoConfiguration().getSnapshotRoot());
+
+        Assert.assertEquals("", configuration.getCairoConfiguration().getSnapshotInstanceId());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSnapshotRecoveryEnabled());
 
         // assert mime types
         TestUtils.assertEquals("application/json", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getMimeTypesCache().get("json"));
@@ -570,6 +575,8 @@ public class PropServerConfigurationTest {
             Assert.assertEquals("Keep-Alive: timeout=10, max=50000" + Misc.EOL, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getKeepAliveHeader());
             Assert.assertEquals(8, configuration.getCairoConfiguration().getDoubleToStrCastScale());
             Assert.assertEquals(3, configuration.getCairoConfiguration().getFloatToStrCastScale());
+            Assert.assertEquals("test-id-42", configuration.getCairoConfiguration().getSnapshotInstanceId());
+            Assert.assertFalse(configuration.getCairoConfiguration().isSnapshotRecoveryEnabled());
 
             Assert.assertEquals(CommitMode.ASYNC, configuration.getCairoConfiguration().getCommitMode());
             Assert.assertEquals(12, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());

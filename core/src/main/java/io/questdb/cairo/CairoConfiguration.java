@@ -82,6 +82,24 @@ public interface CairoConfiguration {
 
     CharSequence getConfRoot(); // same as root/../conf
 
+    CharSequence getSnapshotRoot(); // same as root/../snapshot
+
+    /**
+     * Returns database instance id. The instance id is used by the snapshot recovery mechanism:
+     * on database start the id is compared with the id stored in a snapshot, if any. If the ids
+     * are different, snapshot recovery is being triggered.
+     *
+     * @return instance id.
+     */
+    CharSequence getSnapshotInstanceId();
+
+    /**
+     * A flag to enable/disable snapshot recovery mechanism. Defaults to {@code true}.
+     *
+     * @return enable/disable snapshot recovery flag
+     */
+    boolean isSnapshotRecoveryEnabled();
+
     int getCopyPoolCapacity();
 
     int getCreateAsSelectRetryCount();

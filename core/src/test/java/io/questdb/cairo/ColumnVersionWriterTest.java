@@ -29,6 +29,7 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -39,14 +40,6 @@ import java.util.concurrent.atomic.AtomicLong;
 import static io.questdb.cairo.ColumnVersionReader.HEADER_SIZE;
 
 public class ColumnVersionWriterTest extends AbstractCairoTest {
-    public static void assertEqual(LongList expected, LongList actual) {
-        Assert.assertEquals(expected.size(), actual.size());
-        for (int i = 0, n = expected.size(); i < n; i++) {
-            if (expected.getQuick(i) != actual.getQuick(i)) {
-                Assert.assertEquals("index " + i, expected.getQuick(i), actual.getQuick(i));
-            }
-        }
-    }
 
     @Test
     public void testColumnAddRemove() throws Exception {
@@ -109,7 +102,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     Assert.assertEquals(i % 2 == 0 ? i * 10 : 0, colTop);
                 }
 
-                assertEqual(w.getCachedList(), r.getCachedList());
+                TestUtils.assertEquals(w.getCachedList(), r.getCachedList());
             }
         });
     }
@@ -179,17 +172,17 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     Assert.assertEquals(i % 2 == 0 ? i * 10 : 0, colTop);
                 }
 
-                assertEqual(w.getCachedList(), r.getCachedList());
+                TestUtils.assertEquals(w.getCachedList(), r.getCachedList());
 
                 r.ofRO(ff, path);
                 r.readSafe(configuration.getMicrosecondClock(), 1000);
-                assertEqual(w.getCachedList(), r.getCachedList());
+                TestUtils.assertEquals(w.getCachedList(), r.getCachedList());
 
                 MemoryCMR mem = Vm.getCMRInstance();
                 mem.of(ff, path, 0, HEADER_SIZE, MemoryTag.MMAP_TABLE_READER);
                 r.ofRO(mem);
                 r.readSafe(configuration.getMicrosecondClock(), 1000);
-                assertEqual(w.getCachedList(), r.getCachedList());
+                TestUtils.assertEquals(w.getCachedList(), r.getCachedList());
                 mem.close();
             }
         });
@@ -218,7 +211,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     w.commit();
                     r.readSafe(configuration.getMicrosecondClock(), 1000);
                     Assert.assertTrue(w.getCachedList().size() > 0);
-                    assertEqual(w.getCachedList(), r.getCachedList());
+                    TestUtils.assertEquals(w.getCachedList(), r.getCachedList());
                     // assert list is ordered by (timestamp,column_index)
 
                     LongList list = r.getCachedList();

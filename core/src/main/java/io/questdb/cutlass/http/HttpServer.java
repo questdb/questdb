@@ -29,6 +29,7 @@ import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnIndexerJob;
 import io.questdb.cutlass.http.processors.*;
+import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
@@ -48,7 +49,9 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 
 public class HttpServer implements Closeable {
+
     private static final Log LOG = LogFactory.getLog(HttpServer.class);
+
     private static final WorkerPoolAwareConfiguration.ServerFactory<HttpServer, HttpServerConfiguration> CREATE0 = HttpServer::create0;
     private static final WorkerPoolAwareConfiguration.ServerFactory<HttpServer, HttpMinServerConfiguration> CREATE_MIN = HttpServer::createMin;
     private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
@@ -112,7 +115,8 @@ public class HttpServer implements Closeable {
             CairoEngine cairoEngine,
             WorkerPool workerPool,
             HttpRequestProcessorBuilder jsonQueryProcessorBuilder,
-            FunctionFactoryCache functionFactoryCache
+            FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent
     ) {
         server.bind(new HttpRequestProcessorFactory() {
             @Override
@@ -145,7 +149,8 @@ public class HttpServer implements Closeable {
                         configuration.getJsonQueryProcessorConfiguration(),
                         cairoEngine,
                         workerPool.getWorkerCount(),
-                        functionFactoryCache
+                        functionFactoryCache,
+                        snapshotAgent
                 );
             }
 
@@ -199,6 +204,7 @@ public class HttpServer implements Closeable {
                 workerPoolLog,
                 cairoEngine,
                 null,
+                null,
                 metrics
         );
     }
@@ -210,6 +216,7 @@ public class HttpServer implements Closeable {
             Log workerPoolLog,
             CairoEngine cairoEngine,
             @Nullable FunctionFactoryCache functionFactoryCache,
+            @Nullable DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
     ) {
         return WorkerPoolAwareConfiguration.create(
@@ -219,6 +226,7 @@ public class HttpServer implements Closeable {
                 cairoEngine,
                 CREATE0,
                 functionFactoryCache,
+                snapshotAgent,
                 metrics
         );
     }
@@ -230,6 +238,7 @@ public class HttpServer implements Closeable {
             Log workerPoolLog,
             CairoEngine cairoEngine,
             @Nullable FunctionFactoryCache functionFactoryCache,
+            @Nullable DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
     ) {
         return WorkerPoolAwareConfiguration.create(
@@ -239,6 +248,7 @@ public class HttpServer implements Closeable {
                 cairoEngine,
                 CREATE_MIN,
                 functionFactoryCache,
+                snapshotAgent,
                 metrics
         );
     }
@@ -280,6 +290,7 @@ public class HttpServer implements Closeable {
             WorkerPool workerPool,
             boolean localPool,
             FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
     ) {
         final HttpServer s = new HttpServer(configuration, metrics, workerPool, localPool);
@@ -288,8 +299,9 @@ public class HttpServer implements Closeable {
                 configuration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
                 workerPool.getWorkerCount(),
-                functionFactoryCache);
-        addDefaultEndpoints(s, configuration, cairoEngine, workerPool, jsonQueryProcessorBuilder, functionFactoryCache);
+                functionFactoryCache,
+                snapshotAgent);
+        addDefaultEndpoints(s, configuration, cairoEngine, workerPool, jsonQueryProcessorBuilder, functionFactoryCache, snapshotAgent);
         return s;
     }
 
@@ -299,6 +311,7 @@ public class HttpServer implements Closeable {
             WorkerPool workerPool,
             boolean localPool,
             FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
     ) {
         final HttpServer s = new HttpServer(configuration, metrics, workerPool, localPool);

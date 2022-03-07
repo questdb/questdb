@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.cairo.vm.api.MemoryW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -63,6 +64,28 @@ public class ColumnVersionReader implements Closeable, Mutable {
     @Override
     public void close() {
         clear();
+    }
+
+    public void dumpTo(MemoryW mem) {
+        mem.putLong(OFFSET_VERSION_64, version);
+        boolean areaA = (version & 1L) == 0L;
+        final long offset = HEADER_SIZE;
+        mem.putLong(areaA ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64, offset);
+        final long size = (long) (cachedList.size() / BLOCK_SIZE) * BLOCK_SIZE_BYTES;
+        mem.putLong(areaA ? OFFSET_SIZE_A_64 : OFFSET_SIZE_B_64, size);
+
+        int i = 0;
+        long p = offset;
+        long lim = offset + size;
+
+        while (p < lim) {
+            mem.putLong(p, cachedList.getQuick(i));
+            mem.putLong(p + Long.BYTES, cachedList.getQuick(i + 1));
+            mem.putLong(p + 2 * Long.BYTES, cachedList.getQuick(i + 2));
+            mem.putLong(p + 3 * Long.BYTES, cachedList.getQuick(i + 3));
+            i += BLOCK_SIZE;
+            p += BLOCK_SIZE_BYTES;
+        }
     }
 
     public LongList getCachedList() {
@@ -179,17 +202,17 @@ public class ColumnVersionReader implements Closeable, Mutable {
         long p = offset;
         long lim = offset + areaSize;
 
-        assert areaSize % ColumnVersionWriter.BLOCK_SIZE_BYTES == 0;
+        assert areaSize % BLOCK_SIZE_BYTES == 0;
 
-        cachedList.setPos((int) ((areaSize / (ColumnVersionWriter.BLOCK_SIZE_BYTES)) * BLOCK_SIZE));
+        cachedList.setPos((int) ((areaSize / BLOCK_SIZE_BYTES) * BLOCK_SIZE));
 
         while (p < lim) {
             cachedList.setQuick(i, mem.getLong(p));
-            cachedList.setQuick(i + 1, mem.getLong(p + 8));
-            cachedList.setQuick(i + 2, mem.getLong(p + 16));
-            cachedList.setQuick(i + 3, mem.getLong(p + 24));
-            i += ColumnVersionWriter.BLOCK_SIZE;
-            p += ColumnVersionWriter.BLOCK_SIZE_BYTES;
+            cachedList.setQuick(i + 1, mem.getLong(p + Long.BYTES));
+            cachedList.setQuick(i + 2, mem.getLong(p + 2 * Long.BYTES));
+            cachedList.setQuick(i + 3, mem.getLong(p + 3 * Long.BYTES));
+            i += BLOCK_SIZE;
+            p += BLOCK_SIZE_BYTES;
         }
     }
 
