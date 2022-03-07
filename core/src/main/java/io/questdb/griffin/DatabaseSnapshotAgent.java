@@ -183,7 +183,8 @@ public class DatabaseSnapshotAgent implements Closeable {
         }
         try {
             if (snapshotReaders.size() == 0) {
-                throw SqlException.position(0).put("SNAPSHOT PREPARE must be called before SNAPSHOT COMPLETE");
+                LOG.info().$("Snapshot has no tables, SNAPSHOT COMPLETE is ignored.").$();
+                return;
             }
 
             // Delete snapshot directory.

@@ -75,6 +75,14 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSnapshotPrepareOnEmptyDatabase() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+            compiler.compile("snapshot complete", sqlExecutionContext);
+        });
+    }
+
+    @Test
     public void testSnapshotPrepareCheckTableMetadata() throws Exception {
         testSnapshotPrepareCheckTableMetadata(false, false);
     }
