@@ -303,7 +303,6 @@ const getTextFixes = ({
     selectStartOffset: 0,
   }
 
-  console.log(position)
   const rules: Rule[] = [
     {
       when: () => model?.getValue() === "",
