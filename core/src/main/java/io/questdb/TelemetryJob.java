@@ -76,7 +76,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
         this.queue = engine.getTelemetryQueue();
         this.subSeq = engine.getTelemetrySubSequence();
 
-        try (final SqlCompiler compiler = new SqlCompiler(engine, functionFactoryCache)) {
+        try (final SqlCompiler compiler = new SqlCompiler(engine, functionFactoryCache, null)) {
             final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
             sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
             if (enabled) {
@@ -106,7 +106,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
                 this.writer = null;
             }
 
-            // todo: close writerConfig. We currently keep it opened to prevent users from
+            // TODO: close writerConfig. We currently keep it opened to prevent users from
             // modifying the table.
             // Once we have a permission system, we can use that instead.
             try {

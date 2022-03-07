@@ -181,7 +181,6 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
             w.removeColumn("double");
             w.removeColumn("str");
             w.addColumn("xyz", ColumnType.STRING);
-
         });
     }
 

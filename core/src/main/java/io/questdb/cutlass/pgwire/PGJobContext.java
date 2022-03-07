@@ -25,6 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.network.PeerDisconnectedException;
@@ -42,8 +43,13 @@ public class PGJobContext implements Closeable {
     private final AssociativeCache<TypesAndSelect> selectAndTypesCache;
     private final WeakAutoClosableObjectPool<TypesAndSelect> selectAndTypesPool;
 
-    public PGJobContext(PGWireConfiguration configuration, CairoEngine engine, FunctionFactoryCache functionFactoryCache) {
-        this.compiler = new SqlCompiler(engine, functionFactoryCache);
+    public PGJobContext(
+            PGWireConfiguration configuration,
+            CairoEngine engine,
+            FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent
+    ) {
+        this.compiler = new SqlCompiler(engine, functionFactoryCache, snapshotAgent);
         final boolean enableSelectCache = configuration.isSelectCacheEnabled();
         final int blockCount = enableSelectCache ? configuration.getSelectCacheBlockCount() : 1;
         final int rowCount = enableSelectCache ? configuration.getSelectCacheRowCount() : 1;

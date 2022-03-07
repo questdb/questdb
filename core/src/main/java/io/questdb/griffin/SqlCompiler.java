@@ -84,6 +84,7 @@ public class SqlCompiler implements Closeable {
     private final CairoConfiguration configuration;
     private final Path renamePath = new Path();
     private final DatabaseBackupAgent backupAgent;
+    private final DatabaseSnapshotAgent snapshotAgent;
     private final MemoryMARW mem = Vm.getMARWInstance();
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final MessageBus messageBus;
@@ -115,14 +116,15 @@ public class SqlCompiler implements Closeable {
         }
     };
 
-    //helper var used to pass back count in cases it can't be done via method result
+    // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
 
+    // Exposed for embedded API users.
     public SqlCompiler(CairoEngine engine) {
-        this(engine, null);
+        this(engine, null, null);
     }
 
-    public SqlCompiler(CairoEngine engine, @Nullable FunctionFactoryCache functionFactoryCache) {
+    public SqlCompiler(CairoEngine engine, @Nullable FunctionFactoryCache functionFactoryCache, @Nullable DatabaseSnapshotAgent snapshotAgent) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
@@ -148,6 +150,7 @@ public class SqlCompiler implements Closeable {
         functionParser.setSqlCodeGenerator(codeGenerator);
 
         this.backupAgent = new DatabaseBackupAgent();
+        this.snapshotAgent = snapshotAgent;
 
         // For each 'this::method' reference java compiles a class
         // We need to minimize repetition of this syntax as each site generates garbage
@@ -162,6 +165,7 @@ public class SqlCompiler implements Closeable {
         final KeywordBasedExecutor sqlBackup = backupAgent::sqlBackup;
         final KeywordBasedExecutor sqlShow = this::sqlShow;
         final KeywordBasedExecutor vacuumTable = this::vacuum;
+        final KeywordBasedExecutor snapshotDatabase = this::snapshotDatabase;
 
         keywordBasedExecutors.put("truncate", truncateTables);
         keywordBasedExecutors.put("TRUNCATE", truncateTables);
@@ -193,6 +197,8 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("SHOW", sqlShow);
         keywordBasedExecutors.put("vacuum", vacuumTable);
         keywordBasedExecutors.put("VACUUM", vacuumTable);
+        keywordBasedExecutors.put("snapshot", snapshotDatabase);
+        keywordBasedExecutors.put("SNAPSHOT", snapshotDatabase);
 
         configureLexer(lexer);
 
@@ -1154,7 +1160,7 @@ public class SqlCompiler implements Closeable {
             tableExistsOrFail(tableNamePosition, tok, executionContext);
 
             CharSequence name = GenericLexer.immutableOf(tok);
-            try (TableReader reader = getTableReaderForAlterTable(executionContext, name)) {
+            try (TableReader reader = engine.getReaderForStatement(executionContext, name, "alter table")) {
                 String tableName = reader.getTableName();
                 TableReaderMetadata tableMetadata = reader.getMetadata();
                 tok = expectToken(lexer, "'add', 'alter' or 'drop'");
@@ -2238,29 +2244,6 @@ public class SqlCompiler implements Closeable {
         return codeGenerator.generate(queryModel, executionContext);
     }
 
-    private TableReader getTableReaderForAlterTable(SqlExecutionContext executionContext, CharSequence tableName) {
-        try {
-            return engine.getReader(executionContext.getCairoSecurityContext(), tableName);
-        } catch (CairoException ex) {
-            // Cannot open reader on existing table is pretty bad
-            LOG.error().$("error opening reader for alter table statement [table=").$(tableName)
-                    .$(",errno=").$(ex.getErrno())
-                    .$(",error=").$(ex.getMessage()).I$();
-            // In some messed states, for example after _meta file swap failure Reader cannot be opened
-            // but writer can be
-            // Opening writer fixes the table mess
-            try (TableWriter ignored = engine.getWriter(executionContext.getCairoSecurityContext(), tableName, "alter table statement")) {
-                return engine.getReader(executionContext.getCairoSecurityContext(), tableName);
-            } catch (EntryUnavailableException wrOpEx) {
-                // This is fine, writer is busy. Throw back origin error
-                throw ex;
-            } catch (Throwable th) {
-                LOG.error().$("error preliminary opening writer for alter table statement [table=").$(tableName).$(",error=").$(ex.getMessage()).I$();
-                throw ex;
-            }
-        }
-    }
-
     private CompiledQuery insert(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
         final InsertModel model = (InsertModel) executionModel;
         final ExpressionNode name = model.getTableName();
@@ -2774,6 +2757,29 @@ public class SqlCompiler implements Closeable {
         throw SqlException.$(lexer.lastTokenPosition(), "'partitions' expected");
     }
 
+    private CompiledQuery snapshotDatabase(SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getCairoSecurityContext().checkWritePermission();
+        CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
+
+        if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
+            if (snapshotAgent == null) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("Snapshot agent is not configured. Try using different embedded API");
+            }
+            snapshotAgent.prepareSnapshot(executionContext);
+            return compiledQuery.ofSnapshotPrepare();
+        }
+
+        if (Chars.equalsLowerCaseAscii(tok, "complete")) {
+            if (snapshotAgent == null) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("Snapshot agent is not configured. Try using different embedded API");
+            }
+            snapshotAgent.completeSnapshot();
+            return compiledQuery.ofSnapshotComplete();
+        }
+
+        throw SqlException.position(lexer.lastTokenPosition()).put("'prepare' or 'complete' expected");
+    }
+
     private Function validateAndConsume(
             InsertModel model,
             int tupleIndex,
@@ -3173,7 +3179,7 @@ public class SqlCompiler implements Closeable {
             TableReaderMetadata sourceMetaData = reader.getMetadata();
             try {
                 mem.smallFile(ff, srcPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                sourceMetaData.cloneTo(mem);
+                sourceMetaData.dumpTo(mem);
 
                 // create symbol maps
                 srcPath.trimTo(rootLen).$();

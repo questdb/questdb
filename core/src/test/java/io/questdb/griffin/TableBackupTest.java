@@ -132,7 +132,7 @@ public class TableBackupTest {
                         -1,
                         null);
 
-        File confRoot = new File(PropServerConfiguration.confRoot(root));  // dummy configuration
+        File confRoot = new File(PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CONFIG_DIRECTORY));  // dummy configuration
         Assert.assertTrue(confRoot.mkdirs());
         Assert.assertTrue(new File(confRoot, "server.conf").createNewFile());
         Assert.assertTrue(new File(confRoot, "mime.types").createNewFile());

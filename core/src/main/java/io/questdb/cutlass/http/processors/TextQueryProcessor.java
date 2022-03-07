@@ -50,16 +50,19 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
 public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
+
     // Factory cache is thread local due to possibility of factory being
     // closed by another thread. Peer disconnect is a typical example of this.
     // Being asynchronous we may need to be able to return factory to the cache
     // by the same thread that executes the dispatcher.
     private static final LocalValue<TextQueryProcessorState> LV = new LocalValue<>();
     private static final Log LOG = LogFactory.getLog(TextQueryProcessor.class);
+
     private final SqlCompiler compiler;
     private final JsonQueryProcessorConfiguration configuration;
     private final int floatScale;
@@ -69,22 +72,24 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final Metrics metrics;
 
+    @TestOnly
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
             int workerCount
     ) {
-        this(configuration, engine, workerCount, null);
+        this(configuration, engine, workerCount, null, null);
     }
 
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
             int workerCount,
-            @Nullable FunctionFactoryCache functionFactoryCache
+            @Nullable FunctionFactoryCache functionFactoryCache,
+            @Nullable DatabaseSnapshotAgent snapshotAgent
     ) {
         this.configuration = configuration;
-        this.compiler = new SqlCompiler(engine,functionFactoryCache);
+        this.compiler = new SqlCompiler(engine, functionFactoryCache, snapshotAgent);
         this.floatScale = configuration.getFloatScale();
         this.clock = configuration.getClock();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount);

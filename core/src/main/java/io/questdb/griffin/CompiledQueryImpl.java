@@ -246,6 +246,14 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(VACUUM);
     }
 
+    CompiledQuery ofSnapshotPrepare() {
+        return of(SNAPSHOT_DB_PREPARE);
+    }
+
+    CompiledQuery ofSnapshotComplete() {
+        return of(SNAPSHOT_DB_COMPLETE);
+    }
+
     private class AlterTableQueryFuture implements QueryFuture {
         private SCSequence eventSubSeq;
         private int status;
