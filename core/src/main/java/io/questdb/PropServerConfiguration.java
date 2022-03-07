@@ -715,7 +715,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             );
 
             try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
-                inputFormatConfiguration.parseConfiguration(lexer, sqlCopyFormatsFile);
+                inputFormatConfiguration.parseConfiguration(lexer, confRoot, sqlCopyFormatsFile);
             }
 
             this.inputRoot = getString(properties, env, "cairo.sql.copy.root", null);

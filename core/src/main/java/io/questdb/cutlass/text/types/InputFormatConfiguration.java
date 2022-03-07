@@ -36,6 +36,8 @@ import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.TimestampFormatFactory;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
 
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 
@@ -135,18 +137,14 @@ public class InputFormatConfiguration {
         return timestampUtf8Flags;
     }
 
-    public void parseConfiguration(JsonLexer jsonLexer, String adapterSetConfigurationFileName) throws JsonException {
+    public void parseConfiguration(JsonLexer jsonLexer, String confRoot, String configFileName) throws JsonException {
 
         this.clear();
         jsonLexer.clear();
 
         final JsonParser parser = this::onJsonEvent;
 
-        LOG.info().$("loading [from=").$(adapterSetConfigurationFileName).$(']').$();
-        try (InputStream stream = this.getClass().getResourceAsStream(adapterSetConfigurationFileName)) {
-            if (stream == null) {
-                throw JsonException.$(0, "could not find [resource=").put(adapterSetConfigurationFileName).put(']');
-            }
+        try (InputStream stream = openStream(confRoot, configFileName)) {
             // here is where using direct memory is very disadvantageous
             // we will copy buffer twice to parse json, but luckily contents should be small
             // and we should be parsing this only once on startup
@@ -166,8 +164,28 @@ public class InputFormatConfiguration {
                 Unsafe.free(memBuffer, heapBuffer.length, MemoryTag.NATIVE_DEFAULT);
             }
         } catch (IOException e) {
-            throw JsonException.$(0, "could not read [resource=").put(adapterSetConfigurationFileName).put(']');
+            throw JsonException.$(0, "could not read input format config [confRoot=").put(confRoot)
+                    .put(", configFileName=").put(configFileName)
+                    .put(']');
         }
+    }
+
+    private InputStream openStream(String confRoot, String configFileName) throws IOException, JsonException {
+        final InputStream stream = this.getClass().getResourceAsStream(configFileName);
+        if (stream != null) {
+            LOG.info().$("loading input format config [resource=").$(configFileName).$(']').$();
+            return stream;
+        }
+        if (confRoot != null) {
+            final File configFile = new File(confRoot, configFileName);
+            if (configFile.exists()) {
+                LOG.info().$("loading input format config [file=").$(configFile.getAbsolutePath()).$(']').$();
+                return new FileInputStream(configFile);
+            }
+        }
+        throw JsonException.$(0, "could not find input format config [confRoot=").put(confRoot)
+                .put(", configFileName=").put(configFileName)
+                .put(']');
     }
 
     private void onJsonEvent(int code, CharSequence tag, int position) throws JsonException {
