@@ -78,11 +78,8 @@ public class Mig620 {
         try (MemoryMARW txMemory = openFileSafe(ff, path, TX_OFFSET_MAP_WRITER_COUNT_MIG + 8)) {
             int symbolCount = txMemory.getInt(TX_OFFSET_MAP_WRITER_COUNT_MIG);
             long partitionSizeOffset = TX_OFFSET_MAP_WRITER_COUNT_MIG + 4 + symbolCount * 8L;
-            txMemory.extend(partitionSizeOffset + 4);
-            int partitionTableSize = txMemory.getInt(partitionSizeOffset);
+            int partitionTableSize = txMemory.size() > partitionSizeOffset ? txMemory.getInt(partitionSizeOffset) : 0;
             long existingTotalSize = partitionSizeOffset + 4 + partitionTableSize;
-            long newSize = existingTotalSize + TX_BASE_HEADER_SIZE_MIG;
-            txMemory.extend(newSize);
             long txn = txMemory.getLong(TXN_OFFSET_MIG);
 
             createColumnVersionFile(txMemory, partitionSizeOffset, partitionTableSize, migrationContext, path, pathLen);
@@ -188,11 +185,20 @@ public class Mig620 {
         LongList result = new LongList();
         int partitionCount = partitionTableSize / 8 / 4;
         long offset = partitionSizeOffset + 4;
+        long prevPartition = Long.MIN_VALUE;
+        long txSize = txMemory.size() - 4 * 8;
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+            if (offset > txSize) {
+                throw CairoException.instance(0).put("corrupt _txn file ").put(path.trimTo(pathLen)).put(", file is too small to read offset ").put(offset);
+            }
             long partitionTs = txMemory.getLong(offset);
+            if (partitionTs <= prevPartition) {
+                throw CairoException.instance(0).put("corrupt _txn file, partitions are not ordered at ").put(path.trimTo(pathLen));
+            }
             long partitionNameTxn = txMemory.getLong(offset + PARTITION_NAME_TX_OFFSET_MIG * 8);
             readColumnTopsForPartition(result, columnNames, columnCount, partitionBy, partitionTs, partitionNameTxn, ff, path, pathLen);
             offset += 4 * 8;
+            prevPartition = partitionTs;
         }
         return result;
     }
