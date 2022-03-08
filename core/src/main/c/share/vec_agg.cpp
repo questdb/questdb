@@ -411,7 +411,6 @@ double SUM_DOUBLE(double *d, int64_t count) {
 }
 
 double SUM_DOUBLE_KAHAN(double *d, int64_t count) {
-//    return sumDoubleKahan_Vanilla(d, count);
     Vec8d inputVec;
     const int step = 8;
     const auto *lim = d + count;
@@ -458,7 +457,6 @@ double SUM_DOUBLE_KAHAN(double *d, int64_t count) {
 }
 
 double SUM_DOUBLE_NEUMAIER(double *d, int64_t count) {
-//    return sumDoubleNeumaier_Vanilla(d, count);
     Vec8d inputVec;
     const int step = 8;
     const auto *lim = d + count;
@@ -625,6 +623,5 @@ extern "C" {
 JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_getSupportedInstructionSet(JNIEnv *env, jclass cl) {
     return instrset_detect();
 }
-
 }
 #endif  // INSTRSET == 2

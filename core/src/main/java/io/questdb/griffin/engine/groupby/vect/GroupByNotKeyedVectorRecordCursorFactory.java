@@ -69,6 +69,12 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
     }
 
     @Override
+    public void close() {
+        RecordCursorFactory.super.close();
+        Misc.freeObjList(vafList);
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final MessageBus bus = executionContext.getMessageBus();
 

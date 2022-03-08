@@ -132,7 +132,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     private void testPageFrameCursor(int rowCount, int maxSize, int startTopAt) throws Exception {
-        pageFrameMaxSize = maxSize;
+        pageFrameMaxRows = maxSize;
 
         TestUtils.assertMemoryLeak(() -> {
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).

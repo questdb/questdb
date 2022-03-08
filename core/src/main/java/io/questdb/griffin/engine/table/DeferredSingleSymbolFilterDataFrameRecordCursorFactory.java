@@ -110,7 +110,7 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
         assert this.convertedToFrame;
         DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext);
         if (pageFrameCursor == null) {
-            pageFrameCursor = new TableReaderPageFrameCursor(columnIndexes, columnSizes, pageFrameMaxSize);
+            pageFrameCursor = new TableReaderPageFrameCursor(columnIndexes, columnSizes, pageFrameMaxRows);
         }
 
         pageFrameCursor.of(dataFrameCursor);

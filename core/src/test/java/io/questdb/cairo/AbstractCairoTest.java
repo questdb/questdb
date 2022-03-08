@@ -70,7 +70,7 @@ public class AbstractCairoTest {
     protected static int sampleByIndexSearchPageSize;
     protected static int binaryEncodingMaxLength = -1;
     protected static CharSequence defaultMapType;
-    protected static int pageFrameMaxSize = -1;
+    protected static int pageFrameMaxRows = -1;
     protected static int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     protected static int rndFunctionMemoryPageSize = -1;
     protected static int rndFunctionMemoryMaxPages = -1;
@@ -128,6 +128,7 @@ public class AbstractCairoTest {
                 return configOverrideCommitLagMicros >= 0 ? configOverrideCommitLagMicros : super.getCommitLag();
             }
 
+
             @Override
             public long getSpinLockTimeoutUs() {
                 if (spinLockTimeoutUs > -1) {
@@ -160,8 +161,8 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public int getSqlPageFrameMaxSize() {
-                return pageFrameMaxSize < 0 ? super.getSqlPageFrameMaxSize() : pageFrameMaxSize;
+            public int getSqlPageFrameMaxRows() {
+                return pageFrameMaxRows < 0 ? super.getSqlPageFrameMaxRows() : pageFrameMaxRows;
             }
 
             @Override
@@ -228,7 +229,7 @@ public class AbstractCairoTest {
         defaultMapType = null;
         writerAsyncCommandBusyWaitTimeout = -1;
         writerAsyncCommandMaxTimeout = -1;
-        pageFrameMaxSize = -1;
+        pageFrameMaxRows = -1;
         spinLockTimeoutUs = -1;
     }
 

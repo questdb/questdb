@@ -581,8 +581,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlPageFrameMaxSize() {
-        return 10_000;
+    public int getSqlPageFrameMaxRows() {
+        return 1_000_000;
     }
 
     @Override

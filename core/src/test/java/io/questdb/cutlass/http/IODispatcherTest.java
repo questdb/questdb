@@ -4152,7 +4152,13 @@ public class IODispatcherTest {
                 }
             }, Metrics.disabled());
 
-            try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
+            try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir) {
+                @Override
+                public int getSqlPageFrameMaxRows() {
+                    // this is necessary to sufficiently fragment paged filter execution
+                    return 10_000;
+                }
+            }, metrics);
                  HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {

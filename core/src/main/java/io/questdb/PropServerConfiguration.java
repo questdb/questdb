@@ -157,7 +157,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlGroupByMapCapacity;
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlBindVariablePoolSize;
-    private final int sqlPageFrameMaxSize;
+    private final int sqlPageFrameMaxRows;
     private final int sqlJitMode;
     private final int sqlJitIRMemoryPageSize;
     private final int sqlJitIRMemoryMaxPages;
@@ -695,7 +695,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
             this.sqlDistinctTimestampKeyCapacity = getInt(properties, env, "cairo.sql.distinct.timestamp.key.capacity", 512);
             this.sqlDistinctTimestampLoadFactor = getDouble(properties, env, "cairo.sql.distinct.timestamp.load.factor", 0.5);
-            this.sqlPageFrameMaxSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.sql.page.frame.max.size", 8 * 1024 * 1024));
+            this.sqlPageFrameMaxRows = getInt(properties, env, "cairo.sql.page.frame.max.rows", 1_000_000);
 
             this.sqlJitMode = getSqlJitMode(properties, env);
             this.sqlJitIRMemoryPageSize = getIntSize(properties, env, "cairo.sql.jit.ir.memory.page.size", 8 * 1024);
@@ -2117,8 +2117,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlPageFrameMaxSize() {
-            return sqlPageFrameMaxSize;
+        public int getSqlPageFrameMaxRows() {
+            return sqlPageFrameMaxRows;
         }
 
         @Override

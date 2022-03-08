@@ -44,7 +44,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     private final boolean framingSupported;
     private final IntList columnIndexes;
     private final IntList columnSizes;
-    protected final int pageFrameMaxSize;
+    protected final int pageFrameMaxRows;
     private TableReaderPageFrameCursor pageFrameCursor;
 
     public DataFrameRecordCursorFactory(
@@ -67,7 +67,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         this.framingSupported = framingSupported;
         this.columnIndexes = columnIndexes;
         this.columnSizes = columnSizes;
-        this.pageFrameMaxSize = configuration.getSqlPageFrameMaxSize();
+        this.pageFrameMaxRows = configuration.getSqlPageFrameMaxRows();
     }
 
     @Override
@@ -91,7 +91,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         if (pageFrameCursor != null) {
             return pageFrameCursor.of(dataFrameCursor);
         } else if (framingSupported) {
-            pageFrameCursor = new TableReaderPageFrameCursor(columnIndexes, columnSizes, pageFrameMaxSize);
+            pageFrameCursor = new TableReaderPageFrameCursor(columnIndexes, columnSizes, pageFrameMaxRows);
             return pageFrameCursor.of(dataFrameCursor);
         } else {
             return null;
@@ -143,7 +143,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         private final IntList columnSizes;
         private final LongList pageRowsRemaining = new LongList();
         private final LongList pageSizes = new LongList();
-        private final int pageFrameMaxSize;
+        private final int pageFrameMaxRows;
         private TableReader reader;
         private int reenterPartitionIndex;
         private DataFrameCursor dataFrameCursor;
@@ -151,11 +151,11 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         private long reenterPartitionHi;
         private boolean reenterDataFrame = false;
 
-        public TableReaderPageFrameCursor(IntList columnIndexes, IntList columnSizes, int pageFrameMaxSize) {
+        public TableReaderPageFrameCursor(IntList columnIndexes, IntList columnSizes, int pageFrameMaxRows) {
             this.columnIndexes = columnIndexes;
             this.columnSizes = columnSizes;
             this.columnCount = columnIndexes.size();
-            this.pageFrameMaxSize = pageFrameMaxSize;
+            this.pageFrameMaxRows = pageFrameMaxRows;
         }
 
         @Override
@@ -215,7 +215,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
 
             // we may need to split this data frame either along "top" lines, or along
             // max page frame sizes; to do this, we calculate min top value from given position
-            long adjustedHi = Math.min(partitionHi, partitionLo + pageFrameMaxSize);
+            long adjustedHi = Math.min(partitionHi, partitionLo + pageFrameMaxRows);
             for (int i = 0; i < columnCount; i++) {
                 final int columnIndex = columnIndexes.getQuick(i);
                 long top = reader.getColumnTop(base, columnIndex);

@@ -121,8 +121,8 @@ public class CompiledFilterTest extends AbstractGriffinTest {
 
     @Test
     public void testPageFrameMaxSize() throws Exception {
-        pageFrameMaxSize = 128;
-        final long N = 8 * pageFrameMaxSize + 1;
+        pageFrameMaxRows = 128;
+        final long N = 8 * pageFrameMaxRows + 1;
         assertMemoryLeak(() -> {
             compiler.compile("create table t1 as (select " +
                     " x," +

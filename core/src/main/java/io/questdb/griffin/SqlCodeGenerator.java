@@ -2329,7 +2329,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         tempVaf.getQuick(i).pushValueTypes(arrayColumnTypes);
                     }
 
-                    GroupByUtils.validateGroupByColumns(model, 1);
+                    try {
+                        GroupByUtils.validateGroupByColumns(model, 1);
+                    } catch (Throwable e) {
+                        Misc.freeObjList(tempVaf);
+                        throw e;
+                    }
 
                     return new GroupByRecordCursorFactory(
                             configuration,
@@ -2374,8 +2379,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         groupByFunctionPositions,
                         valueTypes
                 );
-            } catch (SqlException e) {
+            } catch (Throwable e) {
                 Misc.freeObjList(groupByFunctions);
+                Misc.freeObjList(tempVaf);
                 throw e;
             }
 
@@ -2396,8 +2402,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         true,
                         timestampIndex
                 );
-            } catch (SqlException e) {
+            } catch (Throwable e) {
                 Misc.freeObjList(recordFunctions);
+                Misc.freeObjList(tempVaf);
                 throw e;
             }
 
