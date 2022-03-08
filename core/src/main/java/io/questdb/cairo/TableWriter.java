@@ -3483,7 +3483,7 @@ public class TableWriter implements Closeable {
                     queuedCount++;
                     pubSeq.done(cursor);
                 }
-            } else {
+            } else if (columnType > 0) {
                 o3MoveLag0(columnIndex, columnType, o3LagRowCount, o3RowCount);
             }
         }
