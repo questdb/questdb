@@ -194,7 +194,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             if (timestamp < next) {
                 adjustDSTInFlight(timestamp - tzOffset);
                 GroupByUtils.updateExisting(groupByFunctions, n, mapValue, baseRecord);
-                circuitBreaker.statefulThrowExceptionWhenTripped();
+                circuitBreaker.statefulThrowExceptionIfTripped();
             } else {
                 // timestamp changed, make sure we keep the value of 'lastTimestamp'
                 // unchanged. Timestamp columns uses this variable

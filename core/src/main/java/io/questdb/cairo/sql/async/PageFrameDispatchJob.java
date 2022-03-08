@@ -25,7 +25,10 @@
 package io.questdb.cairo.sql.async;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.PageAddressCacheRecord;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
@@ -33,6 +36,7 @@ import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -47,18 +51,25 @@ public class PageFrameDispatchJob implements Job, Closeable {
     private final RingQueue<PageFrameDispatchTask> dispatchQueue;
     // work stealing records
     private final PageAddressCacheRecord[] records;
-    private final PageFrameCircuitBreaker[] circuitBreakers;
+    private final SqlExecutionCircuitBreaker[] circuitBreakers;
 
-    public PageFrameDispatchJob(MessageBus messageBus, int workerCount) {
+    public PageFrameDispatchJob(
+            MessageBus messageBus,
+            int workerCount,
+            @Nullable SqlExecutionCircuitBreakerConfiguration sqlExecutionCircuitBreakerConfiguration) {
         this.messageBus = messageBus;
         this.dispatchSubSeq = messageBus.getPageFrameDispatchSubSeq();
         this.dispatchQueue = messageBus.getPageFrameDispatchQueue();
 
         this.records = new PageAddressCacheRecord[workerCount];
-        this.circuitBreakers = new PageFrameCircuitBreaker[workerCount];
+        this.circuitBreakers = new SqlExecutionCircuitBreaker[workerCount];
         for (int i = 0; i < workerCount; i++) {
             records[i] = new PageAddressCacheRecord();
-            circuitBreakers[i] = new PageFrameCircuitBreakerImpl();
+            if (sqlExecutionCircuitBreakerConfiguration != null) {
+                circuitBreakers[i] = new NetworkSqlExecutionCircuitBreaker(sqlExecutionCircuitBreakerConfiguration);
+            } else {
+                circuitBreakers[i] = NetworkSqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+            }
         }
     }
 
@@ -66,7 +77,7 @@ public class PageFrameDispatchJob implements Job, Closeable {
             RingQueue<PageFrameReduceTask> queue,
             MCSequence reduceSubSeq,
             PageAddressCacheRecord record,
-            PageFrameCircuitBreaker circuitBreaker
+            SqlExecutionCircuitBreaker circuitBreaker
     ) {
         if (PageFrameReduceJob.consumeQueue(queue, reduceSubSeq, record, circuitBreaker)) {
             LockSupport.parkNanos(1);
@@ -118,7 +129,7 @@ public class PageFrameDispatchJob implements Job, Closeable {
             PageAddressCacheRecord record,
             MessageBus messageBus,
             boolean workStealingMode,
-            PageFrameCircuitBreaker circuitBreaker
+            SqlExecutionCircuitBreaker circuitBreaker
     ) {
         boolean idle = true;
         final int shard = frameSequence.getShard();

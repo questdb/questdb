@@ -125,7 +125,7 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
         chain.clear();
         if (limit != 0) {
             while (base.hasNext()) {
-                circuitBreaker.statefulThrowExceptionWhenTripped();
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 // Tree chain is liable to re-position record to
                 // other rows to do record comparison. We must use our
                 // own record instance in case base cursor keeps

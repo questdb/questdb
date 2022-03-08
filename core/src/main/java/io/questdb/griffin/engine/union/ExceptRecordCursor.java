@@ -64,7 +64,7 @@ class ExceptRecordCursor implements RecordCursor {
             MapKey key = map.withKey();
             key.put(record, recordSink);
             key.createValue();
-            circuitBreaker.statefulThrowExceptionWhenTripped();
+            circuitBreaker.statefulThrowExceptionIfTripped();
         }
     }
 
@@ -88,7 +88,7 @@ class ExceptRecordCursor implements RecordCursor {
             if (key.notFound()) {
                 return true;
             }
-            circuitBreaker.statefulThrowExceptionWhenTripped();
+            circuitBreaker.statefulThrowExceptionIfTripped();
         }
         return false;
     }

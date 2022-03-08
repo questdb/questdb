@@ -25,21 +25,37 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.sql.async.PageFrameDispatchJob;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
+import org.jetbrains.annotations.Nullable;
 
 public class O3Utils {
 
     private static final Log LOG = LogFactory.getLog(O3Utils.class);
 
-    public static void setupWorkerPool(WorkerPool workerPool, MessageBus messageBus) {
+    public static void setupWorkerPool(
+            WorkerPool workerPool,
+            MessageBus messageBus,
+            @Nullable SqlExecutionCircuitBreakerConfiguration sqlExecutionCircuitBreakerConfiguration
+    ) {
         final O3PurgeDiscoveryJob purgeDiscoveryJob = new O3PurgeDiscoveryJob(messageBus, workerPool.getWorkerCount());
-        final PageFrameDispatchJob pageFrameDispatchJob = new PageFrameDispatchJob(messageBus, workerPool.getWorkerCount());
-        final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(messageBus, new Rnd(), workerPool.getWorkerCount());
+        final PageFrameDispatchJob pageFrameDispatchJob = new PageFrameDispatchJob(
+                messageBus,
+                workerPool.getWorkerCount(),
+                sqlExecutionCircuitBreakerConfiguration
+        );
+
+        final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(
+                messageBus,
+                new Rnd(),
+                workerPool.getWorkerCount(),
+                sqlExecutionCircuitBreakerConfiguration
+        );
         workerPool.assign(purgeDiscoveryJob);
         workerPool.assign(new O3PartitionJob(messageBus));
         workerPool.assign(new O3OpenColumnJob(messageBus));

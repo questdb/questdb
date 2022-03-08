@@ -27,20 +27,46 @@ package io.questdb.cairo.sql;
 public interface SqlExecutionCircuitBreaker {
     SqlExecutionCircuitBreaker NOOP_CIRCUIT_BREAKER = new SqlExecutionCircuitBreaker() {
         @Override
-        public void statefulThrowExceptionWhenTripped() {
+        public void statefulThrowExceptionIfTripped() {
         }
 
         @Override
         public void setState() {
         }
+
+        @Override
+        public boolean checkIfTripped(long executionStartTimeUs, long fd) {
+            return false;
+        }
+
+        @Override
+        public SqlExecutionCircuitBreakerConfiguration getConfiguration() {
+            return null;
+        }
+
+        @Override
+        public void setFd(long fd) {
+        }
+
+        @Override
+        public long getFd() {
+            return -1;
+        }
     };
+
+    SqlExecutionCircuitBreakerConfiguration getConfiguration();
 
     /**
      * Uses internal state of the circuit breaker to assert conditions. This method also
      * throttles heavy checks. It is meant to be used in single-threaded applications.
      */
-    void statefulThrowExceptionWhenTripped();
+    void statefulThrowExceptionIfTripped();
 
+    boolean checkIfTripped(long executionStartTimeUs, long fd);
 
     void setState();
+
+    void setFd(long fd);
+
+    long getFd();
 }

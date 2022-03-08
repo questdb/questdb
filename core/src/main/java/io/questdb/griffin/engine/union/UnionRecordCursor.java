@@ -87,7 +87,7 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
                 if (key.create()) {
                     return true;
                 }
-                circuitBreaker.statefulThrowExceptionWhenTripped();
+                circuitBreaker.statefulThrowExceptionIfTripped();
             } else {
                 return false;
             }

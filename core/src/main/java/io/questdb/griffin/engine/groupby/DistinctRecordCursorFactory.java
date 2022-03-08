@@ -129,7 +129,7 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
         @Override
         public boolean hasNext() {
             while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionWhenTripped();
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 MapKey key = dataMap.withKey();
                 recordSink.copy(record, key);
                 if (key.create()) {

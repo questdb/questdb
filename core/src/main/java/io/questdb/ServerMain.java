@@ -185,7 +185,11 @@ public class ServerMain {
         }
 
         workerPool.assignCleaner(Path.CLEANER);
-        O3Utils.setupWorkerPool(workerPool, cairoEngine.getMessageBus());
+        O3Utils.setupWorkerPool(
+                workerPool,
+                cairoEngine.getMessageBus(),
+                configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getCircuitBreakerConfiguration()
+        );
 
         try {
             initQuestDb(workerPool, cairoEngine, log);

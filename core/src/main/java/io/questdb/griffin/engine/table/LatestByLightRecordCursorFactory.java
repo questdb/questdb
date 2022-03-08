@@ -106,7 +106,7 @@ public class LatestByLightRecordCursorFactory implements RecordCursorFactory {
 
     private void buildMapForOrderedSubQuery(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor baseCursor, Record baseRecord) {
         while (baseCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionWhenTripped();
+            circuitBreaker.statefulThrowExceptionIfTripped();
 
             final MapKey key = latestByMap.withKey();
             recordSink.copy(baseRecord, key);
@@ -117,7 +117,7 @@ public class LatestByLightRecordCursorFactory implements RecordCursorFactory {
 
     private void buildMapForUnorderedSubQuery(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor baseCursor, Record baseRecord) {
         while (baseCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionWhenTripped();
+            circuitBreaker.statefulThrowExceptionIfTripped();
 
             final MapKey key = latestByMap.withKey();
             recordSink.copy(baseRecord, key);
@@ -195,7 +195,7 @@ public class LatestByLightRecordCursorFactory implements RecordCursorFactory {
             if (!mapCursor.hasNext()) {
                 return false;
             }
-            circuitBreaker.statefulThrowExceptionWhenTripped();
+            circuitBreaker.statefulThrowExceptionIfTripped();
             final MapValue value = mapRecord.getValue();
             final long rowId = value.getLong(ROW_ID_VALUE_IDX);
             baseCursor.recordAt(baseRecord, rowId);

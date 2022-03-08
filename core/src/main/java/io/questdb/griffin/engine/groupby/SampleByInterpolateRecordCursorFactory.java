@@ -219,7 +219,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             //
             // At the same time check if cursor has data
             while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionWhenTripped();
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 final MapKey key = recordKeyMap.withKey();
                 mapSink.copy(baseRecord, key);
                 key.createValue();
@@ -287,7 +287,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                     hiSample = sampler.nextTimestamp(prevSample);
                     break;
                 }
-                circuitBreaker.statefulThrowExceptionWhenTripped();
+                circuitBreaker.statefulThrowExceptionIfTripped();
             } while (true);
 
             // fill gaps if any at end of base cursor
@@ -297,7 +297,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                 final RecordCursor mapCursor = recordKeyMap.getCursor();
                 final Record mapRecord = mapCursor.getRecord();
                 while (mapCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionWhenTripped();
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     MapValue value = findDataMapValue(mapRecord, loSample);
                     if (value.getByte(0) == 0) { //we have at least 1 data point
                         long x1 = loSample;
@@ -325,7 +325,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                 final RecordCursor mapCursor = recordKeyMap.getCursor();
                 final Record mapRecord = mapCursor.getRecord();
                 while (mapCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionWhenTripped();
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     // locate first gap
                     MapValue value = findDataMapValue(mapRecord, sample);
                     if (value.getByte(0) == 1) {
@@ -449,7 +449,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         long timestamp = lo;
         while (timestamp < hi) {
             while (keyCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionWhenTripped();
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 MapKey key = dataMap.withKey();
                 mapSink2.copy(record, key);
                 key.putLong(timestamp);

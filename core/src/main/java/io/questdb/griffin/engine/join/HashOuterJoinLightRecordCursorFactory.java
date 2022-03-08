@@ -111,7 +111,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
         joinKeyMap.clear();
         final Record record = slaveCursor.getRecord();
         while (slaveCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionWhenTripped();
+            circuitBreaker.statefulThrowExceptionIfTripped();
             MapKey key = joinKeyMap.withKey();
             key.put(record, slaveKeySink);
             MapValue value = key.createValue();

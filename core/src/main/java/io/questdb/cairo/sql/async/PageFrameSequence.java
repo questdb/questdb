@@ -35,9 +35,9 @@ import io.questdb.mp.*;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -57,6 +57,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private final PageAddressCache pageAddressCache;
     private final MessageBus messageBus;
     private final AtomicInteger owner = new AtomicInteger(OWNER_NONE);
+    private final MicrosecondClock microsecondClock;
     private long id;
     private int shard;
     private int frameCount;
@@ -67,8 +68,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     // we need this to restart execution for `toTop`
     private MPSequence dispatchPubSeq;
     private RingQueue<PageFrameDispatchTask> pageFrameDispatchQueue;
-    private int dispatchStartIndex = 0;
-    private PageFrameCircuitBreaker[] circuitBreakers;
+    private final AtomicInteger dispatchStartIndex = new AtomicInteger();
+    private SqlExecutionCircuitBreaker[] circuitBreakers;
+    private long startTimeUs;
+    private long circuitBreakerFd;
 
     public PageFrameSequence(
             CairoConfiguration configuration,
@@ -78,6 +81,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         this.pageAddressCache = new PageAddressCache(configuration);
         this.messageBus = messageBus;
         this.reducer = reducer;
+        this.microsecondClock = configuration.getMicrosecondClock();
     }
 
     /**
@@ -91,12 +95,21 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                 .$(", frameCount=").$(frameCount)
                 .I$();
 
+        // Collect only dispatched frames. To do that we need to stall any further dispatch.
+        while (true) {
+            final int dispatched = dispatchStartIndex.get();
+            if (dispatchStartIndex.compareAndSet(dispatched, frameCount)) {
+                frameCount = dispatched;
+                break;
+            }
+        }
+
         final RingQueue<PageFrameReduceTask> queue = getPageFrameReduceQueue();
         final MCSequence pageFrameReduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
         while (doneLatch.getCount() == 0) {
             final int workerId = getWorkerId();
             final PageAddressCacheRecord rec = records[workerId];
-            final PageFrameCircuitBreaker circuitBreaker = circuitBreakers[getWorkerId()];
+            final SqlExecutionCircuitBreaker circuitBreaker = circuitBreakers[getWorkerId()];
             // we were asked to steal work from dispatch0 queue and beyond, as much as we can
             if (PageFrameReduceJob.consumeQueue(queue, pageFrameReduceSubSeq, rec, circuitBreaker)) {
                 long cursor = collectSubSeq.next();
@@ -125,7 +138,12 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             messageBus.getPageFrameCollectFanOut(shard).remove(collectSubSeq);
             collectSubSeq.clear();
         }
-        this.dispatchStartIndex = 0;
+        this.dispatchStartIndex.set(0);
+    }
+
+    @Override
+    public void close() {
+        Misc.free(circuitBreakers);
     }
 
     public PageFrameSequence<T> dispatch(
@@ -135,8 +153,14 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             T atom
     ) throws SqlException {
 
+        this.startTimeUs = microsecondClock.getTicks();
+        this.circuitBreakerFd = executionContext.getCircuitBreaker().getFd();
+
         // allow entry for 0 - main thread that is a non-worker
-        initWorkerRecords(executionContext.getWorkerCount() + 1);
+        initWorkerRecords(
+                executionContext.getWorkerCount() + 1,
+                executionContext.getCircuitBreaker()
+        );
 
         final Rnd rnd = executionContext.getAsyncRandom();
         try {
@@ -165,12 +189,16 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return atom;
     }
 
+    public long getCircuitBreakerFd() {
+        return circuitBreakerFd;
+    }
+
     public int getDispatchStartIndex() {
-        return dispatchStartIndex;
+        return dispatchStartIndex.get();
     }
 
     public void setDispatchStartIndex(int i) {
-        this.dispatchStartIndex = i;
+        this.dispatchStartIndex.set(i);
     }
 
     public int getFrameCount() {
@@ -203,6 +231,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
     public int getShard() {
         return shard;
+    }
+
+    public long getStartTimeUs() {
+        return startTimeUs;
     }
 
     public SymbolTableSource getSymbolTableSource() {
@@ -248,7 +280,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     public void stealWork() {
         final int workerId = getWorkerId();
         final PageAddressCacheRecord rec = records[workerId];
-        final PageFrameCircuitBreaker circuitBreaker = circuitBreakers[workerId];
+        final SqlExecutionCircuitBreaker circuitBreaker = circuitBreakers[workerId];
         // we were asked to steal work from dispatch0 queue and beyond, as much as we can
         PageFrameDispatchJob.handleTask(this, rec, messageBus, true, circuitBreaker);
 
@@ -290,7 +322,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
             // done latch is reset by method call above
             doneLatch.reset();
-            dispatchStartIndex = 0;
+            dispatchStartIndex.set(0);
             reduceCounter.set(0);
             long dispatchCursor;
             do {
@@ -332,6 +364,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         long dispatchCursor;
         do {
             dispatchCursor = dispatchPubSeq.next();
+
             if (dispatchCursor < 0) {
                 stealWork();
                 LockSupport.parkNanos(1);
@@ -345,14 +378,26 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         dispatchPubSeq.done(dispatchCursor);
     }
 
-    private void initWorkerRecords(int workerCount) {
+    private void initWorkerRecords(
+            int workerCount,
+            SqlExecutionCircuitBreaker executionContextCircuitBreaker
+    ) {
         if (records == null || records.length < workerCount) {
+            final SqlExecutionCircuitBreakerConfiguration sqlExecutionCircuitBreakerConfiguration = executionContextCircuitBreaker.getConfiguration();
             this.records = new PageAddressCacheRecord[workerCount];
-            this.circuitBreakers = new PageFrameCircuitBreaker[workerCount];
+            this.circuitBreakers = new SqlExecutionCircuitBreaker[workerCount];
             for (int i = 0; i < workerCount; i++) {
                 this.records[i] = new PageAddressCacheRecord();
-                this.circuitBreakers[i] = new PageFrameCircuitBreakerImpl();
+                if (sqlExecutionCircuitBreakerConfiguration != null) {
+                    this.circuitBreakers[i] = new NetworkSqlExecutionCircuitBreaker(sqlExecutionCircuitBreakerConfiguration);
+                } else {
+                    this.circuitBreakers[i] = NetworkSqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+                }
             }
+        }
+
+        for (int i = 0; i < workerCount; i++) {
+            this.circuitBreakers[i].setFd(executionContextCircuitBreaker.getFd());
         }
     }
 
@@ -390,10 +435,5 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
         }
         return frameIndex;
-    }
-
-    @Override
-    public void close() {
-        Misc.free(circuitBreakers);
     }
 }

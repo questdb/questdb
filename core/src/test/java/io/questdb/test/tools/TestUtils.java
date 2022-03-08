@@ -652,7 +652,7 @@ public final class TestUtils {
             try {
                 if (pool != null) {
                     pool.assignCleaner(Path.CLEANER);
-                    O3Utils.setupWorkerPool(pool, engine.getMessageBus());
+                    O3Utils.setupWorkerPool(pool, engine.getMessageBus(), null);
                     pool.start(LOG);
                 }
 

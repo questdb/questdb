@@ -27,12 +27,11 @@ package io.questdb.cutlass.http;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.async.PageFrameDispatchJob;
+import io.questdb.cairo.sql.async.PageFrameReduceJob;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.cutlass.http.processors.*;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.jit.JitUtil;
@@ -4120,7 +4119,7 @@ public class IODispatcherTest {
         assertMemoryLeak(() -> {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final int tableRowCount = 300_000;
+            final int tableRowCount = 3_000_000;
 
             SOCountDownLatch peerDisconnectLatch = new SOCountDownLatch(1);
 
@@ -4206,6 +4205,22 @@ public class IODispatcherTest {
                         }
                     }
                 };
+
+                final PageFrameReduceJob reduceJob = new PageFrameReduceJob(
+                        engine.getMessageBus(),
+                        new Rnd(),
+                        workerPool.getWorkerCount(),
+                        new DefaultSqlExecutionCircuitBreakerConfiguration()
+                );
+                final PageFrameDispatchJob dispatchJob = new PageFrameDispatchJob(
+                        engine.getMessageBus(),
+                        workerPool.getWorkerCount(),
+                        new DefaultSqlExecutionCircuitBreakerConfiguration()
+                );
+                workerPool.assign(dispatchJob);
+                workerPool.assign(reduceJob);
+                workerPool.freeOnHalt(reduceJob);
+                workerPool.freeOnHalt(dispatchJob);
                 workerPool.start(LOG);
 
                 try {

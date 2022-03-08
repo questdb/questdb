@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.cairo.sql;
 
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.datetime.microtime.MicrosecondClock;

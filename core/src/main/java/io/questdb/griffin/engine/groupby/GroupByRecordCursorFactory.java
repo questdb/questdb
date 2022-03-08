@@ -96,7 +96,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             final Record baseRecord = baseCursor.getRecord();
             final int n = groupByFunctions.size();
             while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionWhenTripped();
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 final MapKey key = dataMap.withKey();
                 mapSink.copy(baseRecord, key);
                 MapValue value = key.createValue();

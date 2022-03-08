@@ -85,7 +85,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
         joinKeyMap.clear();
         slaveChain.clear();
         while (slaveCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionWhenTripped();
+            circuitBreaker.statefulThrowExceptionIfTripped();
             MapKey key = joinKeyMap.withKey();
             key.put(record, slaveKeySink);
             MapValue value = key.createValue();

@@ -138,7 +138,7 @@ public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactor
         public boolean hasNext() {
             if (state == COMPUTE_NEXT) {
                 while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionWhenTripped();
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     final long timestamp = record.getTimestamp(timestampIndex);
                     if (timestamp != prevTimestamp) {
                         prevTimestamp = timestamp;

@@ -64,7 +64,7 @@ class IntersectRecordCursor implements RecordCursor {
             MapKey key = map.withKey();
             key.put(record, recordSink);
             key.createValue();
-            circuitBreaker.statefulThrowExceptionWhenTripped();
+            circuitBreaker.statefulThrowExceptionIfTripped();
         }
     }
 
@@ -98,7 +98,7 @@ class IntersectRecordCursor implements RecordCursor {
             if (key.findValue() != null) {
                 return true;
             }
-            circuitBreaker.statefulThrowExceptionWhenTripped();
+            circuitBreaker.statefulThrowExceptionIfTripped();
         }
         return false;
     }

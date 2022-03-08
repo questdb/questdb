@@ -68,8 +68,17 @@ public class FilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                 }
             }, Metrics.disabled());
 
-            final PageFrameDispatchJob pageFrameDispatchJob = new PageFrameDispatchJob(engine.getMessageBus(), pool.getWorkerCount());
-            final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(engine.getMessageBus(), sqlExecutionContext.getRandom(), pool.getWorkerCount());
+            final PageFrameDispatchJob pageFrameDispatchJob = new PageFrameDispatchJob(
+                    engine.getMessageBus(),
+                    pool.getWorkerCount(),
+                    null
+            );
+            final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(
+                    engine.getMessageBus(),
+                    sqlExecutionContext.getRandom(),
+                    pool.getWorkerCount(),
+                    null
+            );
             pool.assign(pageFrameDispatchJob);
             pool.assign(pageFrameReduceJob);
             pool.freeOnHalt(pageFrameDispatchJob);

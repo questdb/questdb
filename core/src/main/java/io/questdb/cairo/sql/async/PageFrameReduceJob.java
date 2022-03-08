@@ -25,7 +25,10 @@
 package io.questdb.cairo.sql.async;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.PageAddressCacheRecord;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
@@ -33,6 +36,7 @@ import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -44,11 +48,16 @@ public class PageFrameReduceJob implements Job, Closeable {
     private final int[] shards;
     private final int shardCount;
     private final MessageBus messageBus;
-    private final PageFrameCircuitBreaker[] circuitBreakers;
+    private final SqlExecutionCircuitBreaker[] circuitBreakers;
 
     // Each thread should be assigned own instance of this job, making the code effectively
     // single threaded. Such assignment is necessary for threads to have their own shard walk sequence.
-    public PageFrameReduceJob(MessageBus bus, Rnd rnd, int workerCount) {
+    public PageFrameReduceJob(
+            MessageBus bus,
+            Rnd rnd,
+            int workerCount,
+            @Nullable SqlExecutionCircuitBreakerConfiguration sqlExecutionCircuitBreakerConfiguration
+    ) {
         this.messageBus = bus;
         this.shardCount = messageBus.getPageFrameReduceShardCount();
         this.shards = new int[shardCount];
@@ -71,10 +80,14 @@ public class PageFrameReduceJob implements Job, Closeable {
         }
 
         this.record = new PageAddressCacheRecord[workerCount];
-        this.circuitBreakers = new PageFrameCircuitBreaker[workerCount];
+        this.circuitBreakers = new SqlExecutionCircuitBreaker[workerCount];
         for (int i = 0; i < workerCount; i++) {
             this.record[i] = new PageAddressCacheRecord();
-            this.circuitBreakers[i] = new PageFrameCircuitBreakerImpl();
+            if (sqlExecutionCircuitBreakerConfiguration != null) {
+                this.circuitBreakers[i] = new NetworkSqlExecutionCircuitBreaker(sqlExecutionCircuitBreakerConfiguration);
+            } else {
+                this.circuitBreakers[i] = NetworkSqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+            }
         }
     }
 
@@ -92,7 +105,7 @@ public class PageFrameReduceJob implements Job, Closeable {
             RingQueue<PageFrameReduceTask> queue,
             MCSequence subSeq,
             PageAddressCacheRecord record,
-            PageFrameCircuitBreaker circuitBreaker
+            SqlExecutionCircuitBreaker circuitBreaker
     ) {
         // loop is required to deal with CAS errors, cursor == -2
         do {
@@ -115,7 +128,7 @@ public class PageFrameReduceJob implements Job, Closeable {
                             // we deliberately hold the queue item because
                             // processing is daisy-chained. If we were to release item before
                             // finishing reduction, next step (job) will be processing an incomplete task
-                            if (circuitBreaker.isValid()) {
+                            if (!circuitBreaker.checkIfTripped(frameSequence.getStartTimeUs(), frameSequence.getCircuitBreakerFd())) {
                                 record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
                                 record.setFrameIndex(task.getFrameIndex());
                                 assert frameSequence.doneLatch.getCount() == 0;

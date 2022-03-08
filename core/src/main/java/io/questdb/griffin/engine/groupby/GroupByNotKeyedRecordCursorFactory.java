@@ -136,7 +136,7 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
                 GroupByUtils.updateNew(groupByFunctions, n, simpleMapValue, baseRecord);
 
                 while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionWhenTripped();
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     GroupByUtils.updateExisting(groupByFunctions, n, simpleMapValue, baseRecord);
                 }
             } else {

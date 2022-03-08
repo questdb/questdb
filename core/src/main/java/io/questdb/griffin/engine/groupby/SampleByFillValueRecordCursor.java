@@ -125,7 +125,7 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
 
                 // carry on with the loop if we still have data
                 if (base.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionWhenTripped();
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     continue;
                 }
 

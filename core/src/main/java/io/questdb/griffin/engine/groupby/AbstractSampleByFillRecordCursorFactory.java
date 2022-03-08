@@ -85,7 +85,7 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
             int n = groupByFunctions.size();
             final Record baseCursorRecord = baseCursor.getRecord();
             while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionWhenTripped();
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 MapKey key = map.withKey();
                 mapSink.copy(baseCursorRecord, key);
                 MapValue value = key.createValue();
