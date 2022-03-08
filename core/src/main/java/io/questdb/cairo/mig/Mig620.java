@@ -189,11 +189,11 @@ public class Mig620 {
         long txSize = txMemory.size() - 4 * 8;
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
             if (offset > txSize) {
-                throw CairoException.instance(0).put("corrupt _txn file ").put(path.trimTo(pathLen)).put(", file is too small to read offset ").put(offset);
+                throw CairoException.instance(0).put("corrupt _txn file ").put(path.trimTo(pathLen).$()).put(", file is too small to read offset ").put(offset);
             }
             long partitionTs = txMemory.getLong(offset);
             if (partitionTs <= prevPartition) {
-                throw CairoException.instance(0).put("corrupt _txn file, partitions are not ordered at ").put(path.trimTo(pathLen));
+                throw CairoException.instance(0).put("corrupt _txn file, partitions are not ordered at ").put(path.trimTo(pathLen).$());
             }
             long partitionNameTxn = txMemory.getLong(offset + PARTITION_NAME_TX_OFFSET_MIG * 8);
             readColumnTopsForPartition(result, columnNames, columnCount, partitionBy, partitionTs, partitionNameTxn, ff, path, pathLen);
