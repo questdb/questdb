@@ -428,7 +428,9 @@ public class LineTcpParser implements Closeable {
     private boolean expectTimestamp(byte endOfEntityByte, long bufHi) {
         try {
             if (endOfEntityByte == (byte) '\n') {
-                timestamp = Numbers.parseLong(charSeq.of(entityLo, bufAt - nEscapedChars));
+                if (entityLo < bufAt - nEscapedChars) {
+                    timestamp = Numbers.parseLong(charSeq.of(entityLo, bufAt - nEscapedChars));
+                }
                 entityHandler = null;
                 return true;
             }

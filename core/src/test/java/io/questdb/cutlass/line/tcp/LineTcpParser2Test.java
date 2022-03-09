@@ -147,6 +147,26 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     }
 
     @Test
+    public void testNoTimestamp() {
+        assertThat("measurement,a=10 v=11\n", "measurement,a=10 v=11\n"); // No trailing space
+    }
+
+    @Test
+    public void testTrailingSpace() {
+        assertThat("measurement,a=10\n", "measurement,a=10 \n"); // Trailing space
+    }
+
+    @Test
+    public void testTrailingSpace2() {
+        assertThat("measurement,a=10 v=11\n", "measurement,a=10 v=11 \n"); // Trailing space after fields
+    }
+
+    @Test
+    public void testTrailingSpace3() {
+        assertThat("measurement v=11\n", "measurement v=11 \n"); // Trailing space
+    }
+
+    @Test
     public void testSupportsUtf8Chars() {
         assertThat(
                 "लаблअца,символ=значение1 поле=\"значение2\",поле2=\"значение3\" 123--non ascii--\n",
