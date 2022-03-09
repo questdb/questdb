@@ -31,6 +31,7 @@ import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.line.udp.LineUdpReceiver;
 import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
 import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.jit.JitUtil;
@@ -175,6 +176,9 @@ public class ServerMain {
         workerPool.assign(cairoEngine.getEngineMaintenanceJob());
         instancesToClean.add(cairoEngine);
 
+        final DatabaseSnapshotAgent snapshotAgent = new DatabaseSnapshotAgent(cairoEngine);
+        instancesToClean.add(snapshotAgent);
+
         if (!configuration.getCairoConfiguration().getTelemetryConfiguration().getDisableCompletely()) {
             final TelemetryJob telemetryJob = new TelemetryJob(cairoEngine, functionFactoryCache);
             instancesToClean.add(telemetryJob);
@@ -194,8 +198,8 @@ public class ServerMain {
         try {
             initQuestDb(workerPool, cairoEngine, log);
 
-            instancesToClean.add(createHttpServer(workerPool, log, cairoEngine, functionFactoryCache, metrics));
-            instancesToClean.add(createMinHttpServer(workerPool, log, cairoEngine, functionFactoryCache, metrics));
+            instancesToClean.add(createHttpServer(workerPool, log, cairoEngine, functionFactoryCache, snapshotAgent, metrics));
+            instancesToClean.add(createMinHttpServer(workerPool, log, cairoEngine, functionFactoryCache, snapshotAgent, metrics));
 
             if (configuration.getPGWireConfiguration().isEnabled()) {
                 instancesToClean.add(PGWireServer.create(
@@ -204,6 +208,7 @@ public class ServerMain {
                         log,
                         cairoEngine,
                         functionFactoryCache,
+                        snapshotAgent,
                         metrics
                 ));
             }
@@ -490,6 +495,7 @@ public class ServerMain {
             final Log log,
             final CairoEngine cairoEngine,
             FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics) {
         return HttpServer.create(
                 configuration.getHttpServerConfiguration(),
@@ -497,6 +503,7 @@ public class ServerMain {
                 log,
                 cairoEngine,
                 functionFactoryCache,
+                snapshotAgent,
                 metrics
         );
     }
@@ -506,6 +513,7 @@ public class ServerMain {
             final Log log,
             final CairoEngine cairoEngine,
             FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics) {
         if (!metrics.isEnabled()) {
             log.advisory().$("Min health server is starting. Health check endpoint will not consider unhandled errors when metrics are disabled.").$();
@@ -516,6 +524,7 @@ public class ServerMain {
                 log,
                 cairoEngine,
                 functionFactoryCache,
+                snapshotAgent,
                 metrics
         );
     }

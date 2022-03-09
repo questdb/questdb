@@ -129,6 +129,8 @@ public final class Files {
 
     public static native int fsync(long fd);
 
+    public static native int sync();
+
     /**
      * Detects if filesystem is supported by QuestDB. The function returns both FS magic and name. Both
      * can be presented to user even if file system is not supported.

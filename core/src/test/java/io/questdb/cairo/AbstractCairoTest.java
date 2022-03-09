@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -61,6 +62,7 @@ public class AbstractCairoTest {
     protected final static MicrosecondClock testMicrosClock =
             () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
     protected static CairoEngine engine;
+    protected static DatabaseSnapshotAgent snapshotAgent;
     protected static String inputRoot = null;
     protected static FilesFacade ff;
     protected static long configOverrideCommitLagMicros = -1;
@@ -74,6 +76,8 @@ public class AbstractCairoTest {
     protected static int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     protected static int rndFunctionMemoryPageSize = -1;
     protected static int rndFunctionMemoryMaxPages = -1;
+    protected static String snapshotInstanceId = null;
+    protected static Boolean snapshotRecoveryEnabled = null;
 
     @Rule
     public TestName testName = new TestName();
@@ -196,13 +200,28 @@ public class AbstractCairoTest {
             public int getRndFunctionMemoryMaxPages() {
                 return rndFunctionMemoryMaxPages < 0 ? super.getRndFunctionMemoryMaxPages() : rndFunctionMemoryMaxPages;
             }
+
+            @Override
+            public CharSequence getSnapshotInstanceId() {
+                if (snapshotInstanceId == null) {
+                    return super.getSnapshotInstanceId();
+                }
+                return snapshotInstanceId;
+            }
+
+            @Override
+            public boolean isSnapshotRecoveryEnabled() {
+                return snapshotRecoveryEnabled == null ? super.isSnapshotRecoveryEnabled() : snapshotRecoveryEnabled;
+            }
         };
         engine = new CairoEngine(configuration, metrics);
+        snapshotAgent = new DatabaseSnapshotAgent(engine);
         messageBus = engine.getMessageBus();
     }
 
     @AfterClass
     public static void tearDownStatic() {
+        snapshotAgent = Misc.free(snapshotAgent);
         engine = Misc.free(engine);
     }
 
@@ -219,6 +238,7 @@ public class AbstractCairoTest {
     @After
     public void tearDown() {
         LOG.info().$("Tearing down test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
+        snapshotAgent.clear();
         engine.freeTableId();
         engine.clear();
         TestUtils.removeTestPath(root);
@@ -231,6 +251,8 @@ public class AbstractCairoTest {
         writerAsyncCommandMaxTimeout = -1;
         pageFrameMaxRows = -1;
         spinLockTimeoutUs = -1;
+        snapshotInstanceId = null;
+        snapshotRecoveryEnabled = null;
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {

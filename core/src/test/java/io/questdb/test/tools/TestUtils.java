@@ -818,6 +818,15 @@ public final class TestUtils {
         }
     }
 
+    public static void assertEquals(LongList expected, LongList actual) {
+        Assert.assertEquals(expected.size(), actual.size());
+        for (int i = 0, n = expected.size(); i < n; i++) {
+            if (expected.getQuick(i) != actual.getQuick(i)) {
+                Assert.assertEquals("index " + i, expected.getQuick(i), actual.getQuick(i));
+            }
+        }
+    }
+
     @FunctionalInterface
     public interface LeakProneCode {
         void run() throws Exception;
