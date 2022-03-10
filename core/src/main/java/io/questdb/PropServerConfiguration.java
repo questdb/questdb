@@ -679,7 +679,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlCopyBufferSize = getIntSize(properties, env, "cairo.sql.copy.buffer.size", 2 * 1024 * 1024);
 
             this.cairoFilterQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.filter.queue.capacity", 64));
-            this.cairoPageFrameQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.page.frame.queue.capacity", 64));
+            this.cairoPageFrameQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.page.frame.queue.capacity", 256));
             this.cairoWriterCommandQueueSlotSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.writer.command.queue.slot.size", 2048));
             this.cairoPageFrameRowsCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.page.frame.rows.capacity", 32));
 
@@ -704,7 +704,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
             this.sqlDistinctTimestampKeyCapacity = getInt(properties, env, "cairo.sql.distinct.timestamp.key.capacity", 512);
             this.sqlDistinctTimestampLoadFactor = getDouble(properties, env, "cairo.sql.distinct.timestamp.load.factor", 0.5);
-            this.sqlPageFrameMaxRows = getInt(properties, env, "cairo.sql.page.frame.max.rows", 1_000_000);
+            this.sqlPageFrameMaxRows = getInt(properties, env, "cairo.sql.page.frame.max.rows", 20_000_000);
 
             this.sqlJitMode = getSqlJitMode(properties, env);
             this.sqlJitIRMemoryPageSize = getIntSize(properties, env, "cairo.sql.jit.ir.memory.page.size", 8 * 1024);
