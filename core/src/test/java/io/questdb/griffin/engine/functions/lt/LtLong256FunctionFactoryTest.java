@@ -63,6 +63,26 @@ public class LtLong256FunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
+    public void testLessThan3() throws SqlException {
+        CharSequence tok1 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
+        CharSequence tok2 = "0x7ee65ec7b6e3bc3a423a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
+
+        Long256 l1 = Numbers.parseLong256(tok1, tok1.length(), new Long256Impl());
+        Long256 l2 = Numbers.parseLong256(tok2, tok2.length(), new Long256Impl());
+        callBySignature("<(HH)", l1, l2).andAssert(true);
+    }
+
+    @Test
+    public void testLessThan4() throws SqlException {
+        CharSequence tok1 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
+        CharSequence tok2 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199bf5c2aa91ba39c022fa261bdede7";
+
+        Long256 l1 = Numbers.parseLong256(tok1, tok1.length(), new Long256Impl());
+        Long256 l2 = Numbers.parseLong256(tok2, tok2.length(), new Long256Impl());
+        callBySignature("<(HH)", l1, l2).andAssert(true);
+    }
+
+    @Test
     public void testLessThanOrEqual() throws SqlException {
         CharSequence tok1 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede5";
         CharSequence tok2 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
