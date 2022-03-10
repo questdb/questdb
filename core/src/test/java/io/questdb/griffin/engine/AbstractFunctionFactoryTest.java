@@ -36,6 +36,8 @@ import io.questdb.griffin.engine.functions.cast.CastIntToShortFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToDateFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToTimestampFunctionFactory;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -422,6 +424,14 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             case ColumnType.CHAR:
                 sink.put('\'').put((char) value).put('\'');
                 break;
+            case ColumnType.LONG256:
+                if (value.equals(Long256Impl.NULL_LONG256)) {
+                    sink.put("null");
+                } else {
+                    Long256Impl value1 = (Long256Impl) value;
+                    value1.toSink(sink);
+                }
+                break;
             default:
                 // byte
                 sink.put("cast(").put((Integer) value).put(" as byte)");
@@ -629,6 +639,15 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         @Override
         public CharSequence getSymB(int col) {
             return (CharSequence) args[col];
+        }
+
+        @Override
+        public Long256 getLong256A(int col) {
+            Object o = args[col];
+            if (o == null) {
+                return null;
+            }
+            return (Long256Impl)o;
         }
     }
 }
