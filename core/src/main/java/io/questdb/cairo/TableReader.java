@@ -138,30 +138,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return 2 + base + index * 2;
     }
 
-    public double avgDouble(int columnIndex) {
-        double result = 0;
-        long countTotal = 0;
-        for (int i = 0; i < partitionCount; i++) {
-            openPartition(i);
-            final int base = getColumnBase(i);
-            final int index = getPrimaryColumnIndex(base, columnIndex);
-            final MemoryR column = columns.getQuick(index);
-            if (column != null) {
-                final long count = column.getPageSize() / Double.BYTES;
-                for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
-                    result += Vect.avgDouble(column.getPageAddress(pageIndex), count);
-                    countTotal++;
-                }
-            }
-        }
-
-        if (countTotal == 0) {
-            return 0;
-        }
-
-        return result / countTotal;
-    }
-
     @Override
     public void close() {
         if (isOpen()) {
@@ -341,48 +317,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return tempMem8b != 0;
     }
 
-    public double maxDouble(int columnIndex) {
-        double max = Double.NEGATIVE_INFINITY;
-        for (int i = 0; i < partitionCount; i++) {
-            openPartition(i);
-            final int base = getColumnBase(i);
-            final int index = getPrimaryColumnIndex(base, columnIndex);
-            final MemoryR column = columns.getQuick(index);
-            if (column != null) {
-                final long count = column.getPageSize() / Double.BYTES;
-                for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
-                    long a = column.getPageAddress(pageIndex);
-                    double x = Vect.maxDouble(a, count);
-                    if (x > max) {
-                        max = x;
-                    }
-                }
-            }
-        }
-        return max;
-    }
-
-    public double minDouble(int columnIndex) {
-        double min = Double.POSITIVE_INFINITY;
-        for (int i = 0; i < partitionCount; i++) {
-            openPartition(i);
-            final int base = getColumnBase(i);
-            final int index = getPrimaryColumnIndex(base, columnIndex);
-            final MemoryR column = columns.getQuick(index);
-            if (column != null) {
-                final long count = column.getPageSize() / Double.BYTES;
-                for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
-                    long a = column.getPageAddress(pageIndex);
-                    double x = Vect.minDouble(a, count);
-                    if (x < min) {
-                        min = x;
-                    }
-                }
-            }
-        }
-        return min;
-    }
-
     public long openPartition(int partitionIndex) {
         final long size = getPartitionRowCount(partitionIndex);
         if (size != -1) {
@@ -477,24 +411,6 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public long size() {
         return rowCount;
-    }
-
-    public double sumDouble(int columnIndex) {
-        double result = 0;
-        for (int i = 0; i < partitionCount; i++) {
-            openPartition(i);
-            final int base = getColumnBase(i);
-            final int index = getPrimaryColumnIndex(base, columnIndex);
-            final MemoryR column = columns.getQuick(index);
-            if (column != null) {
-                final long count = column.getPageSize() / Double.BYTES;
-                for (int pageIndex = 0, pageCount = column.getPageCount(); pageIndex < pageCount; pageIndex++) {
-                    long a = column.getPageAddress(pageIndex);
-                    result += Vect.sumDouble(a, count);
-                }
-            }
-        }
-        return result;
     }
 
     private static int getColumnBits(int columnCount) {

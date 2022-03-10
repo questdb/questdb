@@ -981,16 +981,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // check if there are post-filters
                 ExpressionNode filter = slaveModel.getPostJoinWhereClause();
                 if (filter != null) {
-//                    if (master.supportPageFrameCursor()) {
-//                        master = new AsyncFilteredRecordCursorFactory(
-//                                configuration,
-//                                executionContext.getMessageBus(),
-//                                master,
-//                                functionParser.parseFunction(filter, master.getMetadata(), executionContext)
-//                        );
-//                    } else {
+                    if (master.supportPageFrameCursor()) {
+                        master = new AsyncFilteredRecordCursorFactory(
+                                configuration,
+                                executionContext.getMessageBus(),
+                                master,
+                                functionParser.parseFunction(filter, master.getMetadata(), executionContext)
+                        );
+                    } else {
                         master = new FilteredRecordCursorFactory(master, functionParser.parseFunction(filter, master.getMetadata(), executionContext));
-//                    }
+                    }
                 }
             }
 

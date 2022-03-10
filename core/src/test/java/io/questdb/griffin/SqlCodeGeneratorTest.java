@@ -75,10 +75,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(50.03730496259993, r.avgDouble(0), 0.00001);
-        }
     }
 
     @Test
@@ -100,10 +96,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(50.03730496259993, r.avgDouble(0), 0.00001);
-        }
     }
 
     @Test
@@ -125,10 +117,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(49.99614105606191, r.avgDouble(0), 0.00001);
-        }
     }
 
     @Test
@@ -150,10 +138,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(0, r.avgDouble(0), 0.00001);
-        }
     }
 
     @Test
@@ -5321,10 +5305,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(99.99975504094375, r.maxDouble(0), 0.00001);
-        }
     }
 
     @Test
@@ -5346,10 +5326,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(98.8401109488745, r.maxDouble(0), 0.00001);
-        }
     }
 
     @Test
@@ -5371,10 +5347,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(1.743072089888109E-4, r.minDouble(0), 0.00001);
-        }
     }
 
     @Test
@@ -5396,10 +5368,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(0.11075361080621349, r.minDouble(0), 0.00001);
-        }
     }
 
     @Test
@@ -7086,10 +7054,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(6.004476595511992E7, r.sumDouble(0), 0.00001);
-        }
     }
 
     @Test
@@ -7111,10 +7075,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(6.004476595511992E7, r.sumDouble(0), 0.00001);
-        }
     }
 
     @Test
@@ -7124,10 +7084,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         executeInsertStatement(1.0);
         executeInsertStatement(2.0);
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(3, r.sumDouble(0), 0.00001);
-        }
     }
 
     @Test
@@ -7145,11 +7101,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         executeInsertStatement(1.0);
         executeInsertStatement(0.0);
         executeInsertStatement(0.0);
-
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(8, r.sumDouble(0), 0.0000001);
-        }
     }
 
     @Test
@@ -7171,11 +7122,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         executeInsertStatement(1.0);
         executeInsertStatement(1.0);
         executeInsertStatement(0.0);
-
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(12, r.sumDouble(0), 0.0000001);
-        }
     }
 
     @Test
@@ -7197,10 +7143,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(5.001433965140632E7, r.sumDouble(0), 0.00001);
-        }
     }
 
     @Test
@@ -7348,13 +7290,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(6158.373651379578, r.sumDouble(0), 0.00001);
-            Assert.assertEquals(0.11075361080621349, r.minDouble(0), 0.00001);
-            Assert.assertEquals(99.1809311486223, r.maxDouble(0), 0.00001);
-            Assert.assertEquals(53.20159680986086, r.avgDouble(0), 0.00001);
-        }
     }
 
     @Test

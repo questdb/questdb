@@ -4239,7 +4239,7 @@ public class IODispatcherTest {
                     );
 
                     // send multipart request to server
-                    final String request = "GET /query?query=select+distinct+a+from+x+where+test_latched_counter() HTTP/1.1\r\n"
+                    final String request = "GET /query?query=select+a+from+x+where+test_latched_counter() HTTP/1.1\r\n"
                             + "Host: localhost:9001\r\n" + "Connection: keep-alive\r\n" + "Cache-Control: max-age=0\r\n"
                             + "Upgrade-Insecure-Requests: 1\r\n"
                             + "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n"

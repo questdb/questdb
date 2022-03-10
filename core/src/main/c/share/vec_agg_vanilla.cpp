@@ -70,20 +70,6 @@ int32_t maxInt_Vanilla(int32_t *pi, int64_t count) {
     return max;
 }
 
-double avgInt_Vanilla(int32_t *pi, int64_t count) {
-    int32_t *pd = pi;
-    const int32_t *lim = pd + count;
-    int64_t sum = 0;
-    int64_t sumCount = 0;
-    for (; pd < lim; pd++) {
-        const int32_t i = *pd;
-        if (i != I_MIN) {
-            sum += i;
-            sumCount++;
-        }
-    }
-    return (double) sum / sumCount;
-}
 
 double sumDouble_Vanilla(double *d, int64_t count) {
     const double *lim = d + count;
@@ -136,21 +122,6 @@ double sumDoubleNeumaier_Vanilla(double *d, int64_t count) {
         }
     }
     return hasData ? sum + c : NAN;
-}
-
-double avgDouble_Vanilla(double *d, int64_t count) {
-    double *pd = d;
-    const double *lim = pd + count;
-    double sum = 0;
-    int64_t sumCount = 0;
-    for (; pd < lim; pd++) {
-        const double d1 = *pd;
-        if (d1 == d1) {
-            sum += d1;
-            sumCount++;
-        }
-    }
-    return sum / sumCount;
 }
 
 double minDouble_Vanilla(double *d, int64_t count) {
@@ -232,22 +203,6 @@ bool hasNull_Vanilla(int32_t *pi, int64_t count) {
     }
     return false;
 }
-
-double avgLong_Vanilla(int64_t *pl, int64_t count) {
-    int64_t *p = pl;
-    const int64_t *lim = p + count;
-    int64_t sum = 0;
-    int64_t sumCount = 0;
-    for (; p < lim; p++) {
-        const int64_t l = *p;
-        if (l != L_MIN) {
-            sum += l;
-            sumCount++;
-        }
-    }
-    return (double) sum / sumCount;
-}
-
 
 extern "C" {
 

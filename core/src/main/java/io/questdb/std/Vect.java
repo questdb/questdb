@@ -26,8 +26,6 @@ package io.questdb.std;
 
 public final class Vect {
 
-    public static native double avgDouble(long pDouble, long count);
-
     public static native double avgIntAcc(long pInt, long count, long pCount);
 
     public static native double avgLongAcc(long pInt, long count, long pCount);
