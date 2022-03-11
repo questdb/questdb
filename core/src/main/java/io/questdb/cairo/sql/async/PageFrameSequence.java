@@ -34,6 +34,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 
@@ -41,7 +42,6 @@ import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.LockSupport;
 
 public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private static final int OWNER_NONE = 0;
@@ -121,7 +121,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     }
                     collectSubSeq.done(cursor);
                 } else {
-                    LockSupport.parkNanos(1);
+                    Os.pause();
                 }
             }
         }
@@ -367,7 +367,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
             if (dispatchCursor < 0) {
                 stealWork();
-                LockSupport.parkNanos(1);
+                Os.pause();
             } else {
                 break;
             }

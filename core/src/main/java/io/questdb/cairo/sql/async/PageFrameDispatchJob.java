@@ -36,6 +36,7 @@ import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -80,7 +81,7 @@ public class PageFrameDispatchJob implements Job, Closeable {
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
         if (PageFrameReduceJob.consumeQueue(queue, reduceSubSeq, record, circuitBreaker)) {
-            LockSupport.parkNanos(1);
+            Os.pause();
             return false;
         }
         return true;
