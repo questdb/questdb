@@ -1384,6 +1384,7 @@ public class PGJobContextTest extends BasePGTest {
 
                 Assert.fail();
             } catch (PSQLException e) {
+                Assert.assertNotNull(e.getServerErrorMessage());
                 TestUtils.assertContains(e.getServerErrorMessage().getMessage(), "blob is too large");
             }
         });
@@ -5404,7 +5405,6 @@ create table tab as (
     @Test
     public void testSlowClient() throws Exception {
         assertMemoryLeak(() -> {
-            final int delayedAttempts = 1000;
             DelayingNetworkFacade nf = new DelayingNetworkFacade();
             PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
                 @Override
@@ -5438,7 +5438,6 @@ create table tab as (
     @Test
     public void testSlowClient2() throws Exception {
         assertMemoryLeak(() -> {
-            final int delayedAttempts = 1000;
             DelayingNetworkFacade nf = new DelayingNetworkFacade();
             PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
                 @Override
