@@ -289,19 +289,20 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         // - find out publisher id
         final MCSequence dispatchSubSeq = messageBus.getPageFrameDispatchSubSeq();
         while (true) {
-            final long c = dispatchSubSeq.next();
-            if (c > -1) {
-                PageFrameSequence<?> s = pageFrameDispatchQueue.get(c).getFrameSequence();
+            final long cursor = dispatchSubSeq.next();
+            if (cursor > -1) {
+                PageFrameSequence<?> pageFrameSequence = pageFrameDispatchQueue.get(cursor).getFrameSequence();
 
-                if (s == this) {
-                    dispatchSubSeq.done(c);
+                if (pageFrameSequence == this) {
+                    dispatchSubSeq.done(cursor);
                     break;
                 }
 
                 // We are entering all frame sequences in work stealing mode, which means
                 // they can end up being partially dispatched. This is done because we
                 // cannot afford to enter infinite loop here
-                PageFrameDispatchJob.handleTask(s, rec, messageBus, true, circuitBreaker);
+                PageFrameDispatchJob.handleTask(pageFrameSequence, rec, messageBus, true, circuitBreaker);
+                dispatchSubSeq.done(cursor);
             } else {
                 break;
             }
