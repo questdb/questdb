@@ -33,9 +33,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
 
-import java.io.Closeable;
+public class LineTcpParser {
 
-public class LineTcpParser implements Closeable {
     public static final long NULL_TIMESTAMP = Numbers.LONG_NaN;
     public static final byte ENTITY_TYPE_NULL = 0;
     public static final byte ENTITY_TYPE_TAG = 1;
@@ -60,6 +59,7 @@ public class LineTcpParser implements Closeable {
     public static final byte ENTITY_TYPE_CHAR = 19;
     static final byte ENTITY_TYPE_NONE = (byte) 0xff; // visible for testing
     private static final Log LOG = LogFactory.getLog(LineTcpParser.class);
+
     private final DirectByteCharSequence measurementName = new DirectByteCharSequence();
     private final DirectByteCharSequence charSeq = new DirectByteCharSequence();
     private final ObjList<ProtoEntity> entityCache = new ObjList<>();
@@ -78,17 +78,17 @@ public class LineTcpParser implements Closeable {
     private EntityHandler entityHandler;
     private long timestamp;
     private final EntityHandler entityTimestampHandler = this::expectTimestamp;
-    private int nQuoteCharacters;    private final EntityHandler entityTableHandler = this::expectTableName;
-    private boolean scape;    private final EntityHandler entityValueHandler = this::expectEntityValue;
-    private boolean nextValueCanBeOpenQuote;    private final EntityHandler entityNameHandler = this::expectEntityName;
+    private int nQuoteCharacters;
+    private final EntityHandler entityTableHandler = this::expectTableName;
+    private boolean scape;
+    private final EntityHandler entityValueHandler = this::expectEntityValue;
+    private boolean nextValueCanBeOpenQuote;
+    private final EntityHandler entityNameHandler = this::expectEntityName;
     private boolean hasNonAscii;
+
     public LineTcpParser(boolean stringAsTagSupported, boolean symbolAsFieldSupported) {
         this.stringAsTagSupported = stringAsTagSupported;
         this.symbolAsFieldSupported = symbolAsFieldSupported;
-    }
-
-    @Override
-    public void close() {
     }
 
     public long getBufferAddress() {
