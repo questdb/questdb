@@ -73,7 +73,7 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence tableWriterEventPubSeq;
     private final FanOut tableWriterEventSubSeq;
     private final CairoConfiguration configuration;
-    private final int pageFrameReduceShardCount = 4;
+    private final int pageFrameReduceShardCount;
     private final MPSequence[] pageFrameReducePubSeq;
     private final MCSequence[] pageFrameReduceSubSeq;
     private final RingQueue<PageFrameReduceTask>[] pageFrameReduceQueue;
@@ -145,21 +145,23 @@ public class MessageBusImpl implements MessageBus {
         this.tableWriterEventSubSeq = new FanOut();
         this.tableWriterEventPubSeq.then(this.tableWriterEventSubSeq).then(this.tableWriterEventPubSeq);
 
+        this.pageFrameReduceShardCount = configuration.getPageFrameReduceShardCount();
+
         //noinspection unchecked
         pageFrameReduceQueue = new RingQueue[pageFrameReduceShardCount];
         pageFrameReducePubSeq = new MPSequence[pageFrameReduceShardCount];
         pageFrameReduceSubSeq = new MCSequence[pageFrameReduceShardCount];
         pageFrameCollectFanOut = new FanOut[pageFrameReduceShardCount];
 
-        int queueCapacity = configuration.getPageFrameQueueCapacity();
+        int reduceQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
         for (int i = 0; i < pageFrameReduceShardCount; i++) {
             final RingQueue<PageFrameReduceTask> queue = new RingQueue<PageFrameReduceTask>(
-                    () -> new PageFrameReduceTask(configuration, queueCapacity),
-                    queueCapacity
+                    () -> new PageFrameReduceTask(configuration, reduceQueueCapacity),
+                    reduceQueueCapacity
             );
 
-            final MPSequence reducePubSeq = new MPSequence(queueCapacity);
-            final MCSequence reduceSubSeq = new MCSequence(queueCapacity);
+            final MPSequence reducePubSeq = new MPSequence(reduceQueueCapacity);
+            final MCSequence reduceSubSeq = new MCSequence(reduceQueueCapacity);
             final FanOut collectFanOut = new FanOut();
             reducePubSeq.then(reduceSubSeq).then(collectFanOut).then(reducePubSeq);
 
@@ -170,7 +172,7 @@ public class MessageBusImpl implements MessageBus {
         }
         pageFrameDispatchQueue = new RingQueue<PageFrameDispatchTask>(
                 PageFrameDispatchTask::new,
-                configuration.getFilterQueueCapacity()
+                configuration.getPageFrameDispatchQueueCapacity()
         );
         pageFrameDispatchPubSeq = new MPSequence(pageFrameDispatchQueue.getCycle());
         pageFrameDispatchSubSeq = new MCSequence(pageFrameDispatchQueue.getCycle());

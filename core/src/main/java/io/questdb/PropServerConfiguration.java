@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
@@ -37,7 +38,6 @@ import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.log.Log;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -63,8 +63,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
     public static final String SNAPSHOT_DIRECTORY = "snapshot";
-    private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
+    private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
     private final IODispatcherConfiguration httpIODispatcherConfiguration = new PropHttpIODispatcherConfiguration();
     private final WaitProcessorConfiguration httpWaitProcessorConfiguration = new PropWaitProcessorConfiguration();
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
@@ -239,10 +239,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int writerTickRowsCountMod;
     private final long writerAsyncCommandMaxWaitTimeout;
     private final int o3PartitionPurgeListCapacity;
-    private final int cairoFilterQueueCapacity;
-    private final int cairoPageFrameQueueCapacity;
+    private final int cairoPageFrameDispatchQueueCapacity;
+    private final int cairoPageFrameReduceQueueCapacity;
     private final int cairoWriterCommandQueueSlotSize;
-    private final int cairoPageFrameRowsCapacity;
+    private final int cairoPageFrameReduceRowIdListCapacity;
     private final long writerFileOpenOpts;
     private int lineUdpDefaultPartitionBy;
     private int httpMinNetConnectionLimit;
@@ -374,6 +374,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean stringToCharCastAllowed;
     private boolean symbolAsFieldSupported;
     private boolean isStringAsTagSupported;
+    private final int cairoPageFrameReduceShardCount;
 
     public PropServerConfiguration(
             String root,
@@ -678,11 +679,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlCopyModelPoolCapacity = getInt(properties, env, "cairo.sql.copy.model.pool.capacity", 32);
             this.sqlCopyBufferSize = getIntSize(properties, env, "cairo.sql.copy.buffer.size", 2 * 1024 * 1024);
 
-            this.cairoFilterQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.filter.queue.capacity", 64));
-            this.cairoPageFrameQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.page.frame.queue.capacity", 256));
-            this.cairoWriterCommandQueueSlotSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.writer.command.queue.slot.size", 2048));
-            this.cairoPageFrameRowsCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.page.frame.rows.capacity", 32));
+            this.cairoPageFrameDispatchQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.page.frame.dispatch.queue.capacity", 64));
+            this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.page.frame.reduce.queue.capacity", 256));
+            this.cairoPageFrameReduceRowIdListCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.page.frame.rowid.list.capacity", 256));
+            this.cairoPageFrameReduceShardCount = getInt(properties, env, "cairo.page.frame.shard.count", 16);
 
+            this.cairoWriterCommandQueueSlotSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.writer.command.queue.slot.size", 2048));
 
             this.writerDataIndexKeyAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, "cairo.writer.data.index.key.append.page.size", 512 * 1024));
             this.writerDataIndexValueAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, "cairo.writer.data.index.value.append.page.size", 16 * 1024 * 1024));
@@ -1606,26 +1608,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private class PropCairoConfiguration implements CairoConfiguration {
         @Override
-        public int getFilterQueueCapacity() {
-            return cairoFilterQueueCapacity;
-        }
-
-        @Override
-        public int getPageFrameQueueCapacity() {
-            return cairoPageFrameQueueCapacity;
-        }
-
-        @Override
-        public int getWriterCommandQueueSlotSize() {
-            return cairoWriterCommandQueueSlotSize;
-        }
-
-        @Override
-        public int getPageFrameRowsCapacity() {
-            return cairoPageFrameRowsCapacity;
-        }
-
-        @Override
         public boolean enableDevelopmentUpdates() {
             return false;
         }
@@ -1796,6 +1778,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getPageFrameDispatchQueueCapacity() {
+            return cairoPageFrameDispatchQueueCapacity;
+        }
+
+        @Override
+        public int getPageFrameReduceShardCount() {
+            return cairoPageFrameReduceShardCount;
+        }
+
+        @Override
         public int getFloatToStrCastScale() {
             return sqlFloatToStrCastScale;
         }
@@ -1913,6 +1905,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getO3PurgeDiscoveryQueueCapacity() {
             return o3PurgeDiscoveryQueueCapacity;
+        }
+
+        @Override
+        public int getPageFrameReduceQueueCapacity() {
+            return cairoPageFrameReduceQueueCapacity;
         }
 
         @Override
@@ -2220,6 +2217,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getWriterCommandQueueSlotSize() {
+            return cairoWriterCommandQueueSlotSize;
+        }
+
+        @Override
         public long getWriterFileOpenOpts() {
             return writerFileOpenOpts;
         }
@@ -2242,6 +2244,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlJitDebugEnabled() {
             return sqlJitDebugEnabled;
+        }
+
+        @Override
+        public int getPageFrameReduceRowIdListCapacity() {
+            return cairoPageFrameReduceRowIdListCapacity;
         }
     }
 

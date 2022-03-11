@@ -132,7 +132,7 @@ public interface CairoConfiguration {
 
     FilesFacade getFilesFacade();
 
-    int getFilterQueueCapacity();
+    int getPageFrameDispatchQueueCapacity();
 
     int getFloatToStrCastScale();
 
@@ -187,7 +187,9 @@ public interface CairoConfiguration {
 
     int getO3PurgeDiscoveryQueueCapacity();
 
-    int getPageFrameQueueCapacity();
+    int getPageFrameReduceQueueCapacity();
+
+    int getPageFrameReduceShardCount();
 
     int getParallelIndexThreshold();
 
@@ -339,5 +341,5 @@ public interface CairoConfiguration {
 
     boolean isSqlJitDebugEnabled();
 
-    int getPageFrameRowsCapacity();
+    int getPageFrameReduceRowIdListCapacity();
 }

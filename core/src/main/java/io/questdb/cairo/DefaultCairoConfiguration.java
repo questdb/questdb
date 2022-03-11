@@ -62,6 +62,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean enableDevelopmentUpdates() {
+        return false;
+    }
+
+    @Override
     public boolean enableTestFactories() {
         return true;
     }
@@ -227,7 +232,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getFilterQueueCapacity() {
+    public int getPageFrameDispatchQueueCapacity() {
         return 32;
     }
 
@@ -352,8 +357,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getPageFrameQueueCapacity() {
+    public int getPageFrameReduceQueueCapacity() {
         return 32;
+    }
+
+    @Override
+    public int getPageFrameReduceShardCount() {
+        return 4;
     }
 
     @Override
@@ -436,15 +446,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         // 1024 seems like a good fit, but tests need
         // smaller capacity so that resize is tested correctly
         return 64;
-    }
-
-    @Override
-    public long getWriterFileOpenOpts() {
-        // In some places we rely on the fact that data written via conventional IO
-        // is immediately visible to mapped memory for the same area of file. While this is the
-        // case on Linux it is absolutely not the case on Windows. We must not enable anything other
-        // than MMAP on Windows.
-        return Os.type != Os.WINDOWS ? O_ASYNC : O_NONE;
     }
 
     @Override
@@ -578,11 +579,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean enableDevelopmentUpdates() {
-        return false;
-    }
-
-    @Override
     public int getSqlMapMaxResizes() {
         return 64;
     }
@@ -683,6 +679,15 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getWriterFileOpenOpts() {
+        // In some places we rely on the fact that data written via conventional IO
+        // is immediately visible to mapped memory for the same area of file. While this is the
+        // case on Linux it is absolutely not the case on Windows. We must not enable anything other
+        // than MMAP on Windows.
+        return Os.type != Os.WINDOWS ? O_ASYNC : O_NONE;
+    }
+
+    @Override
     public int getWriterTickRowsCountMod() {
         return 1024 - 1;
     }
@@ -703,7 +708,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getPageFrameRowsCapacity() {
+    public int getPageFrameReduceRowIdListCapacity() {
         return 32;
     }
 }

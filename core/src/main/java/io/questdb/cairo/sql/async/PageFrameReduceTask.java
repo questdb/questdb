@@ -39,7 +39,7 @@ public class PageFrameReduceTask implements Closeable {
     private PageFrameSequence<?> frameSequence;
 
     public PageFrameReduceTask(CairoConfiguration configuration, int pageFrameQueueCapacity) {
-        this.rows = new DirectLongList(configuration.getPageFrameRowsCapacity(), MemoryTag.NATIVE_LONG_LIST);
+        this.rows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_LONG_LIST);
         this.pageFrameQueueCapacity = pageFrameQueueCapacity;
     }
 
