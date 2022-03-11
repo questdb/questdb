@@ -37,10 +37,11 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Misc;
+import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-public class FilteredRecordCursorFactoryTest extends AbstractGriffinTest {
+public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
 
     @BeforeClass
     public static void setUpStatic() {
@@ -89,7 +90,7 @@ public class FilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                 compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(20000000)) timestamp(t) partition by hour", sqlExecutionContext);
                 try (RecordCursorFactory f = compiler.compile("x where a > 0.34", sqlExecutionContext).getRecordCursorFactory()) {
 
-                    LOG.info().$("class name:").$(f.getClass().getName()).$();
+                    Assert.assertEquals("io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory", f.getClass().getName());
                     SCSequence subSeq = new SCSequence();
                     PageFrameSequence<?> frameSequence = f.execute(sqlExecutionContext, subSeq);
 

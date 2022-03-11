@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -39,7 +40,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class AsyncOffloadTest extends AbstractGriffinTest {
     @Test
-    public void testFuzz() throws Exception {
+    public void testParallelStress() throws Exception {
+
+        jitMode = SqlJitMode.JIT_MODE_DISABLED;
 
         String expected = "v\n" +
                 "3352215237270276085\n" +
