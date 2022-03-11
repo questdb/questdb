@@ -3155,8 +3155,6 @@ nodejs code:
                 return 512;
             }
         });
-
-        Thread.sleep(4000);
     }
 
     @Test
