@@ -299,7 +299,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
         attachedPartitions.setPos(index + LONGS_PER_TX_ATTACHED_PARTITION);
         long newTimestampLo = getPartitionTimestampLo(timestamp);
-        initPartitionAt(index, newTimestampLo, 0);
+        initPartitionAt(index, newTimestampLo, 0, -1);
         transientRowCount = 0;
         txPartitionCount++;
     }
@@ -430,7 +430,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             attachedPartitions.arrayCopy(index, index + LONGS_PER_TX_ATTACHED_PARTITION, size - index);
             partitionTableVersion++;
         }
-        initPartitionAt(index, partitionTimestamp, partitionSize);
+        initPartitionAt(index, partitionTimestamp, partitionSize, -1);
     }
 
     private void openTxnFile(FilesFacade ff, Path path) {
@@ -519,7 +519,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         if (attachedPartitions.getQuick(index + PARTITION_SIZE_OFFSET) != partitionSize) {
             recordStructureVersion++;
             attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
-            attachedPartitions.set(index + PARTITION_DATA_TX_OFFSET, txn);
         }
     }
 
@@ -527,6 +526,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         recordStructureVersion++;
         attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
         attachedPartitions.set(index + PARTITION_NAME_TX_OFFSET, txn);
+    }
+
+    void updatePartitionColumnVersion(long partitionTimestamp) {
+        final int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
+        attachedPartitions.set(index + PARTITION_COLUMN_VERSION_OFFSET, columnVersion);
     }
 
     private void writeTransientSymbolCount(int symbolIndex, int symCount) {

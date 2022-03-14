@@ -45,8 +45,6 @@ public interface CairoConfiguration {
 
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
-    boolean enableDevelopmentUpdates();
-
     boolean enableTestFactories();
 
     int getAnalyticColumnPoolCapacity();

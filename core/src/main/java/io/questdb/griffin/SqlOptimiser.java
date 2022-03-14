@@ -1912,12 +1912,10 @@ class SqlOptimiser {
                 )
         ) {
             TableReaderMetadata metadata = r.getMetadata();
-            if (metadata.getPartitionBy() == PartitionBy.NONE) {
-                throw SqlException.$(updateQueryModel.getModelPosition(), "UPDATE query can only be executed on partitioned tables");
-            }
             int timestampIndex = metadata.getTimestampIndex();
             if (timestampIndex < 0) {
-                throw SqlException.$(updateQueryModel.getModelPosition(), "UPDATE query can only be executed on tables with Designated timestamp");
+                // could we support this?
+                throw SqlException.$(updateQueryModel.getModelPosition(), "UPDATE query can only be executed on tables with designated timestamp");
             }
 
             tempList.clear(metadata.getColumnCount());

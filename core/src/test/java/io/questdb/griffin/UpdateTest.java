@@ -29,7 +29,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableModel;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
-import io.questdb.griffin.update.InplaceUpdateExecution;
+import io.questdb.griffin.update.UpdateExecution;
 import io.questdb.griffin.update.UpdateStatement;
 import io.questdb.std.Misc;
 import io.questdb.test.tools.TestUtils;
@@ -38,17 +38,17 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-public class UpdateBasicTest extends AbstractGriffinTest {
-    private InplaceUpdateExecution inplaceUpdate;
+public class UpdateTest extends AbstractGriffinTest {
+    private UpdateExecution updateExecution;
 
     @Before
     public void setUpUpdates() {
-        inplaceUpdate = new InplaceUpdateExecution(configuration);
+        updateExecution = new UpdateExecution(configuration);
     }
 
     @After
     public void tearDownUpdate() {
-        inplaceUpdate = Misc.free(inplaceUpdate);
+        updateExecution = Misc.free(updateExecution);
     }
 
     @Test
@@ -595,6 +595,18 @@ public class UpdateBasicTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUpdateTableWithoutDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " cast(x as int) x" +
+                    " from long_sequence(5))", sqlExecutionContext);
+
+            executeUpdateFails("UPDATE up SET ts = 1", 7, "UPDATE query can only be executed on tables with designated timestamp");
+        });
+    }
+
+    @Test
     public void testUpdateWith2TableJoinInWithClause() throws Exception {
         assertMemoryLeak(() -> {
 
@@ -803,12 +815,32 @@ public class UpdateBasicTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testUpdateNonPartitionedTable() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " x" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts)", sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET x = 123 WHERE x > 1 and x < 4");
+
+            assertSql("up", "ts\tx\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\n" +
+                    "1970-01-01T00:00:01.000000Z\t123\n" +
+                    "1970-01-01T00:00:02.000000Z\t123\n" +
+                    "1970-01-01T00:00:03.000000Z\t4\n" +
+                    "1970-01-01T00:00:04.000000Z\t5\n");
+        });
+    }
+
     private void applyUpdate(UpdateStatement updateStatement) throws SqlException {
         try (TableWriter tableWriter = engine.getWriter(
                 sqlExecutionContext.getCairoSecurityContext(),
                 updateStatement.getTableName(),
                 "UPDATE")) {
-            inplaceUpdate.executeUpdate(tableWriter, updateStatement, sqlExecutionContext);
+            updateExecution.executeUpdate(tableWriter, updateStatement, sqlExecutionContext);
         }
     }
 
@@ -842,9 +874,7 @@ public class UpdateBasicTest extends AbstractGriffinTest {
     private void executeUpdate(String query) throws SqlException {
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
-        try (UpdateStatement updateStatement = cc.getUpdateStatement()) {
-            applyUpdate(updateStatement);
-        }
+        cc.execute(null);
     }
 
     private void executeUpdateFails(String sql, int position, String reason) {

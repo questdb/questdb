@@ -242,14 +242,12 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
 
     @Test
     public void testFuzzConcurrent() throws Exception {
-        int spinLockTimeoutUs = 5_000_000;
-        testFuzzConcurrent(spinLockTimeoutUs);
+        testFuzzConcurrent(0);
     }
 
     @Test
     public void testFuzzWithTimeout() throws Exception {
-        int spinLockTimeoutUs = 0;
-        testFuzzConcurrent(spinLockTimeoutUs);
+        testFuzzConcurrent(5_000_000);
     }
 
     private void testFuzzConcurrent(int spinLockTimeoutUs) throws Exception {

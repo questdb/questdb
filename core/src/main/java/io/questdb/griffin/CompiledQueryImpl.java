@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.TextLoader;
+import io.questdb.griffin.update.UpdateExecution;
 import io.questdb.griffin.update.UpdateStatement;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -47,6 +48,7 @@ public class CompiledQueryImpl implements CompiledQuery {
     private static final Log LOG = LogFactory.getLog(CompiledQueryImpl.class);
     private final CairoEngine engine;
     private final AlterTableQueryFuture alterFuture = new AlterTableQueryFuture();
+    private final UpdateExecution updateExecution;
     private RecordCursorFactory recordCursorFactory;
     private InsertStatement insertStatement;
     private UpdateStatement updateStatement;
@@ -59,6 +61,12 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     public CompiledQueryImpl(CairoEngine engine) {
         this.engine = engine;
+        updateExecution = new UpdateExecution(engine.getConfiguration());
+    }
+
+    @Override
+    public void close() {
+        updateExecution.close();
     }
 
     @Override
@@ -101,6 +109,11 @@ public class CompiledQueryImpl implements CompiledQuery {
     public QueryFuture execute(SCSequence eventSubSeq) throws SqlException {
         if (type == INSERT) {
             executeInsert();
+            return QueryFuture.DONE;
+        }
+
+        if (type == UPDATE) {
+            executeUpdate();
             return QueryFuture.DONE;
         }
 
@@ -156,6 +169,19 @@ public class CompiledQueryImpl implements CompiledQuery {
         try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
             insertMethod.execute();
             insertMethod.commit();
+        }
+    }
+
+    private void executeUpdate() throws SqlException {
+        try (
+                TableWriter writer = engine.getWriter(
+                        sqlExecutionContext.getCairoSecurityContext(),
+                        updateStatement.getTableName(),
+                        "Update table execute"
+                )
+        ) {
+            updateExecution.executeUpdate(writer, updateStatement, sqlExecutionContext);
+            updateStatement.close();
         }
     }
 

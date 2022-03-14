@@ -63,6 +63,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     creepyAlterStatement.of((short) 1000, "product", writer.getMetadata().getId(), 1000);
                     cc.ofAlter(creepyAlterStatement);
                     cf = cc.execute(commandReplySequence);
+                    cc.close();
                 }
                 cf.await();
                 Assert.fail();
@@ -288,6 +289,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 CompiledQueryImpl cc = new CompiledQueryImpl(engine).withContext(sqlExecutionContext);
                 cc.ofAlter(creepyAlter);
                 cf = cc.execute(commandReplySequence);
+                cc.close();
             } // Unblock table
             drainEngineCmdQueue(engine);
 
@@ -345,6 +347,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     CompiledQueryImpl cc = new CompiledQueryImpl(engine).withContext(sqlExecutionContext);
                     cc.ofAlter(creepyAlter.build());
                     cf = cc.execute(commandReplySequence);
+                    cc.close();
                 }
                 compile("drop table product", sqlExecutionContext);
                 drainEngineCmdQueue(engine);
@@ -464,6 +467,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                         TestUtils.assertContains(exception.getFlyweightMessage(), "could not remove partition 'default'");
                     }
                 }
+                cc.close();
             }
         });
     }
@@ -491,6 +495,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                         TestUtils.assertContains(exception.getFlyweightMessage(), "Invalid column: timestamp");
                     }
                 }
+                cc.close();
             }
         });
     }

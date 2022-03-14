@@ -178,7 +178,7 @@ public class TableWriter implements Closeable {
     private boolean o3InError = false;
     private ObjList<? extends MemoryA> activeColumns;
     private ObjList<Runnable> activeNullSetters;
-    private int rowActon = ROW_ACTION_OPEN_PARTITION;
+    private int rowAction = ROW_ACTION_OPEN_PARTITION;
     private long committedMasterRef;
     private DirectLongList o3ColumnTopSink;
     private final Metrics metrics;
@@ -795,6 +795,10 @@ public class TableWriter implements Closeable {
         return txWriter.getTxn();
     }
 
+    public long getColumnVersion() {
+        return columnVersionWriter.getVersion();
+    }
+
     public TxnScoreboard getTxnScoreboard() {
         return txnScoreboard;
     }
@@ -804,7 +808,7 @@ public class TableWriter implements Closeable {
     }
 
     public boolean inTransaction() {
-        return txWriter != null && (txWriter.inTransaction() || hasO3());
+        return txWriter != null && (txWriter.inTransaction() || hasO3() || columnVersionWriter.hasChanges());
     }
 
     public boolean isOpen() {
@@ -813,7 +817,7 @@ public class TableWriter implements Closeable {
 
     public Row newRow(long timestamp) {
 
-        switch (rowActon) {
+        switch (rowAction) {
             case ROW_ACTION_OPEN_PARTITION:
 
                 if (timestamp < Timestamps.O3_MIN_TS) {
@@ -826,7 +830,7 @@ public class TableWriter implements Closeable {
                 }
                 // fall thru
 
-                rowActon = ROW_ACTION_SWITCH_PARTITION;
+                rowAction = ROW_ACTION_SWITCH_PARTITION;
 
             default: // switch partition
                 bumpMasterRef();
@@ -1110,7 +1114,7 @@ public class TableWriter implements Closeable {
             try {
                 final long ts = txWriter.getPartitionTimestamp(i);
                 final long ourSize = i < ourLast ? txWriter.getPartitionSize(i) : txWriter.transientRowCount;
-                final long ourDataTxn = i < ourLast ? txWriter.getPartitionDataTxn(i) : txWriter.txn;
+                final long ourColumnVersion = i < ourLast ? txWriter.getPartitionColumnVersion(i) : txWriter.columnVersion;
                 final int keyIndex = replPartitionHash.keyIndex(ts);
                 final long theirSize;
                 if (keyIndex < 0) {
@@ -1147,7 +1151,7 @@ public class TableWriter implements Closeable {
                             theirSize,
                             ourSize - theirSize,
                             partitionNameTxn,
-                            ourDataTxn
+                            ourColumnVersion
                     );
 
                     setPathForPartition(path, partitionBy, ts, false);
@@ -1363,7 +1367,7 @@ public class TableWriter implements Closeable {
                 }
             }
             removePartitionDirectories();
-            rowActon = ROW_ACTION_OPEN_PARTITION;
+            rowAction = ROW_ACTION_OPEN_PARTITION;
         } else {
             // truncate columns, we cannot remove them
             for (int i = 0; i < columnCount; i++) {
@@ -1732,7 +1736,7 @@ public class TableWriter implements Closeable {
 
     private void clearO3() {
         this.o3MasterRef = -1; // clears o3 flag, hasO3() will be returning false
-        rowActon = ROW_ACTION_SWITCH_PARTITION;
+        rowAction = ROW_ACTION_SWITCH_PARTITION;
         // transaction log is either not required or pending
         activeColumns = columns;
         activeNullSetters = nullSetters;
@@ -1804,7 +1808,6 @@ public class TableWriter implements Closeable {
         }
 
         if (inTransaction()) {
-
             if (hasO3() && o3Commit(commitLag)) {
                 // Bookmark masterRef to track how many rows is in uncommitted state
                 this.committedMasterRef = masterRef;
@@ -1837,18 +1840,18 @@ public class TableWriter implements Closeable {
         if (this.txWriter.getMaxTimestamp() > Long.MIN_VALUE || !partitioned) {
             openFirstPartition(this.txWriter.getMaxTimestamp());
             if (partitioned) {
-                rowActon = ROW_ACTION_OPEN_PARTITION;
+                rowAction = ROW_ACTION_OPEN_PARTITION;
                 timestampSetter = appendTimestampSetter;
             } else {
                 if (metadata.getTimestampIndex() < 0) {
-                    rowActon = ROW_ACTION_NO_TIMESTAMP;
+                    rowAction = ROW_ACTION_NO_TIMESTAMP;
                 } else {
-                    rowActon = ROW_ACTION_NO_PARTITION;
+                    rowAction = ROW_ACTION_NO_PARTITION;
                     timestampSetter = appendTimestampSetter;
                 }
             }
         } else {
-            rowActon = ROW_ACTION_OPEN_PARTITION;
+            rowAction = ROW_ACTION_OPEN_PARTITION;
             timestampSetter = appendTimestampSetter;
         }
         activeColumns = columns;
@@ -2360,7 +2363,7 @@ public class TableWriter implements Closeable {
         o3OpenColumns();
         o3InError = false;
         o3MasterRef = masterRef;
-        rowActon = ROW_ACTION_O3;
+        rowAction = ROW_ACTION_O3;
         o3TimestampSetter(timestamp);
         return row;
     }
@@ -3720,7 +3723,6 @@ public class TableWriter implements Closeable {
             if (mem2 != null) {
                 mem2.putLong(0);
             }
-
         } finally {
             path.trimTo(rootLen);
         }
@@ -4608,7 +4610,7 @@ public class TableWriter implements Closeable {
                         throw e;
                     }
                 } else {
-                    rowActon = ROW_ACTION_OPEN_PARTITION;
+                    rowAction = ROW_ACTION_OPEN_PARTITION;
                 }
 
                 // undo counts
@@ -4923,6 +4925,11 @@ public class TableWriter implements Closeable {
                 }
             }
         }
+    }
+
+    public void upsertColumnVersion(long partitionTimestamp, int columnIndex) {
+        columnVersionWriter.upsert(partitionTimestamp, columnIndex, txWriter.txn, getColumnTop(columnIndex));
+        txWriter.updatePartitionColumnVersion(partitionTimestamp);
     }
 
     private void validateSwapMeta(CharSequence columnName) {

@@ -30,7 +30,9 @@ import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.update.UpdateStatement;
 import io.questdb.mp.SCSequence;
 
-public interface CompiledQuery {
+import java.io.Closeable;
+
+public interface CompiledQuery extends Closeable {
     //these values should be covered in both JsonQueryProcessor and PGConnectionContext
     short SELECT = 1;
     short INSERT = 2;

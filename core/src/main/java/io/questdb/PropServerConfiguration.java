@@ -1597,11 +1597,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropCairoConfiguration implements CairoConfiguration {
 
         @Override
-        public boolean enableDevelopmentUpdates() {
-            return false;
-        }
-
-        @Override
         public boolean enableTestFactories() {
             return false;
         }

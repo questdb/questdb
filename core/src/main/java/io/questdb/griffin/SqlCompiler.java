@@ -906,6 +906,7 @@ public class SqlCompiler implements Closeable {
     public void close() {
         backupAgent.close();
         codeGenerator.close();
+        compiledQuery.close();
         Misc.free(path);
         Misc.free(renamePath);
         Misc.free(textLoader);
@@ -913,15 +914,6 @@ public class SqlCompiler implements Closeable {
 
     @NotNull
     public CompiledQuery compile(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext) throws SqlException {
-        CompiledQuery result = compile0(query, executionContext);
-        if (result.getType() != CompiledQuery.UPDATE || configuration.enableDevelopmentUpdates()) {
-            return result;
-        }
-        throw SqlException.$(0, "UPDATE statement is not supported yet");
-    }
-
-    @NotNull
-    private CompiledQuery compile0(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext) throws SqlException {
         clear();
         // these are quick executions that do not require building of a model
         lexer.of(query);

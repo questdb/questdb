@@ -95,7 +95,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.compiler = sqlCompiler;
         final QueryExecutor sendConfirmation = this::updateMetricsAndSendConfirmation;
         this.queryExecutors.extendAndSet(CompiledQuery.SELECT, this::executeNewSelect);
-        this.queryExecutors.extendAndSet(CompiledQuery.INSERT, this::executeInsert);
+        this.queryExecutors.extendAndSet(CompiledQuery.INSERT, this::executeInsertOrUpdate);
+        this.queryExecutors.extendAndSet(CompiledQuery.UPDATE, this::executeInsertOrUpdate);
         this.queryExecutors.extendAndSet(CompiledQuery.TRUNCATE, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.ALTER, this::executeAlterTable);
         this.queryExecutors.extendAndSet(CompiledQuery.REPAIR, sendConfirmation);
@@ -415,7 +416,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         sendConfirmation(state, cc, keepAliveHeader);
     }
 
-    private void executeInsert(
+    private void executeInsertOrUpdate(
             JsonQueryProcessorState state,
             CompiledQuery cc,
             CharSequence keepAliveHeader

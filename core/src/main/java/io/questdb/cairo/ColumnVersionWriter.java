@@ -81,6 +81,10 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         return mem.getLong(OFFSET_OFFSET_B_64);
     }
 
+    public boolean hasChanges() {
+        return hasChanges;
+    }
+
     public void removeColumnTop(long partitionTimestamp, int columnIndex) {
         int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);
         if (recordIndex >= 0) {
@@ -127,7 +131,6 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         } else {
             index = -index - 1;
         }
-
 
         if (insert) {
             if (index < sz) {

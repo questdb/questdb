@@ -60,7 +60,7 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "update tblx set x = 1",
                 7,
-                "UPDATE query can only be executed on partitioned tables",
+                "UPDATE query can only be executed on tables with designated timestamp",
                 modelOf("tblx")
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
