@@ -31,26 +31,35 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.jit.JitUtil;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Misc;
 import org.junit.Assert;
-import org.junit.BeforeClass;
+import org.junit.Assume;
 import org.junit.Test;
 
 public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
 
-    @BeforeClass
-    public static void setUpStatic() {
-        jitMode = SqlJitMode.JIT_MODE_DISABLED;
-        AbstractGriffinTest.setUpStatic();
+    @Test
+    public void testSimpleJitDisabled() throws Exception {
+        testSimple(SqlJitMode.JIT_MODE_DISABLED, AsyncFilteredRecordCursorFactory.class);
     }
 
     @Test
-    public void testSimple() throws Exception {
+    public void testSimpleJitEnabled() throws Exception {
+        // Disable the test on ARM64.
+        Assume.assumeTrue(JitUtil.isJitSupported());
+
+        testSimple(SqlJitMode.JIT_MODE_ENABLED, AsyncJitFilteredRecordCursorFactory.class);
+    }
+
+    private void testSimple(int jitMode, Class<?> expectedFactoryClass) throws Exception {
         assertMemoryLeak(() -> {
+            sqlExecutionContext.setJitMode(jitMode);
+
             WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
@@ -76,10 +85,10 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
             pool.start(null);
 
             try {
-                compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(20000000)) timestamp(t) partition by hour", sqlExecutionContext);
+                compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(5000000)) timestamp(t) partition by day", sqlExecutionContext);
                 try (RecordCursorFactory f = compiler.compile("x where a > 0.34", sqlExecutionContext).getRecordCursorFactory()) {
 
-                    Assert.assertEquals("io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory", f.getClass().getName());
+                    Assert.assertEquals(expectedFactoryClass, f.getClass());
                     SCSequence subSeq = new SCSequence();
                     PageFrameSequence<?> frameSequence = f.execute(sqlExecutionContext, subSeq);
 

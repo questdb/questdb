@@ -117,4 +117,8 @@ public class PageAddressCache implements Mutable {
         }
         return false;
     }
+
+    public int getColumnCount() {
+        return columnCount;
+    }
 }

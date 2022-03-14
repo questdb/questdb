@@ -38,8 +38,9 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
 
 public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
-    private static final PageFrameReducer REDUCER_ASC = AsyncFilteredRecordCursorFactory::filterAsc;
-    private static final PageFrameReducer REDUCER_DESC = AsyncFilteredRecordCursorFactory::filterDesc;
+
+    private static final PageFrameReducer REDUCER = AsyncFilteredRecordCursorFactory::filter;
+
     private final RecordCursorFactory base;
     private final AsyncFilteredRecordCursor cursor;
     private final Function filter;
@@ -54,13 +55,9 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
     ) {
         assert !(base instanceof AsyncFilteredRecordCursorFactory);
         this.base = base;
-        this.cursor = new AsyncFilteredRecordCursor(filter);
+        this.cursor = new AsyncFilteredRecordCursor(filter, base.hasDescendingOrder());
         this.filter = filter;
-        this.frameSequence = new PageFrameSequence<>(
-                configuration,
-                messageBus,
-                base.hasDescendingOrder() ? REDUCER_DESC : REDUCER_ASC
-        );
+        this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER);
     }
 
     @Override
@@ -109,27 +106,13 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
         return base.hasDescendingOrder();
     }
 
-    private static void filterAsc(PageAddressCacheRecord record, PageFrameReduceTask task) {
+    private static void filter(PageAddressCacheRecord record, PageFrameReduceTask task) {
         final DirectLongList rows = task.getRows();
         final long frameRowCount = task.getFrameRowCount();
         final Function filter = task.getFrameSequence(Function.class).getAtom();
 
         rows.clear();
         for (long r = 0; r < frameRowCount; r++) {
-            record.setRowIndex(r);
-            if (filter.getBool(record)) {
-                rows.add(r);
-            }
-        }
-    }
-
-    private static void filterDesc(PageAddressCacheRecord record, PageFrameReduceTask task) {
-        final DirectLongList rows = task.getRows();
-        final long frameRowCount = task.getFrameRowCount();
-        final Function filter = task.getFrameSequence(Function.class).getAtom();
-
-        rows.clear();
-        for (long r = frameRowCount - 1; r > -1; r--) {
             record.setRowIndex(r);
             if (filter.getBool(record)) {
                 rows.add(r);

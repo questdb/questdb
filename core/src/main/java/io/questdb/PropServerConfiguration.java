@@ -245,6 +245,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoPageFrameReduceQueueCapacity;
     private final int cairoWriterCommandQueueSlotSize;
     private final int cairoPageFrameReduceRowIdListCapacity;
+    private final int cairoPageFrameReduceColumnListCapacity;
     private final long writerFileOpenOpts;
     private final int cairoPageFrameReduceShardCount;
     private int lineUdpDefaultPartitionBy;
@@ -684,6 +685,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoPageFrameDispatchQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.page.frame.dispatch.queue.capacity", 64));
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.page.frame.reduce.queue.capacity", 256));
             this.cairoPageFrameReduceRowIdListCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.page.frame.rowid.list.capacity", 256));
+            this.cairoPageFrameReduceColumnListCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.page.frame.column.list.capacity", 16));
             this.cairoPageFrameReduceShardCount = getInt(properties, env, "cairo.page.frame.shard.count", 16);
 
             this.cairoWriterCommandQueueSlotSize = Numbers.ceilPow2(getIntSize(properties, env, "cairo.writer.command.queue.slot.size", 2048));
@@ -2259,6 +2261,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPageFrameReduceRowIdListCapacity() {
             return cairoPageFrameReduceRowIdListCapacity;
+        }
+
+        @Override
+        public int getPageFrameReduceColumnListCapacity() {
+            return cairoPageFrameReduceColumnListCapacity;
         }
 
         @Override

@@ -346,5 +346,7 @@ public interface CairoConfiguration {
 
     int getPageFrameReduceRowIdListCapacity();
 
+    int getPageFrameReduceColumnListCapacity();
+
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 }

@@ -40,7 +40,7 @@ public class PageAddressCacheRecord implements Record {
     private final Long256Impl long256A = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
 
-    private PageFrameCursor cursor;//makes it possible to determine real rowid, not one relative to page  
+    private PageFrameCursor cursor; // Makes it possible to determine real row id, not one relative to page.
     private SymbolTableSource symbolTableSource;
     private PageAddressCache pageAddressCache;
     private int frameIndex;

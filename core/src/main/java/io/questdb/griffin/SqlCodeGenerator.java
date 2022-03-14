@@ -760,7 +760,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     LOG.info()
                             .$("JIT enabled for (sub)query [tableName=").utf8(model.getName())
                             .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
-                    return new CompiledFilterRecordCursorFactory(configuration, factory, bindVarFunctions, f, jitFilter);
+                    return new AsyncJitFilteredRecordCursorFactory(configuration, executionContext.getMessageBus(), factory, bindVarFunctions, f, jitFilter);
                 } catch (SqlException | LimitOverflowException ex) {
                     LOG.debug()
                             .$("JIT cannot be applied to (sub)query [tableName=").utf8(model.getName())

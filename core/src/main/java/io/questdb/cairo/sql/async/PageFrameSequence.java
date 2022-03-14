@@ -47,7 +47,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private static final int OWNER_NONE = 0;
     private static final int OWNER_WORK_STEALING = 1;
     private static final int OWNER_ASYNC = 2;
-    private final static Log LOG = LogFactory.getLog(PageFrameSequence.class);
+    private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
     private static final AtomicLong ID_SEQ = new AtomicLong();
     public final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final AtomicBoolean valid = new AtomicBoolean(true);
