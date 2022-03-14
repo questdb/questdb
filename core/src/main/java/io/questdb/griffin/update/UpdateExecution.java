@@ -56,7 +56,7 @@ public class UpdateExecution implements Closeable {
         path = new Path().of(configuration.getRoot());
         rootLen = path.length();
         dataAppendPageSize = configuration.getDataAppendPageSize();
-        this.fileOpenOpts = configuration.getWriterFileOpenOpts();
+        fileOpenOpts = configuration.getWriterFileOpenOpts();
     }
 
     @Override
