@@ -42,7 +42,7 @@ public class HideTelemetryTablesTest extends AbstractGriffinTest {
             TestUtils.assertSql(
                     compiler,
                     sqlExecutionContext,
-                    "tables",
+                    "tables order by 2",
                     sink,
                     "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
                             "2\ttelemetry\t\tNONE\t1000\t0\n" +
