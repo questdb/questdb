@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.BuildInformation;
 import io.questdb.TelemetryConfiguration;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.NanosecondClock;
@@ -342,4 +343,6 @@ public interface CairoConfiguration {
     boolean isSqlJitDebugEnabled();
 
     int getPageFrameReduceRowIdListCapacity();
+
+    SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 }

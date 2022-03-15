@@ -164,7 +164,7 @@ public class PageFrameDispatchJob implements Job, Closeable {
                         LOG.debug()
                                 .$("dispatched [shard=").$(shard)
                                 .$(", id=").$(frameSequence.getId())
-                                .$(", staling=").$(workStealingMode)
+                                .$(", stealing=").$(workStealingMode)
                                 .$(", frameIndex=").$(i)
                                 .$(", frameCount=").$(frameCount)
                                 .$(", cursor=").$(cursor)

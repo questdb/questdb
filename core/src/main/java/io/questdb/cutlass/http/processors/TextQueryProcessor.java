@@ -95,7 +95,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.clock = configuration.getClock();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount);
         this.doubleScale = configuration.getDoubleScale();
-        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration());
+        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration());
         this.metrics = engine.getMetrics();
     }
 

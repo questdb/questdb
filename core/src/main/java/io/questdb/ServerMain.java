@@ -192,7 +192,7 @@ public class ServerMain {
         O3Utils.setupWorkerPool(
                 workerPool,
                 cairoEngine.getMessageBus(),
-                configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getCircuitBreakerConfiguration()
+                configuration.getCairoConfiguration().getCircuitBreakerConfiguration()
         );
 
         try {

@@ -43,6 +43,4 @@ public interface JsonQueryProcessorConfiguration {
     CharSequence getKeepAliveHeader();
 
     long getMaxQueryResponseRowLimit();
-
-    SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 }

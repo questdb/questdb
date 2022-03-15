@@ -133,7 +133,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public SqlExecutionCircuitBreaker getCircuitBreaker() {
-        circuitBreaker.setState();
+        circuitBreaker.resetTimer();
         return circuitBreaker;
     }
 

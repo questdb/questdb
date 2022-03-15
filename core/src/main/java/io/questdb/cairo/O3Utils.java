@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.async.PageFrameDispatchJob;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import org.jetbrains.annotations.Nullable;
@@ -43,29 +44,35 @@ public class O3Utils {
             MessageBus messageBus,
             @Nullable SqlExecutionCircuitBreakerConfiguration sqlExecutionCircuitBreakerConfiguration
     ) {
+        final int workerCount = workerPool.getWorkerCount();
         final O3PurgeDiscoveryJob purgeDiscoveryJob = new O3PurgeDiscoveryJob(messageBus, workerPool.getWorkerCount());
         final PageFrameDispatchJob pageFrameDispatchJob = new PageFrameDispatchJob(
                 messageBus,
-                workerPool.getWorkerCount(),
+                workerCount,
                 sqlExecutionCircuitBreakerConfiguration
         );
 
-        final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(
-                messageBus,
-                new Rnd(),
-                workerPool.getWorkerCount(),
-                sqlExecutionCircuitBreakerConfiguration
-        );
         workerPool.assign(purgeDiscoveryJob);
         workerPool.assign(new O3PartitionJob(messageBus));
         workerPool.assign(new O3OpenColumnJob(messageBus));
         workerPool.assign(new O3CopyJob(messageBus));
         workerPool.assign(new O3CallbackJob(messageBus));
         workerPool.assign(pageFrameDispatchJob);
-        workerPool.assign(pageFrameReduceJob);
         workerPool.freeOnHalt(purgeDiscoveryJob);
         workerPool.freeOnHalt(pageFrameDispatchJob);
-        workerPool.freeOnHalt(pageFrameReduceJob);
+
+        for (int i = 0; i < workerCount; i++) {
+            // create job per worker to allow each worker to have
+            // own shard walk sequence
+            final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(
+                    messageBus,
+                    new Rnd(),
+                    workerCount,
+                    sqlExecutionCircuitBreakerConfiguration
+            );
+            workerPool.assign(i, (Job)pageFrameDispatchJob);
+            workerPool.freeOnHalt(pageFrameReduceJob);
+        }
     }
 
     static long getVarColumnLength(long srcLo, long srcHi, long srcFixAddr) {

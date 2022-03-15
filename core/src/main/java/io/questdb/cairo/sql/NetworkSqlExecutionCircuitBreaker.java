@@ -64,15 +64,14 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
         buffer = 0;
         fd = -1;
-    }    @Override
-    public void setFd(long fd) {
-        this.fd = fd;
     }
 
     @Override
     public SqlExecutionCircuitBreakerConfiguration getConfiguration() {
         return configuration;
-    }    @Override
+    }
+
+    @Override
     public long getFd() {
         return fd;
     }
@@ -99,7 +98,12 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public void setState() {
+    public void setFd(long fd) {
+        this.fd = fd;
+    }
+
+    @Override
+    public void resetTimer() {
         powerUpTimestampUs = microsecondClock.getTicks();
     }
 
@@ -111,9 +115,6 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     private boolean testConnection(long fd) {
-        if (fd == -1) {
-            System.out.println("ok");
-        }
         assert fd != -1;
         final int nRead = nf.peek(fd, buffer, bufferSize);
 

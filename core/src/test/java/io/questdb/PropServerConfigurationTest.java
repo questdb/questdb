@@ -136,9 +136,9 @@ public class PropServerConfigurationTest {
 
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext());
         Assert.assertEquals(Long.MAX_VALUE, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
-        Assert.assertTrue(configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getCircuitBreakerConfiguration().isEnabled());
-        Assert.assertEquals(2_000_000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
-        Assert.assertEquals(64, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getCircuitBreakerConfiguration().getBufferSize());
+        Assert.assertTrue(configuration.getCairoConfiguration().getCircuitBreakerConfiguration().isEnabled());
+        Assert.assertEquals(2_000_000, configuration.getCairoConfiguration().getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
+        Assert.assertEquals(64, configuration.getCairoConfiguration().getCircuitBreakerConfiguration().getBufferSize());
 
         Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
         Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlCopyBufferSize());
@@ -529,9 +529,9 @@ public class PropServerConfigurationTest {
 
             Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext());
             Assert.assertEquals(50000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
-            Assert.assertFalse(configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getCircuitBreakerConfiguration().isEnabled());
-            Assert.assertEquals(500, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
-            Assert.assertEquals(32, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getCircuitBreakerConfiguration().getBufferSize());
+            Assert.assertFalse(configuration.getCairoConfiguration().getCircuitBreakerConfiguration().isEnabled());
+            Assert.assertEquals(500, configuration.getCairoConfiguration().getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
+            Assert.assertEquals(32, configuration.getCairoConfiguration().getCircuitBreakerConfiguration().getBufferSize());
 
             Assert.assertEquals(100, configuration.getWorkerPoolConfiguration().getYieldThreshold());
             Assert.assertEquals(100000, configuration.getWorkerPoolConfiguration().getSleepThreshold());

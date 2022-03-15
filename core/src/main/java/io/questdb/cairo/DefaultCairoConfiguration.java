@@ -25,8 +25,10 @@
 package io.questdb.cairo;
 
 import io.questdb.*;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
@@ -43,8 +45,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     private final CharSequence snapshotRoot;
 
     private final TextConfiguration textConfiguration;
-
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
+    private final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
 
     private final BuildInformation buildInformation = new BuildInformationHolder();
 
@@ -710,5 +712,10 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getPageFrameReduceRowIdListCapacity() {
         return 32;
+    }
+
+    @Override
+    public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+        return circuitBreakerConfiguration;
     }
 }

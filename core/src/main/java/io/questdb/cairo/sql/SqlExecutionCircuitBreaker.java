@@ -31,7 +31,7 @@ public interface SqlExecutionCircuitBreaker {
         }
 
         @Override
-        public void setState() {
+        public void resetTimer() {
         }
 
         @Override
@@ -64,7 +64,7 @@ public interface SqlExecutionCircuitBreaker {
 
     boolean checkIfTripped(long executionStartTimeUs, long fd);
 
-    void setState();
+    void resetTimer();
 
     void setFd(long fd);
 

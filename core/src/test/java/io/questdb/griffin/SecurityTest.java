@@ -113,7 +113,7 @@ public class SecurityTest extends AbstractGriffinTest {
             }
 
             @Override
-            public void setState() {
+            public void resetTimer() {
                 deadline = circuitBreakerTimeoutDeadline;
             }
 

@@ -38,6 +38,7 @@ import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.log.Log;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -244,6 +245,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoWriterCommandQueueSlotSize;
     private final int cairoPageFrameReduceRowIdListCapacity;
     private final long writerFileOpenOpts;
+    private final int cairoPageFrameReduceShardCount;
     private int lineUdpDefaultPartitionBy;
     private int httpMinNetConnectionLimit;
     private boolean httpMinNetConnectionHint;
@@ -374,7 +376,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean stringToCharCastAllowed;
     private boolean symbolAsFieldSupported;
     private boolean isStringAsTagSupported;
-    private final int cairoPageFrameReduceShardCount;
 
     public PropServerConfiguration(
             String root,
@@ -1607,6 +1608,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropCairoConfiguration implements CairoConfiguration {
+
         @Override
         public boolean enableDevelopmentUpdates() {
             return false;
@@ -1783,11 +1785,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getPageFrameReduceShardCount() {
-            return cairoPageFrameReduceShardCount;
-        }
-
-        @Override
         public int getFloatToStrCastScale() {
             return sqlFloatToStrCastScale;
         }
@@ -1910,6 +1907,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPageFrameReduceQueueCapacity() {
             return cairoPageFrameReduceQueueCapacity;
+        }
+
+        @Override
+        public int getPageFrameReduceShardCount() {
+            return cairoPageFrameReduceShardCount;
         }
 
         @Override
@@ -2249,6 +2251,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPageFrameReduceRowIdListCapacity() {
             return cairoPageFrameReduceRowIdListCapacity;
+        }
+
+        @Override
+        public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+            return circuitBreakerConfiguration;
         }
     }
 
@@ -2604,6 +2611,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {
+
         @Override
         public MillisecondClock getClock() {
             return httpFrozenClock ? StationaryMillisClock.INSTANCE : MillisecondClockImpl.INSTANCE;
@@ -2637,11 +2645,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getMaxQueryResponseRowLimit() {
             return maxHttpQueryResponseRowLimit;
-        }
-
-        @Override
-        public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
-            return circuitBreakerConfiguration;
         }
     }
 
