@@ -24,9 +24,10 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
+import io.questdb.TelemetryJob;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
@@ -67,7 +68,10 @@ public class TableMetadataCursorFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) {
         return new CursorFunction(
-                new TableMetadataCursor(configuration.getFilesFacade(), configuration.getRoot())
+                new TableMetadataCursor(
+                        configuration.getFilesFacade(),
+                        configuration.getRoot(),
+                        configuration.getTelemetryConfiguration().hideTables())
         ) {
             @Override
             public boolean isRuntimeConstant() {
@@ -79,12 +83,14 @@ public class TableMetadataCursorFactory implements FunctionFactory {
     private static class TableMetadataCursor implements RecordCursorFactory {
         private final FilesFacade ff;
         private final TableListRecordCursor cursor;
+        private final boolean hideTelemetryTables;
         private Path path;
 
-        public TableMetadataCursor(FilesFacade ff, CharSequence dbRoot) {
+        public TableMetadataCursor(FilesFacade ff, CharSequence dbRoot, boolean hideTelemetryTables) {
             this.ff = ff;
             path = new Path().of(dbRoot).$();
             cursor = new TableListRecordCursor();
+            this.hideTelemetryTables = hideTelemetryTables;
         }
 
         @Override
@@ -234,6 +240,11 @@ public class TableMetadataCursorFactory implements FunctionFactory {
                 }
 
                 public boolean open(CharSequence tableName) {
+
+                    if (hideTelemetryTables && (Chars.equals(tableName, TelemetryJob.tableName) || Chars.equals(tableName, TelemetryJob.configTableName))) {
+                        return false;
+                    }
+
                     int pathLen = path.length();
                     try {
                         path.chop$().concat(tableName).concat(META_FILE_NAME).$();

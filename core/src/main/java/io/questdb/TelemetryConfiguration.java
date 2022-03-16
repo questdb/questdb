@@ -30,4 +30,6 @@ public interface TelemetryConfiguration {
     boolean getEnabled();
 
     int getQueueCapacity();
+
+    boolean hideTables();
 }
