@@ -179,6 +179,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean telemetryEnabled;
     private final boolean telemetryDisableCompletely;
     private final int telemetryQueueCapacity;
+    private final boolean telemetryHideTables;
     private final LineTcpReceiverConfiguration lineTcpReceiverConfiguration = new PropLineTcpReceiverConfiguration();
     private final IODispatcherConfiguration lineTcpReceiverDispatcherConfiguration = new PropLineTcpReceiverIODispatcherConfiguration();
     private final boolean lineTcpEnabled;
@@ -757,6 +758,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.telemetryEnabled = getBoolean(properties, env, "telemetry.enabled", true);
             this.telemetryDisableCompletely = getBoolean(properties, env, "telemetry.disable.completely", false);
             this.telemetryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "telemetry.queue.capacity", 512));
+            this.telemetryHideTables = getBoolean(properties, env, "telemetry.hide.tables", true);
             this.o3PartitionPurgeListCapacity = getInt(properties, env, "cairo.o3.partition.purge.list.initial.capacity", 1);
 
             parseBindTo(properties, env, "line.udp.bind.to", "0.0.0.0:9009", (a, p) -> {
@@ -2908,6 +2910,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getQueueCapacity() {
             return telemetryQueueCapacity;
+        }
+
+        @Override
+        public boolean hideTables() {
+            return telemetryHideTables;
         }
     }
 
