@@ -99,8 +99,6 @@ public class AbstractCairoTest {
             throw new ExceptionInInitializerError();
         }
 
-        hideTelemetryTable = false;
-
         telemetryConfiguration = new DefaultTelemetryConfiguration() {
             @Override
             public boolean hideTables() {
@@ -270,6 +268,7 @@ public class AbstractCairoTest {
         spinLockTimeoutUs = -1;
         snapshotInstanceId = null;
         snapshotRecoveryEnabled = null;
+        hideTelemetryTable = false;
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {

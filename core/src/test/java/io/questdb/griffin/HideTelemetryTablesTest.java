@@ -33,8 +33,6 @@ public class HideTelemetryTablesTest extends AbstractGriffinTest {
     @Test
     public void testShow() throws Exception {
 
-        hideTelemetryTable = false;
-
         assertMemoryLeak(() -> {
             compiler.compile("create table test(a int)", sqlExecutionContext);
             compiler.compile("create table " + TelemetryJob.tableName + "(a int)", sqlExecutionContext);
