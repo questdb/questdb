@@ -143,7 +143,7 @@ public class PageFrameReduceJob implements Job, Closeable {
                 }
                 return false;
             } else if (cursor == -1) {
-                // queue is full, we should yield or help
+                // queue is empty, we should yield or help
                 break;
             }
         } while (true);
