@@ -33,10 +33,12 @@ import { Menu as _MenuIcon } from "@styled-icons/remix-fill/Menu"
 import { Play } from "@styled-icons/remix-line/Play"
 import { Stop } from "@styled-icons/remix-line/Stop"
 import { Database2 } from "@styled-icons/remix-line/Database2"
+import { HelpCircle } from "@styled-icons/boxicons-regular/HelpCircle"
 
 import {
   ErrorButton,
   Input,
+  Link,
   PaneMenu,
   PopperHover,
   PopperToggle,
@@ -112,6 +114,10 @@ const SideMenuMenuButton = styled(TransparentButton)`
     opacity: 1;
     transition: opacity ${TransitionDuration.REG}ms;
   }
+`
+
+const HelpButton = styled(SecondaryButton)`
+  margin-right: 1rem;
 `
 
 const Menu = () => {
@@ -215,6 +221,26 @@ const Menu = () => {
       )}
 
       <Separator />
+
+      <PopperHover
+        delay={350}
+        placement="bottom"
+        trigger={
+          <HelpButton>
+            <Link
+              color="draculaForeground"
+              hoverColor="draculaForeground"
+              href="https://questdb.io/docs/reference/web-console/"
+              rel="noreferrer"
+              target="_blank"
+            >
+              <HelpCircle size="18px" />
+            </Link>
+          </HelpButton>
+        }
+      >
+        <Tooltip>Go to Web Console help</Tooltip>
+      </PopperHover>
 
       <DocsearchInput
         id="docsearch-input"
