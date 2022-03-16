@@ -389,6 +389,11 @@ public class ServerMain {
             thisVersion = resource.openConnection().getLastModified();
         }
         final long oldVersion = getPublicVersion(publicDir);
+        log.info()
+                .$("web console update [old=").$(oldVersion)
+                .$(", new=").$(thisVersion)
+                .$(", net=").$(oldVersion != thisVersion)
+                .I$();
         if (thisVersion > oldVersion) {
             try (final InputStream is = ServerMain.class.getResourceAsStream(publicZip)) {
                 if (is != null) {
