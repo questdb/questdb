@@ -35,6 +35,7 @@ import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -54,6 +55,12 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
         testConcurrency(1, 10, 40, PartitionMode.SINGLE);
     }
 
+    @Ignore
+    @Test
+    public void testConcurrencyMultipleWriterMultipleReaderSinglePartitioned() throws Exception {
+        testConcurrency(3, 10, 40, PartitionMode.SINGLE);
+    }
+
     @Test
     public void testConcurrencySingleWriterSingleReaderMultiPartitioned() throws Exception {
         testConcurrency(1, 1, 30, PartitionMode.MULTIPLE);
@@ -64,6 +71,12 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
         testConcurrency(1, 10, 25, PartitionMode.MULTIPLE);
     }
 
+    @Ignore
+    @Test
+    public void testConcurrencyMultipleWriterMultipleReaderMultiPartitioned() throws Exception {
+        testConcurrency(3, 10, 25, PartitionMode.MULTIPLE);
+    }
+
     @Test
     public void testConcurrencySingleWriterSingleReaderNonPartitioned() throws Exception {
         testConcurrency(1, 1, 50, PartitionMode.NONE);
@@ -72,6 +85,12 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
     @Test
     public void testConcurrencySingleWriterMultipleReaderNonPartitioned() throws Exception {
         testConcurrency(1, 10, 40, PartitionMode.NONE);
+    }
+
+    @Ignore
+    @Test
+    public void testConcurrencyMultipleWriterMultipleReaderNonPartitioned() throws Exception {
+        testConcurrency(5, 10, 40, PartitionMode.NONE);
     }
 
     private void testConcurrency(int numOfWriters, int numOfReaders, int numOfUpdates, PartitionMode partitionMode) throws Exception {

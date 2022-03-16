@@ -34,7 +34,7 @@ import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.griffin.AlterStatement;
+import io.questdb.griffin.AsyncWriterCommand;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -69,7 +69,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final RingQueue<TableWriterTask> tableWriterCmdQueue;
     private final MCSequence tableWriterCmdSubSeq;
     private final long tableIdMemSize;
-    private final AtomicLong alterCommandCommandCorrelationId = new AtomicLong();
+    private final AtomicLong writerCommandCorrelationId = new AtomicLong();
     private long tableIdFd = -1;
     private long tableIdMem = 0;
 
@@ -373,16 +373,16 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public long publishTableWriterCommand(AlterStatement alterTableStatement) {
-        CharSequence tableName = alterTableStatement.getTableName();
+    public long publishTableWriterCommand(AsyncWriterCommand asyncWriterCommand) {
+        CharSequence tableName = asyncWriterCommand.getTableName();
         final MPSequence commandPubSeq = messageBus.getTableWriterCommandPubSeq();
 
         while (true) {
             long pubCursor = commandPubSeq.next();
-            long correlationId = alterCommandCommandCorrelationId.incrementAndGet();
+            long correlationId = writerCommandCorrelationId.incrementAndGet();
             if (pubCursor > -1) {
                 final TableWriterTask command = tableWriterCmdQueue.get(pubCursor);
-                alterTableStatement.serialize(command);
+                asyncWriterCommand.serialize(command);
                 command.setInstance(correlationId);
                 commandPubSeq.done(pubCursor);
                 LOG.info()

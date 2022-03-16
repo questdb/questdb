@@ -44,6 +44,7 @@ import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLev
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
+import io.questdb.griffin.update.UpdateExecution;
 import io.questdb.griffin.update.UpdateStatement;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -62,18 +63,19 @@ import java.util.ServiceLoader;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.griffin.SqlKeywords.*;
 
-
 public class SqlCompiler implements Closeable {
     public static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
     private final static Log LOG = LogFactory.getLog(SqlCompiler.class);
     private static final IntList castGroups = new IntList();
     private static final CastCharToStrFunctionFactory CHAR_TO_STR_FUNCTION_FACTORY = new CastCharToStrFunctionFactory();
-    protected final GenericLexer lexer;
-    protected final Path path = new Path();
+    private final GenericLexer lexer;
+    private final Path path = new Path();
     protected final CairoEngine engine;
-    protected final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
-    protected final CompiledQueryImpl compiledQuery;
-    protected final AlterStatementBuilder alterQueryBuilder = new AlterStatementBuilder();
+    private final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
+    private final CompiledQueryImpl compiledQuery;
+    private final AlterStatementBuilder alterQueryBuilder = new AlterStatementBuilder();
+    private final UpdateStatement updateStatement = new UpdateStatement();
+    private final UpdateExecution updateExecution;
     private final SqlOptimiser optimiser;
     private final SqlParser parser;
     private final ObjectPool<ExpressionNode> sqlNodePool;
@@ -224,7 +226,8 @@ public class SqlCompiler implements Closeable {
                 queryModelPool,
                 postOrderTreeTraversalAlgo
         );
-        this.textLoader = new TextLoader(engine);
+        textLoader = new TextLoader(engine);
+        updateExecution = new UpdateExecution(engine.getConfiguration());
     }
 
     // Creates data type converter.
@@ -906,7 +909,7 @@ public class SqlCompiler implements Closeable {
     public void close() {
         backupAgent.close();
         codeGenerator.close();
-        compiledQuery.close();
+        updateExecution.close();
         Misc.free(path);
         Misc.free(renamePath);
         Misc.free(textLoader);
@@ -2180,6 +2183,9 @@ public class SqlCompiler implements Closeable {
         final int tableId = selectQueryModel.getTableId();
         final long tableVersion = selectQueryModel.getTableVersion();
         return generateUpdateStatement(
+                updateStatement,
+                updateExecution,
+                executionContext,
                 updateQueryModel,
                 tableColumnTypes,
                 tableColumnNames,
@@ -2190,6 +2196,9 @@ public class SqlCompiler implements Closeable {
     }
 
     private static UpdateStatement generateUpdateStatement(
+            @Transient UpdateStatement updateStatement,
+            @Transient UpdateExecution updateExecution,
+            @Transient SqlExecutionContext executionContext,
             @Transient QueryModel updateQueryModel,
             @Transient IntList tableColumnTypes,
             @Transient ObjList<CharSequence> tableColumnNames,
@@ -2220,11 +2229,13 @@ public class SqlCompiler implements Closeable {
                 }
             }
 
-            return new UpdateStatement(
+            return updateStatement.of(
                     tableName,
                     tableId,
                     tableVersion,
-                    updateToCursorFactory
+                    updateToCursorFactory,
+                    updateExecution,
+                    executionContext
             );
         } catch (Throwable e) {
             Misc.free(updateToCursorFactory);

@@ -24,27 +24,39 @@
 
 package io.questdb.griffin.update;
 
+import io.questdb.cairo.TableStructureChangesException;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.AsyncWriterCommand;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
 import java.io.Closeable;
 
-public class UpdateStatement implements Closeable {
-    private final String tableName;
-    private final int tableId;
-    private final long tableVersion;
+public class UpdateStatement implements AsyncWriterCommand, Closeable {
+    private String tableName;
+    private int tableId;
+    private long tableVersion;
     private RecordCursorFactory updateToDataCursorFactory;
+    private UpdateExecution updateExecution;
+    private SqlExecutionContext executionContext;
 
-    public UpdateStatement(
+    public UpdateStatement of(
             String tableName,
             int tableId,
             long tableVersion,
-            RecordCursorFactory updateToCursorFactory
+            RecordCursorFactory updateToCursorFactory,
+            UpdateExecution updateExecution,
+            SqlExecutionContext executionContext
     ) {
         this.tableName = tableName;
         this.tableId = tableId;
         this.tableVersion = tableVersion;
         this.updateToDataCursorFactory = updateToCursorFactory;
+        this.updateExecution = updateExecution;
+        this.executionContext = executionContext;
+        return this;
     }
 
     @Override
@@ -56,8 +68,19 @@ public class UpdateStatement implements Closeable {
         return tableId;
     }
 
+    @Override
+    public int getTableNamePosition() {
+        return 7;
+    }
+
+    @Override
     public CharSequence getTableName() {
         return tableName;
+    }
+
+    @Override
+    public void apply(TableWriter tableWriter, boolean acceptStructureChange) throws SqlException, TableStructureChangesException {
+        updateExecution.executeUpdate(tableWriter, this, executionContext);
     }
 
     public long getTableVersion() {

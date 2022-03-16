@@ -33,7 +33,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.tasks.TableWriterTask;
 
-public class AlterStatement implements Mutable {
+public class AlterStatement implements AsyncWriterCommand, Mutable {
 
     public final static short DO_NOTHING = 1;
     public final static short ADD_COLUMN = 3;
@@ -142,6 +142,7 @@ public class AlterStatement implements Mutable {
         longList.clear();
     }
 
+    @Override
     public void deserialize(TableWriterTask event) {
         clear();
 
@@ -170,10 +171,12 @@ public class AlterStatement implements Mutable {
         charSequenceList = directCharList;
     }
 
+    @Override
     public CharSequence getTableName() {
         return tableName;
     }
 
+    @Override
     public int getTableNamePosition() {
         return tableNamePosition;
     }
@@ -191,8 +194,9 @@ public class AlterStatement implements Mutable {
         return this;
     }
 
+    @Override
     public void serialize(TableWriterTask event) {
-        event.of(TableWriterTask.TSK_ALTER_TABLE, tableId, tableName);
+        event.of(TableWriterTask.CMD_ALTER_TABLE, tableId, tableName);
         event.putShort(command);
         event.putInt(tableNamePosition);
         event.putInt(longList.size());

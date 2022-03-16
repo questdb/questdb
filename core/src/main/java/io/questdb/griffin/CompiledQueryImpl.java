@@ -34,21 +34,11 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.update.UpdateExecution;
 import io.questdb.griffin.update.UpdateStatement;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.mp.FanOut;
-import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.tasks.TableWriterTask;
 
 public class CompiledQueryImpl implements CompiledQuery {
-    private static final Log LOG = LogFactory.getLog(CompiledQueryImpl.class);
     private final CairoEngine engine;
-    private final AlterTableQueryFuture alterFuture = new AlterTableQueryFuture();
-    private final UpdateExecution updateExecution;
+    private final QueryFutureImpl queryFuture;
     private RecordCursorFactory recordCursorFactory;
     private InsertStatement insertStatement;
     private UpdateStatement updateStatement;
@@ -61,12 +51,7 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     public CompiledQueryImpl(CairoEngine engine) {
         this.engine = engine;
-        updateExecution = new UpdateExecution(engine.getConfiguration());
-    }
-
-    @Override
-    public void close() {
-        updateExecution.close();
+        queryFuture = new QueryFutureImpl(engine);
     }
 
     @Override
@@ -107,38 +92,16 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     @Override
     public QueryFuture execute(SCSequence eventSubSeq) throws SqlException {
-        if (type == INSERT) {
-            executeInsert();
-            return QueryFuture.DONE;
-        }
-
-        if (type == UPDATE) {
-            executeUpdate();
-            return QueryFuture.DONE;
-        }
-
-        if (type == ALTER) {
-            try (
-                    TableWriter writer = engine.getWriter(
-                            sqlExecutionContext.getCairoSecurityContext(),
-                            alterStatement.getTableName(),
-                            "Alter table execute"
-                    )
-            ) {
-                alterStatement.apply(writer, true);
+        switch (type) {
+            case INSERT:
+                return executeInsert();
+            case UPDATE:
+                return executeUpdate(eventSubSeq);
+            case ALTER:
+                return executeAlter(eventSubSeq);
+            default:
                 return QueryFuture.DONE;
-            } catch (EntryUnavailableException busyException) {
-                if (eventSubSeq == null) {
-                    throw busyException;
-                }
-                alterFuture.of(sqlExecutionContext, eventSubSeq);
-                return alterFuture;
-            } catch (TableStructureChangesException e) {
-                assert false : "This must never happen when parameter acceptChange=true";
-            }
         }
-
-        return QueryFuture.DONE;
     }
 
     @Override
@@ -165,14 +128,15 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
-    private void executeInsert() throws SqlException {
+    private QueryFuture executeInsert() throws SqlException {
         try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
             insertMethod.execute();
             insertMethod.commit();
+            return QueryFuture.DONE;
         }
     }
 
-    private void executeUpdate() throws SqlException {
+    private QueryFuture executeUpdate(SCSequence eventSubSeq) throws SqlException {
         try (
                 TableWriter writer = engine.getWriter(
                         sqlExecutionContext.getCairoSecurityContext(),
@@ -180,8 +144,40 @@ public class CompiledQueryImpl implements CompiledQuery {
                         "Update table execute"
                 )
         ) {
-            updateExecution.executeUpdate(writer, updateStatement, sqlExecutionContext);
+            updateStatement.apply(writer, false);
             updateStatement.close();
+            return QueryFuture.DONE;
+        } catch (EntryUnavailableException busyException) {
+            if (eventSubSeq == null) {
+                throw busyException;
+            }
+            queryFuture.of(updateStatement, sqlExecutionContext, eventSubSeq);
+            return queryFuture;
+        } catch (TableStructureChangesException e) {
+            assert false : "This must never happen when parameter acceptChange=true";
+            return QueryFuture.DONE;
+        }
+    }
+
+    private QueryFuture executeAlter(SCSequence eventSubSeq) throws SqlException {
+        try (
+                TableWriter writer = engine.getWriter(
+                        sqlExecutionContext.getCairoSecurityContext(),
+                        alterStatement.getTableName(),
+                        "Alter table execute"
+                )
+        ) {
+            alterStatement.apply(writer, true);
+            return QueryFuture.DONE;
+        } catch (EntryUnavailableException busyException) {
+            if (eventSubSeq == null) {
+                throw busyException;
+            }
+            queryFuture.of(alterStatement, sqlExecutionContext, eventSubSeq);
+            return queryFuture;
+        } catch (TableStructureChangesException e) {
+            assert false : "This must never happen when parameter acceptChange=true";
+            return QueryFuture.DONE;
         }
     }
 
@@ -278,124 +274,5 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     CompiledQuery ofSnapshotComplete() {
         return of(SNAPSHOT_DB_COMPLETE);
-    }
-
-    private class AlterTableQueryFuture implements QueryFuture {
-        private SCSequence eventSubSeq;
-        private int status;
-        private long commandId;
-        private QueryFutureUpdateListener queryFutureUpdateListener;
-
-        @Override
-        public void await() throws SqlException {
-            status = await(engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout());
-            if (status == QUERY_STARTED) {
-                status = await(engine.getConfiguration().getWriterAsyncCommandMaxTimeout() - engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout());
-            }
-            if (status != QUERY_COMPLETE) {
-                throw SqlException.$(alterStatement.getTableNamePosition(), "Timeout expired on waiting for the ALTER TABLE execution result");
-            }
-        }
-
-        @Override
-        public int await(long timeout) throws SqlException {
-            if (status == QUERY_COMPLETE) {
-                return status;
-            }
-            return status = Math.max(status, awaitWriterEvent(timeout, alterStatement.getTableNamePosition()));
-        }
-
-        @Override
-        public int getStatus() {
-            return status;
-        }
-
-        @Override
-        public void close() {
-            if (eventSubSeq != null) {
-                engine.getMessageBus().getTableWriterEventFanOut().remove(eventSubSeq);
-                eventSubSeq.clear();
-                eventSubSeq = null;
-                commandId = -1;
-            }
-        }
-
-        /***
-         * Initializes instance of AlterTableQueryFuture with the parameters to wait for the new command
-         * @param eventSubSeq - event sequence used to wait for the command execution to be signaled as complete
-         */
-        public void of(SqlExecutionContext executionContext, SCSequence eventSubSeq) {
-            assert eventSubSeq != null : "event subscriber sequence must be provided";
-
-            this.queryFutureUpdateListener = executionContext.getQueryFutureUpdateListener();
-            // Set up execution wait sequence to listen to the Engine async writer events
-            final FanOut writerEventFanOut = engine.getMessageBus().getTableWriterEventFanOut();
-            writerEventFanOut.and(eventSubSeq);
-            this.eventSubSeq = eventSubSeq;
-
-            try {
-                // Publish new command and get published Command Id
-                commandId = engine.publishTableWriterCommand(alterStatement);
-                queryFutureUpdateListener.reportStart(alterStatement.getTableName(), commandId);
-                status = QUERY_NO_RESPONSE;
-            } catch (Throwable ex) {
-                close();
-                throw ex;
-            }
-        }
-
-        private int awaitWriterEvent(
-                long writerAsyncCommandBusyWaitTimeout,
-                int queryTableNamePosition
-        ) throws SqlException {
-            assert eventSubSeq != null : "No sequence to wait on";
-            assert commandId > -1 : "No command id to wait for";
-
-            final MicrosecondClock clock = engine.getConfiguration().getMicrosecondClock();
-            final long start = clock.getTicks();
-            final RingQueue<TableWriterTask> tableWriterEventQueue = engine.getMessageBus().getTableWriterEventQueue();
-
-            int status = this.status;
-            while (true) {
-                long seq = eventSubSeq.next();
-                if (seq < 0) {
-                    // Queue is empty, check if the execution blocked for too long
-                    if (clock.getTicks() - start > writerAsyncCommandBusyWaitTimeout) {
-                        return status;
-                    }
-                    Os.pause();
-                    continue;
-                }
-
-                try {
-                    TableWriterTask event = tableWriterEventQueue.get(seq);
-                    int type = event.getType();
-                    if (event.getInstance() != commandId || (type != TableWriterTask.TSK_ALTER_TABLE_BEGIN && type != TableWriterTask.TSK_ALTER_TABLE_COMPLETE)) {
-                        LOG.debug()
-                                .$("writer command response received and ignored [instance=").$(event.getInstance())
-                                .$(", type=").$(type)
-                                .$(", expectedInstance=").$(commandId)
-                                .I$();
-                        Os.pause();
-                    } else if (type == TableWriterTask.TSK_ALTER_TABLE_COMPLETE) {
-                        // If writer failed to execute the ALTER command it will send back string error
-                        // in the event data
-                        LOG.info().$("writer command response received [instance=").$(commandId).I$();
-                        int strLen = Unsafe.getUnsafe().getInt(event.getData());
-                        if (strLen > -1) {
-                            throw SqlException.$(queryTableNamePosition, event.getData() + 4L, event.getData() + 4L + 2L * strLen);
-                        }
-                        queryFutureUpdateListener.reportProgress(commandId, QUERY_COMPLETE);
-                        return QUERY_COMPLETE;
-                    } else {
-                        status = QUERY_STARTED;
-                        queryFutureUpdateListener.reportProgress(commandId, QUERY_STARTED);
-                        LOG.info().$("writer command QUERY_STARTED response received [instance=").$(commandId).I$();
-                    }
-                } finally {
-                    eventSubSeq.done(seq);
-                }
-            }
-        }
     }
 }

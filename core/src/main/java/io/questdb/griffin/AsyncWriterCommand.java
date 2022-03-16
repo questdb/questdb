@@ -22,17 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.update;
+package io.questdb.griffin;
 
-import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.TableStructureChangesException;
+import io.questdb.cairo.TableWriter;
+import io.questdb.tasks.TableWriterTask;
 
-import java.io.Closeable;
+public interface AsyncWriterCommand {
+    int getTableNamePosition();
+    CharSequence getTableName();
+    void apply(TableWriter tableWriter, boolean acceptStructureChange) throws SqlException, TableStructureChangesException;
 
-public interface UpdateStatementMasterCursor extends Closeable {
-    void setMaster(Record master);
-    Record getRecord();
-    boolean hasNext();
+    default void serialize(TableWriterTask task) {
+        // do nothing, in-process by default
+    }
 
-    @Override
-    void close();
+    default void deserialize(TableWriterTask task) {
+        // do nothing, in-process by default
+    }
 }

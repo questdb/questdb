@@ -32,10 +32,13 @@ import io.questdb.std.Vect;
 import java.io.Closeable;
 
 public class TableWriterTask implements Closeable {
-    public static final int TSK_SLAVE_SYNC = 1;
-    public static final int TSK_ALTER_TABLE = 2;
-    public static final int TSK_ALTER_TABLE_BEGIN = 3;
-    public static final int TSK_ALTER_TABLE_COMPLETE = 4;
+    public static final int CMD_SLAVE_SYNC = 1;
+    public static final int CMD_ALTER_TABLE = 2;
+    public static final int CMD_UPDATE_TABLE = 3;
+
+    public static final int TSK_BEGIN = 64;
+    public static final int TSK_COMPLETE = 65;
+
     private int type;
     private long tableId;
     private String tableName;
@@ -82,7 +85,7 @@ public class TableWriterTask implements Closeable {
         Vect.memcpy(p + 8, txMem, txMemSize);
         Unsafe.getUnsafe().putLong(p + txMemSize + 8, metaMemSize);
         Vect.memcpy(p + txMemSize + 16, metaMem, metaMemSize);
-        this.type = TSK_SLAVE_SYNC;
+        this.type = CMD_SLAVE_SYNC;
         this.tableId = tableId;
         this.tableName = tableName;
         this.ip = slaveIP;
@@ -99,10 +102,6 @@ public class TableWriterTask implements Closeable {
         this.type = type;
         this.appendPtr = data;
         this.ip = 0L;
-    }
-
-    public long getAppendOffset() {
-        return appendPtr - data;
     }
 
     public long getData() {
@@ -151,7 +150,7 @@ public class TableWriterTask implements Closeable {
 
     public void putStr(CharSequence value) {
         int len = value.length();
-        final int byteLen = len * 2 + 4;
+        final int byteLen = len * 2 + Integer.BYTES;
         ensureCapacity(byteLen);
         Unsafe.getUnsafe().putInt(appendPtr, len);
         Chars.copyStrChars(value, 0, len, appendPtr + 4);
@@ -159,32 +158,32 @@ public class TableWriterTask implements Closeable {
     }
 
     public void putByte(byte c) {
-        ensureCapacity(1);
+        ensureCapacity(Byte.BYTES);
         Unsafe.getUnsafe().putByte(appendPtr++, c);
     }
 
     public void putInt(int value) {
-        ensureCapacity(4);
+        ensureCapacity(Integer.BYTES);
         Unsafe.getUnsafe().putInt(appendPtr, value);
-        appendPtr += 4;
+        appendPtr += Integer.BYTES;
     }
 
     public void putShort(short value) {
-        ensureCapacity(2);
+        ensureCapacity(Short.BYTES);
         Unsafe.getUnsafe().putShort(appendPtr, value);
-        appendPtr += 2;
+        appendPtr += Short.BYTES;
     }
 
     public void putLong(long value) {
-        ensureCapacity(8);
+        ensureCapacity(Long.BYTES);
         Unsafe.getUnsafe().putLong(appendPtr, value);
-        appendPtr += 8;
+        appendPtr += Long.BYTES;
     }
 
-    public void resize(long size) {
+    private void resize(long size) {
         assert dataSize > 0;
         if (size > dataSize) {
-            long appendOffset = getAppendOffset();
+            long appendOffset = appendPtr - data;
             data = Unsafe.realloc(data, dataSize, size, MemoryTag.NATIVE_REPL);
             dataSize = size;
             appendPtr = data + appendOffset;
@@ -193,7 +192,7 @@ public class TableWriterTask implements Closeable {
     }
 
     private void ensureCapacity(int byteCount) {
-        if (appendPtr + byteCount - 1 >= appendLim) {
+        if (appendPtr + byteCount > appendLim) {
             resize(Math.max(dataSize * 2, (appendPtr - data) + byteCount));
         }
     }

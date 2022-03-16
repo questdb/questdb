@@ -32,7 +32,7 @@ import io.questdb.mp.SCSequence;
 
 import java.io.Closeable;
 
-public interface CompiledQuery extends Closeable {
+public interface CompiledQuery {
     //these values should be covered in both JsonQueryProcessor and PGConnectionContext
     short SELECT = 1;
     short INSERT = 2;
@@ -60,15 +60,15 @@ public interface CompiledQuery extends Closeable {
 
     RecordCursorFactory getRecordCursorFactory();
 
-    InsertStatement getInsertStatement();
-
     TextLoader getTextLoader();
+
+    InsertStatement getInsertStatement();
 
     AlterStatement getAlterStatement();
 
-    short getType();
-
     UpdateStatement getUpdateStatement();
+
+    short getType();
 
     /***
      * Executes the query.

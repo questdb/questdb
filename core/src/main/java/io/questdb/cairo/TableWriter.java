@@ -35,8 +35,10 @@ import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.AlterStatement;
+import io.questdb.griffin.AsyncWriterCommand;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.update.UpdateStatement;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -58,6 +60,7 @@ import java.util.function.LongConsumer;
 
 import static io.questdb.cairo.StatusCode.*;
 import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.tasks.TableWriterTask.*;
 
 public class TableWriter implements Closeable {
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
@@ -146,6 +149,7 @@ public class TableWriter implements Closeable {
     // Publisher source is identified by a long value
     private final LongLongHashMap cmdSequences = new LongLongHashMap();
     private final AlterStatement alterTableStatement = new AlterStatement();
+    private final UpdateStatement updateTableStatement = new UpdateStatement();
     private final ColumnVersionWriter columnVersionWriter;
     private Row row = regularRow;
     private long todoTxn;
@@ -881,11 +885,14 @@ public class TableWriter implements Closeable {
     public void processCommandQueue(TableWriterTask cmd, Sequence commandSubSeq, long cursor, boolean acceptStructureChange) {
         if (cmd.getTableId() == getMetadata().getId()) {
             switch (cmd.getType()) {
-                case TableWriterTask.TSK_SLAVE_SYNC:
-                    replPublishSyncEvent(cmd, cursor, commandSubSeq);
+                case CMD_SLAVE_SYNC:
+                    processReplSyncCommand(cmd, cursor, commandSubSeq);
                     break;
-                case TableWriterTask.TSK_ALTER_TABLE:
-                    processAlterTableEvent(cmd, cursor, commandSubSeq, acceptStructureChange);
+                case CMD_ALTER_TABLE:
+                    processAsyncWriterCommand(alterTableStatement, cmd, cursor, commandSubSeq, acceptStructureChange);
+                    break;
+                case CMD_UPDATE_TABLE:
+                    processAsyncWriterCommand(updateTableStatement, cmd, cursor, commandSubSeq, acceptStructureChange);
                     break;
                 default:
                     LOG.error().$("unknown TableWriterTask type, ignored: ").$(cmd.getType()).$();
@@ -3776,36 +3783,42 @@ public class TableWriter implements Closeable {
         indexCount = denseIndexers.size();
     }
 
-    private void processAlterTableEvent(TableWriterTask cmd, long cursor, Sequence sequence, boolean acceptStructureChange) {
-        final long instance = cmd.getInstance();
+    private void processAsyncWriterCommand(AsyncWriterCommand asyncWriterCommand, TableWriterTask cmd, long cursor, Sequence sequence, boolean acceptStructureChange) {
+        final long cmdType = cmd.getType();
+        final long correlationId = cmd.getInstance();
         final long tableId = cmd.getTableId();
 
         CharSequence error = null;
         try {
-            replAlterTableEvent0(tableId, instance, null, TableWriterTask.TSK_ALTER_TABLE_BEGIN);
+            publishTableWriterEvent(tableId, correlationId, null, TSK_BEGIN);
             LOG.info()
-                    .$("received ASYNC ALTER TABLE cmd [tableName=").$(tableName)
+                    .$("received async cmd [type=").$(cmdType)
+                    .$(", tableName=").$(tableName)
                     .$(", tableId=").$(tableId)
-                    .$(", instance=").$(instance)
+                    .$(", correlationId=").$(correlationId)
                     .I$();
-            alterTableStatement.deserialize(cmd);
-            alterTableStatement.apply(this, acceptStructureChange);
+            asyncWriterCommand.deserialize(cmd);
+            asyncWriterCommand.apply(this, acceptStructureChange);
         } catch (TableStructureChangesException ex) {
             LOG.info()
-                    .$("cannot complete ASYNC ALTER TABLE cmd, table structure change is not allowed atm [tableName=").$(tableName)
+                    .$("cannot complete async cmd, table structure change is not allowed [type=").$(cmdType)
+                    .$(", tableName=").$(tableName)
                     .$(", tableId=").$(tableId)
-                    .$(", src=").$(instance)
+                    .$(", correlationId=").$(correlationId)
                     .I$();
-            error = "ALTER TABLE cannot change table structure while Writer is busy";
+            error = "async cmd cannot change table structure while writer is busy";
         } catch (SqlException | CairoException ex) {
             error = ex.getFlyweightMessage();
         } catch (Throwable ex) {
-            LOG.error().$("error on processing ALTER table [tableName=").$(tableName).$(", ex=").$(ex).I$();
-            error = "error on processing ALTER table, see QuestDB server logs for details";
+            LOG.error().$("error on processing async cmd [type=").$(cmdType)
+                    .$(", tableName=").$(tableName)
+                    .$(", ex=").$(ex)
+                    .I$();
+            error = "error on processing async cmd, see QuestDB server logs for details";
         } finally {
             sequence.done(cursor);
         }
-        replAlterTableEvent0(tableId, instance, error, TableWriterTask.TSK_ALTER_TABLE_COMPLETE);
+        publishTableWriterEvent(tableId, correlationId, error, TSK_COMPLETE);
     }
 
     private void processCommandQueue(boolean acceptStructureChange) {
@@ -4398,7 +4411,7 @@ public class TableWriter implements Closeable {
         clearTodoLog();
     }
 
-    private void replAlterTableEvent0(long tableId, long instance, CharSequence error, int eventType) {
+    private void publishTableWriterEvent(long tableId, long correlationId, CharSequence error, int eventType) {
         final long pubCursor = messageBus.getTableWriterEventPubSeq().next();
         if (pubCursor > -1) {
             try {
@@ -4409,17 +4422,17 @@ public class TableWriter implements Closeable {
                 } else {
                     event.putInt(-1);
                 }
-                event.setInstance(instance);
+                event.setInstance(correlationId);
             } finally {
                 messageBus.getTableWriterEventPubSeq().done(pubCursor);
             }
 
             // Log result
-            if (eventType == TableWriterTask.TSK_ALTER_TABLE_COMPLETE) {
+            if (eventType == TSK_COMPLETE) {
                 LogRecord lg = LOG.info()
                         .$("published alter table complete event [table=").$(tableName)
                         .$(",tableId=").$(tableId)
-                        .$(",instance=").$(instance);
+                        .$(",correlationId=").$(correlationId);
                 if (error != null) {
                     lg.$(",error=").$(error);
                 }
@@ -4430,7 +4443,7 @@ public class TableWriter implements Closeable {
             LOG.error()
                     .$("cannot publish alter table complete event [table=").$(tableName)
                     .$(",tableId=").$(tableId)
-                    .$(",instance=").$(instance)
+                    .$(",correlationId=").$(correlationId)
                     .I$();
         }
     }
@@ -4452,7 +4465,7 @@ public class TableWriter implements Closeable {
         );
     }
 
-    private void replPublishSyncEvent(TableWriterTask cmd, long cursor, Sequence sequence) {
+    private void processReplSyncCommand(TableWriterTask cmd, long cursor, Sequence sequence) {
         long dst = cmd.getInstance();
         long dstIP = cmd.getIp();
         long tableId = cmd.getTableId();
@@ -4471,17 +4484,17 @@ public class TableWriter implements Closeable {
             sequence.done(cursor);
         }
         if (syncModel != null) {
-            replPublishSyncEvent0(syncModel, tableId, dst, dstIP);
+            publishTableWriterEvent(syncModel, tableId, dst, dstIP);
         }
     }
 
-    void replPublishSyncEvent0(TableSyncModel model, long tableId, long dst, long dstIP) {
+    void publishTableWriterEvent(TableSyncModel model, long tableId, long dst, long dstIP) {
         final long pubCursor = messageBus.getTableWriterEventPubSeq().next();
         if (pubCursor > -1) {
             final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
             model.toBinary(event);
             event.setInstance(dst);
-            event.setInstance(dstIP);
+            event.setIp(dstIP);
             event.setTableId(tableId);
             messageBus.getTableWriterEventPubSeq().done(pubCursor);
             LOG.info()
