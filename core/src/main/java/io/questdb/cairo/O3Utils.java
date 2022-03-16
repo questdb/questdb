@@ -70,7 +70,7 @@ public class O3Utils {
                     workerCount,
                     sqlExecutionCircuitBreakerConfiguration
             );
-            workerPool.assign(i, (Job)pageFrameDispatchJob);
+            workerPool.assign(i, (Job)pageFrameReduceJob);
             workerPool.freeOnHalt(pageFrameReduceJob);
         }
     }
