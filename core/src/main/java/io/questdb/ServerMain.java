@@ -386,7 +386,7 @@ public class ServerMain {
         if (resource == null) {
             log.error().$("did not find Web Console build at '").$(publicZip).$("'. Proceeding without Web Console checks").$();
         } else {
-            thisVersion = resource.openConnection().getLastModified();
+            thisVersion = resource.openConnection().getDate();
         }
         final long oldVersion = getPublicVersion(publicDir);
         log.info()
