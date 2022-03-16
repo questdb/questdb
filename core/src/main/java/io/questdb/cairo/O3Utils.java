@@ -33,6 +33,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import org.jetbrains.annotations.Nullable;
 
 public class O3Utils {
@@ -61,16 +62,18 @@ public class O3Utils {
         workerPool.freeOnHalt(purgeDiscoveryJob);
         workerPool.freeOnHalt(pageFrameDispatchJob);
 
+        final MicrosecondClock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
+        final NanosecondClock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();
+
         for (int i = 0; i < workerCount; i++) {
             // create job per worker to allow each worker to have
             // own shard walk sequence
             final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(
                     messageBus,
-                    new Rnd(),
-                    workerCount,
+                    new Rnd(microsecondClock.getTicks(), nanosecondClock.getTicks()),
                     sqlExecutionCircuitBreakerConfiguration
             );
-            workerPool.assign(i, (Job)pageFrameReduceJob);
+            workerPool.assign(i, (Job) pageFrameReduceJob);
             workerPool.freeOnHalt(pageFrameReduceJob);
         }
     }

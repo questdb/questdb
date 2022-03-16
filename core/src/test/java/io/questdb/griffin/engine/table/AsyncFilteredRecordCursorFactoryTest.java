@@ -25,10 +25,9 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.Metrics;
+import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.async.PageFrameDispatchJob;
-import io.questdb.cairo.sql.async.PageFrameReduceJob;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.AbstractGriffinTest;
@@ -69,21 +68,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                 }
             }, Metrics.disabled());
 
-            final PageFrameDispatchJob pageFrameDispatchJob = new PageFrameDispatchJob(
-                    engine.getMessageBus(),
-                    pool.getWorkerCount(),
+            O3Utils.setupWorkerPool(
+                    pool,
+                    messageBus,
                     null
             );
-            final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(
-                    engine.getMessageBus(),
-                    sqlExecutionContext.getRandom(),
-                    pool.getWorkerCount(),
-                    null
-            );
-            pool.assign(pageFrameDispatchJob);
-            pool.assign(pageFrameReduceJob);
-            pool.freeOnHalt(pageFrameDispatchJob);
-            pool.freeOnHalt(pageFrameReduceJob);
             pool.start(null);
 
             try {

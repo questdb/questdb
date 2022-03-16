@@ -44,18 +44,17 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class PageFrameReduceJob implements Job, Closeable {
 
     private final static Log LOG = LogFactory.getLog(PageFrameReduceJob.class);
-    private final PageAddressCacheRecord[] record;
+    private final PageAddressCacheRecord record;
     private final int[] shards;
     private final int shardCount;
     private final MessageBus messageBus;
-    private final SqlExecutionCircuitBreaker[] circuitBreakers;
+    private final SqlExecutionCircuitBreaker circuitBreakers;
 
     // Each thread should be assigned own instance of this job, making the code effectively
     // single threaded. Such assignment is necessary for threads to have their own shard walk sequence.
     public PageFrameReduceJob(
             MessageBus bus,
             Rnd rnd,
-            int workerCount,
             @Nullable SqlExecutionCircuitBreakerConfiguration sqlExecutionCircuitBreakerConfiguration
     ) {
         this.messageBus = bus;
@@ -79,15 +78,11 @@ public class PageFrameReduceJob implements Job, Closeable {
             shards[randomIndex] = tmp;
         }
 
-        this.record = new PageAddressCacheRecord[workerCount];
-        this.circuitBreakers = new SqlExecutionCircuitBreaker[workerCount];
-        for (int i = 0; i < workerCount; i++) {
-            this.record[i] = new PageAddressCacheRecord();
-            if (sqlExecutionCircuitBreakerConfiguration != null) {
-                this.circuitBreakers[i] = new NetworkSqlExecutionCircuitBreaker(sqlExecutionCircuitBreakerConfiguration);
-            } else {
-                this.circuitBreakers[i] = NetworkSqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
-            }
+        this.record = new PageAddressCacheRecord();
+        if (sqlExecutionCircuitBreakerConfiguration != null) {
+            this.circuitBreakers = new NetworkSqlExecutionCircuitBreaker(sqlExecutionCircuitBreakerConfiguration);
+        } else {
+            this.circuitBreakers = NetworkSqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
         }
     }
 
@@ -162,14 +157,16 @@ public class PageFrameReduceJob implements Job, Closeable {
 
     @Override
     public boolean run(int workerId) {
+        // there is job instance per thread, the workerid must never change
+        // for this job
         boolean useful = false;
         for (int i = 0; i < shardCount; i++) {
             final int shard = shards[i];
             useful = !consumeQueue(
                     messageBus.getPageFrameReduceQueue(shard),
                     messageBus.getPageFrameReduceSubSeq(shard),
-                    record[workerId],
-                    circuitBreakers[workerId]
+                    record,
+                    circuitBreakers
             ) || useful;
         }
         return useful;

@@ -27,11 +27,12 @@ package io.questdb.cutlass.http;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.async.PageFrameDispatchJob;
-import io.questdb.cairo.sql.async.PageFrameReduceJob;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.cutlass.http.processors.*;
-import io.questdb.griffin.*;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.jit.JitUtil;
@@ -4212,21 +4213,12 @@ public class IODispatcherTest {
                     }
                 };
 
-                final PageFrameReduceJob reduceJob = new PageFrameReduceJob(
+                O3Utils.setupWorkerPool(
+                        workerPool,
                         engine.getMessageBus(),
-                        new Rnd(),
-                        workerPool.getWorkerCount(),
-                        new DefaultSqlExecutionCircuitBreakerConfiguration()
+                        null
                 );
-                final PageFrameDispatchJob dispatchJob = new PageFrameDispatchJob(
-                        engine.getMessageBus(),
-                        workerPool.getWorkerCount(),
-                        new DefaultSqlExecutionCircuitBreakerConfiguration()
-                );
-                workerPool.assign(dispatchJob);
-                workerPool.assign(reduceJob);
-                workerPool.freeOnHalt(reduceJob);
-                workerPool.freeOnHalt(dispatchJob);
+
                 workerPool.start(LOG);
 
                 try {
@@ -4418,6 +4410,11 @@ public class IODispatcherTest {
 
             final IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration() {
                 @Override
+                public boolean getHint() {
+                    return true;
+                }
+
+                @Override
                 public int getLimit() {
                     return activeConnectionLimit;
                 }
@@ -4425,11 +4422,6 @@ public class IODispatcherTest {
                 @Override
                 public long getQueueTimeout() {
                     return 300_000;
-                }
-
-                @Override
-                public boolean getHint() {
-                    return true;
                 }
             };
 
@@ -6635,26 +6627,6 @@ public class IODispatcherTest {
                 .run(code);
     }
 
-    private void writeRandomFile(Path path, Rnd rnd, long lastModified) {
-        if (Files.exists(path)) {
-            Assert.assertTrue(Files.remove(path));
-        }
-        long fd = Files.openAppend(path);
-
-        long buf = Unsafe.malloc(1048576, MemoryTag.NATIVE_DEFAULT); // 1Mb buffer
-        for (int i = 0; i < 1048576; i++) {
-            Unsafe.getUnsafe().putByte(buf + i, rnd.nextByte());
-        }
-
-        for (int i = 0; i < 20; i++) {
-            Assert.assertEquals(1048576, Files.append(fd, buf, 1048576));
-        }
-
-        Files.close(fd);
-        Files.setLastModified(path, lastModified);
-        Unsafe.free(buf, 1048576, MemoryTag.NATIVE_DEFAULT);
-    }
-
     private void testMaxConnections0(
             IODispatcher<HttpConnectionContext> dispatcher,
             long sockAddr,
@@ -6729,6 +6701,26 @@ public class IODispatcherTest {
         } finally {
             Unsafe.free(mem, request.length(), MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    private void writeRandomFile(Path path, Rnd rnd, long lastModified) {
+        if (Files.exists(path)) {
+            Assert.assertTrue(Files.remove(path));
+        }
+        long fd = Files.openAppend(path);
+
+        long buf = Unsafe.malloc(1048576, MemoryTag.NATIVE_DEFAULT); // 1Mb buffer
+        for (int i = 0; i < 1048576; i++) {
+            Unsafe.getUnsafe().putByte(buf + i, rnd.nextByte());
+        }
+
+        for (int i = 0; i < 20; i++) {
+            Assert.assertEquals(1048576, Files.append(fd, buf, 1048576));
+        }
+
+        Files.close(fd);
+        Files.setLastModified(path, lastModified);
+        Unsafe.free(buf, 1048576, MemoryTag.NATIVE_DEFAULT);
     }
 
     private static class QueryThread extends Thread {
