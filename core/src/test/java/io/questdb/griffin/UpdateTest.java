@@ -513,6 +513,46 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUpdateColumnsSeparately() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " cast(x as int) v," +
+                    " cast(x as int) x," +
+                    " cast(x as int) z" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET x = 1");
+
+            assertSql("up", "ts\tv\tx\tz\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\t1\t1\n" +
+                    "1970-01-01T00:00:01.000000Z\t2\t1\t2\n" +
+                    "1970-01-01T00:00:02.000000Z\t3\t1\t3\n" +
+                    "1970-01-01T00:00:03.000000Z\t4\t1\t4\n" +
+                    "1970-01-01T00:00:04.000000Z\t5\t1\t5\n");
+
+            executeUpdate("UPDATE up SET z = 2");
+
+            assertSql("up", "ts\tv\tx\tz\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\t1\t2\n" +
+                    "1970-01-01T00:00:01.000000Z\t2\t1\t2\n" +
+                    "1970-01-01T00:00:02.000000Z\t3\t1\t2\n" +
+                    "1970-01-01T00:00:03.000000Z\t4\t1\t2\n" +
+                    "1970-01-01T00:00:04.000000Z\t5\t1\t2\n");
+
+            executeUpdate("UPDATE up SET v = 33");
+
+            assertSql("up", "ts\tv\tx\tz\n" +
+                    "1970-01-01T00:00:00.000000Z\t33\t1\t2\n" +
+                    "1970-01-01T00:00:01.000000Z\t33\t1\t2\n" +
+                    "1970-01-01T00:00:02.000000Z\t33\t1\t2\n" +
+                    "1970-01-01T00:00:03.000000Z\t33\t1\t2\n" +
+                    "1970-01-01T00:00:04.000000Z\t33\t1\t2\n");
+        });
+    }
+
+    @Test
     public void testUpdateNoFilter() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +
