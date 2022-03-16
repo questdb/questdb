@@ -518,7 +518,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                 );
 
                 w1.tick();
-                engine.tick();
+//                engine.tick();
 
                 final TableSyncModel model = client.consumeSyncModel();
 
@@ -561,7 +561,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                         )
                 );
 
-                engine.tick();
+//                engine.tick();
 
                 final TableSyncModel model = client.consumeSyncModel();
                 Assert.assertNotNull(model);
@@ -1398,7 +1398,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                 sequence
         );
 
-        engine.tick();
+//        engine.tick();
 
         sink.clear();
         TableSyncModel model = client.consumeSyncModel();
@@ -1412,15 +1412,15 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     }
 
     private static class SimpleLocalClient implements Closeable {
-        private final Sequence cmdPubSeq;
-        private final RingQueue<TableWriterTask> cmdQueue;
+        //        private final Sequence cmdPubSeq;
+//        private final RingQueue<TableWriterTask> cmdQueue;
         private final RingQueue<TableWriterTask> evtQueue;
         private final Sequence evtSubSeq;
         private final FanOut evtFanOut;
 
         public SimpleLocalClient(CairoEngine engine) {
-            this.cmdPubSeq = engine.getMessageBus().getTableWriterCommandPubSeq();
-            this.cmdQueue = engine.getMessageBus().getTableWriterCommandQueue();
+//            this.cmdPubSeq = engine.getMessageBus().getTableWriterCommandPubSeq();
+//            this.cmdQueue = engine.getMessageBus().getTableWriterCommandQueue();
             this.evtQueue = engine.getMessageBus().getTableWriterEventQueue();
 
             // consume event from bus and make sure it is what we expect
@@ -1451,26 +1451,26 @@ public class ReplModelReconTest extends AbstractGriffinTest {
         }
 
         public boolean publishSyncCmd(String tableName, long tableId, TableWriter slave, long slaveIP, long sequence) {
-            long cursor = cmdPubSeq.next();
-            if (cursor > -1) {
-                TableWriterTask task = cmdQueue.get(cursor);
-                task.fromSlaveSyncRequest(
-                        // we need to know master table ID from master's writer because
-                        // we are simulating replication from table X to table Y on the same database
-                        // In real world slave will have the same ID as master
-                        tableId,
-                        tableName,
-                        slave.getRawTxnMemory(),
-                        slave.getRawTxnMemorySize(),
-                        slave.getRawMetaMemory(),
-                        slave.getRawMetaMemorySize(),
-                        slaveIP,
-                        sequence
-                );
-
-                cmdPubSeq.done(cursor);
-                return true;
-            }
+//            long cursor = cmdPubSeq.next();
+//            if (cursor > -1) {
+//                TableWriterTask task = cmdQueue.get(cursor);
+//                task.fromSlaveSyncRequest(
+//                        // we need to know master table ID from master's writer because
+//                        // we are simulating replication from table X to table Y on the same database
+//                        // In real world slave will have the same ID as master
+//                        tableId,
+//                        tableName,
+//                        slave.getRawTxnMemory(),
+//                        slave.getRawTxnMemorySize(),
+//                        slave.getRawMetaMemory(),
+//                        slave.getRawMetaMemorySize(),
+//                        slaveIP,
+//                        sequence
+//                );
+//
+//                cmdPubSeq.done(cursor);
+//                return true;
+//            }
             return false;
         }
     }

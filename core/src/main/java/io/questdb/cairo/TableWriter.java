@@ -325,7 +325,7 @@ public class TableWriter implements Closeable {
             );
             commandSubSeq = new SCSequence();
             commandPubSeq = new MPSequence(commandQueue.getCycle());
-            commandSubSeq.then(commandSubSeq).then(commandPubSeq);
+            commandPubSeq.then(commandSubSeq).then(commandPubSeq);
         } catch (Throwable e) {
             doClose(false);
             throw e;
@@ -2090,6 +2090,7 @@ public class TableWriter implements Closeable {
                 TableWriterTask cmd = commandQueue.get(seq);
                 writeFunc.writeTo(cmd);
                 commandPubSeq.done(seq);
+                return;
             } else if (seq == -1) {
                 throw CairoException.instance(0).put("cannot publish, command queue is full [table=").put(tableName).put(']');
             }

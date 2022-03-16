@@ -119,58 +119,28 @@ public class WriterPool extends AbstractPool {
      * @return cached TableWriter instance.
      */
     public TableWriter get(CharSequence tableName, CharSequence lockReason) {
-        assert null != lockReason;
-        checkClosed();
+        Entry e = getWriterEntry(tableName, lockReason, false);
+        return e.writer;
+    }
 
+    public TableWriter getOrPublishCommand(CharSequence tableName, String lockReason, WriteToQueue<TableWriterTask> writeAction) {
         long thread = Thread.currentThread().getId();
-
-        while (true) {
-            Entry e = entries.get(tableName);
-            if (e == null) {
-                // We are racing to create new writer!
-                e = new Entry(clock.getTicks());
-                Entry other = entries.putIfAbsent(tableName, e);
-                if (other == null) {
-                    // race won
-                    return createWriter(tableName, e, thread, lockReason);
-                } else {
-                    e = other;
-                }
-            }
-
-            long owner = e.owner;
-            // try to change owner
-            if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
-                // in an extreme race condition it is possible that e.writer will be null
-                // in this case behaviour should be identical to entry missing entirely
-                if (e.writer == null) {
-                    return createWriter(tableName, e, thread, lockReason);
-                }
-                return checkClosedAndGetWriter(tableName, e, lockReason);
-            } else {
-                if (owner < 0) {
-                    // writer is about to be released from the pool by release method.
-                    // try again, it should become available soon.
-                    Os.pause();
-                    continue;
-                }
-                if (owner == thread) {
-                    if (e.lockFd != -1L) {
-                        throw EntryLockedException.instance(reinterpretOwnershipReason(e.ownershipReason));
-                    }
-
-                    if (e.ex != null) {
-                        notifyListener(thread, tableName, PoolListener.EV_EX_RESEND);
-                        // this writer failed to allocate by this very thread
-                        // ensure consistent response
-                        entries.remove(tableName);
-                        throw e.ex;
-                    }
-                }
-                LOG.info().$("busy [table=`").utf8(tableName).$("`, owner=").$(owner).$(", thread=").$(thread).I$();
-                throw EntryUnavailableException.instance(reinterpretOwnershipReason(e.ownershipReason));
-            }
+        Entry e = getWriterEntry(tableName, lockReason, true);
+        if (e.owner == thread) {
+            // locked
+            return e.writer;
         }
+        // unlocked
+        e.writer.processCommandAsync(writeAction);
+
+        Unsafe.getUnsafe().storeFence();
+        if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
+            // Writer might be released back to pool before command is added to the queue.
+            // Re-release it back to the pool to execute command
+            e.writer.close();
+        }
+        // Async action queued
+        return null;
     }
 
     /**
@@ -241,9 +211,65 @@ public class WriterPool extends AbstractPool {
         return reinterpretOwnershipReason(e.ownershipReason);
     }
 
-    public void executeOrPublishCommand(CharSequence tableName, String lockReason, WriteAction writeAction, WriteToQueue<TableWriterTask> writeToQueue) {
+    private Entry getWriterEntry(CharSequence tableName, CharSequence lockReason, boolean returnUnlocked) {
+        assert null != lockReason;
+        checkClosed();
 
+        long thread = Thread.currentThread().getId();
 
+        while (true) {
+            Entry e = entries.get(tableName);
+            if (e == null) {
+                // We are racing to create new writer!
+                e = new Entry(clock.getTicks());
+                Entry other = entries.putIfAbsent(tableName, e);
+                if (other == null) {
+                    // race won
+                    createWriter(tableName, e, thread, lockReason);
+                    return e;
+                } else {
+                    e = other;
+                }
+            }
+
+            long owner = e.owner;
+            // try to change owner
+            if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
+                // in an extreme race condition it is possible that e.writer will be null
+                // in this case behaviour should be identical to entry missing entirely
+                if (e.writer == null) {
+                    createWriter(tableName, e, thread, lockReason);
+                    return e;
+                }
+                checkClosedAndGetWriter(tableName, e, lockReason);
+                return e;
+            } else {
+                if (owner < 0) {
+                    // writer is about to be released from the pool by release method.
+                    // try again, it should become available soon.
+                    Os.pause();
+                    continue;
+                }
+                if (owner == thread) {
+                    if (e.lockFd != -1L) {
+                        throw EntryLockedException.instance(reinterpretOwnershipReason(e.ownershipReason));
+                    }
+
+                    if (e.ex != null) {
+                        notifyListener(thread, tableName, PoolListener.EV_EX_RESEND);
+                        // this writer failed to allocate by this very thread
+                        // ensure consistent response
+                        entries.remove(tableName);
+                        throw e.ex;
+                    }
+                }
+                if (returnUnlocked) {
+                    return e;
+                }
+                LOG.info().$("busy [table=`").utf8(tableName).$("`, owner=").$(owner).$(", thread=").$(thread).I$();
+                throw EntryUnavailableException.instance(reinterpretOwnershipReason(e.ownershipReason));
+            }
+        }
     }
 
     public int size() {

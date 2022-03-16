@@ -25,8 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.griffin.SqlException;
+import io.questdb.tasks.TableWriterTask;
 
-@FunctionalInterface
-public interface WriteAction {
+public interface WriteAction extends WriteToQueue<TableWriterTask> {
     void applyToWriter(TableWriter writer) throws TableStructureChangesException, SqlException;
 }

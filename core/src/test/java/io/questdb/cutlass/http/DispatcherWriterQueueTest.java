@@ -360,14 +360,6 @@ public class DispatcherWriterQueueTest {
                     thread.start();
                 }
 
-                if (httpAlterQueries.length > 1 && httpAlterQueries.length <= httpWorkers) {
-                    // Allow all queries to trigger commands before start processing them
-                    MPSequence tableWriterCommandPubSeq = engine.getMessageBus().getTableWriterCommandPubSeq();
-                    while (tableWriterCommandPubSeq.current() < httpAlterQueries.length - 1) {
-                        LockSupport.parkNanos(10_000_000L);
-                    }
-                }
-
                 MicrosecondClock microsecondClock = engine.getConfiguration().getMicrosecondClock();
                 long startTimeMicro = microsecondClock.getTicks();
                 // Wait 1 min max for completion

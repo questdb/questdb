@@ -33,7 +33,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.tasks.TableWriterTask;
 
-public class AlterStatement implements Mutable, WriteAction, WriteToQueue<TableWriterTask> {
+public class AlterStatement implements Mutable, WriteAction {
 
     public final static short DO_NOTHING = 1;
     public final static short ADD_COLUMN = 3;

@@ -298,7 +298,7 @@ public class CompiledQueryImpl implements CompiledQuery {
          * Initializes instance of AlterTableQueryFuture with the parameters to wait for the new command
          * @param eventSubSeq - event sequence used to wait for the command execution to be signaled as complete
          */
-        public void of(SqlExecutionContext executionContext, SCSequence eventSubSeq) {
+        public void of(SqlExecutionContext executionContext, SCSequence eventSubSeq) throws SqlException {
             assert eventSubSeq != null : "event subscriber sequence must be provided";
 
             this.queryFutureUpdateListener = executionContext.getQueryFutureUpdateListener();
@@ -309,13 +309,29 @@ public class CompiledQueryImpl implements CompiledQuery {
 
             try {
                 // Publish new command and get published Command Id
-                commandId = engine.publishTableWriterCommand(alterStatement);
+                commandId = publishTableWriterCommand(alterStatement);
                 queryFutureUpdateListener.reportStart(alterStatement.getTableName(), commandId);
                 status = QUERY_NO_RESPONSE;
-            } catch (Throwable ex) {
-                close();
-                throw ex;
+            } catch (TableStructureChangesException e) {
+                assert false : "Should never throw TableStructureChangesException when executed with acceptStructureChange=true";
             }
+        }
+
+        private long publishTableWriterCommand(AlterStatement alterTableStatement) throws TableStructureChangesException, SqlException {
+            CharSequence tableName = alterTableStatement.getTableName();
+            final long commandCorrelationId = engine.getCommandCorrelationId();
+            alterTableStatement.setCommandCorrelationId(commandCorrelationId);
+            try (TableWriter writer = engine.getWriterOrPublishCommand(tableName, "alter table", alterTableStatement)) {
+                if (writer != null) {
+                    alterTableStatement.apply(writer, true);
+                }
+            }
+
+            LOG.info()
+                    .$("published ASYNC writer ALTER TABLE task [table=").$(tableName)
+                    .$(",instance=").$(commandCorrelationId)
+                    .I$();
+            return commandCorrelationId;
         }
 
         private int awaitWriterEvent(
