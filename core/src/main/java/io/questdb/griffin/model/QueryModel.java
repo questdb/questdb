@@ -37,6 +37,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int ORDER_DIRECTION_ASCENDING = 0;
     public static final int ORDER_DIRECTION_DESCENDING = 1;
     public static final String NO_ROWID_MARKER = "*!*";
+
     public static final int JOIN_INNER = 1;
     public static final int JOIN_OUTER = 2;
     public static final int JOIN_CROSS = 3;
@@ -44,7 +45,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int JOIN_SPLICE = 5;
     public static final int JOIN_LT = 6;
     public static final int JOIN_MAX = JOIN_LT;
+
     public static final String SUB_QUERY_ALIAS_PREFIX = "_xQdbA";
+
     public static final int SELECT_MODEL_NONE = 0;
     public static final int SELECT_MODEL_CHOOSE = 1;
     public static final int SELECT_MODEL_VIRTUAL = 2;
@@ -52,13 +55,17 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SELECT_MODEL_GROUP_BY = 4;
     public static final int SELECT_MODEL_DISTINCT = 5;
     public static final int SELECT_MODEL_CURSOR = 6;
+
+    //types of set operations between this and union model  
     public static final int SET_OPERATION_UNION_ALL = 0;
     public static final int SET_OPERATION_UNION = 1;
     public static final int SET_OPERATION_EXCEPT = 2;
     public static final int SET_OPERATION_INTERSECT = 3;
+
     public static final int LATEST_BY_NONE = 0;
     public static final int LATEST_BY_DEPRECATED = 1;
     public static final int LATEST_BY_NEW = 2;
+
     private static final ObjList<String> modelTypeName = new ObjList<>();
     private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
     private final LowerCaseCharSequenceHashSet topDownNameSet = new LowerCaseCharSequenceHashSet();
@@ -76,6 +83,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final IntList orderedJoinModels2 = new IntList();
     private final LowerCaseCharSequenceIntHashMap aliasIndexes = new LowerCaseCharSequenceIntHashMap();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
+
     // collect frequency of column names from each join model
     // and check if any of columns with frequency > 0 are selected
     // column name frequency of 1 corresponds to map value 0
@@ -269,6 +277,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         updateTableColumnNames.clear();
         updateTableModel = null;
         updateTableName = null;
+        setOperationType = SET_OPERATION_UNION_ALL;
     }
 
     public void clearColumnMapStructs() {
@@ -288,6 +297,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         sampleByFill.clear();
         sampleByTimezoneName = null;
         sampleByOffset = null;
+    }
+
+    public void copyBottomToTopColumns() {
+        topDownColumns.clear();
+        for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
+            QueryColumn qc = bottomUpColumns.getQuick(i);
+            topDownColumns.add(qc);
+        }
     }
 
     public void copyColumnsFrom(
@@ -821,6 +838,22 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.limitHi = hi;
     }
 
+    /* Determines whether this model allows pushing columns from parent model(s).
+     * If this is a UNION, EXCEPT or INTERSECT or contains a select distinct then it can't be done safely. */
+    public boolean allowsColumnsChange() {
+        QueryModel union = this;
+        while (union != null) {
+            if (union.getSetOperationType() != QueryModel.SET_OPERATION_UNION_ALL ||
+                    union.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT) {
+                return false;
+            }
+
+            union = union.getUnionModel();
+        }
+
+        return true;
+    }
+
     @Override
     public void toSink(CharSink sink) {
         if (modelType == ExecutionModel.QUERY) {
@@ -935,6 +968,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
+    //returns textual description of this model, e.g. select-choose [top-down-columns] bottom-up-columns from X ... 
     private void toSink0(CharSink sink, boolean joinSlave) {
         final boolean hasColumns = this.topDownColumns.size() > 0 || this.bottomUpColumns.size() > 0;
         if (hasColumns) {
