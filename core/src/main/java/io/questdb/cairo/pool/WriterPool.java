@@ -37,6 +37,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -238,6 +239,11 @@ public class WriterPool extends AbstractPool {
         LOG.error().$("could not lock, busy [table=`").utf8(tableName).$("`, owner=").$(e.owner).$(", thread=").$(thread).$(']').$();
         notifyListener(thread, tableName, PoolListener.EV_LOCK_BUSY);
         return reinterpretOwnershipReason(e.ownershipReason);
+    }
+
+    public void executeOrPublishCommand(CharSequence tableName, String lockReason, WriteAction writeAction, WriteToQueue<TableWriterTask> writeToQueue) {
+
+
     }
 
     public int size() {

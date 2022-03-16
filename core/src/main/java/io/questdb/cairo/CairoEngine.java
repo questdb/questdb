@@ -66,8 +66,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private final RingQueue<TelemetryTask> telemetryQueue;
     private final MPSequence telemetryPubSeq;
     private final SCSequence telemetrySubSeq;
-    private final RingQueue<TableWriterTask> tableWriterCmdQueue;
-    private final MCSequence tableWriterCmdSubSeq;
     private final long tableIdMemSize;
     private final AtomicLong alterCommandCommandCorrelationId = new AtomicLong();
     private long tableIdFd = -1;
@@ -98,9 +96,6 @@ public class CairoEngine implements Closeable, WriterSource {
         }
         this.tableIdMemSize = Files.PAGE_SIZE;
         // Subscribe to table writer commands to provide cold command handling.
-        this.tableWriterCmdQueue = messageBus.getTableWriterCommandQueue();
-        final FanOut fanOut = messageBus.getTableWriterCommandFanOut();
-        fanOut.and(tableWriterCmdSubSeq = new MCSequence(fanOut.current(), tableWriterCmdQueue.getCycle()));
         openTableId();
         // Recover snapshot, if necessary.
         try {
@@ -375,31 +370,14 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public long publishTableWriterCommand(AlterStatement alterTableStatement) {
         CharSequence tableName = alterTableStatement.getTableName();
-        final MPSequence commandPubSeq = messageBus.getTableWriterCommandPubSeq();
-
-        while (true) {
-            long pubCursor = commandPubSeq.next();
-            long correlationId = alterCommandCommandCorrelationId.incrementAndGet();
-            if (pubCursor > -1) {
-                final TableWriterTask command = tableWriterCmdQueue.get(pubCursor);
-                alterTableStatement.serialize(command);
-                command.setInstance(correlationId);
-                commandPubSeq.done(pubCursor);
-                LOG.info()
-                        .$("published ASYNC writer ALTER TABLE task [table=").$(tableName)
-                        .$(",instance=").$(correlationId)
-                        .I$();
-                return correlationId;
-            } else if (pubCursor == -1) {
-                // Queue is full
-                LOG.error()
-                        .$("could not publish writer task [table=").$(tableName)
-                        .$(",instance").$(correlationId)
-                        .$(",seqCursor=").$(pubCursor)
-                        .I$();
-                throw CairoException.instance(0).put("Could not publish writer ALTER TABLE task [table=").put(tableName).put(']');
-            }
-        }
+        final long commandCorrelationId = alterCommandCommandCorrelationId.incrementAndGet();
+        alterTableStatement.setCommandCorrelationId(commandCorrelationId);
+        writerPool.executeOrPublishCommand(tableName, "alter table", alterTableStatement, alterTableStatement);
+        LOG.info()
+                .$("published ASYNC writer ALTER TABLE task [table=").$(tableName)
+                .$(",instance=").$(commandCorrelationId)
+                .I$();
+        return commandCorrelationId;
     }
 
     @TestOnly
