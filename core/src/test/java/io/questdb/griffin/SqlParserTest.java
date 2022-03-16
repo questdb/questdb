@@ -41,6 +41,15 @@ import org.junit.Test;
 public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
+    public void testPushWhereThroughUnionAll() throws SqlException {
+        assertQuery(
+                "select-choose sm from (select-group-by [sum(x) sm] sum(x) sm from (select-choose [x] x from (select [x] from t1) union all select-choose [x] x from (select [x] from t2)) where sm = 1)",
+                "select * from ( select sum(x) as sm from (select * from t1 union all select * from t2 ) ) where sm = 1",
+                modelOf("t1").col("x", ColumnType.INT),
+                modelOf("t2").col("x", ColumnType.INT));
+    }
+
+    @Test
     public void test2Between() throws Exception {
         assertQuery("select-choose t from (select [t, tt] from x where t between ('2020-01-01','2021-01-02') and tt between ('2021-01-02','2021-01-31'))",
                 "select t from x where t between '2020-01-01' and '2021-01-02' and tt between '2021-01-02' and '2021-01-31'",

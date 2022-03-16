@@ -8,6 +8,17 @@ import org.junit.Test;
 public class NestedSetOperationTest extends AbstractGriffinTest {
 
     @Test
+    public void testSumOverUnionAll() throws Exception {
+        assertQuery("sm\n" +
+                        "6\n",
+                "select * from ( select sum(x) as sm from (select * from test union all select * from test ) ) where sm = 6",
+                "create table test as (" +
+                        "select x from long_sequence(2)" +
+                        ")", null, false, true);
+
+    }
+
+    @Test
     public void testColumnPushdownWithDistinctAndUnionAll() throws Exception {
         assertQuery("c\n" +
                         "0\n" +
