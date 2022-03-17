@@ -54,6 +54,7 @@ import java.util.zip.ZipInputStream;
 
 public class ServerMain {
     private static final String VERSION_TXT = "version.txt";
+    private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
 
     protected PropServerConfiguration configuration;
 
@@ -85,7 +86,7 @@ public class ServerMain {
         // -n = disables handling of HUP signal
 
         final String rootDirectory = optHash.get("-d");
-        extractSite(rootDirectory, log);
+        extractSite(buildInformation, rootDirectory, log);
         final Properties properties = new Properties();
         final String configurationFileName = "/server.conf";
         final File configurationFile = new File(new File(rootDirectory, PropServerConfiguration.CONFIG_DIRECTORY), configurationFileName);
@@ -361,27 +362,27 @@ public class ServerMain {
         return optHash;
     }
 
-    private static long getPublicVersion(String publicDir) throws IOException {
+    private static String getPublicVersion(String publicDir) throws IOException {
         File f = new File(publicDir, VERSION_TXT);
         if (f.exists()) {
             try (FileInputStream fis = new FileInputStream(f)) {
                 byte[] buf = new byte[128];
                 int len = fis.read(buf);
-                return Long.parseLong(new String(buf, 0, len));
+                return new String(buf, 0, len);
             }
         }
-        return Long.MIN_VALUE;
+        return null;
     }
 
-    private static void setPublicVersion(String publicDir, long version) throws IOException {
+    private static void setPublicVersion(String publicDir, String version) throws IOException {
         File f = new File(publicDir, VERSION_TXT);
         try (FileOutputStream fos = new FileOutputStream(f)) {
-            byte[] buf = Long.toString(version).getBytes();
+            byte[] buf = version.getBytes();
             fos.write(buf, 0, buf.length);
         }
     }
 
-    private static void extractSite(String dir, Log log) throws IOException {
+    private static void extractSite(BuildInformation buildInformation, String dir, Log log) throws IOException {
         final String publicZip = "/io/questdb/site/public.zip";
         final String publicDir = dir + "/public";
         final byte[] buffer = new byte[1024 * 1024];
@@ -392,31 +393,69 @@ public class ServerMain {
         } else {
             thisVersion = resource.openConnection().getLastModified();
         }
-        final long oldVersion = getPublicVersion(publicDir);
-        if (thisVersion > oldVersion) {
-            try (final InputStream is = ServerMain.class.getResourceAsStream(publicZip)) {
-                if (is != null) {
-                    try (ZipInputStream zip = new ZipInputStream(is)) {
-                        ZipEntry ze;
-                        while ((ze = zip.getNextEntry()) != null) {
-                            final File dest = new File(publicDir, ze.getName());
-                            if (!ze.isDirectory()) {
-                                copyInputStream(true, buffer, dest, zip, log);
-                            }
-                            zip.closeEntry();
-                        }
+
+        boolean extracted = false;
+        final String oldVersionStr = getPublicVersion(publicDir);
+        final CharSequence dbVersion = buildInformation.getQuestDbVersion();
+        if (oldVersionStr == null) {
+            if (thisVersion != 0) {
+                extractSite0(dir, log, publicDir, buffer, Long.toString(thisVersion));
+            } else {
+                extractSite0(dir, log, publicDir, buffer, Chars.toString(dbVersion));
+            }
+            extracted = true;
+        } else {
+            // This is a hack to deal with RT package problem
+            // in this package "thisVersion" is always 0, and we need to fall back
+            // to the database version.
+            if (thisVersion == 0) {
+                if (!Chars.equals(oldVersionStr, dbVersion)) {
+                    extractSite0(dir, log, publicDir, buffer, Chars.toString(dbVersion));
+                    extracted = true;
+                }
+            } else {
+                // it is possible that old version is the database version
+                // which means user might have switched from RT distribution to no-JVM on the same data dir
+                // in this case we might fail to parse the version string
+                try {
+                    final long oldVersion = Numbers.parseLong(oldVersionStr);
+                    if (thisVersion > oldVersion) {
+                        extractSite0(dir, log, publicDir, buffer, Long.toString(thisVersion));
+                        extracted = true;
                     }
-                } else {
-                    log.error().$("could not find site [resource=").$(publicZip).$(']').$();
+                } catch (NumericException e) {
+                    extractSite0(dir, log, publicDir, buffer, Long.toString(thisVersion));
+                    extracted = true;
                 }
             }
-            setPublicVersion(publicDir, thisVersion);
-            copyConfResource(dir, false, buffer, "conf/date.formats", log);
-            copyConfResource(dir, true, buffer, "conf/mime.types", log);
-            copyConfResource(dir, false, buffer, "conf/server.conf", log);
-        } else {
+        }
+
+        if (!extracted) {
             log.info().$("web console is up to date").$();
         }
+    }
+
+    private static void extractSite0(String dir, Log log, String publicDir, byte[] buffer, String thisVersion) throws IOException {
+        try (final InputStream is = ServerMain.class.getResourceAsStream(PUBLIC_ZIP)) {
+            if (is != null) {
+                try (ZipInputStream zip = new ZipInputStream(is)) {
+                    ZipEntry ze;
+                    while ((ze = zip.getNextEntry()) != null) {
+                        final File dest = new File(publicDir, ze.getName());
+                        if (!ze.isDirectory()) {
+                            copyInputStream(true, buffer, dest, zip, log);
+                        }
+                        zip.closeEntry();
+                    }
+                }
+            } else {
+                log.error().$("could not find site [resource=").$(PUBLIC_ZIP).$(']').$();
+            }
+        }
+        setPublicVersion(publicDir, thisVersion);
+        copyConfResource(dir, false, buffer, "conf/date.formats", log);
+        copyConfResource(dir, true, buffer, "conf/mime.types", log);
+        copyConfResource(dir, false, buffer, "conf/server.conf", log);
     }
 
     private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
@@ -538,10 +577,12 @@ public class ServerMain {
         // For extension
     }
 
-    protected void readServerConfiguration(final String rootDirectory,
-                                           final Properties properties,
-                                           Log log,
-                                           final BuildInformation buildInformation) throws ServerConfigurationException, JsonException {
+    protected void readServerConfiguration(
+            final String rootDirectory,
+            final Properties properties,
+            Log log,
+            final BuildInformation buildInformation
+    ) throws ServerConfigurationException, JsonException {
         configuration = new PropServerConfiguration(rootDirectory, properties, System.getenv(), log, buildInformation);
     }
 

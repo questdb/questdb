@@ -429,7 +429,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            Assert.assertEquals(supportsRandomAccess, factory.recordCursorSupportsRandomAccess());
+            Assert.assertEquals("supports random access", supportsRandomAccess, factory.recordCursorSupportsRandomAccess());
             if (
                     assertCursor(
                             expected,
