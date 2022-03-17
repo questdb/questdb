@@ -174,10 +174,26 @@ public class UnionTest extends AbstractGriffinTest {
                     "CAR\n" +
                     "VAN\n" +
                     "PLANE\n" +
+                    "PLANE\n" +
+                    "PLANE\n" +
                     "BICYCLE\n" +
                     "SCOOTER\n" +
+                    "SCOOTER\n" +
+                    "SCOOTER\n" +
+                    "SCOOTER\n" +
                     "HELICOPTER\n" +
-                    "MOTORBIKE\n";
+                    "MOTORBIKE\n" +
+                    "HELICOPTER\n" +
+                    "HELICOPTER\n" +
+                    "VAN\n" +
+                    "HELICOPTER\n" +
+                    "HELICOPTER\n" +
+                    "HELICOPTER\n" +
+                    "MOTORBIKE\n" +
+                    "MOTORBIKE\n" +
+                    "HELICOPTER\n" +
+                    "MOTORBIKE\n" +
+                    "HELICOPTER\n";
 
             compiler.compile(
                     "CREATE TABLE x as " +
@@ -199,7 +215,7 @@ public class UnionTest extends AbstractGriffinTest {
                             " rnd_symbol('PLANE', 'BICYCLE', 'SCOOTER') t " +
                             " FROM long_sequence(7) x)",
                     sqlExecutionContext
-            );
+            ); //produces PLANE PLANE BICYCLE SCOOTER SCOOTER SCOOTER SCOOTER
 
             compiler.compile(
                     "CREATE TABLE z as " +
@@ -207,10 +223,10 @@ public class UnionTest extends AbstractGriffinTest {
                             " rnd_symbol('MOTORBIKE', 'HELICOPTER', 'VAN') t " +
                             " FROM long_sequence(13) x)",
                     sqlExecutionContext
-            );
+            ); //produces HELICOPTER MOTORBIKE HELICOPTER HELICOPTER VAN HELICOPTER HELICOPTER HELICOPTER MOTORBIKE MOTORBIKE HELICOPTER MOTORBIKE HELICOPTER
 
             try (RecordCursorFactory factory = compiler.compile("select distinct t from x union all y union all z", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, false, true, false);
+                assertCursor(expected2, factory, false, true, true);
             }
         });
     }
@@ -232,7 +248,12 @@ public class UnionTest extends AbstractGriffinTest {
                     "CAR\n" +
                     "VAN\n" +
                     "PLANE\n" +
+                    "PLANE\n" +
+                    "PLANE\n" +
                     "BICYCLE\n" +
+                    "SCOOTER\n" +
+                    "SCOOTER\n" +
+                    "SCOOTER\n" +
                     "SCOOTER\n";
 
             compiler.compile(
@@ -255,10 +276,10 @@ public class UnionTest extends AbstractGriffinTest {
                             " rnd_symbol('PLANE', 'BICYCLE', 'SCOOTER') t " +
                             " FROM long_sequence(7) x)",
                     sqlExecutionContext
-            );
+            );//produces PLANE PLANE BICYCLE SCOOTER SCOOTER SCOOTER SCOOTER
 
             try (RecordCursorFactory factory = compiler.compile("select distinct t from x union all y", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, false, true, false);
+                assertCursor(expected2, factory, false, true, true);
             }
         });
     }
