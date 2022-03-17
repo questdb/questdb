@@ -27,6 +27,7 @@ import { ContextMenu, MenuItem } from "components/ContextMenu"
 import { QuestContext } from "providers"
 import * as QuestDB from "utils/questdb"
 import { formatTableSchemaQueryResult } from "./services"
+import { copyToClipboard } from "../../../../utils"
 
 type Props = {
   name: string
@@ -44,7 +45,7 @@ const ContextualMenu = ({ name, partitionBy }: Props) => {
           partitionBy,
           result,
         )
-        void navigator.clipboard.writeText(formattedResult)
+        copyToClipboard(formattedResult)
       }
     })
   }, [quest, name, partitionBy])
