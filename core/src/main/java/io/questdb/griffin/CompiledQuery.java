@@ -62,9 +62,9 @@ public interface CompiledQuery {
 
     InsertStatement getInsertStatement();
 
-    AlterStatement getAlterStatement();
-
     UpdateStatement getUpdateStatement();
+
+    AlterStatement getAlterStatement();
 
     short getType();
 

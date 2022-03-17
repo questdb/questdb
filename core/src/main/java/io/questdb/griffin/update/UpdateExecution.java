@@ -95,14 +95,13 @@ public class UpdateExecution implements Closeable {
         // Start execution frame by frame
         RecordCursorFactory updateStatementDataCursorFactory = updateStatement.getUpdateToDataCursorFactory();
 
-        // Track how many records updated
-        long rowsUpdated = 0;
+        // Partition to update
+        long currentPartitionIndex = -1L;
 
         // Row by row updates
         // This should happen parallel per file (partition and column)
         try (RecordCursor recordCursor = updateStatementDataCursorFactory.getCursor(executionContext)) {
             Record masterRecord = recordCursor.getRecord();
-            long currentPartitionIndex = -1L;
 
             long startPartitionRowId = 0;
             long lastRowId = -1;
@@ -143,24 +142,26 @@ public class UpdateExecution implements Closeable {
                         masterRecord);
 
                 startPartitionRowId = ++partitionRowId;
-                rowsUpdated++;
             }
 
-            updateColumnValues(
-                    writerMetadata,
-                    updateColumnIndexes,
-                    updateColumnCount,
-                    baseMemory,
-                    updateMemory,
-                    startPartitionRowId);
+            if (currentPartitionIndex > -1) {
+                updateColumnValues(
+                        writerMetadata,
+                        updateColumnIndexes,
+                        updateColumnCount,
+                        baseMemory,
+                        updateMemory,
+                        startPartitionRowId);
+            }
         } finally {
             for (int i = 0; i < updateMemory.size(); i++) {
                 baseMemory.getQuick(i).close(false);
-                updateMemory.getQuick(i).close(false);
+                updateMemory.getQuick(i).close(true);
             }
         }
-        if (rowsUpdated > 0) {
+        if (currentPartitionIndex > -1) {
             tableWriter.commit();
+            tableWriter.openLastPartition();
         }
     }
 
@@ -264,11 +265,11 @@ public class UpdateExecution implements Closeable {
         openPartitionColumns(tableWriter, updateMemory, partitionIndex, updateColumnIndexes, true);
     }
 
-    private void openPartitionColumnsForRead(TableWriter tableWriter, ObjList<MemoryCMARW> updateMemory, int partitionIndex, IntList updateColumnIndexes) {
-        openPartitionColumns(tableWriter, updateMemory, partitionIndex, updateColumnIndexes, false);
+    private void openPartitionColumnsForRead(TableWriter tableWriter, ObjList<MemoryCMARW> baseMemory, int partitionIndex, IntList updateColumnIndexes) {
+        openPartitionColumns(tableWriter, baseMemory, partitionIndex, updateColumnIndexes, false);
     }
 
-    private void openPartitionColumns(TableWriter tableWriter, ObjList<MemoryCMARW> updateMemory, int partitionIndex, IntList updateColumnIndexes, boolean forWrite) {
+    private void openPartitionColumns(TableWriter tableWriter, ObjList<MemoryCMARW> memList, int partitionIndex, IntList updateColumnIndexes, boolean forWrite) {
         long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
         RecordMetadata metadata = tableWriter.getMetadata();
         try {
@@ -279,8 +280,8 @@ public class UpdateExecution implements Closeable {
             for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
                 int columnIndex = updateColumnIndexes.get(i);
                 CharSequence name = metadata.getColumnName(columnIndex);
-                MemoryCMARW colMem = updateMemory.get(i);
-                colMem.close(false);
+                MemoryCMARW colMem = memList.get(i);
+                colMem.close(forWrite);
                 if (forWrite) {
                     tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex);
                 }

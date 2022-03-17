@@ -1399,6 +1399,16 @@ public class TableWriter implements Closeable {
         this.commitInterval = calculateCommitInterval();
     }
 
+    public void openLastPartition() {
+        try {
+            openPartition(txWriter.getLastPartitionTimestamp());
+            setAppendPosition(txWriter.getTransientRowCount(), false);
+        } catch (Throwable e) {
+            freeColumns(false);
+            throw e;
+        }
+    }
+
     /**
      * Eagerly sets up writer instance. Otherwise, writer will initialize lazily. Invoking this method could improve
      * performance of some applications. UDP receivers use this in order to avoid initial receive buffer contention.
