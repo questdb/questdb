@@ -120,6 +120,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.openPartitionInfo = new LongList(partitionCount * PARTITIONS_SLOT_SIZE);
             this.openPartitionInfo.setPos(partitionCount * PARTITIONS_SLOT_SIZE);
             for (int i = 0; i < partitionCount; i++) {
+                // number of rows, txn and column version is tracked for each partition
+                // it is compared to attachedPartitions within the txn file to determine if a partition needs to be reloaded or not
                 this.openPartitionInfo.setQuick(i * PARTITIONS_SLOT_SIZE, txFile.getPartitionTimestamp(i));
                 this.openPartitionInfo.setQuick(i * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE, -1); // size
                 this.openPartitionInfo.setQuick(i * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_NAME_TXN, txFile.getPartitionNameTxn(i)); // txn
