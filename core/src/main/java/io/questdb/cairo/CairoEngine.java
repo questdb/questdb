@@ -34,7 +34,6 @@ import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.griffin.AlterStatement;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -43,6 +42,7 @@ import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.TableWriterTask;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -370,7 +370,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public TableWriter getWriterOrPublishCommand(CharSequence tableName, String lockReason, AlterStatement writeAction) {
+    public TableWriter getWriterOrPublishCommand(CharSequence tableName, String lockReason, WriteToQueue<TableWriterTask> writeAction) {
         return writerPool.getOrPublishCommand(tableName, lockReason, writeAction);
     }
 
@@ -446,47 +446,6 @@ public class CairoEngine implements Closeable, WriterSource {
         Unsafe.getUnsafe().putLong(tableIdMem, 0);
     }
 
-//    public boolean tick() {
-//        final long cursor = tableWriterCmdSubSeq.next();
-//        if (cursor > -1) {
-//            final TableWriterTask cmd = tableWriterCmdQueue.get(cursor);
-//            final String tableName = cmd.getTableName();
-//            boolean done = false;
-//            LOG.info().$("received table command cmd [tableName=").$(tableName)
-//                    .$(", type=").$(cmd.getType())
-//                    .$(", instance=").$(cmd.getInstance())
-//                    .$(", ip=").$ip(cmd.getIp())
-//                    .I$();
-//
-//            if (tableName != null) {
-//                try (TableWriter writer = writerPool.get(tableName, "async writer cmd")) {
-//                    done = true; // next line must call done() on the sequence
-//                    writer.processCommandQueue(cmd, tableWriterCmdSubSeq, cursor, true);
-//                } catch (EntryUnavailableException e) {
-//                    // ignore command, writer is busy
-//                    // it will tick on its way back to pool or earlier
-//                } catch (Throwable e) {
-//                    LogRecord record = LOG.error()
-//                            .$("could not create table writer or execute writer command [tableName=").$(tableName)
-//                            .$(", tableId=").$(cmd.getTableId()).$(", ex=`");
-//                    if (e instanceof Sinkable) {
-//                        record.$((Sinkable) e).$('`').I$();
-//                    } else {
-//                        record.$(e).$('`').I$();
-//                    }
-//                } finally {
-//                    if (!done) {
-//                        tableWriterCmdSubSeq.done(cursor);
-//                    }
-//                }
-//            } else {
-//                tableWriterCmdSubSeq.done(cursor);
-//            }
-//            return true;
-//        }
-//        return false;
-//    }
-
     public void unlock(
             CairoSecurityContext securityContext,
             CharSequence tableName,
@@ -544,16 +503,11 @@ public class CairoEngine implements Closeable, WriterSource {
         @Override
         protected boolean runSerially() {
             long t = clock.getTicks();
-            boolean useful = false;
-//            while (tick()) {
-//                // process and drain cmd queue
-//                useful = true;
-//            }
             if (last + checkInterval < t) {
                 last = t;
-                return useful | releaseInactive();
+                return releaseInactive();
             }
-            return useful;
+            return false;
         }
     }
 }

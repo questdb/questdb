@@ -305,15 +305,20 @@ public class CompiledQueryImpl implements CompiledQuery {
             // Set up execution wait sequence to listen to the Engine async writer events
             final FanOut writerEventFanOut = engine.getMessageBus().getTableWriterEventFanOut();
             writerEventFanOut.and(eventSubSeq);
-            this.eventSubSeq = eventSubSeq;
 
             try {
-                // Publish new command and get published Command Id
-                commandId = publishTableWriterCommand(alterStatement);
-                queryFutureUpdateListener.reportStart(alterStatement.getTableName(), commandId);
-                status = QUERY_NO_RESPONSE;
-            } catch (TableStructureChangesException e) {
-                assert false : "Should never throw TableStructureChangesException when executed with acceptStructureChange=true";
+                this.eventSubSeq = eventSubSeq;
+                try {
+                    // Publish new command and get published Command Id
+                    commandId = publishTableWriterCommand(alterStatement);
+                    queryFutureUpdateListener.reportStart(alterStatement.getTableName(), commandId);
+                    status = QUERY_NO_RESPONSE;
+                } catch (TableStructureChangesException e) {
+                    assert false : "Should never throw TableStructureChangesException when executed with acceptStructureChange=true";
+                }
+            } catch (Throwable throwable) {
+                engine.getMessageBus().getTableWriterEventFanOut().remove(eventSubSeq);
+                throw throwable;
             }
         }
 

@@ -31,7 +31,6 @@ import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
-import io.questdb.mp.MPSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.std.Chars;
@@ -46,9 +45,6 @@ import org.junit.rules.TemporaryFolder;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.LockSupport;
-
-import static io.questdb.test.tools.TestUtils.drainEngineCmdQueue;
 
 public class DispatcherWriterQueueTest {
     @Rule
@@ -131,7 +127,6 @@ public class DispatcherWriterQueueTest {
                     }
                     Assert.assertTrue(metadata.isColumnIndexed(columnIndex));
                 },
-                2,
                 0,
                 queryTestBuilder,
                 disconnectLatch,
@@ -178,7 +173,6 @@ public class DispatcherWriterQueueTest {
                     int columnIndex = metadata.getColumnIndex("s");
                     Assert.assertTrue(metadata.isColumnIndexed(columnIndex));
                 },
-                1,
                 0,
                 queryTestBuilder,
                 null,
@@ -215,7 +209,6 @@ public class DispatcherWriterQueueTest {
                     int columnIndex = metadata.getColumnIndex("s");
                     Assert.assertTrue(metadata.isColumnIndexed(columnIndex));
                 },
-                1,
                 1,
                 queryTestBuilder,
                 null,
@@ -298,12 +291,11 @@ public class DispatcherWriterQueueTest {
                 )
                 .withAlterTableStartWaitTimeout(30_000_000);
 
-        runAlterOnBusyTable(alterVerifyAction, httpWorkers, errorsExpected, queryTestBuilder, null, httpAlterQueries);
+        runAlterOnBusyTable(alterVerifyAction, errorsExpected, queryTestBuilder, null, httpAlterQueries);
     }
 
     private void runAlterOnBusyTable(
             AlterVerifyAction alterVerifyAction,
-            int httpWorkers,
             int errorsExpected,
             HttpQueryTestBuilder queryTestBuilder,
             SOCountDownLatch waitToDisconnect,
@@ -378,7 +370,6 @@ public class DispatcherWriterQueueTest {
                     alterVerifyAction.run(writer, rdr);
                 }
             } finally {
-                drainEngineCmdQueue(engine);
                 if (writer != null) {
                     writer.close();
                 }

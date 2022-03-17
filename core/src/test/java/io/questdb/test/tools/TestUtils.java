@@ -628,10 +628,6 @@ public final class TestUtils {
         }
     }
 
-    public static boolean drainEngineCmdQueue(CairoEngine engine) {
-        return false;
-    }
-
     @NotNull
     public static Rnd generateRandom(Log log) {
         long s0 = System.nanoTime();
