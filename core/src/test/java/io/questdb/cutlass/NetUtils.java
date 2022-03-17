@@ -51,6 +51,7 @@ public class NetUtils {
             long sendPtr = sendBuf;
             boolean expectDisconnect = false;
 
+            int line = 0;
             int mode = 0;
             int n = script.length();
             int i = 0;
@@ -59,31 +60,32 @@ public class NetUtils {
                 switch (c1) {
                     case '<':
                     case '>':
-                        int len = (int) (sendPtr - sendBuf);
+                        int expectedLen = (int) (sendPtr - sendBuf);
                         if (mode == 0) {
                             // we were sending - lets wrap up and send
-                            if (len > 0) {
-                                int m = nf.send(clientFd, sendBuf, len);
+                            if (expectedLen > 0) {
+                                int m = nf.send(clientFd, sendBuf, expectedLen);
                                 // if we expect disconnect we might get it on either `send` or `recv`
                                 // check if we expect disconnect on recv?
                                 if (m == -2 && script.charAt(i + 1) == '!' && script.charAt(i + 2) == '!') {
                                     // force exit
                                     i = n;
                                 } else {
-                                    Assert.assertEquals("disc:" + expectDisconnect, len, m);
+                                    Assert.assertEquals("disc:" + expectDisconnect, expectedLen, m);
                                     sendPtr = sendBuf;
                                 }
                             }
                         } else {
                             // we meant to receive; sendBuf will contain expected bytes we have to receive
                             // and this buffer will also drive the length of the message
-                            if (len > 0) {
-                                int m = nf.recv(clientFd, recvBuf, len);
+                            if (expectedLen > 0) {
+                                int actualLen = nf.recv(clientFd, recvBuf, expectedLen);
                                 if (expectDisconnect) {
-                                    Assert.assertTrue(m < 0);
+                                    Assert.assertTrue(actualLen < 0);
                                     // force exit
                                     i = n;
                                 } else {
+                                    assertBuffers(line, sendBuf, expectedLen, recvBuf, actualLen);
                                     // clear sendBuf
                                     sendPtr = sendBuf;
                                 }
@@ -99,6 +101,7 @@ public class NetUtils {
                         continue;
                     case '\n':
                         i++;
+                        line++;
                         continue;
                     default:
                         char c2 = script.charAt(i + 1);
@@ -117,23 +120,24 @@ public class NetUtils {
                 }
             }
 
-            // this we do final receive (or send) when we don't have
+            // here we do final receive (or send) when we don't have
             // any more script left to process
-            int len = (int) (sendPtr - sendBuf);
+            int expectedLen = (int) (sendPtr - sendBuf);
             if (mode == 0) {
                 // we were sending - lets wrap up and send
-                if (len > 0) {
-                    int m = nf.send(clientFd, sendBuf, len);
-                    Assert.assertEquals(len, m);
+                if (expectedLen > 0) {
+                    int m = nf.send(clientFd, sendBuf, expectedLen);
+                    Assert.assertEquals(expectedLen, m);
                 }
             } else {
                 // we meant to receive; sendBuf will contain expected bytes we have to receive
                 // and this buffer will also drive the length of the message
-                if (len > 0 || expectDisconnect) {
+                if (expectedLen > 0 || expectDisconnect) {
                     if (expectDisconnect) {
                         Assert.assertTrue(Net.isDead(clientFd));
                     } else {
-                        nf.recv(clientFd, recvBuf, len);
+                        int actualLen = nf.recv(clientFd, recvBuf, expectedLen);
+                        assertBuffers(line, sendBuf, expectedLen, recvBuf, actualLen);
                     }
                 }
             }
@@ -142,6 +146,15 @@ public class NetUtils {
             Unsafe.free(recvBuf, N, MemoryTag.NATIVE_DEFAULT);
             nf.freeSockAddr(sockAddress);
             nf.close(clientFd);
+        }
+    }
+
+    private static void assertBuffers(int line, long expectedBuf, int expectedLen, long actualBuf, int actualLen) {
+        Assert.assertEquals(expectedLen, actualLen);
+        for (int j = 0; j < expectedLen; j++) {
+            if (Unsafe.getUnsafe().getByte(expectedBuf + j) != Unsafe.getUnsafe().getByte(actualBuf + j)) {
+                Assert.fail("line = " + line + ", pos = " + j + ", expected: " + Unsafe.getUnsafe().getByte(expectedBuf + j) + ", actual: " + Unsafe.getUnsafe().getByte(actualBuf + j));
+            }
         }
     }
 }
