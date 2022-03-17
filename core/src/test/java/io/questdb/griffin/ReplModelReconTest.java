@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -1454,9 +1455,10 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     slave.getRawMetaMemory(),
                     slave.getRawMetaMemorySize(),
                     slaveIP,
-                    sequence);
+                    sequence
+            );
 
-            try (TableWriter writer = engine.getWriterOrPublishCommand(tableName, "repl model test", writeFunc)) {
+            try (TableWriter writer = engine.getWriterOrPublishCommand(AllowAllCairoSecurityContext.INSTANCE, tableName, "repl model test", writeFunc)) {
                 if (writer != null) {
                     writer.processCommandAsync(writeFunc);
                 }

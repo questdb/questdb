@@ -326,7 +326,7 @@ public class CompiledQueryImpl implements CompiledQuery {
             CharSequence tableName = alterTableStatement.getTableName();
             final long commandCorrelationId = engine.getCommandCorrelationId();
             alterTableStatement.setCommandCorrelationId(commandCorrelationId);
-            try (TableWriter writer = engine.getWriterOrPublishCommand(tableName, "alter table", alterTableStatement)) {
+            try (TableWriter writer = engine.getWriterOrPublishCommand(sqlExecutionContext.getCairoSecurityContext(), tableName, "alter table", alterTableStatement)) {
                 if (writer != null) {
                     alterTableStatement.apply(writer, true);
                 }

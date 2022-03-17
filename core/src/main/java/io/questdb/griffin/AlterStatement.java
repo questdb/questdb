@@ -33,7 +33,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.tasks.TableWriterTask;
 
-public class AlterStatement implements Mutable, WriteAction {
+public class AlterStatement implements Mutable, WriteToQueue<TableWriterTask> {
 
     public final static short DO_NOTHING = 1;
     public final static short ADD_COLUMN = 3;
@@ -132,11 +132,6 @@ public class AlterStatement implements Mutable, WriteAction {
                     .put("] ")
                     .put(e2.getFlyweightMessage());
         }
-    }
-
-    @Override
-    public void applyToWriter(TableWriter writer) throws TableStructureChangesException, SqlException {
-        apply(writer, true);
     }
 
     @Override

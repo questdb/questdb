@@ -370,7 +370,8 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public TableWriter getWriterOrPublishCommand(CharSequence tableName, String lockReason, WriteToQueue<TableWriterTask> writeAction) {
+    public TableWriter getWriterOrPublishCommand(CairoSecurityContext securityContext, CharSequence tableName, String lockReason, WriteToQueue<TableWriterTask> writeAction) {
+        securityContext.checkWritePermission();
         return writerPool.getOrPublishCommand(tableName, lockReason, writeAction);
     }
 
