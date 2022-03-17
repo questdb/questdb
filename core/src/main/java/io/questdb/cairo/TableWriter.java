@@ -35,10 +35,8 @@ import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.AlterStatement;
-import io.questdb.griffin.AsyncWriterCommand;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.griffin.update.UpdateStatement;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -149,7 +147,6 @@ public class TableWriter implements Closeable {
     // Publisher source is identified by a long value
     private final LongLongHashMap cmdSequences = new LongLongHashMap();
     private final AlterStatement alterTableStatement = new AlterStatement();
-    private final UpdateStatement updateTableStatement = new UpdateStatement();
     private final ColumnVersionWriter columnVersionWriter;
     private Row row = regularRow;
     private long todoTxn;
@@ -889,10 +886,7 @@ public class TableWriter implements Closeable {
                     processReplSyncCommand(cmd, cursor, commandSubSeq);
                     break;
                 case CMD_ALTER_TABLE:
-                    processAsyncWriterCommand(alterTableStatement, cmd, cursor, commandSubSeq, acceptStructureChange);
-                    break;
-                case CMD_UPDATE_TABLE:
-                    processAsyncWriterCommand(updateTableStatement, cmd, cursor, commandSubSeq, acceptStructureChange);
+                    processAlterTableCommand(cmd, cursor, commandSubSeq, acceptStructureChange);
                     break;
                 default:
                     LOG.error().$("unknown TableWriterTask type, ignored: ").$(cmd.getType()).$();
@@ -3783,8 +3777,7 @@ public class TableWriter implements Closeable {
         indexCount = denseIndexers.size();
     }
 
-    private void processAsyncWriterCommand(AsyncWriterCommand asyncWriterCommand, TableWriterTask cmd, long cursor, Sequence sequence, boolean acceptStructureChange) {
-        final long cmdType = cmd.getType();
+    private void processAlterTableCommand(TableWriterTask cmd, long cursor, Sequence sequence, boolean acceptStructureChange) {
         final long correlationId = cmd.getInstance();
         final long tableId = cmd.getTableId();
 
@@ -3792,29 +3785,24 @@ public class TableWriter implements Closeable {
         try {
             publishTableWriterEvent(tableId, correlationId, null, TSK_BEGIN);
             LOG.info()
-                    .$("received async cmd [type=").$(cmdType)
-                    .$(", tableName=").$(tableName)
+                    .$("received ASYNC ALTER TABLE cmd [tableName=").$(tableName)
                     .$(", tableId=").$(tableId)
-                    .$(", correlationId=").$(correlationId)
+                    .$(", instance=").$(correlationId)
                     .I$();
-            asyncWriterCommand.deserialize(cmd);
-            asyncWriterCommand.apply(this, acceptStructureChange);
+            alterTableStatement.deserialize(cmd);
+            alterTableStatement.apply(this, acceptStructureChange);
         } catch (TableStructureChangesException ex) {
             LOG.info()
-                    .$("cannot complete async cmd, table structure change is not allowed [type=").$(cmdType)
-                    .$(", tableName=").$(tableName)
+                    .$("cannot complete ASYNC ALTER TABLE cmd, table structure change is not allowed atm [tableName=").$(tableName)
                     .$(", tableId=").$(tableId)
                     .$(", correlationId=").$(correlationId)
                     .I$();
-            error = "async cmd cannot change table structure while writer is busy";
+            error = "ALTER TABLE cannot change table structure while Writer is busy";
         } catch (SqlException | CairoException ex) {
             error = ex.getFlyweightMessage();
         } catch (Throwable ex) {
-            LOG.error().$("error on processing async cmd [type=").$(cmdType)
-                    .$(", tableName=").$(tableName)
-                    .$(", ex=").$(ex)
-                    .I$();
-            error = "error on processing async cmd, see QuestDB server logs for details";
+            LOG.error().$("error on processing ALTER table [tableName=").$(tableName).$(", ex=").$(ex).I$();
+            error = "error on processing ALTER table, see QuestDB server logs for details";
         } finally {
             sequence.done(cursor);
         }

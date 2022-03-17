@@ -298,7 +298,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "ALTER TABLE plug DROP COLUMN label");
 
             Assert.assertNotNull(exception);
-            TestUtils.assertEquals("async cmd cannot change table structure while writer is busy", exception.getFlyweightMessage());
+            TestUtils.assertEquals("ALTER TABLE cannot change table structure while Writer is busy", exception.getFlyweightMessage());
             exception = sendWithAlterStatement(
                     server,
                     lineData,
@@ -307,7 +307,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             );
 
             Assert.assertNotNull(exception);
-            TestUtils.assertEquals("async cmd cannot change table structure while writer is busy", exception.getFlyweightMessage());
+            TestUtils.assertEquals("ALTER TABLE cannot change table structure while Writer is busy", exception.getFlyweightMessage());
             lineData = "plug,label=Power,room=6A watts=\"4\" 2631819999001\n" +
                     "plug,label=Power,room=6B watts=\"55\" 1631817902843\n" +
                     "plug,label=Line,room=6C watts=\"666\" 1531817902843\n";
