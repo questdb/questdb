@@ -325,6 +325,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         putStringOrNull(socket, rec.getStr(col));
     }
 
+    private static void putRecValue(HttpChunkedResponseSocket socket) {
+        putStringOrNull(socket, null);
+    }
+
     private static void putSymValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         putStringOrNull(socket, rec.getSym(col));
     }
@@ -536,6 +540,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     break;
                 case ColumnType.GEOLONG:
                     putGeoHashStringLongValue(socket, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex + 1));
+                    break;
+                case ColumnType.RECORD:
+                    putRecValue(socket);
                     break;
                 default:
                     assert false : "Not supported type in output " + ColumnType.nameOf(columnType);

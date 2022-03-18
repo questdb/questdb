@@ -26,10 +26,7 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.Metrics;
 import io.questdb.Telemetry;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoError;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.http.*;
@@ -478,6 +475,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 break;
             case ColumnType.NULL:
             case ColumnType.BINARY:
+            case ColumnType.RECORD:
                 break;
             case ColumnType.STRING:
                 putStringOrNull(socket, rec.getStr(col));
@@ -492,6 +490,21 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 assert false;
         }
     }
+
+    private static void putGeoHashStringValue(HttpChunkedResponseSocket socket, long value, int bitFlags) {
+        if (value == GeoHashes.NULL) {
+            socket.put("null");
+        } else {
+            socket.put('\"');
+            if (bitFlags < 0) {
+                GeoHashes.appendCharsUnsafe(value, -bitFlags, socket);
+            } else {
+                GeoHashes.appendBinaryStringUnsafe(value, bitFlags, socket);
+            }
+            socket.put('\"');
+        }
+    }
+
 
     private void sendConfirmation(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
         socket.put("DDL Success\n");
