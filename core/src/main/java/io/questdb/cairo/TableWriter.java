@@ -147,6 +147,9 @@ public class TableWriter implements Closeable {
     private final AlterStatement alterTableStatement = new AlterStatement();
     private final ColumnVersionWriter columnVersionWriter;
     private final Metrics metrics;
+    private final RingQueue<TableWriterTask> commandQueue;
+    private final SCSequence commandSubSeq;
+    private final MPSequence commandPubSeq;
     private Row row = regularRow;
     private long todoTxn;
     private MemoryMAT o3TimestampMem;
@@ -181,10 +184,6 @@ public class TableWriter implements Closeable {
     private int rowActon = ROW_ACTION_OPEN_PARTITION;
     private long committedMasterRef;
     private DirectLongList o3ColumnTopSink;
-    private final RingQueue<TableWriterTask> commandQueue;
-    private final SCSequence commandSubSeq;
-    private final MPSequence commandPubSeq;
-
     // ILP related
     private double commitIntervalFraction;
     private long commitIntervalDefault;
@@ -873,6 +872,20 @@ public class TableWriter implements Closeable {
 
     public void o3BumpErrorCount() {
         o3ErrorCount.incrementAndGet();
+    }
+
+    public void processCommandAsync(WriteToQueue<TableWriterTask> writeFunc) {
+        while (true) {
+            long seq = commandPubSeq.next();
+            if (seq > -1) {
+                TableWriterTask cmd = commandQueue.get(seq);
+                writeFunc.writeTo(cmd);
+                commandPubSeq.done(seq);
+                return;
+            } else if (seq == -1) {
+                throw CairoException.instance(0).put("cannot publish, command queue is full [table=").put(tableName).put(']');
+            }
+        }
     }
 
     public void processCommandQueue(TableWriterTask cmd, Sequence commandSubSeq, long cursor, boolean acceptStructureChange) {
@@ -2086,17 +2099,29 @@ public class TableWriter implements Closeable {
         symbolMapWriters.extendAndSet(columnCount, w);
     }
 
-    public void processCommandAsync(WriteToQueue<TableWriterTask> writeFunc) {
-        while (true) {
-            long seq = commandPubSeq.next();
-            if (seq > -1) {
-                TableWriterTask cmd = commandQueue.get(seq);
-                writeFunc.writeTo(cmd);
-                commandPubSeq.done(seq);
-                return;
-            } else if (seq == -1) {
-                throw CairoException.instance(0).put("cannot publish, command queue is full [table=").put(tableName).put(']');
-            }
+    private void doClose(boolean truncate) {
+        boolean tx = inTransaction();
+        freeSymbolMapWriters();
+        freeIndexers();
+        Misc.free(txWriter);
+        Misc.free(metaMem);
+        Misc.free(ddlMem);
+        Misc.free(indexMem);
+        Misc.free(other);
+        Misc.free(todoMem);
+        Misc.free(columnVersionWriter);
+        Misc.free(o3ColumnTopSink);
+        Misc.free(commandQueue);
+        freeColumns(truncate & !distressed);
+        try {
+            releaseLock(!truncate | tx | performRecovery | distressed);
+        } finally {
+            Misc.free(txnScoreboard);
+            Misc.free(path);
+            Misc.free(o3TimestampMemCpy);
+            Misc.free(ownMessageBus);
+            freeTempMem();
+            LOG.info().$("closed '").utf8(tableName).$('\'').$();
         }
     }
 
@@ -3643,7 +3668,7 @@ public class TableWriter implements Closeable {
 
         try {
             mem1.of(ff, dFile(
-                            path.trimTo(pathTrimToLen), name, columnNameTxn),
+                    path.trimTo(pathTrimToLen), name, columnNameTxn),
                     configuration.getDataAppendPageSize(),
                     -1,
                     MemoryTag.MMAP_TABLE_WRITER,
@@ -3806,32 +3831,6 @@ public class TableWriter implements Closeable {
             }
         }
         indexCount = denseIndexers.size();
-    }
-
-    private void doClose(boolean truncate) {
-        boolean tx = inTransaction();
-        freeSymbolMapWriters();
-        freeIndexers();
-        Misc.free(txWriter);
-        Misc.free(metaMem);
-        Misc.free(ddlMem);
-        Misc.free(indexMem);
-        Misc.free(other);
-        Misc.free(todoMem);
-        Misc.free(columnVersionWriter);
-        Misc.free(o3ColumnTopSink);
-        Misc.free(commandQueue);
-        freeColumns(truncate & !distressed);
-        try {
-            releaseLock(!truncate | tx | performRecovery | distressed);
-        } finally {
-            Misc.free(txnScoreboard);
-            Misc.free(path);
-            Misc.free(o3TimestampMemCpy);
-            Misc.free(ownMessageBus);
-            freeTempMem();
-            LOG.info().$("closed '").utf8(tableName).$('\'').$();
-        }
     }
 
     private void processAlterTableEvent(TableWriterTask cmd, long cursor, Sequence sequence, boolean acceptStructureChange) {
