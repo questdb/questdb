@@ -34,6 +34,7 @@ import { Play } from "@styled-icons/remix-line/Play"
 import { Stop } from "@styled-icons/remix-line/Stop"
 import { Database2 } from "@styled-icons/remix-line/Database2"
 import { HelpCircle } from "@styled-icons/boxicons-regular/HelpCircle"
+import { Slack } from "@styled-icons/boxicons-logos/Slack"
 
 import {
   ErrorButton,
@@ -116,9 +117,35 @@ const SideMenuMenuButton = styled(TransparentButton)`
   }
 `
 
-const HelpButton = styled(SecondaryButton)`
+const MenuButton = styled(SecondaryButton)`
   margin-right: 1rem;
 `
+
+const MenuLink: React.FunctionComponent<{
+  href: string
+  icon: React.ReactNode
+  tooltipText: string
+}> = ({ href, icon, tooltipText }) => {
+  const Trigger = (
+    <MenuButton>
+      <Link
+        color="draculaForeground"
+        hoverColor="draculaForeground"
+        href={href}
+        rel="noreferrer"
+        target="_blank"
+      >
+        {icon}
+      </Link>
+    </MenuButton>
+  )
+
+  return (
+    <PopperHover delay={350} placement="bottom" trigger={Trigger}>
+      <Tooltip>{tooltipText}</Tooltip>
+    </PopperHover>
+  )
+}
 
 const Menu = () => {
   const dispatch = useDispatch()
@@ -203,6 +230,7 @@ const Menu = () => {
           <span>Run</span>
         </SuccessButton>
       )}
+
       <Separator />
 
       {savedQueries.length > 0 && (
@@ -222,25 +250,17 @@ const Menu = () => {
 
       <Separator />
 
-      <PopperHover
-        delay={350}
-        placement="bottom"
-        trigger={
-          <HelpButton>
-            <Link
-              color="draculaForeground"
-              hoverColor="draculaForeground"
-              href="https://questdb.io/docs/reference/web-console/"
-              rel="noreferrer"
-              target="_blank"
-            >
-              <HelpCircle size="18px" />
-            </Link>
-          </HelpButton>
-        }
-      >
-        <Tooltip>Go to Web Console help</Tooltip>
-      </PopperHover>
+      <MenuLink
+        href="https://slack.questdb.io/"
+        icon={<Slack size="18px" />}
+        tooltipText="Questions? Join our Slack"
+      />
+
+      <MenuLink
+        href="https://questdb.io/docs/reference/web-console/"
+        icon={<HelpCircle size="18px" />}
+        tooltipText="Go to Web Console help"
+      />
 
       <DocsearchInput
         id="docsearch-input"
