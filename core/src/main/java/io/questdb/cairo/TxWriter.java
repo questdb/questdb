@@ -51,6 +51,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     private long prevRecordStructureVersion = -2;
     private int lastRecordBaseOffset = -1;
     private int prevRecordBaseOffset = -2;
+    private TableWriter.ExtensionListener extensionListener;
 
     public TxWriter(FilesFacade ff) {
         super(ff);
@@ -200,23 +201,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    public void removeAttachedPartitions(long timestamp) {
-        recordStructureVersion++;
-        final long partitionTimestampLo = getPartitionTimestampLo(timestamp);
-        int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
-        if (index > -1) {
-            final int size = attachedPartitions.size();
-            final int lim = size - LONGS_PER_TX_ATTACHED_PARTITION;
-            if (index < lim) {
-                attachedPartitions.arrayCopy(index + LONGS_PER_TX_ATTACHED_PARTITION, index, lim - index);
-            }
-            attachedPartitions.setPos(lim);
-            partitionTableVersion++;
-        } else {
-            assert false;
-        }
-    }
-
     public int getAppendedPartitionCount() {
         return txPartitionCount;
     }
@@ -256,6 +240,23 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         updateAttachedPartitionSizeByTimestamp(timestamp, 0);
     }
 
+    public void removeAttachedPartitions(long timestamp) {
+        recordStructureVersion++;
+        final long partitionTimestampLo = getPartitionTimestampLo(timestamp);
+        int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
+        if (index > -1) {
+            final int size = attachedPartitions.size();
+            final int lim = size - LONGS_PER_TX_ATTACHED_PARTITION;
+            if (index < lim) {
+                attachedPartitions.arrayCopy(index + LONGS_PER_TX_ATTACHED_PARTITION, index, lim - index);
+            }
+            attachedPartitions.setPos(lim);
+            partitionTableVersion++;
+        } else {
+            assert false;
+        }
+    }
+
     public void reset(long fixedRowCount, long transientRowCount, long maxTimestamp, int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
         recordStructureVersion++;
         this.fixedRowCount = fixedRowCount;
@@ -277,6 +278,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             recordStructureVersion++;
             this.columnVersion = newVersion;
         }
+    }
+
+    public void setExtensionListener(TableWriter.ExtensionListener extensionListener) {
+        this.extensionListener = extensionListener;
     }
 
     public void setMinTimestamp(long timestamp) {
@@ -302,6 +307,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         initPartitionAt(index, newTimestampLo, 0);
         transientRowCount = 0;
         txPartitionCount++;
+        if (extensionListener != null) {
+            extensionListener.onTableExtended(newTimestampLo);
+        }
     }
 
     public void truncate() {
@@ -341,6 +349,27 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         partitionTableVersion++;
     }
 
+    private int calculateWriteOffset() {
+        int areaSize = calculateTxRecordSize(symbolColumnCount * 8, attachedPartitions.size() * 8);
+        boolean currentIsA = (baseVersion & 1L) == 0L;
+        int currentOffset = currentIsA ? txMemBase.getInt(TX_BASE_OFFSET_A_32) : txMemBase.getInt(TX_BASE_OFFSET_B_32);
+        if (TX_BASE_HEADER_SIZE + areaSize <= currentOffset) {
+            return TX_BASE_HEADER_SIZE;
+        }
+        int currentSizeSymbols = currentIsA ? txMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32) : txMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
+        int currentSizePartitions = currentIsA ? txMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32) : txMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32);
+        int currentSize = calculateTxRecordSize(currentSizeSymbols, currentSizePartitions);
+        return currentOffset + currentSize;
+    }
+
+    private int calculateWriteSize() {
+        // If by any action data is reset, clear attachedPartitions
+        if (maxTimestamp == Long.MIN_VALUE) {
+            attachedPartitions.clear();
+        }
+        return calculateTxRecordSize(symbolColumnCount * 8, attachedPartitions.size() * 8);
+    }
+
     private void commitFullRecord(int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
         symbolColumnCount = symbolCountProviders.size();
 
@@ -370,27 +399,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         lastRecordStructureVersion = recordStructureVersion;
         prevRecordBaseOffset = lastRecordBaseOffset;
         lastRecordBaseOffset = writeBaseOffset;
-    }
-
-    private int calculateWriteOffset() {
-        int areaSize = calculateTxRecordSize(symbolColumnCount * 8, attachedPartitions.size() * 8);
-        boolean currentIsA = (baseVersion & 1L) == 0L;
-        int currentOffset = currentIsA ? txMemBase.getInt(TX_BASE_OFFSET_A_32) : txMemBase.getInt(TX_BASE_OFFSET_B_32);
-        if (TX_BASE_HEADER_SIZE + areaSize <= currentOffset) {
-            return TX_BASE_HEADER_SIZE;
-        }
-        int currentSizeSymbols = currentIsA ? txMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32) : txMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
-        int currentSizePartitions = currentIsA ? txMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32) : txMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32);
-        int currentSize = calculateTxRecordSize(currentSizeSymbols, currentSizePartitions);
-        return currentOffset + currentSize;
-    }
-
-    private int calculateWriteSize() {
-        // If by any action data is reset, clear attachedPartitions
-        if (maxTimestamp == Long.MIN_VALUE) {
-            attachedPartitions.clear();
-        }
-        return calculateTxRecordSize(symbolColumnCount * 8, attachedPartitions.size() * 8);
     }
 
     private void finishABHeader(int areaOffset, int bytesSymbols, int bytesPartitions, int commitMode) {
@@ -429,6 +437,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             // insert in the middle
             attachedPartitions.arrayCopy(index, index + LONGS_PER_TX_ATTACHED_PARTITION, size - index);
             partitionTableVersion++;
+        } else if (extensionListener != null) {
+            extensionListener.onTableExtended(partitionTimestamp);
         }
         initPartitionAt(index, partitionTimestamp, partitionSize);
     }
