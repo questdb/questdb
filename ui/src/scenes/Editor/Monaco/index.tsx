@@ -58,7 +58,6 @@ enum Command {
 
 const MonacoEditor = () => {
   const { editorRef, monacoRef, insertTextAtCursor } = useEditor()
-  const [editorReady, setEditorReady] = useState(false)
   const { loadPreferences, savePreferences } = usePreferences()
   const { quest } = useContext(QuestContext)
   const [request, setRequest] = useState<Request | undefined>()
@@ -319,40 +318,35 @@ const MonacoEditor = () => {
   }, [running, savePreferences])
 
   useEffect(() => {
-    if (tables) {
-      setEditorReady(true)
-      if (tables.length > 0 && monacoRef?.current) {
-        schemaCompletionHandle?.dispose()
-        setSchemaCompletionHandle(
-          monacoRef.current.languages.registerCompletionItemProvider(
-            QuestDBLanguageName,
-            createSchemaCompletionProvider(tables),
-          ),
-        )
-      }
+    if (monacoRef?.current) {
+      schemaCompletionHandle?.dispose()
+      setSchemaCompletionHandle(
+        monacoRef.current.languages.registerCompletionItemProvider(
+          QuestDBLanguageName,
+          createSchemaCompletionProvider(tables),
+        ),
+      )
     }
   }, [tables, monacoRef])
 
   return (
     <Content>
-      {editorReady && (
-        <Editor
-          beforeMount={handleEditorBeforeMount}
-          defaultLanguage={QuestDBLanguageName}
-          onMount={handleEditorDidMount}
-          options={{
-            fixedOverflowWidgets: true,
-            fontSize: 14,
-            fontFamily: theme.fontMonospace,
-            renderLineHighlight: "gutter",
-            minimap: {
-              enabled: false,
-            },
-            scrollBeyondLastLine: false,
-          }}
-          theme="vs-dark"
-        />
-      )}
+      <Editor
+        beforeMount={handleEditorBeforeMount}
+        defaultLanguage={QuestDBLanguageName}
+        onMount={handleEditorDidMount}
+        options={{
+          fixedOverflowWidgets: true,
+          fontSize: 14,
+          fontFamily: theme.fontMonospace,
+          renderLineHighlight: "gutter",
+          minimap: {
+            enabled: false,
+          },
+          scrollBeyondLastLine: false,
+        }}
+        theme="vs-dark"
+      />
       <Loader show={!!request || !tables} />
     </Content>
   )
