@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.*;
 import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.NullMemoryMR;
@@ -38,14 +38,15 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
+    protected final int pageFrameMinRows;
+    protected final int pageFrameMaxRows;
     private final DataFrameRecordCursor cursor;
     private final boolean followsOrderByAdvice;
     private final Function filter;
     private final boolean framingSupported;
     private final IntList columnIndexes;
     private final IntList columnSizes;
-    protected final int pageFrameMaxRows;
-    private TableReaderPageFrameCursor pageFrameCursor;
+    protected TableReaderPageFrameCursor pageFrameCursor;
 
     public DataFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -57,7 +58,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             @Nullable Function filter,
             boolean framingSupported,
             @NotNull IntList columnIndexes,
-            @Nullable IntList columnSizes
+            @NotNull IntList columnSizes
     ) {
         super(metadata, dataFrameCursorFactory);
 
@@ -67,6 +68,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         this.framingSupported = framingSupported;
         this.columnIndexes = columnIndexes;
         this.columnSizes = columnSizes;
+        this.pageFrameMinRows = configuration.getSqlPageFrameMinRows();
         this.pageFrameMaxRows = configuration.getSqlPageFrameMaxRows();
     }
 
@@ -74,10 +76,6 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     public void close() {
         Misc.free(filter);
         Misc.free(dataFrameCursorFactory);
-    }
-
-    public boolean hasDescendingOrder() {
-        return dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_DESC;
     }
 
     @Override
@@ -91,8 +89,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         if (pageFrameCursor != null) {
             return pageFrameCursor.of(dataFrameCursor);
         } else if (framingSupported) {
-            pageFrameCursor = new TableReaderPageFrameCursor(columnIndexes, columnSizes, pageFrameMaxRows);
-            return pageFrameCursor.of(dataFrameCursor);
+            return initPageFrameCursor(executionContext, dataFrameCursor);
         } else {
             return null;
         }
@@ -109,10 +106,19 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     }
 
     @Override
+    public boolean supportsUpdateRowId(CharSequence tableName) {
+        return dataFrameCursorFactory.supportTableRowId(tableName);
+    }
+
+    @Override
     public void toSink(CharSink sink) {
         sink.put("{\"name\":\"DataFrameRecordCursorFactory\", \"cursorFactory\":");
         dataFrameCursorFactory.toSink(sink);
         sink.put('}');
+    }
+
+    public boolean hasDescendingOrder() {
+        return dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_DESC;
     }
 
     @Override
@@ -127,35 +133,37 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         return cursor;
     }
 
-    @Override
-    public boolean supportsUpdateRowId(CharSequence tableName) {
-        return dataFrameCursorFactory.supportTableRowId(tableName);
+    protected TableReaderPageFrameCursor initPageFrameCursor(
+            SqlExecutionContext executionContext,
+            DataFrameCursor dataFrameCursor
+    ) {
+        if (pageFrameCursor == null) {
+            pageFrameCursor = new TableReaderPageFrameCursor(executionContext.getWorkerCount());
+        }
+        return pageFrameCursor.of(dataFrameCursor);
     }
 
-    public static class TableReaderPageFrameCursor implements PageFrameCursor {
+    public class TableReaderPageFrameCursor implements PageFrameCursor {
         private final LongList columnPageNextAddress = new LongList();
         private final LongList columnPageAddress = new LongList();
         private final TableReaderPageFrameCursor.TableReaderPageFrame frame = new TableReaderPageFrameCursor.TableReaderPageFrame();
         private final LongList topsRemaining = new LongList();
         private final IntList pages = new IntList();
         private final int columnCount;
-        private final IntList columnIndexes;
-        private final IntList columnSizes;
         private final LongList pageRowsRemaining = new LongList();
         private final LongList pageSizes = new LongList();
-        private final int pageFrameMaxRows;
+        private final int workerCount;
         private TableReader reader;
         private int reenterPartitionIndex;
+        private long currentPageFrameRowLimit;
         private DataFrameCursor dataFrameCursor;
         private long reenterPartitionLo;
         private long reenterPartitionHi;
         private boolean reenterDataFrame = false;
 
-        public TableReaderPageFrameCursor(IntList columnIndexes, IntList columnSizes, int pageFrameMaxRows) {
-            this.columnIndexes = columnIndexes;
-            this.columnSizes = columnSizes;
+        public TableReaderPageFrameCursor(int workerCount) {
             this.columnCount = columnIndexes.size();
-            this.pageFrameMaxRows = pageFrameMaxRows;
+            this.workerCount = workerCount;
         }
 
         @Override
@@ -176,7 +184,15 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             DataFrame dataFrame = dataFrameCursor.next();
             if (dataFrame != null) {
                 this.reenterPartitionIndex = dataFrame.getPartitionIndex();
-                return computeFrame(dataFrame.getRowLo(), dataFrame.getRowHi());
+                final long lo = dataFrame.getRowLo();
+                final long hi = dataFrame.getRowHi();
+                this.currentPageFrameRowLimit = Math.min(
+                        pageFrameMaxRows,
+                        Math.max(
+                                pageFrameMinRows, (hi - lo) / workerCount
+                        )
+                );
+                return computeFrame(lo, hi);
             }
             return null;
         }
@@ -215,7 +231,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
 
             // we may need to split this data frame either along "top" lines, or along
             // max page frame sizes; to do this, we calculate min top value from given position
-            long adjustedHi = Math.min(partitionHi, partitionLo + pageFrameMaxRows);
+            long adjustedHi = Math.min(partitionHi, partitionLo + currentPageFrameRowLimit);
             for (int i = 0; i < columnCount; i++) {
                 final int columnIndex = columnIndexes.getQuick(i);
                 long top = reader.getColumnTop(base, columnIndex);

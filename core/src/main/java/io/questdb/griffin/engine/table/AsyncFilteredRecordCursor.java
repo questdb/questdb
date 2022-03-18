@@ -167,11 +167,10 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                             .$(", valid=").$(frameSequence.isValid())
                             .$(", cursor=").$(cursor)
                             .I$();
-
                     this.rows = task.getRows();
                     this.frameRowCount = rows.size();
                     this.frameIndex = task.getFrameIndex();
-                    if (this.frameRowCount > 0) {
+                    if (this.frameRowCount > 0 && frameSequence.isValid()) {
                         this.frameRowIndex = 0;
                         record.setFrameIndex(task.getFrameIndex());
                         break;

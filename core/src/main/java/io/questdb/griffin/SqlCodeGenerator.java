@@ -1078,6 +1078,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext,
             int timestampIndex,
             @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizes,
             @NotNull LongList prefixes
     ) throws SqlException {
         final DataFrameCursorFactory dataFrameCursorFactory;
@@ -1173,7 +1174,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 null,
                                 false,
                                 columnIndexes,
-                                null
+                                columnSizes
                         );
                     }
 
@@ -1366,7 +1367,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // we could have two possibilities:
                 // 1. if we only have one column to order by - the cursor would already be ordered
                 //    by timestamp (either ASC or DESC); we have nothing to do
-                // 2. metadata of the new cursor will have timestamp
+                // 2. metadata of the new cursor will have the timestamp
 
                 RecordMetadata orderedMetadata;
                 if (timestampIndex != -1) {
@@ -2770,6 +2771,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             executionContext,
                             readerTimestampIndex,
                             columnIndexes,
+                            columnSizes,
                             prefixes
                     );
                 }

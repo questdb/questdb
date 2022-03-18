@@ -38,7 +38,6 @@ import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
-import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.log.Log;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -159,6 +158,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlGroupByMapCapacity;
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlBindVariablePoolSize;
+    private final int sqlPageFrameMinRows;
     private final int sqlPageFrameMaxRows;
     private final int sqlJitMode;
     private final int sqlJitIRMemoryPageSize;
@@ -708,7 +708,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
             this.sqlDistinctTimestampKeyCapacity = getInt(properties, env, "cairo.sql.distinct.timestamp.key.capacity", 512);
             this.sqlDistinctTimestampLoadFactor = getDouble(properties, env, "cairo.sql.distinct.timestamp.load.factor", 0.5);
-            this.sqlPageFrameMaxRows = getInt(properties, env, "cairo.sql.page.frame.max.rows", 20_000_000);
+            this.sqlPageFrameMinRows = getInt(properties, env, "cairo.sql.page.frame.min.rows", 1_000);
+            this.sqlPageFrameMaxRows = getInt(properties, env, "cairo.sql.page.frame.max.rows", 1_000_000);
 
             this.sqlJitMode = getSqlJitMode(properties, env);
             this.sqlJitIRMemoryPageSize = getIntSize(properties, env, "cairo.sql.jit.ir.memory.page.size", 8 * 1024);
@@ -2139,6 +2140,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlModelPoolCapacity() {
             return sqlModelPoolCapacity;
+        }
+
+        @Override
+        public int getSqlPageFrameMinRows() {
+            return sqlPageFrameMinRows;
         }
 
         @Override

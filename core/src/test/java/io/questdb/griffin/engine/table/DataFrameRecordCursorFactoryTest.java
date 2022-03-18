@@ -91,12 +91,22 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 }
                 SymbolIndexRowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, true, BitmapIndexReader.DIR_FORWARD, null);
                 FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(engine, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION);
+
                 // entity index
                 final IntList columnIndexes = new IntList();
-                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                    columnIndexes.add(i);
-                }
-                DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(configuration, metadata, dataFrameFactory, symbolIndexRowCursorFactory, false, null, false, columnIndexes, null);
+                final IntList columnSizes = new IntList();
+                populateColumnTypes(metadata, columnIndexes, columnSizes);
+                DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(
+                        configuration,
+                        metadata,
+                        dataFrameFactory,
+                        symbolIndexRowCursorFactory,
+                        false,
+                        null,
+                        false,
+                        columnIndexes,
+                        columnSizes
+                );
                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Record record = cursor.getRecord();
@@ -178,17 +188,29 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
 
                 final IntList columnIndexes = new IntList();
                 final IntList columnSizes = new IntList();
-                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                    columnIndexes.add(i);
-                    int type = metadata.getColumnType(i);
-                    int typeSize = ColumnType.sizeOf(type);
-                    columnSizes.add((Numbers.msb(typeSize)));
-                }
+                populateColumnTypes(metadata, columnIndexes, columnSizes);
 
                 FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(engine, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION);
                 DataFrameRowCursorFactory rowCursorFactory = new DataFrameRowCursorFactory(); // stub RowCursorFactory
-                DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(configuration, metadata, dataFrameFactory, rowCursorFactory, false, null, true, columnIndexes, columnSizes);
-                SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
+                DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(
+                        configuration,
+                        metadata,
+                        dataFrameFactory,
+                        rowCursorFactory,
+                        false,
+                        null,
+                        true,
+                        columnIndexes,
+                        columnSizes
+                );
+
+                SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        null,
+                        null,
+                        -1,
+                        null
+                );
 
                 Assert.assertTrue(factory.supportPageFrameCursor());
 
@@ -213,5 +235,12 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 Assert.assertEquals(expectedFrameCount, frameCount);
             }
         });
+    }
+
+    private void populateColumnTypes(RecordMetadata metadata, IntList columnIndexes, IntList columnSizes) {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            columnIndexes.add(i);
+            columnSizes.add(Numbers.msb(ColumnType.sizeOf(metadata.getColumnType(i))));
+        }
     }
 }

@@ -177,13 +177,15 @@ public class DirectLongList implements Mutable, Closeable {
 
     // desired capacity in bytes (not count of LONG values)
     private void setCapacityBytes(long capacity) {
-        final long oldCapacity = this.capacity;
-        this.capacity = capacity;
-        long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);
-        this.pos = address + (this.pos - this.start);
-        this.address = address;
-        this.start = address;
-        this.limit = address + capacity;
-        LOG.debug().$("resized [old=").$(oldCapacity).$(", new=").$(this.capacity).$(']').$();
+        if (this.capacity != capacity) {
+            final long oldCapacity = this.capacity;
+            this.capacity = capacity;
+            long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);
+            this.pos = address + (this.pos - this.start);
+            this.address = address;
+            this.start = address;
+            this.limit = address + capacity;
+            LOG.debug().$("resized [old=").$(oldCapacity).$(", new=").$(this.capacity).$(']').$();
+        }
     }
 }

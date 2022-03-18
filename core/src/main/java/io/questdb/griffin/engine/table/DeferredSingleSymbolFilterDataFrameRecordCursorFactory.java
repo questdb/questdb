@@ -31,17 +31,13 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends DataFrameRecordCursorFactory {
     private final int symbolColumnIndex;
     private final SingleSymbolFilter symbolFilter;
-    private final IntList columnIndexes;
-    private final IntList columnSizes;
     private final Function symbolFunc;
     private int symbolKey;
     private boolean convertedToFrame;
-    private TableReaderPageFrameCursor pageFrameCursor;
 
     public DeferredSingleSymbolFilterDataFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -52,7 +48,7 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
             DataFrameCursorFactory dataFrameCursorFactory,
             boolean followsOrderByAdvice,
             @NotNull IntList columnIndexes,
-            @Nullable IntList columnSizes
+            @NotNull IntList columnSizes
     ) {
         super(
                 configuration,
@@ -67,9 +63,7 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
         );
         this.symbolFunc = symbolFunc;
         this.symbolKey = SymbolTable.VALUE_NOT_FOUND;
-        this.columnIndexes = columnIndexes;
         this.symbolColumnIndex = columnIndexes.indexOf(tableSymColIndex, 0, columnIndexes.size());
-        this.columnSizes = columnSizes;
 
         this.symbolFilter = new SingleSymbolFilter() {
             @Override
@@ -109,11 +103,7 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         assert this.convertedToFrame;
         DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext);
-        if (pageFrameCursor == null) {
-            pageFrameCursor = new TableReaderPageFrameCursor(columnIndexes, columnSizes, pageFrameMaxRows);
-        }
-
-        pageFrameCursor.of(dataFrameCursor);
+        initPageFrameCursor(executionContext, dataFrameCursor);
         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
             final CharSequence symbol = symbolFunc.getStr(null);
             final StaticSymbolTable symbolMapReader = pageFrameCursor.getSymbolTable(symbolColumnIndex);
