@@ -28,7 +28,9 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCM;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -45,7 +47,7 @@ public class UpdateExecution implements Closeable {
     private final FilesFacade ff;
     private final int rootLen;
     private final IntList updateColumnIndexes = new IntList();
-    private final ObjList<MemoryCMARW> baseMemory = new ObjList<>();
+    private final ObjList<MemoryCMR> baseMemory = new ObjList<>();
     private final ObjList<MemoryCMARW> updateMemory = new ObjList<>();
     private final long dataAppendPageSize;
     private final long fileOpenOpts;
@@ -90,7 +92,7 @@ public class UpdateExecution implements Closeable {
         }
 
         // Create update memory list of all columns to be updated
-        initUpdateMemory(updateColumnCount);
+        initUpdateMemory(writerMetadata, updateColumnCount);
 
         // Start execution frame by frame
         RecordCursorFactory updateStatementDataCursorFactory = updateStatement.getUpdateToDataCursorFactory();
@@ -154,10 +156,10 @@ public class UpdateExecution implements Closeable {
                         startPartitionRowId);
             }
         } finally {
-            for (int i = 0; i < updateMemory.size(); i++) {
-                baseMemory.getQuick(i).close(false);
-                updateMemory.getQuick(i).close(true);
-            }
+            Misc.freeObjList(baseMemory);
+            Misc.freeObjList(updateMemory);
+            baseMemory.clear();
+            updateMemory.clear();
         }
         if (currentPartitionIndex > -1) {
             tableWriter.commit();
@@ -165,111 +167,30 @@ public class UpdateExecution implements Closeable {
         }
     }
 
-    private void updateColumnValues(
-            RecordMetadata metadata,
-            IntList updateColumnIndexes,
-            int columnCount,
-            ObjList<MemoryCMARW> baseMemory,
-            ObjList<MemoryCMARW> updateMemory,
-            long startPartitionRowId
-    ) throws SqlException {
-        updateColumnValues(metadata, updateColumnIndexes, columnCount, baseMemory, updateMemory, startPartitionRowId, -1, null);
-    }
+    private void initUpdateMemory(RecordMetadata metadata, int columnCount) {
+        for (int i = updateMemory.size(); i < columnCount; i++) {
+            int columnType = metadata.getColumnType(updateColumnIndexes.get(i));
+            switch (columnType) {
+                case ColumnType.STRING:
+                case ColumnType.BINARY:
+                    // Primary and secondary
+                    baseMemory.add(Vm.getCMRInstance());
+                    baseMemory.add(Vm.getCMRInstance());
+                    updateMemory.add(Vm.getCMARWInstance());
+                    updateMemory.add(Vm.getCMARWInstance());
+                    break;
+                default:
+                    baseMemory.add(Vm.getCMRInstance());
+                    baseMemory.add(null);
+                    updateMemory.add(Vm.getCMARWInstance());
+                    updateMemory.add(null);
+                    break;
 
-    private void updateColumnValues(
-            RecordMetadata metadata,
-            IntList updateColumnIndexes,
-            int columnCount,
-            ObjList<MemoryCMARW> baseMemory,
-            ObjList<MemoryCMARW> updateMemory,
-            long startPartitionRowId,
-            long partitionRowId,
-            Record masterRecord
-    ) throws SqlException {
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            MemoryCMARW baseColumn = baseMemory.get(columnIndex);
-            MemoryCMARW updatedColumn = updateMemory.get(columnIndex);
-
-            int columnType = metadata.getColumnType(updateColumnIndexes.get(columnIndex));
-            int typeSize = ColumnType.sizeOf(columnType);
-            if (typeSize > 0) {
-                long addr = baseColumn.addressOf(startPartitionRowId * typeSize);
-                if (masterRecord != null) {
-                    updatedColumn.putBlockOfBytes(addr, (partitionRowId - startPartitionRowId) * typeSize);
-                    switch (ColumnType.tagOf(columnType)) {
-                        case ColumnType.INT:
-                            updatedColumn.putInt(masterRecord.getInt(columnIndex));
-                            break;
-                        case ColumnType.FLOAT:
-                            updatedColumn.putFloat(masterRecord.getFloat(columnIndex));
-                            break;
-                        case ColumnType.LONG:
-                            updatedColumn.putLong(masterRecord.getLong(columnIndex));
-                            break;
-                        case ColumnType.TIMESTAMP:
-                            updatedColumn.putLong(masterRecord.getTimestamp(columnIndex));
-                            break;
-                        case ColumnType.DATE:
-                            updatedColumn.putLong(masterRecord.getDate(columnIndex));
-                            break;
-                        case ColumnType.DOUBLE:
-                            updatedColumn.putDouble(masterRecord.getDouble(columnIndex));
-                            break;
-                        case ColumnType.SHORT:
-                            updatedColumn.putShort(masterRecord.getShort(columnIndex));
-                            break;
-                        case ColumnType.CHAR:
-                            updatedColumn.putChar(masterRecord.getChar(columnIndex));
-                            break;
-                        case ColumnType.BYTE:
-                        case ColumnType.BOOLEAN:
-                            updatedColumn.putByte(masterRecord.getByte(columnIndex));
-                            break;
-                        case ColumnType.GEOBYTE:
-                            updatedColumn.putByte(masterRecord.getGeoByte(columnIndex));
-                            break;
-                        case ColumnType.GEOSHORT:
-                            updatedColumn.putShort(masterRecord.getGeoShort(columnIndex));
-                            break;
-                        case ColumnType.GEOINT:
-                            updatedColumn.putInt(masterRecord.getGeoInt(columnIndex));
-                            break;
-                        case ColumnType.GEOLONG:
-                            updatedColumn.putLong(masterRecord.getGeoLong(columnIndex));
-                            break;
-                        default:
-                            throw SqlException.$(0, "Column type ")
-                                    .put(ColumnType.nameOf(columnType))
-                                    .put(" not supported for updates");
-                    }
-                } else {
-                    updatedColumn.putBlockOfBytes(addr, baseColumn.size() - (startPartitionRowId * typeSize));
-                }
-            } else {
-                // add support for variable length types
-                throw SqlException.$(0, "Column type ")
-                        .put(ColumnType.nameOf(columnType))
-                        .put(" is not fixed length, UPDATE is not supported");
             }
         }
     }
 
-    private void initUpdateMemory(int columnCount) {
-        for(int i = updateMemory.size(); i < columnCount; i++) {
-            baseMemory.add(Vm.getCMARWInstance());
-            updateMemory.add(Vm.getCMARWInstance());
-        }
-    }
-
-    private void openPartitionColumnsForWrite(TableWriter tableWriter, ObjList<MemoryCMARW> updateMemory, int partitionIndex, IntList updateColumnIndexes) {
-        openPartitionColumns(tableWriter, updateMemory, partitionIndex, updateColumnIndexes, true);
-    }
-
-    private void openPartitionColumnsForRead(TableWriter tableWriter, ObjList<MemoryCMARW> baseMemory, int partitionIndex, IntList updateColumnIndexes) {
-        openPartitionColumns(tableWriter, baseMemory, partitionIndex, updateColumnIndexes, false);
-    }
-
-    private void openPartitionColumns(TableWriter tableWriter, ObjList<MemoryCMARW> memList, int partitionIndex, IntList updateColumnIndexes, boolean forWrite) {
+    private void openPartitionColumns(TableWriter tableWriter, ObjList<? extends MemoryCM> memList, int partitionIndex, IntList updateColumnIndexes, boolean forWrite) {
         long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
         RecordMetadata metadata = tableWriter.getMetadata();
         try {
@@ -280,8 +201,8 @@ public class UpdateExecution implements Closeable {
             for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
                 int columnIndex = updateColumnIndexes.get(i);
                 CharSequence name = metadata.getColumnName(columnIndex);
-                MemoryCMARW colMem = memList.get(i);
-                colMem.close(forWrite);
+                MemoryCMR colMem = (MemoryCMR) memList.get(2 * i);
+                colMem.close();
                 if (forWrite) {
                     tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex);
                 }
@@ -297,6 +218,107 @@ public class UpdateExecution implements Closeable {
             }
         } finally {
             path.trimTo(rootLen);
+        }
+    }
+
+    private void openPartitionColumnsForRead(TableWriter tableWriter, ObjList<? extends MemoryCM> baseMemory, int partitionIndex, IntList updateColumnIndexes) {
+        openPartitionColumns(tableWriter, baseMemory, partitionIndex, updateColumnIndexes, false);
+    }
+
+    private void openPartitionColumnsForWrite(TableWriter tableWriter, ObjList<MemoryCMARW> updateMemory, int partitionIndex, IntList updateColumnIndexes) {
+        openPartitionColumns(tableWriter, updateMemory, partitionIndex, updateColumnIndexes, true);
+    }
+
+    private void updateColumnValues(
+            RecordMetadata metadata,
+            IntList updateColumnIndexes,
+            int columnCount,
+            ObjList<MemoryCMR> baseMemory,
+            ObjList<MemoryCMARW> updateMemory,
+            long startPartitionRowId
+    ) throws SqlException {
+        updateColumnValues(metadata, updateColumnIndexes, columnCount, baseMemory, updateMemory, startPartitionRowId, -1, null);
+    }
+
+    private void updateColumnValues(
+            RecordMetadata metadata,
+            IntList updateColumnIndexes,
+            int columnCount,
+            ObjList<MemoryCMR> baseMemory,
+            ObjList<MemoryCMARW> updateMemory,
+            long startPartitionRowId,
+            long partitionRowId,
+            Record masterRecord
+    ) throws SqlException {
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            MemoryCMR basePrimaryColumnFile = baseMemory.get(2 * columnIndex);
+            MemoryCMARW updatedPrimaryColumnFile = updateMemory.get(2 * columnIndex);
+//            MemoryCMR baseVariableColumnFile = baseMemory.get(2 * columnIndex + 1);
+//            MemoryCMARW updatedVariableColumnFile = updateMemory.get(2 * columnIndex + 1);
+
+            int columnType = metadata.getColumnType(updateColumnIndexes.get(columnIndex));
+            int typeSize = ColumnType.sizeOf(columnType);
+            if (typeSize > 0) {
+                long addr = basePrimaryColumnFile.addressOf(startPartitionRowId * typeSize);
+                if (masterRecord != null) {
+                    if (partitionRowId > startPartitionRowId) {
+                        updatedPrimaryColumnFile.putBlockOfBytes(addr, (partitionRowId - startPartitionRowId) * typeSize);
+                    }
+                    switch (ColumnType.tagOf(columnType)) {
+                        case ColumnType.INT:
+                            updatedPrimaryColumnFile.putInt(masterRecord.getInt(columnIndex));
+                            break;
+                        case ColumnType.FLOAT:
+                            updatedPrimaryColumnFile.putFloat(masterRecord.getFloat(columnIndex));
+                            break;
+                        case ColumnType.LONG:
+                            updatedPrimaryColumnFile.putLong(masterRecord.getLong(columnIndex));
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            updatedPrimaryColumnFile.putLong(masterRecord.getTimestamp(columnIndex));
+                            break;
+                        case ColumnType.DATE:
+                            updatedPrimaryColumnFile.putLong(masterRecord.getDate(columnIndex));
+                            break;
+                        case ColumnType.DOUBLE:
+                            updatedPrimaryColumnFile.putDouble(masterRecord.getDouble(columnIndex));
+                            break;
+                        case ColumnType.SHORT:
+                            updatedPrimaryColumnFile.putShort(masterRecord.getShort(columnIndex));
+                            break;
+                        case ColumnType.CHAR:
+                            updatedPrimaryColumnFile.putChar(masterRecord.getChar(columnIndex));
+                            break;
+                        case ColumnType.BYTE:
+                        case ColumnType.BOOLEAN:
+                            updatedPrimaryColumnFile.putByte(masterRecord.getByte(columnIndex));
+                            break;
+                        case ColumnType.GEOBYTE:
+                            updatedPrimaryColumnFile.putByte(masterRecord.getGeoByte(columnIndex));
+                            break;
+                        case ColumnType.GEOSHORT:
+                            updatedPrimaryColumnFile.putShort(masterRecord.getGeoShort(columnIndex));
+                            break;
+                        case ColumnType.GEOINT:
+                            updatedPrimaryColumnFile.putInt(masterRecord.getGeoInt(columnIndex));
+                            break;
+                        case ColumnType.GEOLONG:
+                            updatedPrimaryColumnFile.putLong(masterRecord.getGeoLong(columnIndex));
+                            break;
+                        default:
+                            throw SqlException.$(0, "Column type ")
+                                    .put(ColumnType.nameOf(columnType))
+                                    .put(" not supported for updates");
+                    }
+                } else {
+                    updatedPrimaryColumnFile.putBlockOfBytes(addr, basePrimaryColumnFile.size() - (startPartitionRowId * typeSize));
+                }
+            } else {
+                // add support for variable length types
+                throw SqlException.$(0, "Column type ")
+                        .put(ColumnType.nameOf(columnType))
+                        .put(" is not fixed length, UPDATE is not supported");
+            }
         }
     }
 }
