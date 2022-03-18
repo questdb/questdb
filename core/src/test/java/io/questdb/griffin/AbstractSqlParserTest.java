@@ -143,10 +143,10 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
             ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
             Assert.assertEquals(model.getModelType(), modelType);
             ((Sinkable) model).toSink(sink);
+            TestUtils.assertEquals(expected, sink);
             if (model instanceof QueryModel && model.getModelType() == ExecutionModel.QUERY) {
                 validateTopDownColumns((QueryModel) model);
             }
-            TestUtils.assertEquals(expected, sink);
         }, tableModels);
     }
 

@@ -41,6 +41,15 @@ import org.junit.Test;
 public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
+    public void testPushWhereThroughUnionAll() throws SqlException {
+        assertQuery(
+                "select-choose sm from (select-group-by [sum(x) sm] sum(x) sm from (select-choose [x] x from (select [x] from t1) union all select-choose [x] x from (select [x] from t2)) where sm = 1)",
+                "select * from ( select sum(x) as sm from (select * from t1 union all select * from t2 ) ) where sm = 1",
+                modelOf("t1").col("x", ColumnType.INT),
+                modelOf("t2").col("x", ColumnType.INT));
+    }
+
+    @Test
     public void test2Between() throws Exception {
         assertQuery("select-choose t from (select [t, tt] from x where t between ('2020-01-01','2021-01-02') and tt between ('2021-01-02','2021-01-31'))",
                 "select t from x where t between '2020-01-01' and '2021-01-02' and tt between '2021-01-02' and '2021-01-31'",
@@ -3560,7 +3569,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinTimestampPropagationWhenTimestampNotSelected() throws SqlException {
         assertQuery(
-                "select-distinct id from (select-choose [id] id from (select-choose [a.id id] a.created ts_stop, a.id id, b.created ts_start, b.id id1 from (select [id, created] from (select-choose [id, created] id, created, event, timestamp from (select-choose [created, id] id, created, event, timestamp from (select [created, id, event] from telemetry_users timestamp (timestamp) where event = 101 and id != '0x05ab1e873d165b00000005743f2c17') order by created) timestamp (created)) a lt join select [id, created] from (select-choose [id] id, created, event, timestamp from (select-choose [created, id] id, created, event, timestamp from (select [created, id, event] from telemetry_users timestamp (timestamp) where event = 100) order by created) timestamp (created)) b on b.id = a.id post-join-where a.created - b.created > 10000000000) a))",
+                "select-distinct [id] id from (select-choose [id] id from (select-choose [a.id id] a.created ts_stop, a.id id, b.created ts_start, b.id id1 from (select [id, created] from (select-choose [id, created] id, created, event, timestamp from (select-choose [created, id] id, created, event, timestamp from (select [created, id, event] from telemetry_users timestamp (timestamp) where event = 101 and id != '0x05ab1e873d165b00000005743f2c17') order by created) timestamp (created)) a lt join select [id, created] from (select-choose [id] id, created, event, timestamp from (select-choose [created, id] id, created, event, timestamp from (select [created, id, event] from telemetry_users timestamp (timestamp) where event = 100) order by created) timestamp (created)) b on b.id = a.id post-join-where a.created - b.created > 10000000000) a))",
                 "with \n" +
                         "    starts as ((telemetry_users where event = 100 order by created) timestamp(created)),\n" +
                         "    stops as ((telemetry_users where event = 101 order by created) timestamp(created))\n" +
@@ -4690,10 +4699,22 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testOrderByPropagation() throws SqlException {
         assertQuery(
-                "select-choose id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType from (select-choose [C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp] C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp from (select [contactId] from (select-distinct [contactId] contactId from (select-choose [contactId] contactId from (select-choose [contactId, groupId] contactId, groupId, timestamp from (select [groupId, contactId] from contact_events latest on timestamp partition by _id) where groupId = 'qIqlX6qESMtTQXikQA46') eventlist) except select-choose [_id contactId] _id contactId from (select-choose [_id, notRealType] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [notRealType, _id] from contacts latest on timestamp partition by _id) where notRealType = 'bot') contactlist) C join select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from (select-choose [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from contacts latest on timestamp partition by _id)) contactlist on contactlist._id = C.contactId) C order by timestamp desc)",
+                "select-choose id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType from " +
+                        "(select-choose [C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp] C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp from " +
+                        "(select [contactId] from (select-distinct [contactId] contactId from (select-choose [contactId] contactId from " +
+                        "(select-choose [contactId, groupId] contactId, groupId, timestamp from " +
+                        "(select [groupId, contactId] from contact_events latest on timestamp partition by contactId) where groupId = 'qIqlX6qESMtTQXikQA46') eventlist) " +
+                        "except " +
+                        "select-choose [_id contactId] _id contactId from " +
+                        "(select-choose [_id, notRealType] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from " +
+                        "(select [notRealType, _id] from contacts latest on timestamp partition by _id) where notRealType = 'bot') contactlist) C " +
+                        "join " +
+                        "select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from " +
+                        "(select-choose [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from " +
+                        "(select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from contacts latest on timestamp partition by _id)) contactlist on contactlist._id = C.contactId) C order by timestamp desc)",
                 "WITH \n" +
                         "contactlist AS (SELECT * FROM contacts LATEST ON timestamp PARTITION BY _id ORDER BY timestamp),\n" +
-                        "eventlist AS (SELECT * FROM contact_events LATEST ON timestamp PARTITION BY _id ORDER BY timestamp),\n" +
+                        "eventlist AS (SELECT * FROM contact_events LATEST ON timestamp PARTITION BY contactId ORDER BY timestamp),\n" +
                         "C AS (\n" +
                         "    SELECT DISTINCT contactId FROM eventlist WHERE groupId = 'qIqlX6qESMtTQXikQA46'\n" +
                         "    EXCEPT\n" +
@@ -4961,7 +4982,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryExceptQuery() throws SqlException {
         assertQuery(
-                "select-choose a, b, c, x, y, z from (select [a, b, c, x, y, z] from x) except select-choose a, b, c, x, y, z from (select [a, b, c, x, y, z] from y)",
+                "select-choose [a, b, c, x, y, z] a, b, c, x, y, z from (select [a, b, c, x, y, z] from x) except select-choose [a, b, c, x, y, z] a, b, c, x, y, z from (select [a, b, c, x, y, z] from y)",
                 "select * from x except select* from y",
                 modelOf("x")
                         .col("a", ColumnType.INT)
@@ -4983,7 +5004,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryIntersectQuery() throws SqlException {
         assertQuery(
-                "select-choose a, b, c, x, y, z from (select [a, b, c, x, y, z] from x) intersect select-choose a, b, c, x, y, z from (select [a, b, c, x, y, z] from y)",
+                "select-choose [a, b, c, x, y, z] a, b, c, x, y, z from (select [a, b, c, x, y, z] from x) intersect select-choose [a, b, c, x, y, z] a, b, c, x, y, z from (select [a, b, c, x, y, z] from y)",
                 "select * from x intersect select* from y",
                 modelOf("x")
                         .col("a", ColumnType.INT)
@@ -5236,7 +5257,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectAfterOrderBy() throws SqlException {
-        assertQuery("select-distinct Schema from (select-choose [Schema] Schema from (select-virtual [Schema, Name] Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relnamespace, relkind, oid] from pg_catalog.pg_class() c outer join select [nspname, oid] from pg_catalog.pg_namespace() n on n.oid = c.relnamespace post-join-where n.nspname != 'pg_catalog' and n.nspname != 'information_schema' and n.nspname !~ '^pg_toast' where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid)) c) c order by Schema, Name))",
+        assertQuery("select-distinct [Schema] Schema from (select-choose [Schema] Schema from (select-virtual [Schema, Name] Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relnamespace, relkind, oid] from pg_catalog.pg_class() c outer join select [nspname, oid] from pg_catalog.pg_namespace() n on n.oid = c.relnamespace post-join-where n.nspname != 'pg_catalog' and n.nspname != 'information_schema' and n.nspname !~ '^pg_toast' where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid)) c) c order by Schema, Name))",
                 "select distinct Schema from \n" +
                         "(SELECT n.nspname                              as \"Schema\",\n" +
                         "       c.relname                              as \"Name\",\n" +
@@ -5358,7 +5379,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectDistinct() throws SqlException {
         assertQuery(
-                "select-distinct a, b from (select-choose [a, b] a, b from (select [a, b] from tab))",
+                "select-distinct [a, b] a, b from (select-choose [a, b] a, b from (select [a, b] from tab))",
                 "select distinct a, b from tab",
                 modelOf("tab")
                         .col("a", ColumnType.STRING)
@@ -5369,7 +5390,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectDistinctArithmetic() throws SqlException {
         assertQuery(
-                "select-distinct column from (select-virtual [a + b column] a + b column from (select [b, a] from tab))",
+                "select-distinct [column] column from (select-virtual [a + b column] a + b column from (select [b, a] from tab))",
                 "select distinct a + b from tab",
                 modelOf("tab")
                         .col("a", ColumnType.STRING)
@@ -5380,7 +5401,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectDistinctGroupByFunction() throws SqlException {
         assertQuery(
-                "select-distinct a, bb from (select-group-by [a, sum(b) bb] a, sum(b) bb from (select [a, b] from tab))",
+                "select-distinct [a, bb] a, bb from (select-group-by [a, sum(b) bb] a, sum(b) bb from (select [a, b] from tab))",
                 "select distinct a, sum(b) bb from tab",
                 modelOf("tab")
                         .col("a", ColumnType.STRING)
@@ -5391,7 +5412,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectDistinctGroupByFunctionArithmetic() throws SqlException {
         assertQuery(
-                "select-distinct a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from (select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1 from (select [a, c, b] from tab)))",
+                "select-distinct [a, bb] a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from (select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1 from (select [a, c, b] from tab)))",
                 "select distinct a, sum(b)+sum(c) bb from tab",
                 modelOf("tab")
                         .col("a", ColumnType.STRING)
@@ -5402,7 +5423,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectDistinctGroupByFunctionArithmeticLimit() throws SqlException {
-        assertQuery("select-distinct a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from (select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1 from (select [a, c, b] from tab))) limit 10",
+        assertQuery("select-distinct [a, bb] a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from (select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1 from (select [a, c, b] from tab))) limit 10",
                 "select distinct a, sum(b)+sum(c) bb from tab limit 10",
                 modelOf("tab")
                         .col("a", ColumnType.STRING)
@@ -5413,7 +5434,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectDistinctGroupByFunctionArithmeticOrderByLimit() throws SqlException {
-        assertQuery("select-distinct a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from " +
+        assertQuery("select-distinct [a, bb] a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from " +
                         "(select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1 " +
                         "from (select [a, c, b] from tab))) order by a limit 10",
                 "select distinct a, sum(b)+sum(c) bb from tab order by a limit 10",
@@ -5426,7 +5447,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectDistinctUnion() throws SqlException {
-        assertQuery("select-choose c from (select-distinct [c] c, b from (select-choose [a c] a c, b from (select [a] from trips)) union select-distinct [c] c, b from (select-choose [c] c, d b from (select [c] from trips)))",
+        assertQuery("select-choose c from (" +
+                        "select-distinct [c, b] c, b from (select-choose [a c, b] a c, b from (select [a, b] from trips)) " +
+                        "union all " +
+                        "select-distinct [c, b] c, b from (select-choose [c, d b] c, d b from (select [c, d] from trips)))",
                 "select c from (select distinct a c, b from trips union all select distinct c, d b from trips)",
                 modelOf("trips")
                         .col("a", ColumnType.INT)
@@ -6205,7 +6229,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testUnion() throws SqlException {
-        assertQuery("select-choose x from (select [x] from a) union select-choose y from (select [y] from b) union select-choose z from (select [z] from c)",
+        assertQuery("select-choose [x] x from (select [x] from a) union select-choose [y] y from (select [y] from b) union select-choose [z] z from (select [z] from c)",
                 "select * from a union select * from b union select * from c",
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("y", ColumnType.INT),
@@ -6216,7 +6240,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testUnionAllInSubQuery() throws SqlException {
         assertQuery(
-                "select-choose x from (select-choose [x] x from (select [x] from a) union select-choose y from (select [y] from b) union all select-choose z from (select [z] from c))",
+                "select-choose x from (select-choose [x] x from (select [x] from a) union select-choose [y] y from (select [y] from b) union all select-choose [z] z from (select [z] from c))",
                 "select x from (select * from a union select * from b union all select * from c)",
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("y", ColumnType.INT),
@@ -6265,7 +6289,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testUnionJoinReorder3() throws Exception {
         assertQuery(
-                "select-virtual 1 1, 2 2, 3 3, 4 4, 5 5, 6 6, 7 7, 8 8 from (long_sequence(1)) union select-choose orders.orderId orderId, customers.customerId customerId, shippers.shipper shipper, d.orderId orderId1, d.productId productId, suppliers.supplier supplier, products.productId productId1, products.supplier supplier1 from (select [orderId] from orders join select [shipper] from shippers on shippers.shipper = orders.orderId join (select [orderId, productId] from orderDetails d where productId = orderId) d on d.productId = shippers.shipper join select [productId, supplier] from products on products.productId = d.productId join select [supplier] from suppliers on suppliers.supplier = products.supplier cross join select [customerId] from customers const-where 1 = 1)",
+                "select-virtual [1 1, 2 2, 3 3, 4 4, 5 5, 6 6, 7 7, 8 8] 1 1, 2 2, 3 3, 4 4, 5 5, 6 6, 7 7, 8 8 from (long_sequence(1)) union " +
+                        "select-choose [orders.orderId orderId, customers.customerId customerId, shippers.shipper shipper, d.orderId orderId1, d.productId productId, suppliers.supplier supplier, products.productId productId1, products.supplier supplier1] " +
+                        "orders.orderId orderId, customers.customerId customerId, shippers.shipper shipper, d.orderId orderId1, d.productId productId, suppliers.supplier supplier, products.productId productId1, products.supplier supplier1 " +
+                        "from (select [orderId] from orders join select [shipper] " +
+                        "from shippers on shippers.shipper = orders.orderId join (select [orderId, productId] " +
+                        "from orderDetails d where productId = orderId) d on d.productId = shippers.shipper " +
+                        "join select [productId, supplier] from products on products.productId = d.productId join select [supplier] " +
+                        "from suppliers on suppliers.supplier = products.supplier cross " +
+                        "join select [customerId] from customers const-where 1 = 1)",
                 "select 1, 2, 3, 4, 5, 6, 7, 8 from long_sequence(1)" +
                         " union " +
                         "orders" +
@@ -6287,7 +6319,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testUnionKeepOrderBy() throws SqlException {
         assertQuery(
-                "select-choose x from (select-choose [x] x from (select [x] from a) union select-choose y from (select [y] from b) union all select-choose z from (select [z] from c order by z))",
+                "select-choose x from (select-choose [x] x from (select [x] from a) union select-choose [y] y from (select [y] from b) union all select-choose [z] z from (select [z] from c order by z))",
                 "select x from (select * from a union select * from b union all select * from c order by z)",
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("y", ColumnType.INT),
@@ -6298,7 +6330,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testUnionKeepOrderByIndex() throws SqlException {
         assertQuery(
-                "select-choose x from (select-choose [x] x from (select [x] from a) union select-choose y from (select [y] from b) union all select-choose z from (select [z] from c order by z))",
+                "select-choose x from (select-choose [x] x from (select [x] from a) union select-choose [y] y from (select [y] from b) union all select-choose [z] z from (select [z] from c order by z))",
                 "select x from (select * from a union select * from b union all select * from c order by 1)",
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("y", ColumnType.INT),
@@ -6309,8 +6341,23 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testUnionKeepOrderByWhenSampleByPresent() throws SqlException {
         assertQuery(
-                "select-choose x from (select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-virtual 'a' k, sum from (select-group-by [sum(z) sum] sum(z) sum from (select-choose [t, z] z, t from (select [t, z] from c order by t)) timestamp (t) sample by 6h)) order by x",
-                "select x from (select * from a union select * from b union all select 'a' k, sum(z) from (c order by t) timestamp(t) sample by 6h) order by x",
+                "select-choose x from " +
+                        "(select-choose [x, t] x, t from (select [x, t] from a) " +
+                        "union " +
+                        "select-choose [y, t] y, t from (select [y, t] from b) " +
+                        "union all " +
+                        "select-virtual ['a' k, sum] 'a' k, sum from " +
+                        "(select-group-by [sum(z) sum] sum(z) sum from " +
+                        "(select-choose [t, z] z, t from (select [t, z] from c order by t)) " +
+                        "timestamp (t) sample by 6h)" +
+                        ") order by x",
+                "select x from " +
+                        "(select * from a " +
+                        "union " +
+                        "select * from b " +
+                        "union all " +
+                        "select 'a' k, sum(z) from (c order by t) timestamp(t) sample by 6h" +
+                        ") order by x",
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("c").col("z", ColumnType.INT).col("t", ColumnType.TIMESTAMP)
@@ -6320,7 +6367,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testUnionMoveWhereIntoSubQuery() throws Exception {
         assertQuery(
-                "select-virtual 1 1, 2 2, 3 3 from (long_sequence(1)) union select-choose c.customerId customerId, o.customerId customerId1, o.x x from (select [customerId] from customers c outer join select [customerId, x] from (select-choose [customerId, x] customerId, x from (select [customerId, x] from orders o where x = 10 and customerId = 100) o) o on customerId = c.customerId where customerId = 100) c",
+                "select-virtual [1 1, 2 2, 3 3] 1 1, 2 2, 3 3 from (long_sequence(1)) " +
+                        "union " +
+                        "select-choose [c.customerId customerId, o.customerId customerId1, o.x x] c.customerId customerId, o.customerId customerId1, o.x x from " +
+                        "(select [customerId] from customers c outer join " +
+                        "select [customerId, x] from (select-choose [customerId, x] customerId, x from " +
+                        "(select [customerId, x] from orders o where x = 10 and customerId = 100) o) o on customerId = c.customerId where customerId = 100) c",
                 "select 1, 2, 3 from long_sequence(1)" +
                         " union " +
                         "customers c" +
@@ -6336,7 +6388,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testUnionRemoveOrderBy() throws SqlException {
         assertQuery(
-                "select-choose x from (select-choose [x] x from (select [x] from a) union select-choose y from (select [y] from b) union all select-choose z from (select [z] from c)) order by x",
+                "select-choose x from (select-choose [x] x from (select [x] from a) union select-choose [y] y from (select [y] from b) union all select-choose [z] z from (select [z] from c)) order by x",
                 "select x from (select * from a union select * from b union all select * from c order by z) order by x",
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("y", ColumnType.INT),
@@ -6347,7 +6399,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testUnionRemoveRedundantOrderBy() throws SqlException {
         assertQuery(
-                "select-choose x from (select-choose [x] x, t from (select [x] from a) union select-choose y, t from (select [y, t] from b) union all select-virtual 1 1, sum from (select-group-by [sum(z) sum] sum(z) sum from (select-choose [t, z] z, t from (select [t, z] from c order by t)) timestamp (t) sample by 6h)) order by x",
+                "select-choose x from (select-choose [x, t] x, t from (select [x, t] from a) union select-choose [y, t] y, t from (select [y, t] from b) union all select-virtual [1 1, sum] 1 1, sum from (select-group-by [sum(z) sum] sum(z) sum from (select-choose [t, z] z, t from (select [t, z] from c order by t)) timestamp (t) sample by 6h)) order by x",
                 "select x from (select * from a union select * from b union all select 1, sum(z) from (c order by t, t) timestamp(t) sample by 6h) order by x",
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
@@ -6492,7 +6544,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testWithTwoAliasesExcept() throws SqlException {
         assertQuery(
-                "select-choose a from (select-choose [a] a from (select [a] from tab)) x except select-choose a from (select-choose [a] a from (select [a] from tab)) y",
+                "select-choose [a] a from (select-choose [a] a from (select [a] from tab)) x except select-choose [a] a from (select-choose [a] a from (select [a] from tab)) y",
                 "with x as (select * from tab)," +
                         " y as (select * from tab)" +
                         " select * from x except select * from y",
@@ -6503,7 +6555,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testWithTwoAliasesIntersect() throws SqlException {
         assertQuery(
-                "select-choose a from (select-choose [a] a from (select [a] from tab)) x intersect select-choose a from (select-choose [a] a from (select [a] from tab)) y",
+                "select-choose [a] a from (select-choose [a] a from (select [a] from tab)) x intersect select-choose [a] a from (select-choose [a] a from (select [a] from tab)) y",
                 "with x as (select * from tab)," +
                         " y as (select * from tab)" +
                         " select * from x intersect select * from y",
@@ -6514,7 +6566,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testWithTwoAliasesUnion() throws SqlException {
         assertQuery(
-                "select-choose a from (select-choose [a] a from (select [a] from tab)) x union select-choose a from (select-choose [a] a from (select [a] from tab)) y",
+                "select-choose [a] a from (select-choose [a] a from (select [a] from tab)) x union select-choose [a] a from (select-choose [a] a from (select [a] from tab)) y",
                 "with x as (select * from tab)," +
                         " y as (select * from tab)" +
                         " select * from x union select * from y",
@@ -6525,7 +6577,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testWithUnionWith() throws SqlException {
         assertQuery(
-                "select-choose a from (select-choose [a] a from (select [a] from tab)) x union select-choose a from (select-choose [a] a from (select [a] from tab)) y",
+                "select-choose [a] a from (select-choose [a] a from (select [a] from tab)) x union select-choose [a] a from (select-choose [a] a from (select [a] from tab)) y",
                 "with x as (select * from tab) select * from x union with " +
                         " y as (select * from tab) select * from y",
                 modelOf("tab").col("a", ColumnType.INT)

@@ -1791,6 +1791,12 @@ class SqlOptimiser {
                             // whenever nested model has explicitly defined columns it must also
                             // have its own nested model, where we assign new "where" clauses
                             addWhereNode(nested, node);
+                            //where clause pushed from parent applies to all SET-op models
+                            QueryModel unionModel = nested.getUnionModel();
+                            while (unionModel != null) {
+                                addWhereNode(unionModel, node);
+                                unionModel = unionModel.getUnionModel();
+                            }
                         } catch (NonLiteralException ignore) {
                             // keep node where it is
                             addWhereNode(parent, node);
@@ -1982,7 +1988,7 @@ class SqlOptimiser {
             moveWhereInsideSubQueries(rewrittenModel);
             eraseColumnPrefixInWhereClauses(rewrittenModel);
             moveTimestampToChooseModel(rewrittenModel);
-            propagateTopDownColumns(rewrittenModel);
+            propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             return rewrittenModel;
         } catch (SqlException e) {
             // at this point models may have functions than need to be freed
@@ -2303,16 +2309,41 @@ class SqlOptimiser {
         }
     }
 
-    private void propagateTopDownColumns(QueryModel model) {
-        propagateTopDownColumns0(model, true, null);
+    private void propagateTopDownColumns(QueryModel model, boolean allowColumnChange) {
+        propagateTopDownColumns0(model, true, null, allowColumnChange);
     }
 
-    private void propagateTopDownColumns0(QueryModel model, boolean topLevel, @Nullable QueryModel papaModel) {
+    /*
+        Pushes columns from top to bottom models .    
+    
+        Adding or removing columns to/from union, except, intersect should not happen!
+        UNION/INTERSECT/EXCEPT-ed columns MUST be exactly as specified in the query, otherwise they might produce different result, e.g.
+         
+        select a from (
+            select 1 as a, 'b' as status
+            union 
+            select 1 as a, 'c' as status
+        )
+        
+        Now if we push a top-to-bottom and remove b from union column list then we'll get a single '1' but we should get two !
+        Same thing applies to INTERSECT & EXCEPT
+        The only thing that'd be safe to add SET models is a constant literal (but what's the point?) .  
+        Column/expression pushdown should (probably) ONLY happen for UNION with ALL!
+          
+        allowColumnsChange - determines whether changing columns of given model is acceptable. 
+        It is not for columns used in distinct, except, intersect, union (even transitively for the latter three!).    
+    */
+    private void propagateTopDownColumns0(QueryModel model, boolean topLevel, @Nullable QueryModel papaModel, boolean allowColumnsChange) {
+        //copy columns to 'protect' column list that shouldn't be modified
+        if (!allowColumnsChange && model.getBottomUpColumns().size() > 0) {
+            model.copyBottomToTopColumns();
+        }
 
         // skip over NONE model that does not have table name
         final QueryModel nested = skipNoneTypeModels(model.getNestedModel());
         model.setNestedModel(nested);
         final boolean nestedIsFlex = modelIsFlex(nested);
+        final boolean nestedAllowsColumnChange = nested != null && nested.allowsColumnsChange();
 
         final QueryModel union = skipNoneTypeModels(model.getUnionModel());
 
@@ -2337,7 +2368,7 @@ class SqlOptimiser {
                     }
                 }
             }
-            propagateTopDownColumns0(jm, false, model);
+            propagateTopDownColumns0(jm, false, model, true);
 
             // process post-join-where
             final ExpressionNode postJoinWhere = jm.getPostJoinWhereClause();
@@ -2360,18 +2391,35 @@ class SqlOptimiser {
         }
 
         // latest by
-        emitLiteralsTopDown(model.getLatestBy(), model);
-
-        // propagate explicit timestamp declaration
-        if (model.getTimestamp() != null && nestedIsFlex) {
-            emitLiteralsTopDown(model.getTimestamp(), nested);
+        if (model.getLatestBy().size() > 0) {
+            emitLiteralsTopDown(model.getLatestBy(), model);
         }
 
-        // where clause
+        // propagate explicit timestamp declaration
+        if (model.getTimestamp() != null &&
+                nestedIsFlex &&
+                nestedAllowsColumnChange) {
+            emitLiteralsTopDown(model.getTimestamp(), nested);
+
+            QueryModel unionModel = nested.getUnionModel();
+            while (unionModel != null) {
+                emitLiteralsTopDown(model.getTimestamp(), unionModel);
+                unionModel = unionModel.getUnionModel();
+            }
+        }
+
         if (model.getWhereClause() != null) {
-            emitLiteralsTopDown(model.getWhereClause(), model);
-            if (nested != null) {
+            if (allowColumnsChange) {
+                emitLiteralsTopDown(model.getWhereClause(), model);
+            }
+            if (nested != null && nestedAllowsColumnChange) {
                 emitLiteralsTopDown(model.getWhereClause(), nested);
+
+                QueryModel unionModel = nested.getUnionModel();
+                while (unionModel != null) {
+                    emitLiteralsTopDown(model.getWhereClause(), unionModel);
+                    unionModel = unionModel.getUnionModel();
+                }
             }
         }
 
@@ -2380,18 +2428,25 @@ class SqlOptimiser {
             emitLiteralsTopDown(model.getOrderBy(), model);
         }
 
-        if (nestedIsFlex) {
+        if (nestedIsFlex && nestedAllowsColumnChange) {
             emitColumnLiteralsTopDown(model.getColumns(), nested);
+
+            QueryModel unionModel = nested.getUnionModel();
+            while (unionModel != null) {
+                emitColumnLiteralsTopDown(model.getColumns(), unionModel);
+                unionModel = unionModel.getUnionModel();
+            }
         }
 
         // go down the nested path
         if (nested != null) {
-            propagateTopDownColumns0(nested, false, null);
+            propagateTopDownColumns0(nested, false, null, nestedAllowsColumnChange);
         }
 
         final QueryModel unionModel = model.getUnionModel();
         if (unionModel != null) {
-            propagateTopDownColumns(unionModel);
+            //we've to use this value because union-ed models don't have a back-reference and might not know they participate in set operation 
+            propagateTopDownColumns(unionModel, allowColumnsChange);
         }
     }
 
