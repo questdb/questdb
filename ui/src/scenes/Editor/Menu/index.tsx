@@ -253,7 +253,7 @@ const Menu = () => {
       <MenuLink
         href="https://slack.questdb.io/"
         icon={<Slack size="18px" />}
-        tooltipText="Join QuestDB community on Slack"
+        tooltipText="Questions? Join our Slack"
       />
 
       <MenuLink
