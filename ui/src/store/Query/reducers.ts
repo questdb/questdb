@@ -26,7 +26,7 @@ import { QueryAction, QueryAT, QueryStateShape } from "types"
 
 export const initialState: QueryStateShape = {
   notifications: [],
-  tables: undefined,
+  tables: [],
   running: {
     value: false,
     isRefresh: false,

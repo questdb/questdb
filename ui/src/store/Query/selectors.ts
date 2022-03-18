@@ -34,8 +34,7 @@ const getResult: (store: StoreShape) => undefined | QueryRawResult = (store) =>
 const getRunning: (store: StoreShape) => RunningShape = (store) =>
   store.query.running
 
-const getTables: (store: StoreShape) => Table[] | undefined = (store) =>
-  store.query.tables
+const getTables: (store: StoreShape) => Table[] = (store) => store.query.tables
 
 export default {
   getNotifications,
