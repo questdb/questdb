@@ -48,7 +48,7 @@ export type RunningShape = Readonly<{
 
 export type QueryStateShape = Readonly<{
   notifications: NotificationShape[]
-  tables: Table[]
+  tables: Table[] | undefined
   result?: QueryRawResult
   running: RunningShape
   maxNotifications: number

@@ -319,10 +319,9 @@ const MonacoEditor = () => {
   }, [running, savePreferences])
 
   useEffect(() => {
-    if (tables.length > 0) {
+    if (tables) {
       setEditorReady(true)
-
-      if (monacoRef?.current) {
+      if (tables.length > 0 && monacoRef?.current) {
         schemaCompletionHandle?.dispose()
         setSchemaCompletionHandle(
           monacoRef.current.languages.registerCompletionItemProvider(
