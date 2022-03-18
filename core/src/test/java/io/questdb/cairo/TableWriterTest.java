@@ -800,54 +800,6 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCancelRowOutOfOrder() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final int N = 47;
-            create(FF, PartitionBy.DAY, N);
-            Rnd rnd = new Rnd();
-
-            DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(root);
-            try (TableWriter writer = new TableWriter(configuration, PRODUCT, metrics)) {
-                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
-                populateProducts(writer, rnd, ts, 1, 0);
-                writer.commit();
-
-                TableWriter.Row r = writer.newRow(TimestampFormatUtils.parseTimestamp("2013-03-02T09:00:00.000Z"));
-                // One set of columns
-                r.putInt(0, rnd.nextPositiveInt());  // productId
-                r.putStr(1, "CANCELLED"); // productName
-                r.putSym(2, "CANCELLED2"); // supplier
-                r.putSym(3, "CANCELLED3"); // category
-                r.cancel();
-
-                // Another set of columns
-                r = writer.newRow(ts);
-                r.putSym(2, "GOOD"); // supplier
-                r.putSym(3, "GOOD2"); // category
-                r.putDouble(4, 123); // price
-                r.putByte(5, (byte) 45); // locationByte
-                r.putShort(6, (short) 678);
-                r.append();
-
-                writer.commit();
-
-                Assert.assertEquals(2, writer.size());
-            }
-
-            try (TableWriter writer = new TableWriter(AbstractCairoTest.configuration, PRODUCT, metrics)) {
-                Assert.assertEquals(2, writer.size());
-            }
-
-            try(TableReader rdr = new TableReader(configuration, PRODUCT)) {
-                String expected = "productId\tproductName\tsupplier\tcategory\tprice\tlocationByte\tlocationShort\tlocationInt\tlocationLong\ttimestamp\n" +
-                        "1148479920\tTJWCPSW\tHYRX\tPEHNRXGZSXU\t0.4621835429127854\tq\ttp0\tttmt7w\tcs4bdw4y4dpw\t2013-03-04T00:00:00.000000Z\n" +
-                        "NaN\t\tGOOD\tGOOD2\t123.0\te\t0p6\t\t\t2013-03-04T00:00:00.000000Z\n";
-                assertCursor(expected, rdr.getCursor(), rdr.getMetadata(), true);
-            }
-        });
-    }
-
-    @Test
     public void testCancelFirstRowFailurePartitioned() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             class X extends FilesFacadeImpl {
@@ -1140,6 +1092,54 @@ public class TableWriterTest extends AbstractCairoTest {
             writer.commit();
             Assert.assertEquals(2 * N, writer.size());
         }
+    }
+
+    @Test
+    public void testCancelRowOutOfOrder() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int N = 47;
+            create(FF, PartitionBy.DAY, N);
+            Rnd rnd = new Rnd();
+
+            DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT, metrics)) {
+                long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                populateProducts(writer, rnd, ts, 1, 0);
+                writer.commit();
+
+                TableWriter.Row r = writer.newRow(TimestampFormatUtils.parseTimestamp("2013-03-02T09:00:00.000Z"));
+                // One set of columns
+                r.putInt(0, rnd.nextPositiveInt());  // productId
+                r.putStr(1, "CANCELLED"); // productName
+                r.putSym(2, "CANCELLED2"); // supplier
+                r.putSym(3, "CANCELLED3"); // category
+                r.cancel();
+
+                // Another set of columns
+                r = writer.newRow(ts);
+                r.putSym(2, "GOOD"); // supplier
+                r.putSym(3, "GOOD2"); // category
+                r.putDouble(4, 123); // price
+                r.putByte(5, (byte) 45); // locationByte
+                r.putShort(6, (short) 678);
+                r.append();
+
+                writer.commit();
+
+                Assert.assertEquals(2, writer.size());
+            }
+
+            try (TableWriter writer = new TableWriter(AbstractCairoTest.configuration, PRODUCT, metrics)) {
+                Assert.assertEquals(2, writer.size());
+            }
+
+            try (TableReader rdr = new TableReader(configuration, PRODUCT)) {
+                String expected = "productId\tproductName\tsupplier\tcategory\tprice\tlocationByte\tlocationShort\tlocationInt\tlocationLong\ttimestamp\n" +
+                        "1148479920\tTJWCPSW\tHYRX\tPEHNRXGZSXU\t0.4621835429127854\tq\ttp0\tttmt7w\tcs4bdw4y4dpw\t2013-03-04T00:00:00.000000Z\n" +
+                        "NaN\t\tGOOD\tGOOD2\t123.0\te\t0p6\t\t\t2013-03-04T00:00:00.000000Z\n";
+                assertCursor(expected, rdr.getCursor(), rdr.getMetadata(), true);
+            }
+        });
     }
 
     @Test
@@ -1587,6 +1587,30 @@ public class TableWriterTest extends AbstractCairoTest {
             writer.rollback();
             Assert.assertEquals(0, writer.size());
         }
+    }
+
+    @Test
+    public void testCommitInterval() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(FF, PartitionBy.NONE, 4);
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT, metrics)) {
+                writer.updateCommitInterval(0.0, 1000);
+                writer.setMetaCommitLag(5_000_000);
+                Assert.assertEquals(1000, writer.getCommitInterval());
+
+                writer.updateCommitInterval(0.5, 1000);
+                writer.setMetaCommitLag(5_000_000);
+                Assert.assertEquals(2500, writer.getCommitInterval());
+
+                writer.updateCommitInterval(0.5, 1000);
+                writer.setMetaCommitLag(15_000_000);
+                Assert.assertEquals(7500, writer.getCommitInterval());
+
+                writer.updateCommitInterval(0.5, 3000);
+                writer.setMetaCommitLag(0);
+                Assert.assertEquals(3000, writer.getCommitInterval());
+            }
+        });
     }
 
     @Test
@@ -2689,6 +2713,63 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTableExtensionCallback() throws Exception {
+        TestUtils.assertMemoryLeak(
+                () -> {
+                    try (TableModel model = new TableModel(configuration, "xyz", PartitionBy.HOUR).col("x", ColumnType.LONG).timestamp()) {
+                        CairoTestUtils.createTable(model);
+                    }
+
+                    final Rnd rnd = new Rnd();
+                    final ObjList<String> timestampsReported = new ObjList<>();
+                    try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "xyz", "test")) {
+                        w.setExtensionListener(
+                                timestamp -> timestampsReported.add(Timestamps.toString(timestamp))
+                        );
+
+                        TableWriter.Row r = w.newRow(TimestampFormatUtils.parseTimestamp("2022-03-10T10:11:00.000000Z"));
+                        r.putLong(0, rnd.nextLong());
+                        r.append();
+                        w.commit();
+
+                        r = w.newRow(TimestampFormatUtils.parseTimestamp("2022-03-10T12:22:00.000000Z"));
+                        r.putLong(0, rnd.nextLong());
+                        r.append();
+                        w.commit();
+
+                        // O3
+                        r = w.newRow(TimestampFormatUtils.parseTimestamp("2022-03-10T11:34:00.000000Z"));
+                        r.putLong(0, rnd.nextLong());
+                        r.append();
+                        w.commit();
+
+                        // O3, one old one new
+                        r = w.newRow(TimestampFormatUtils.parseTimestamp("2022-03-10T11:44:00.000000Z"));
+                        r.putLong(0, rnd.nextLong());
+                        r.append();
+
+                        r = w.newRow(TimestampFormatUtils.parseTimestamp("2022-03-10T13:22:00.000000Z"));
+                        r.putLong(0, rnd.nextLong());
+                        r.append();
+                        w.commit();
+
+                        // O3 - very old
+                        r = w.newRow(TimestampFormatUtils.parseTimestamp("2022-03-10T08:11:00.000000Z"));
+                        r.putLong(0, rnd.nextLong());
+                        r.append();
+                        w.commit();
+                    }
+                    engine.releaseAllWriters();
+
+                    TestUtils.assertEquals(
+                            "[2022-03-10T10:00:00.000Z,2022-03-10T12:00:00.000Z,2022-03-10T13:00:00.000Z]",
+                            timestampsReported
+                    );
+                }
+        );
+    }
+
+    @Test
     public void testTableLock() {
         CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
 
@@ -2736,30 +2817,6 @@ public class TableWriterTest extends AbstractCairoTest {
             create(FF, PartitionBy.NONE, 4);
             try (TableWriter writer = new TableWriter(configuration, PRODUCT, metrics)) {
                 Assert.assertEquals("TableWriter{name=product}", writer.toString());
-            }
-        });
-    }
-
-    @Test
-    public void testCommitInterval() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            create(FF, PartitionBy.NONE, 4);
-            try (TableWriter writer = new TableWriter(configuration, PRODUCT, metrics)) {
-                writer.updateCommitInterval(0.0, 1000);
-                writer.setMetaCommitLag(5_000_000);
-                Assert.assertEquals(1000, writer.getCommitInterval());
-
-                writer.updateCommitInterval(0.5, 1000);
-                writer.setMetaCommitLag(5_000_000);
-                Assert.assertEquals(2500, writer.getCommitInterval());
-
-                writer.updateCommitInterval(0.5, 1000);
-                writer.setMetaCommitLag(15_000_000);
-                Assert.assertEquals(7500, writer.getCommitInterval());
-
-                writer.updateCommitInterval(0.5, 3000);
-                writer.setMetaCommitLag(0);
-                Assert.assertEquals(3000, writer.getCommitInterval());
             }
         });
     }
