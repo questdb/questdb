@@ -71,6 +71,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
     @Override
     public void close() {
         Misc.freeObjList(vafList);
+        Misc.free(base);
     }
 
     @Override
