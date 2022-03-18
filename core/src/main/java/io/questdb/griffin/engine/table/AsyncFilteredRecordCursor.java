@@ -185,9 +185,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                     collectSubSeq.done(cursor);
                 }
             } else {
-                // multiple reasons for collect task not being ready:
-                // 1. dispatch task hasn't been published
-                frameSequence.stealWork();
+                frameSequence.stealDispatchWork();
             }
         } while (this.frameIndex < frameLimit);
     }

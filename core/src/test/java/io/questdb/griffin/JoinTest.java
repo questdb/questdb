@@ -2268,15 +2268,6 @@ public class JoinTest extends AbstractGriffinTest {
             compiler.compile("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)", sqlExecutionContext);
             compiler.compile("insert into z select cast((x+15)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(2)", sqlExecutionContext);
 
-            TestUtils.printSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "y limit -16",
-                    sink
-            );
-
-            System.out.println(sink);
-
             assertQuery(expected +
                             "7\t253\t14\t228\t214\n" +
                             "7\t253\t14\t723\t709\n" +

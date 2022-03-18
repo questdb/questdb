@@ -109,7 +109,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         while (doneLatch.getCount() == 0) {
             final int workerId = getWorkerId();
             final PageAddressCacheRecord rec = records[workerId];
-            final SqlExecutionCircuitBreaker circuitBreaker = circuitBreakers[getWorkerId()];
+            final SqlExecutionCircuitBreaker circuitBreaker = circuitBreakers[workerId];
             // we were asked to steal work from dispatch0 queue and beyond, as much as we can
             if (PageFrameReduceJob.consumeQueue(queue, pageFrameReduceSubSeq, rec, circuitBreaker)) {
                 long cursor = collectSubSeq.next();
@@ -132,7 +132,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         this.frameCount = 0;
         pageAddressCache.clear();
         symbolTableSource = Misc.free(symbolTableSource);
-        // collect sequence mau not be set here when
+        // collect sequence may not be set here when
         // factory is closed without using cursor
         if (collectSubSeq != null) {
             messageBus.getPageFrameCollectFanOut(shard).remove(collectSubSeq);
@@ -277,7 +277,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         this.owner.set(OWNER_NONE);
     }
 
-    public void stealWork() {
+    public void stealDispatchWork() {
         final int workerId = getWorkerId();
         final PageAddressCacheRecord rec = records[workerId];
         final SqlExecutionCircuitBreaker circuitBreaker = circuitBreakers[workerId];
@@ -315,7 +315,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
      */
     public void toTop() {
         if (frameCount > 0) {
-            LOG.info().$("toTop [shard=").$(shard)
+            LOG.debug().$("toTop [shard=").$(shard)
                     .$(", id=").$(id)
                     .I$();
 
@@ -329,7 +329,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             do {
                 dispatchCursor = dispatchPubSeq.next();
                 if (dispatchCursor < 0) {
-                    stealWork();
+                    stealDispatchWork();
                 } else {
                     break;
                 }
@@ -367,7 +367,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             dispatchCursor = dispatchPubSeq.next();
 
             if (dispatchCursor < 0) {
-                stealWork();
+                stealDispatchWork();
                 Os.pause();
             } else {
                 break;

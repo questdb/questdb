@@ -2351,6 +2351,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
+            Misc.freeObjList(tempVaf);
+
             if (specialCaseKeys) {
                 // uh-oh, we had special case keys, but could not find implementation for the functions
                 // release factory we created unnecessarily
@@ -2382,7 +2384,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             } catch (Throwable e) {
                 Misc.freeObjList(groupByFunctions);
-                Misc.freeObjList(tempVaf);
                 throw e;
             }
 
@@ -2405,7 +2406,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             } catch (Throwable e) {
                 Misc.freeObjList(recordFunctions);
-                Misc.freeObjList(tempVaf);
                 throw e;
             }
 

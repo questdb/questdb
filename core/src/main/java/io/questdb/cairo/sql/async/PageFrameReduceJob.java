@@ -48,7 +48,7 @@ public class PageFrameReduceJob implements Job, Closeable {
     private final int[] shards;
     private final int shardCount;
     private final MessageBus messageBus;
-    private final SqlExecutionCircuitBreaker circuitBreakers;
+    private final SqlExecutionCircuitBreaker circuitBreaker;
 
     // Each thread should be assigned own instance of this job, making the code effectively
     // single threaded. Such assignment is necessary for threads to have their own shard walk sequence.
@@ -80,9 +80,9 @@ public class PageFrameReduceJob implements Job, Closeable {
 
         this.record = new PageAddressCacheRecord();
         if (sqlExecutionCircuitBreakerConfiguration != null) {
-            this.circuitBreakers = new NetworkSqlExecutionCircuitBreaker(sqlExecutionCircuitBreakerConfiguration);
+            this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(sqlExecutionCircuitBreakerConfiguration);
         } else {
-            this.circuitBreakers = NetworkSqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+            this.circuitBreaker = NetworkSqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
         }
     }
 
@@ -152,7 +152,7 @@ public class PageFrameReduceJob implements Job, Closeable {
 
     @Override
     public void close() {
-        Misc.free(circuitBreakers);
+        Misc.free(circuitBreaker);
     }
 
     @Override
@@ -166,7 +166,7 @@ public class PageFrameReduceJob implements Job, Closeable {
                     messageBus.getPageFrameReduceQueue(shard),
                     messageBus.getPageFrameReduceSubSeq(shard),
                     record,
-                    circuitBreakers
+                    circuitBreaker
             ) || useful;
         }
         return useful;
