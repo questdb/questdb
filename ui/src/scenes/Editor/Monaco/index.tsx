@@ -61,6 +61,7 @@ const MonacoEditor = () => {
   const { loadPreferences, savePreferences } = usePreferences()
   const { quest } = useContext(QuestContext)
   const [request, setRequest] = useState<Request | undefined>()
+  const [editorReady, setEditorReady] = useState<boolean>(false)
   const [lastExecutedQuery, setLastExecutedQuery] = useState("")
   const dispatch = useDispatch()
   const running = useSelector(selectors.query.getRunning)
@@ -110,6 +111,7 @@ const MonacoEditor = () => {
 
     if (monacoRef) {
       monacoRef.current = monaco
+      setEditorReady(true)
     }
 
     if (editorRef) {
@@ -318,7 +320,7 @@ const MonacoEditor = () => {
   }, [running, savePreferences])
 
   useEffect(() => {
-    if (monacoRef?.current) {
+    if (editorReady && monacoRef?.current) {
       schemaCompletionHandle?.dispose()
       setSchemaCompletionHandle(
         monacoRef.current.languages.registerCompletionItemProvider(
@@ -327,7 +329,7 @@ const MonacoEditor = () => {
         ),
       )
     }
-  }, [tables, monacoRef])
+  }, [tables, monacoRef, editorReady])
 
   return (
     <Content>
