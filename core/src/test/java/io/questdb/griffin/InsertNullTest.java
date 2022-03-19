@@ -171,6 +171,56 @@ public class InsertNullTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testInsertNullThenFilterIsNull() throws Exception {
+        for (int i = 0; i < TYPES.length; i++) {
+            if (i > 0) {
+                setUp();
+            }
+            try {
+                final String[] type = TYPES[i];
+                assertQuery(
+                        "value\n",
+                        "x where value is null",
+                        String.format("create table x (value %s)", type[0]),
+                        null,
+                        String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
+                        expectedNullInserts("value\n", type[1], NULL_INSERTS),
+                        true,
+                        true,
+                        type[0].equals("long256")
+                );
+            } finally {
+                tearDown();
+            }
+        }
+    }
+
+    @Test
+    public void testInsertNullThenFilterIsNotNull() throws Exception {
+        for (int i = 0; i < TYPES.length; i++) {
+            if (i > 0) {
+                setUp();
+            }
+            try {
+                final String[] type = TYPES[i];
+                assertQuery(
+                        "value\n",
+                        "x where value != null",
+                        String.format("create table x (value %s)", type[0]),
+                        null,
+                        String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
+                        "value\n",
+                        !type[0].equals("long256"),
+                        true,
+                        false
+                );
+            } finally {
+                tearDown();
+            }
+        }
+    }
+
     static String expectedNullInserts(String header, String nullValue, int count) {
         StringSink sb = Misc.getThreadLocalBuilder();
         sb.put(header);

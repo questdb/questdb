@@ -2991,6 +2991,60 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testInvalidIsNull() throws Exception {
+        assertSyntaxError(
+                "3 is null",
+                2,
+                "IS [NOT] not allowed here"
+        );
+        assertSyntaxError(
+                "a where x is 12",
+                10,
+                "IS must be followed by NULL",
+                modelOf("a").col("x", ColumnType.INT)
+        );
+        assertSyntaxError(
+                "a where x is",
+                10,
+                "IS must be followed by [NOT] NULL",
+                modelOf("a").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testInvalidIsNotNull() throws Exception {
+        assertSyntaxError(
+                "3 is not null",
+                2,
+                "IS [NOT] not allowed here"
+        );
+        assertSyntaxError(
+                "a where x is not 12",
+                10,
+                "IS NOT must be followed by NULL",
+                modelOf("a").col("x", ColumnType.INT)
+        );
+        assertSyntaxError(
+                "a where x is not",
+                10,
+                "IS NOT must be followed by NULL",
+                modelOf("a").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testIsNullIsNotNull() throws Exception {
+        assertQuery(
+                "select-choose t1.x x, y from (select [x] from (select-choose [x] x from (select [x] from tab_x where x != null latest on ts partition by x)) t1 join (select [y] from tab_y xx2 where y = null) xx2 on xx2.y = t1.x) t1",
+                "select t1.x, y from (select x from tab_x where x is not null latest on ts partition by x) t1 " +
+                        "join tab_y xx2 on xx2.y = t1.x " +
+                        "where y is null",
+                modelOf("tab_x").timestamp("ts").col("x", ColumnType.INT),
+                modelOf("tab_y").col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testJoin1() throws Exception {
         assertQuery(
                 "select-choose t1.x x, y from (select [x] from (select-choose [x] x from (select [x] from tab t2 where x > 100 latest on ts partition by x) t2) t1 join select [x] from tab2 xx2 on xx2.x = t1.x join select [y, x] from (select-choose [y, x] x, y from (select [y, x, z, b, a] from tab4 where a > b latest on ts partition by z) where y > 0) x4 on x4.x = t1.x cross join select [b] from tab3 post-join-where xx2.x > tab3.b) t1",

@@ -757,6 +757,37 @@ class ExpressionParser {
                         }
                         processDefaultBranch = true;
                         break;
+                    case 'i':
+                    case 'I':
+                        if (SqlKeywords.isIsKeyword(tok)) { // replace 'IS' with '=', and 'IS NOT' with '!='
+                            if (prevBranch != BRANCH_LITERAL) {
+                                throw SqlException.$(position, "IS [NOT] not allowed here");
+                            }
+                            CharSequence notTok = SqlUtil.fetchNext(lexer);
+                            if (notTok == null) {
+                                throw SqlException.$(position, "IS must be followed by [NOT] NULL");
+                            }
+
+                            if (SqlKeywords.isNotKeyword(notTok)) {
+                                int currPosition = lexer.getPosition();
+                                CharSequence nullTok = SqlUtil.fetchNext(lexer);
+                                if (nullTok == null || !SqlKeywords.isNullKeyword(nullTok)) {
+                                    throw SqlException.$(position, "IS NOT must be followed by NULL");
+                                }
+                                lexer.backTo(currPosition, notTok);
+                                tok = "!=";
+                                thisChar = '!';
+                            } else {
+                                if (!SqlKeywords.isNullKeyword(notTok)) {
+                                    throw SqlException.$(position, "IS must be followed by NULL");
+                                }
+                                tok = "=";
+                                thisChar = '=';
+                                lexer.backTo(position + 2, notTok);
+                            }
+                        }
+                        processDefaultBranch = true;
+                        break;
                     case '*':
                         // special case for tab.*
                         if (prevBranch == BRANCH_DOT) {
