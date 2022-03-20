@@ -33,10 +33,7 @@ import io.questdb.griffin.update.UpdateExecution;
 import io.questdb.griffin.update.UpdateStatement;
 import io.questdb.std.Misc;
 import io.questdb.test.tools.TestUtils;
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
 
 public class UpdateTest extends AbstractGriffinTest {
     private UpdateExecution updateExecution;
@@ -316,6 +313,30 @@ public class UpdateTest extends AbstractGriffinTest {
                     " timestamp(ts) partition by DAY", sqlExecutionContext);
 
             executeUpdate("UPDATE up SET geo3 = 'questdb', geo5 = 'questdb' WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
+
+            assertSql("up", "ts\tgeo3\tgeo5\n" +
+                    "1970-01-01T00:00:00.000000Z\t9v1\t46swg\n" +
+                    "1970-01-01T00:00:01.000000Z\tjnw\tzfuqd\n" +
+                    "1970-01-01T00:00:02.000000Z\tque\tquest\n" +
+                    "1970-01-01T00:00:03.000000Z\tque\tquest\n" +
+                    "1970-01-01T00:00:04.000000Z\tmmt\t71ftm\n");
+        });
+    }
+
+    @Test
+    @Ignore
+    public void testUpdateStringColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 6 * 60 * 60 * 1000000L) ts," +
+                    " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
+                    " x as lng2" +
+                    " from long_sequence(10)" +
+                    " )" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET str1 = 'questdb' WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
+            //, lng2 = 1 WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'
 
             assertSql("up", "ts\tgeo3\tgeo5\n" +
                     "1970-01-01T00:00:00.000000Z\t9v1\t46swg\n" +

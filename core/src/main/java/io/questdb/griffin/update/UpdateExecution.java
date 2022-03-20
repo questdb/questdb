@@ -41,6 +41,7 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.dFile;
+import static io.questdb.cairo.TableUtils.iFile;
 
 public class UpdateExecution implements Closeable {
     private static final Log LOG = LogFactory.getLog(UpdateExecution.class);
@@ -118,13 +119,17 @@ public class UpdateExecution implements Closeable {
 
                 int partitionIndex = Rows.toPartitionIndex(rowId);
                 if (partitionIndex != currentPartitionIndex) {
-                    updateColumnValues(
-                            writerMetadata,
-                            updateColumnIndexes,
-                            updateColumnCount,
-                            baseMemory,
-                            updateMemory,
-                            startPartitionRowId);
+                    if (currentPartitionIndex > -1) {
+                        long partitionSize = tableWriter.getPartitionSize((int) currentPartitionIndex);
+                        copyColumnValues(
+                                writerMetadata,
+                                updateColumnIndexes,
+                                updateColumnCount,
+                                baseMemory,
+                                updateMemory,
+                                startPartitionRowId,
+                                partitionSize);
+                    }
 
                     openPartitionColumnsForRead(tableWriter, baseMemory, partitionIndex, updateColumnIndexes);
                     openPartitionColumnsForWrite(tableWriter, updateMemory, partitionIndex, updateColumnIndexes);
@@ -147,13 +152,15 @@ public class UpdateExecution implements Closeable {
             }
 
             if (currentPartitionIndex > -1) {
-                updateColumnValues(
+                long partitionSize = tableWriter.getPartitionSize((int) currentPartitionIndex);
+                copyColumnValues(
                         writerMetadata,
                         updateColumnIndexes,
                         updateColumnCount,
                         baseMemory,
                         updateMemory,
-                        startPartitionRowId);
+                        startPartitionRowId,
+                        partitionSize);
             }
         } finally {
             Misc.freeObjList(baseMemory);
@@ -164,6 +171,27 @@ public class UpdateExecution implements Closeable {
         if (currentPartitionIndex > -1) {
             tableWriter.commit();
             tableWriter.openLastPartition();
+        }
+    }
+
+    private void copyColumnValues(
+            TableWriterMetadata metadata,
+            IntList updateColumnIndexes,
+            int columnCount,
+            ObjList<MemoryCMR> baseMemory,
+            ObjList<MemoryCMARW> updateMemory,
+            long startPartitionRowId,
+            long partitionSize
+    ) {
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            MemoryCMR basePrimaryColumnFile = baseMemory.get(2 * columnIndex);
+            MemoryCMARW updatedFixedColumnFile = updateMemory.get(2 * columnIndex);
+            MemoryCMR baseVariableColumnFile = baseMemory.get(2 * columnIndex + 1);
+            MemoryCMARW updatedVariableColumnFile = updateMemory.get(2 * columnIndex + 1);
+
+            int columnType = metadata.getColumnType(updateColumnIndexes.get(columnIndex));
+            int typeSize = getFixedColumnSize(columnType);
+            copyRecords(startPartitionRowId, partitionSize, basePrimaryColumnFile, updatedFixedColumnFile, baseVariableColumnFile, updatedVariableColumnFile, columnType, typeSize);
         }
     }
 
@@ -190,34 +218,32 @@ public class UpdateExecution implements Closeable {
         }
     }
 
-    private void openPartitionColumns(TableWriter tableWriter, ObjList<? extends MemoryCM> memList, int partitionIndex, IntList updateColumnIndexes, boolean forWrite) {
-        long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
-        RecordMetadata metadata = tableWriter.getMetadata();
-        try {
-            path.concat(tableWriter.getTableName());
-            TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, false);
-            int pathTrimToLen = path.length();
+    private void copyRecords(
+            long fromRowId,
+            long toRowId,
+            MemoryCMR baseFixedColumnFile,
+            MemoryCMARW updatedFixedColumnFile,
+            MemoryCMR baseVariableColumnFile,
+            MemoryCMARW updatedVariableColumnFile,
+            int columnType,
+            int typeSize) {
 
-            for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
-                int columnIndex = updateColumnIndexes.get(i);
-                CharSequence name = metadata.getColumnName(columnIndex);
-                MemoryCMR colMem = (MemoryCMR) memList.get(2 * i);
-                colMem.close();
-                if (forWrite) {
-                    tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex);
-                }
-                long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-                colMem.of(
-                        ff,
-                        dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
-                        dataAppendPageSize,
-                        -1,
-                        MemoryTag.MMAP_UPDATE,
-                        fileOpenOpts
-                );
-            }
-        } finally {
-            path.trimTo(rootLen);
+        long addr = baseFixedColumnFile.addressOf(fromRowId * typeSize);
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.STRING:
+            case ColumnType.BINARY:
+                long varStartOffset = baseFixedColumnFile.getLong(fromRowId * Long.BYTES);
+                long varEndOffset = baseFixedColumnFile.getLong((toRowId + 1) * Long.BYTES);
+                long varAddr = baseVariableColumnFile.addressOf(varStartOffset);
+                long copyToOffset = updatedVariableColumnFile.getAppendOffset();
+                updatedVariableColumnFile.putBlockOfBytes(varAddr, varEndOffset - varStartOffset);
+                updatedFixedColumnFile.extend(updatedFixedColumnFile.getAppendOffset() + (toRowId - fromRowId) * typeSize);
+                Vect.shiftCopyFixedSizeColumnData(copyToOffset - varStartOffset, addr + Long.BYTES, fromRowId, toRowId - 1, updatedFixedColumnFile.getAppendAddress());
+                updatedFixedColumnFile.jumpTo(updatedFixedColumnFile.getAppendOffset() + (toRowId - fromRowId) * typeSize);
+                break;
+            default:
+                updatedFixedColumnFile.putBlockOfBytes(addr, (toRowId - fromRowId) * typeSize);
+                break;
         }
     }
 
@@ -229,15 +255,74 @@ public class UpdateExecution implements Closeable {
         openPartitionColumns(tableWriter, updateMemory, partitionIndex, updateColumnIndexes, true);
     }
 
-    private void updateColumnValues(
-            RecordMetadata metadata,
-            IntList updateColumnIndexes,
-            int columnCount,
-            ObjList<MemoryCMR> baseMemory,
-            ObjList<MemoryCMARW> updateMemory,
-            long startPartitionRowId
-    ) throws SqlException {
-        updateColumnValues(metadata, updateColumnIndexes, columnCount, baseMemory, updateMemory, startPartitionRowId, -1, null);
+    private int getFixedColumnSize(int columnType) {
+        int typeSize = ColumnType.sizeOf(columnType);
+        if (columnType == ColumnType.STRING || columnType == ColumnType.BINARY) {
+            typeSize = Long.BYTES;
+        }
+        return typeSize;
+    }
+
+    private void openPartitionColumns(TableWriter tableWriter, ObjList<? extends MemoryCM> memList, int partitionIndex, IntList updateColumnIndexes, boolean forWrite) {
+        long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
+        RecordMetadata metadata = tableWriter.getMetadata();
+        try {
+            path.concat(tableWriter.getTableName());
+            TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, false);
+            int pathTrimToLen = path.length();
+
+            for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
+                int columnIndex = updateColumnIndexes.get(i);
+                CharSequence name = metadata.getColumnName(columnIndex);
+                int columnType = metadata.getColumnType(columnIndex);
+
+                if (forWrite) {
+                    tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex);
+                }
+
+                long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+                if (columnType == ColumnType.STRING) {
+                    MemoryCMR colMemIndex = (MemoryCMR) memList.get(2 * i);
+                    colMemIndex.close();
+                    colMemIndex.of(
+                            ff,
+                            iFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
+                            dataAppendPageSize,
+                            -1,
+                            MemoryTag.MMAP_UPDATE,
+                            fileOpenOpts
+                    );
+                    MemoryCMR colMemVar = (MemoryCMR) memList.get(2 * i + 1);
+                    colMemVar.close();
+                    colMemVar.of(
+                            ff,
+                            dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
+                            dataAppendPageSize,
+                            -1,
+                            MemoryTag.MMAP_UPDATE,
+                            fileOpenOpts
+                    );
+                } else {
+                    MemoryCMR colMem = (MemoryCMR) memList.get(2 * i);
+                    colMem.close();
+                    colMem.of(
+                            ff,
+                            dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
+                            dataAppendPageSize,
+                            -1,
+                            MemoryTag.MMAP_UPDATE,
+                            fileOpenOpts
+                    );
+                }
+                if (forWrite) {
+                    if (columnType == ColumnType.STRING) {
+                        ((MemoryCMARW) memList.get(2 * i)).putLong(0);
+                    }
+                }
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
     }
 
     private void updateColumnValues(
@@ -252,72 +337,65 @@ public class UpdateExecution implements Closeable {
     ) throws SqlException {
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             MemoryCMR basePrimaryColumnFile = baseMemory.get(2 * columnIndex);
-            MemoryCMARW updatedPrimaryColumnFile = updateMemory.get(2 * columnIndex);
-//            MemoryCMR baseVariableColumnFile = baseMemory.get(2 * columnIndex + 1);
-//            MemoryCMARW updatedVariableColumnFile = updateMemory.get(2 * columnIndex + 1);
+            MemoryCMARW updatedFixedColumnFile = updateMemory.get(2 * columnIndex);
+            MemoryCMR baseVariableColumnFile = baseMemory.get(2 * columnIndex + 1);
+            MemoryCMARW updatedVariableColumnFile = updateMemory.get(2 * columnIndex + 1);
 
             int columnType = metadata.getColumnType(updateColumnIndexes.get(columnIndex));
-            int typeSize = ColumnType.sizeOf(columnType);
-            if (typeSize > 0) {
-                long addr = basePrimaryColumnFile.addressOf(startPartitionRowId * typeSize);
-                if (masterRecord != null) {
-                    if (partitionRowId > startPartitionRowId) {
-                        updatedPrimaryColumnFile.putBlockOfBytes(addr, (partitionRowId - startPartitionRowId) * typeSize);
-                    }
-                    switch (ColumnType.tagOf(columnType)) {
-                        case ColumnType.INT:
-                            updatedPrimaryColumnFile.putInt(masterRecord.getInt(columnIndex));
-                            break;
-                        case ColumnType.FLOAT:
-                            updatedPrimaryColumnFile.putFloat(masterRecord.getFloat(columnIndex));
-                            break;
-                        case ColumnType.LONG:
-                            updatedPrimaryColumnFile.putLong(masterRecord.getLong(columnIndex));
-                            break;
-                        case ColumnType.TIMESTAMP:
-                            updatedPrimaryColumnFile.putLong(masterRecord.getTimestamp(columnIndex));
-                            break;
-                        case ColumnType.DATE:
-                            updatedPrimaryColumnFile.putLong(masterRecord.getDate(columnIndex));
-                            break;
-                        case ColumnType.DOUBLE:
-                            updatedPrimaryColumnFile.putDouble(masterRecord.getDouble(columnIndex));
-                            break;
-                        case ColumnType.SHORT:
-                            updatedPrimaryColumnFile.putShort(masterRecord.getShort(columnIndex));
-                            break;
-                        case ColumnType.CHAR:
-                            updatedPrimaryColumnFile.putChar(masterRecord.getChar(columnIndex));
-                            break;
-                        case ColumnType.BYTE:
-                        case ColumnType.BOOLEAN:
-                            updatedPrimaryColumnFile.putByte(masterRecord.getByte(columnIndex));
-                            break;
-                        case ColumnType.GEOBYTE:
-                            updatedPrimaryColumnFile.putByte(masterRecord.getGeoByte(columnIndex));
-                            break;
-                        case ColumnType.GEOSHORT:
-                            updatedPrimaryColumnFile.putShort(masterRecord.getGeoShort(columnIndex));
-                            break;
-                        case ColumnType.GEOINT:
-                            updatedPrimaryColumnFile.putInt(masterRecord.getGeoInt(columnIndex));
-                            break;
-                        case ColumnType.GEOLONG:
-                            updatedPrimaryColumnFile.putLong(masterRecord.getGeoLong(columnIndex));
-                            break;
-                        default:
-                            throw SqlException.$(0, "Column type ")
-                                    .put(ColumnType.nameOf(columnType))
-                                    .put(" not supported for updates");
-                    }
-                } else {
-                    updatedPrimaryColumnFile.putBlockOfBytes(addr, basePrimaryColumnFile.size() - (startPartitionRowId * typeSize));
-                }
-            } else {
-                // add support for variable length types
-                throw SqlException.$(0, "Column type ")
-                        .put(ColumnType.nameOf(columnType))
-                        .put(" is not fixed length, UPDATE is not supported");
+            int typeSize = getFixedColumnSize(columnType);
+            if (partitionRowId > startPartitionRowId) {
+                copyRecords(startPartitionRowId, partitionRowId, basePrimaryColumnFile, updatedFixedColumnFile, baseVariableColumnFile, updatedVariableColumnFile, columnType, typeSize);
+            }
+            switch (ColumnType.tagOf(columnType)) {
+                case ColumnType.INT:
+                    updatedFixedColumnFile.putInt(masterRecord.getInt(columnIndex));
+                    break;
+                case ColumnType.FLOAT:
+                    updatedFixedColumnFile.putFloat(masterRecord.getFloat(columnIndex));
+                    break;
+                case ColumnType.LONG:
+                    updatedFixedColumnFile.putLong(masterRecord.getLong(columnIndex));
+                    break;
+                case ColumnType.TIMESTAMP:
+                    updatedFixedColumnFile.putLong(masterRecord.getTimestamp(columnIndex));
+                    break;
+                case ColumnType.DATE:
+                    updatedFixedColumnFile.putLong(masterRecord.getDate(columnIndex));
+                    break;
+                case ColumnType.DOUBLE:
+                    updatedFixedColumnFile.putDouble(masterRecord.getDouble(columnIndex));
+                    break;
+                case ColumnType.SHORT:
+                    updatedFixedColumnFile.putShort(masterRecord.getShort(columnIndex));
+                    break;
+                case ColumnType.CHAR:
+                    updatedFixedColumnFile.putChar(masterRecord.getChar(columnIndex));
+                    break;
+                case ColumnType.BYTE:
+                case ColumnType.BOOLEAN:
+                    updatedFixedColumnFile.putByte(masterRecord.getByte(columnIndex));
+                    break;
+                case ColumnType.GEOBYTE:
+                    updatedFixedColumnFile.putByte(masterRecord.getGeoByte(columnIndex));
+                    break;
+                case ColumnType.GEOSHORT:
+                    updatedFixedColumnFile.putShort(masterRecord.getGeoShort(columnIndex));
+                    break;
+                case ColumnType.GEOINT:
+                    updatedFixedColumnFile.putInt(masterRecord.getGeoInt(columnIndex));
+                    break;
+                case ColumnType.GEOLONG:
+                    updatedFixedColumnFile.putLong(masterRecord.getGeoLong(columnIndex));
+                    break;
+                case ColumnType.STRING:
+                    CharSequence value = masterRecord.getStr(columnIndex);
+                    long offset = updatedVariableColumnFile.putStr(value);
+                    updatedFixedColumnFile.putLong(offset);
+                    break;
+                default:
+                    throw SqlException.$(0, "Column type ")
+                            .put(ColumnType.nameOf(columnType))
+                            .put(" not supported for updates");
             }
         }
     }

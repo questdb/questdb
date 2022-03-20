@@ -756,6 +756,13 @@ public class TableWriter implements Closeable {
         return txWriter.getPartitionCount();
     }
 
+    public long getPartitionSize(int partitionIndex) {
+        if (partitionIndex == txWriter.getPartitionCount() - 1 || !PartitionBy.isPartitioned(partitionBy)) {
+            return txWriter.getTransientRowCount();
+        }
+        return txWriter.getPartitionSize(partitionIndex);
+    }
+
     public long getPartitionTimestamp(int partitionIndex) {
         return txWriter.getPartitionTimestamp(partitionIndex);
     }
