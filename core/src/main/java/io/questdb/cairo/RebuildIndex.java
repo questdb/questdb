@@ -29,9 +29,11 @@ import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
@@ -141,7 +143,8 @@ public class RebuildIndex implements Closeable, Mutable {
                                         tempStringSink,
                                         partitionTimestamp,
                                         partitionSize,
-                                        partitionNameTxn);
+                                        partitionNameTxn,
+                                        columnVersionReader);
                             }
                         }
                     } else {
@@ -213,7 +216,8 @@ public class RebuildIndex implements Closeable, Mutable {
             FilesFacade ff,
             ColumnVersionReader columnVersionReader,
             int columnIndex,
-            long partitionTimestamp
+            long partitionTimestamp,
+            long partitionNameTxn
     ) {
         path.trimTo(rootLen).concat(partitionName);
         TableUtils.txnPartitionConditionally(path, partitionNameTxn);
@@ -239,9 +243,9 @@ public class RebuildIndex implements Closeable, Mutable {
                         indexer.index(roMem, columnTop, partitionSize);
                     }
                 }
-            } else {
-                LOG.info().$("partition does not exit ").$(path).$();
             }
+        } else {
+            LOG.info().$("partition does not exit ").$(path).$();
         }
     }
 
@@ -254,6 +258,7 @@ public class RebuildIndex implements Closeable, Mutable {
             StringSink sink,
             long partitionTimestamp,
             long partitionSize,
+            long partitionNameTxn,
             ColumnVersionReader columnVersionReader
     ) {
         sink.clear();
@@ -262,23 +267,33 @@ public class RebuildIndex implements Closeable, Mutable {
         if (rebuildColumnIndex == ALL) {
             for (int columnIndex = metadata.getColumnCount() - 1; columnIndex > -1; columnIndex--) {
                 if (metadata.isColumnIndexed(columnIndex)) {
-                    rebuildIndexForColumn(metadata, columnIndex, indexer, sink, partitionSize, ff, columnVersionReader, partitionTimestamp);
+                    rebuildIndexForColumn(metadata, columnIndex, indexer, sink, partitionSize, ff, columnVersionReader, partitionTimestamp, partitionNameTxn);
                 }
             }
         } else {
             if (metadata.isColumnIndexed(rebuildColumnIndex)) {
-                rebuildIndexForColumn(metadata, rebuildColumnIndex, indexer, sink, partitionSize, ff, columnVersionReader, partitionTimestamp);
+                rebuildIndexForColumn(metadata, rebuildColumnIndex, indexer, sink, partitionSize, ff, columnVersionReader, partitionTimestamp, partitionNameTxn);
             } else {
                 throw CairoException.instance(0).put("Column is not indexed");
             }
         }
     }
 
-    private void rebuildIndexForColumn(TableReaderMetadata metadata, int columnIndex, SymbolColumnIndexer indexer, StringSink sink, long partitionSize, FilesFacade ff, ColumnVersionReader columnVersionReader, long partitionTimestamp) {
+    private void rebuildIndexForColumn(
+            TableReaderMetadata metadata,
+            int columnIndex,
+            SymbolColumnIndexer indexer,
+            StringSink sink,
+            long partitionSize,
+            FilesFacade ff,
+            ColumnVersionReader columnVersionReader,
+            long partitionTimestamp,
+            long partitionNameTxn
+    ) {
         CharSequence columnName = metadata.getColumnName(columnIndex);
         int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
         int writerIndex = metadata.getWriterIndex(columnIndex);
-        rebuildIndex(indexer, columnName, sink, indexValueBlockCapacity, partitionSize, ff, columnVersionReader, writerIndex, partitionTimestamp);
+        rebuildIndex(indexer, columnName, sink, indexValueBlockCapacity, partitionSize, ff, columnVersionReader, writerIndex, partitionTimestamp, partitionNameTxn);
     }
 
     private void removeIndexFiles(CharSequence columnName, FilesFacade ff, long columnNameTxn) {
