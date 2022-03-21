@@ -324,6 +324,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgInsertCacheBlockCount;
     private int pgInsertCacheRowCount;
     private int pgInsertPoolCapacity;
+    private boolean pgUpdateCacheEnabled;
+    private int pgUpdateCacheBlockCount;
+    private int pgUpdateCacheRowCount;
+    private int pgUpdatePoolCapacity;
     private int pgNamedStatementCacheCapacity;
     private int pgNamesStatementPoolCapacity;
     private int pgPendingWritersCacheCapacity;
@@ -616,6 +620,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgInsertCacheBlockCount = getInt(properties, env, "pg.insert.cache.block.count", 8);
                 this.pgInsertCacheRowCount = getInt(properties, env, "pg.insert.cache.row.count", 8);
                 this.pgInsertPoolCapacity = getInt(properties, env, "pg.insert.pool.capacity", 64);
+                this.pgUpdateCacheEnabled = getBoolean(properties, env, "pg.update.cache.enabled", true);
+                this.pgUpdateCacheBlockCount = getInt(properties, env, "pg.update.cache.block.count", 8);
+                this.pgUpdateCacheRowCount = getInt(properties, env, "pg.update.cache.row.count", 8);
+                this.pgUpdatePoolCapacity = getInt(properties, env, "pg.update.pool.capacity", 64);
                 this.pgNamedStatementCacheCapacity = getInt(properties, env, "pg.named.statement.cache.capacity", 32);
                 this.pgNamesStatementPoolCapacity = getInt(properties, env, "pg.named.statement.pool.capacity", 32);
                 this.pgPendingWritersCacheCapacity = getInt(properties, env, "pg.pending.writers.cache.capacity", 16);
@@ -2807,6 +2815,26 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getInsertPoolCapacity() {
             return pgInsertPoolCapacity;
+        }
+
+        @Override
+        public boolean isUpdateCacheEnabled() {
+            return pgUpdateCacheEnabled;
+        }
+
+        @Override
+        public int getUpdateCacheBlockCount() {
+            return pgUpdateCacheBlockCount;
+        }
+
+        @Override
+        public int getUpdateCacheRowCount() {
+            return pgUpdateCacheRowCount;
+        }
+
+        @Override
+        public int getUpdatePoolCapacity() {
+            return pgUpdatePoolCapacity;
         }
 
         @Override

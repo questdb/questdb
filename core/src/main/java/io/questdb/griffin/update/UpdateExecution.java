@@ -67,7 +67,7 @@ public class UpdateExecution implements Closeable {
         path = Misc.free(path);
     }
 
-    public void executeUpdate(TableWriter tableWriter, UpdateStatement updateStatement, SqlExecutionContext executionContext) throws SqlException {
+    public long executeUpdate(TableWriter tableWriter, UpdateStatement updateStatement, SqlExecutionContext executionContext) throws SqlException {
         if (tableWriter.inTransaction()) {
             LOG.info().$("committing current transaction before UPDATE execution [table=").$(tableWriter.getTableName()).I$();
             tableWriter.commit();
@@ -100,6 +100,7 @@ public class UpdateExecution implements Closeable {
 
         // Partition to update
         long currentPartitionIndex = -1L;
+        long rowsUpdated = 0;
 
         // Row by row updates
         // This should happen parallel per file (partition and column)
@@ -149,6 +150,7 @@ public class UpdateExecution implements Closeable {
                         masterRecord);
 
                 startPartitionRowId = ++partitionRowId;
+                rowsUpdated++;
             }
 
             if (currentPartitionIndex > -1) {
@@ -172,6 +174,7 @@ public class UpdateExecution implements Closeable {
             tableWriter.commit();
             tableWriter.openLastPartition();
         }
+        return rowsUpdated;
     }
 
     private void copyColumnValues(

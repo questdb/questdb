@@ -22,19 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.pool.WriterSource;
-import io.questdb.griffin.InsertRowImpl;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.griffin.update.UpdateStatement;
+import io.questdb.std.WeakAutoClosableObjectPool;
 
-public interface InsertStatement {
-    InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException;
+public class TypesAndUpdate extends AbstractTypeContainer<TypesAndUpdate> {
+    private UpdateStatement update;
 
-    InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException;
+    public TypesAndUpdate(WeakAutoClosableObjectPool<TypesAndUpdate> parentPool) {
+        super(parentPool);
+    }
 
-    CharSequence getTableName();
+    public UpdateStatement getUpdate() {
+        return update;
+    }
 
-    void addInsertRow(InsertRowImpl row);
+    public void of(UpdateStatement update, BindVariableService bindVariableService) {
+        this.update = update;
+        copyTypesFrom(bindVariableService);
+    }
 }

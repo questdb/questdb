@@ -2747,6 +2747,121 @@ nodejs code:
     }
 
     @Test
+    public void testUpdate() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(true, false)
+            ) {
+                final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts)");
+                statement.execute();
+
+                final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
+                        "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
+                        "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
+                insert1.execute();
+
+                final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5");
+                update1.execute();
+
+                final PreparedStatement insert2 = connection.prepareStatement("insert into x values " +
+                        "(8, 4.0, '2020-06-01T00:00:22'::timestamp)," +
+                        "(10, 6.0, '2020-06-01T00:00:32'::timestamp)");
+                insert2.execute();
+
+                final PreparedStatement update2 = connection.prepareStatement("update x set a=7 where b>5.0");
+                update2.execute();
+
+                final String expected = "a[BIGINT],b[DOUBLE],ts[TIMESTAMP]\n" +
+                        "1,2.0,2020-06-01 00:00:02.0\n" +
+                        "9,3.0,2020-06-01 00:00:12.0\n" +
+                        "8,4.0,2020-06-01 00:00:22.0\n" +
+                        "7,6.0,2020-06-01 00:00:32.0\n";
+                try (ResultSet resultSet = connection.prepareStatement("select * from x").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expected, sink, resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateNoAutoCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                connection.setAutoCommit(false);
+
+                PreparedStatement tbl = connection.prepareStatement("create table x (a int, b int, ts timestamp) timestamp(ts)");
+                tbl.execute();
+
+                PreparedStatement insert = connection.prepareStatement("insert into x values(?, ?, '2022-03-17T00:00:00'::timestamp)");
+                for (int i = 0; i < 10; i++) {
+                    insert.setInt(1, i);
+                    insert.setInt(2, i+100);
+                    insert.execute();
+                }
+
+                PreparedStatement update = connection.prepareStatement("update x set b=? where a=?");
+                for (int i = 0; i < 10; i++) {
+                    update.setInt(1, i+10);
+                    update.setInt(2, i);
+                    update.execute();
+                }
+
+                for (int i = 10; i < 15; i++) {
+                    insert.setInt(1, i);
+                    insert.setInt(2, i+100);
+                    insert.execute();
+                }
+
+                PreparedStatement update2 = connection.prepareStatement("update x set a=? where a=?");
+                for (int i = 10; i < 15; i++) {
+                    update2.setInt(1, i+10);
+                    update2.setInt(2, i);
+                    update2.execute();
+                }
+
+                for (int i = 0; i < 5; i++) {
+                    update2.setInt(1, i+10);
+                    update2.setInt(2, i);
+                    update2.execute();
+                }
+
+                for (int i = 0; i < 3; i++) {
+                    update.setInt(1, i+1000);
+                    update.setInt(2, i+10);
+                    update.execute();
+                }
+                connection.commit();
+
+                final String expected = "a[INTEGER],b[INTEGER],ts[TIMESTAMP]\n" +
+                        "1000,10,2022-03-17 00:00:00.0\n" +
+                        "1001,11,2022-03-17 00:00:00.0\n" +
+                        "1002,12,2022-03-17 00:00:00.0\n" +
+                        "13,13,2022-03-17 00:00:00.0\n" +
+                        "14,14,2022-03-17 00:00:00.0\n" +
+                        "5,15,2022-03-17 00:00:00.0\n" +
+                        "6,16,2022-03-17 00:00:00.0\n" +
+                        "7,17,2022-03-17 00:00:00.0\n" +
+                        "8,18,2022-03-17 00:00:00.0\n" +
+                        "9,19,2022-03-17 00:00:00.0\n" +
+                        "20,110,2022-03-17 00:00:00.0\n" +
+                        "21,111,2022-03-17 00:00:00.0\n" +
+                        "22,112,2022-03-17 00:00:00.0\n" +
+                        "23,113,2022-03-17 00:00:00.0\n" +
+                        "24,114,2022-03-17 00:00:00.0\n";
+                try (ResultSet resultSet = connection.prepareStatement("select * from x").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expected, sink, resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testIntAndLongParametersWithFormatCountGreaterThanValueCount() throws Exception {
         String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
@@ -2870,7 +2985,6 @@ nodejs code:
                     Assert.assertEquals(1, a[0]);
                     Assert.assertEquals(1, a[1]);
                     Assert.assertEquals(1, a[2]);
-
                 }
 
                 StringSink sink = new StringSink();

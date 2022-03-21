@@ -70,8 +70,8 @@ public class UpdateStatement implements Closeable {
         return tableName;
     }
 
-    public void apply(TableWriter tableWriter) throws SqlException {
-        updateExecution.executeUpdate(tableWriter, this, executionContext);
+    public long apply(TableWriter tableWriter) throws SqlException {
+        return updateExecution.executeUpdate(tableWriter, this, executionContext);
     }
 
     public long getTableVersion() {

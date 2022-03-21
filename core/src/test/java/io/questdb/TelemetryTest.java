@@ -136,7 +136,6 @@ public class TelemetryTest extends AbstractCairoTest {
                im.execute();
                im.commit();
                im.close();
-               ist.close();
                TelemetryJob telemetryJob = new TelemetryJob(engine, null);
                String expectedSql = "column	type	indexed	indexBlockCapacity	symbolCached	symbolCapacity	designated\n" +
                        "id	LONG256	false	0	false	0	false\n" +

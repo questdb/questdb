@@ -3851,7 +3851,7 @@ public class TableWriter implements Closeable {
             LOG.info()
                     .$("received ASYNC ALTER TABLE cmd [tableName=").$(tableName)
                     .$(", tableId=").$(tableId)
-                    .$(", instance=").$(correlationId)
+                    .$(", correlationId=").$(correlationId)
                     .I$();
             alterTableStatement.deserialize(cmd);
             alterTableStatement.apply(this, acceptStructureChange);

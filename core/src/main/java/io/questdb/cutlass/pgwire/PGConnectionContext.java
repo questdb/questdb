@@ -34,6 +34,7 @@ import io.questdb.cutlass.text.TextLoader;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.griffin.update.UpdateStatement;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
@@ -63,6 +64,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     public static final String TAG_OK = "OK";
     public static final String TAG_COPY = "COPY";
     public static final String TAG_INSERT = "INSERT";
+    public static final String TAG_UPDATE = "UPDATE";
     public static final char STATUS_IN_TRANSACTION = 'T';
     public static final char STATUS_IN_ERROR = 'E';
     public static final char STATUS_IDLE = 'I';
@@ -128,11 +130,13 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private final WeakObjectPool<NamedStatementWrapper> namedStatementWrapperPool;
     private final WeakObjectPool<Portal> namedPortalPool;
     private final WeakAutoClosableObjectPool<TypesAndInsert> typesAndInsertPool;
+    private final WeakAutoClosableObjectPool<TypesAndUpdate> typesAndUpdatePool;
     private final DateLocale locale;
     private final CharSequenceObjHashMap<TableWriter> pendingWriters;
     private final DirectCharSink utf8Sink;
     private final TypeManager typeManager;
     private final AssociativeCache<TypesAndInsert> typesAndInsertCache;
+    private final AssociativeCache<TypesAndUpdate> typesAndUpdateCache;
     private final CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap;
     private final CharSequenceObjHashMap<Portal> namedPortalMap;
     private final IntList syncActions = new IntList(4);
@@ -164,6 +168,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     // served to client or query errored out due to network issues
     private TypesAndSelect typesAndSelect = null;
     private TypesAndInsert typesAndInsert = null;
+    private TypesAndUpdate typesAndUpdate = null;
     private long fd;
     private CharSequence queryText;
     //command tag used when returning row count to client,
@@ -222,9 +227,14 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration());
         this.typesAndInsertPool = new WeakAutoClosableObjectPool<>(TypesAndInsert::new, configuration.getInsertPoolCapacity()); // 32
         final boolean enableInsertCache = configuration.isInsertCacheEnabled();
-        final int blockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1; // 8
-        final int rowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1; // 8
-        this.typesAndInsertCache = new AssociativeCache<>(blockCount, rowCount);
+        final int insertBlockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1; // 8
+        final int insertRowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1; // 8
+        this.typesAndInsertCache = new AssociativeCache<>(insertBlockCount, insertRowCount);
+        this.typesAndUpdatePool = new WeakAutoClosableObjectPool<>(TypesAndUpdate::new, configuration.getUpdatePoolCapacity()); // 64
+        final boolean enableUpdateCache = configuration.isUpdateCacheEnabled();
+        final int updateBlockCount = enableUpdateCache ? configuration.getUpdateCacheBlockCount() : 1; // 8
+        final int updateRowCount = enableUpdateCache ? configuration.getUpdateCacheRowCount() : 1; // 8
+        this.typesAndUpdateCache = new AssociativeCache<>(updateBlockCount, updateRowCount);
         this.batchCallback = new PGConnectionBatchCallback();
         this.bindSelectColumnFormats = new IntList();
     }
@@ -299,6 +309,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         clearWriters();
         clearRecvBuffer();
         typesAndInsertCache.clear();
+        typesAndUpdateCache.clear();
         namedStatementMap.clear();
         namedPortalMap.clear();
         bindVariableService.clear();
@@ -1072,6 +1083,14 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 return false;
             }
 
+            typesAndUpdate = typesAndUpdateCache.peek(queryText);
+
+            if (typesAndUpdate != null) {
+                typesAndUpdate.defineBindVariables(bindVariableService);
+                queryTag = TAG_UPDATE;
+                return false;
+            }
+
             typesAndSelect = typesAndSelectCache.poll(queryText);
 
             if (typesAndSelect != null) {
@@ -1085,7 +1104,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             // not cached - compile to see what it is
             final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext); //here
             processCompiledQuery(compiler, cc);
-
         } else {
             isEmptyQuery = true;
         }
@@ -1249,6 +1267,52 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                         rowCount = m2.execute();
                         m2.commit();
                     }
+                    break;
+            }
+            prepareCommandComplete(true);
+        } catch (Throwable e) {
+            if (transactionState == IN_TRANSACTION) {
+                transactionState = ERROR_TRANSACTION;
+            }
+            throw e;
+        }
+    }
+
+    private void executeUpdate() throws SqlException {
+        final TableWriter w;
+        try {
+            switch (transactionState) {
+                case IN_TRANSACTION:
+                    UpdateStatement updateStatement = typesAndUpdate.getUpdate();
+                    w = getWriter(
+                            sqlExecutionContext.getCairoSecurityContext(),
+                            updateStatement.getTableName(),
+                            "Update table execute"
+                    );
+                    // update contains an implicit commit to make sure all rows inserted up to
+                    // the update will be updated, this breaks the idea of transactions
+                    // we should investigate if there is a way to instruct table reader to include
+                    // uncommitted rows in the query which prepares the set of rows for update
+                    // if table reader can do that we could remove the implicit commit from update executor
+                    rowCount = updateStatement.apply(w);
+                    pendingWriters.put(w.getTableName(), w);
+                    break;
+                case ERROR_TRANSACTION:
+                    // when transaction is in error state, skip execution
+                    break;
+                default:
+                    // in any other case we will commit
+                    UpdateStatement updateStatement2 = typesAndUpdate.getUpdate();
+                    try (updateStatement2) {
+                        w = engine.getWriter(
+                                sqlExecutionContext.getCairoSecurityContext(),
+                                updateStatement2.getTableName(),
+                                "Update table execute"
+                        );
+                        rowCount = updateStatement2.apply(w);
+                    }
+                    w.commit();
+                    Misc.free(w);
                     break;
             }
             prepareCommandComplete(true);
@@ -1536,6 +1600,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             bindVariableService.clear();
             currentCursor = Misc.free(currentCursor);
             typesAndInsert = null;
+            typesAndUpdate = null;
             clearCursorAndFactory();
             rowCount = 0;
             queryTag = TAG_OK;
@@ -1831,6 +1896,16 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     typesAndInsertCache.put(queryText, typesAndInsert);
                 }
                 break;
+            case CompiledQuery.UPDATE:
+                queryTag = TAG_UPDATE;
+                typesAndUpdate = typesAndUpdatePool.pop();
+                typesAndUpdate.of(cq.getUpdateStatement(), bindVariableService);
+                if (bindVariableService.getIndexedVariableCount() > 0) {
+                    LOG.debug().$("cache update [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
+                    // we can add update to cache right away because it is local to the connection
+                    typesAndUpdateCache.put(queryText, typesAndUpdate);
+                }
+                break;
             case CompiledQuery.INSERT_AS_SELECT:
                 queryTag = TAG_INSERT;
                 rowCount = cq.getInsertCount();
@@ -1927,6 +2002,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         } else if (typesAndInsert != null) {
             LOG.debug().$("executing insert").$();
             executeInsert();
+        } else if (typesAndUpdate != null) {
+            LOG.debug().$("executing update").$();
+            executeUpdate();
         } else { //this must be a OK/SET/COMMIT/ROLLBACK or empty query
             executeTag();
             prepareCommandComplete(false);
@@ -2407,6 +2485,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 sendCursor(0, resumeCursorQueryRef, resumeQueryCompleteRef);
             } else if (typesAndInsert != null) {
                 executeInsert();
+            } else if (typesAndUpdate != null) {
+                executeUpdate();
             } else if (cq.getType() == CompiledQuery.INSERT_AS_SELECT ||
                     cq.getType() == CompiledQuery.CREATE_TABLE_AS_SELECT) {
                 prepareCommandComplete(true);
@@ -2420,6 +2500,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         public void preCompile(SqlCompiler compiler) throws SqlException {
             prepareForNewBatchQuery();
             PGConnectionContext.this.typesAndInsert = null;
+            PGConnectionContext.this.typesAndUpdate = null;
             PGConnectionContext.this.typesAndSelect = null;
         }
     }

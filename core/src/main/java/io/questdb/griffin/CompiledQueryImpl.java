@@ -152,8 +152,9 @@ public class CompiledQueryImpl implements CompiledQuery {
                 )
         ) {
             updateStatement.apply(writer);
-            updateStatement.close();
             return QueryFuture.DONE;
+        } finally {
+            updateStatement.close();
         }
     }
 

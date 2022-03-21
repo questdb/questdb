@@ -47,10 +47,6 @@ public class InsertStatementImpl implements InsertStatement {
         this.tableName = tableName;
         this.structureVersion = structureVersion;
     }
-    @Override
-    public void close() {
-        detachWriter();
-    }
 
     @Override
     public InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException {
@@ -62,7 +58,7 @@ public class InsertStatementImpl implements InsertStatement {
         initContext(executionContext);
         if (insertMethod.writer == null) {
             final TableWriter writer = writerSource.getWriter(executionContext.getCairoSecurityContext(), tableName, "insert");
-            if (writer.getStructureVersion() != getStructureVersion()) {
+            if (writer.getStructureVersion() != structureVersion) {
                 writer.close();
                 throw WriterOutOfDateException.INSTANCE;
             }
@@ -72,18 +68,8 @@ public class InsertStatementImpl implements InsertStatement {
     }
 
     @Override
-    public long getStructureVersion() {
-        return structureVersion;
-    }
-
-    @Override
     public String getTableName() {
         return tableName;
-    }
-
-    @Override
-    public void detachWriter() {
-        insertMethod.close();
     }
 
     @Override
