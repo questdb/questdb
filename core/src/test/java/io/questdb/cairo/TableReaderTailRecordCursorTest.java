@@ -27,10 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Rnd;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
@@ -215,7 +212,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
 
             Assert.assertTrue(latch.await(600, TimeUnit.SECONDS));
             Assert.assertEquals(0, errorCount.get());
-            Thread.sleep(1000);
+            Os.sleep(1000);
         });
     }
 
