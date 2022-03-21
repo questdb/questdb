@@ -1321,6 +1321,26 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
+    public void testBindVariableIsNullBinaryTransfer() throws Exception {
+        testBindVariableIsNull(true);
+    }
+
+    @Test
+    public void testBindVariableIsNullStringTransfer() throws Exception {
+        testBindVariableIsNull(false);
+    }
+
+    @Test
+    public void testBindVariableIsNotNullBinaryTransfer() throws Exception {
+        testBindVariableIsNotNull(true);
+    }
+
+    @Test
+    public void testBindVariableIsNotNullStringTransfer() throws Exception {
+        testBindVariableIsNotNull(false);
+    }
+
+    @Test
     public void testBindVariableInFilterBinaryTransfer() throws Exception {
         testBindVariableInFilter(true);
     }
@@ -6247,6 +6267,90 @@ create table tab as (
 
                             Assert.assertEquals(totalCount, count);
                         }
+                    }
+                }
+            }
+        });
+    }
+
+    private void testBindVariableIsNull(boolean binary) throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, binary)
+            ) {
+                connection.setAutoCommit(false);
+                connection.prepareStatement("create table tab1 (value int, ts timestamp) timestamp(ts)").execute();
+                connection.prepareStatement("insert into tab1 (value, ts) values (100, 0)").execute();
+                connection.prepareStatement("insert into tab1 (value, ts) values (null, 1)").execute();
+                connection.commit();
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where null is ?")) {
+                    ps.setNull(1, Types.VARCHAR);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                        "100,1970-01-01 00:00:00.0\n" +
+                                        "null,1970-01-01 00:00:00.000001\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where value is ?")) {
+                    ps.setNull(1, Types.NULL);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                        "null,1970-01-01 00:00:00.000001\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    private void testBindVariableIsNotNull(boolean binary) throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, binary)
+            ) {
+                connection.setAutoCommit(false);
+                connection.prepareStatement("create table tab1 (value int, ts timestamp) timestamp(ts)").execute();
+                connection.prepareStatement("insert into tab1 (value, ts) values (100, 0)").execute();
+                connection.prepareStatement("insert into tab1 (value, ts) values (null, 1)").execute();
+                connection.commit();
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where 'null' is not ?")) {
+                    ps.setNull(1, Types.VARCHAR);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                        "100,1970-01-01 00:00:00.0\n" +
+                                        "null,1970-01-01 00:00:00.000001\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where value is not ?")) {
+                    ps.setNull(1, Types.NULL);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                        "100,1970-01-01 00:00:00.0\n",
+                                sink,
+                                rs
+                        );
                     }
                 }
             }

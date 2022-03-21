@@ -35,7 +35,7 @@ class ExpressionParser {
     private static final IntHashSet nonLiteralBranches = new IntHashSet();
     private static final int BRANCH_NONE = 0;
     private static final int BRANCH_COMMA = 1;
-    private static final int BRANCH_LEFT_BRACE = 2;
+    private static final int BRANCH_LEFT_BRACE = 2; // brace -> parenthesis
     private static final int BRANCH_RIGHT_BRACE = 3;
     private static final int BRANCH_CONSTANT = 4;
     private static final int BRANCH_OPERATOR = 5;
@@ -761,31 +761,32 @@ class ExpressionParser {
                     case 'I':
                         if (SqlKeywords.isIsKeyword(tok)) {
                             // replace:
-                            // <literal> IS NULL     -> <literal> = NULL
-                            // <literal> IS NOT NULL -> <literal> != NULL
-                            if (prevBranch != BRANCH_LITERAL) {
-                                throw SqlException.$(position, "IS [NOT] not allowed here");
-                            }
-                            CharSequence notTok = SqlUtil.fetchNext(lexer);
-                            if (notTok == null) {
-                                throw SqlException.$(position, "IS must be followed by [NOT] NULL");
-                            }
-                            if (SqlKeywords.isNotKeyword(notTok)) {
-                                int notTokPosition = lexer.lastTokenPosition();
-                                CharSequence nullTok = SqlUtil.fetchNext(lexer);
-                                if (nullTok == null || !SqlKeywords.isNullKeyword(nullTok)) {
-                                    throw SqlException.$(position, "IS NOT must be followed by NULL");
+                            // <literal or constant> IS NULL     -> <literal or constant> = NULL
+                            // <literal or constant> IS NOT NULL -> <literal or constant> != NULL
+                            if (prevBranch == BRANCH_LITERAL || prevBranch == BRANCH_CONSTANT) {
+                                final CharSequence tokAfterIsTok = SqlUtil.fetchNext(lexer);
+                                if (tokAfterIsTok == null) {
+                                    throw SqlException.$(position, "IS must be followed by [NOT] NULL");
                                 }
-                                lexer.backTo(notTokPosition + 3, notTok);
-                                tok = "!=";
-                                thisChar = '!';
-                            } else {
-                                if (!SqlKeywords.isNullKeyword(notTok)) {
+                                if (SqlKeywords.isNotKeyword(tokAfterIsTok)) {
+                                    int notTokPosition = lexer.lastTokenPosition();
+                                    CharSequence peekNullTok = SqlUtil.fetchNext(lexer);
+                                    if (peekNullTok != null && (SqlKeywords.isNullKeyword(peekNullTok) || peekNullTok.charAt(0) == '$')) {
+                                        lexer.backTo(notTokPosition + 3, tokAfterIsTok);
+                                        tok = "!=";
+                                        thisChar = '!';
+                                    } else {
+                                        throw SqlException.$(position, "IS NOT must be followed by NULL");
+                                    }
+                                } else if (SqlKeywords.isNullKeyword(tokAfterIsTok) || tokAfterIsTok.charAt(0) == '$') {
+                                    tok = "=";
+                                    thisChar = '=';
+                                    lexer.backTo(position + 2, tok);
+                                } else {
                                     throw SqlException.$(position, "IS must be followed by NULL");
                                 }
-                                tok = "=";
-                                thisChar = '=';
-                                lexer.backTo(position + 2, notTok);
+                            } else {
+                                throw SqlException.$(position, "IS [NOT] not allowed here");
                             }
                         }
                         processDefaultBranch = true;
@@ -1057,7 +1058,7 @@ class ExpressionParser {
                                     tok = SqlUtil.fetchNext(lexer);
                                     // Next token is string literal, or we are in 'as' part of cast function
                                     boolean isInActiveCastAs = (castBraceCountStack.size() > 0 && (castBraceCountStack.size() == castAsCount));
-                                    if (tok != null && (isInActiveCastAs|| tok.charAt(0) == '\'')) {
+                                    if (tok != null && (isInActiveCastAs || tok.charAt(0) == '\'')) {
                                         lexer.backTo(zoneTokPosition, zoneTok);
                                         continue;
                                     }
