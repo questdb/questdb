@@ -915,7 +915,7 @@ public class O3Test extends AbstractO3Test {
 
     @Test
     public void testVarColumnStress() throws Exception {
-        executeWithPool(8, O3Test::testVarColumnStress, new FilesFacadeImpl() {
+        executeWithPool(4, O3Test::testVarColumnStress, new FilesFacadeImpl() {
             boolean tooManyFiles = false;
             @Override
             public int mkdirs(LPSZ path, int mode) {
@@ -924,7 +924,7 @@ public class O3Test extends AbstractO3Test {
 
             @Override
             public long openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "1970-01-01.2" + Files.SEPARATOR + "d.i")) {
+                if (Chars.contains(name, "1970-01-01.2" + Files.SEPARATOR + "g.d")) {
                     tooManyFiles = true;
                     return -1;
                 }
@@ -6164,9 +6164,9 @@ public class O3Test extends AbstractO3Test {
             SqlExecutionContext executionContext
     ) throws SqlException {
 
-        compiler.compile("create table x (f symbol index, a string, b string, c string, d string, e symbol index, t timestamp) timestamp (t) partition by DAY", executionContext);
+        compiler.compile("create table x (f symbol index, a string, b string, c string, d string, e symbol index, g int, t timestamp) timestamp (t) partition by DAY", executionContext);
         // max timestamp should be 100_000
-        compiler.compile("insert into x select rnd_symbol('aa', 'bb', 'cc'), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_symbol('aa', 'bb', 'cc'), timestamp_sequence(0, 100) from long_sequence(3000000)", executionContext);
+        compiler.compile("insert into x select rnd_symbol('aa', 'bb', 'cc'), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_symbol('aa', 'bb', 'cc'), rnd_int(), timestamp_sequence(0, 100) from long_sequence(3000000)", executionContext);
 
         String[] symbols = new String[] {"ppp", "wrre", "0ppd", "l22z", "wwe32", "pps", "oop2", "00kk"};
         final int symbolLen = symbols.length;
@@ -6187,10 +6187,11 @@ public class O3Test extends AbstractO3Test {
                         r.putStr(3, rnd.nextChars(4));
                         r.putStr(4, rnd.nextChars(6));
                         r.putSym(5, symbols[rnd.nextInt(symbolLen)]);
+                        r.putInt(6, rnd.nextInt());
                         r.append();
                     }
                     try {
-                        w.commit();
+                        w.commitWithLag(10000L);
                     } catch (Exception e) {
                         w.rollback();
                     }
