@@ -61,6 +61,7 @@ public class LogFactory implements Closeable {
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
     private int recordLength = DEFAULT_MSG_SIZE;
     static boolean envEnabled = true;
+    static boolean overwriteWithSyncLogging = false;
 
     public LogFactory() {
         this(MicrosecondClockImpl.INSTANCE);
@@ -148,6 +149,10 @@ public class LogFactory implements Closeable {
 
     public static void configureFromSystemProperties(WorkerPool workerPool) {
         configureFromSystemProperties(INSTANCE, workerPool);
+    }
+
+    public static void configureSync() {
+        overwriteWithSyncLogging = true;
     }
 
     @SuppressWarnings("rawtypes")
@@ -244,7 +249,24 @@ public class LogFactory implements Closeable {
         final Holder err = scopeConfiguration.getHolder(Numbers.msb(LogLevel.ERROR));
         final Holder cri = scopeConfiguration.getHolder(Numbers.msb(LogLevel.CRITICAL));
         final Holder adv = scopeConfiguration.getHolder(Numbers.msb(LogLevel.ADVISORY));
-        return new Logger(
+        if (!overwriteWithSyncLogging) {
+            return new Logger(
+                    clock,
+                    compressScope(key, sink),
+                    dbg == null ? null : dbg.ring,
+                    dbg == null ? null : dbg.lSeq,
+                    inf == null ? null : inf.ring,
+                    inf == null ? null : inf.lSeq,
+                    err == null ? null : err.ring,
+                    err == null ? null : err.lSeq,
+                    cri == null ? null : cri.ring,
+                    cri == null ? null : cri.lSeq,
+                    adv == null ? null : adv.ring,
+                    adv == null ? null : adv.lSeq
+            );
+        }
+
+        return new SyncLogger(
                 clock,
                 compressScope(key, sink),
                 dbg == null ? null : dbg.ring,

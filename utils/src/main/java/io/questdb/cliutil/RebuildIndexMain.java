@@ -36,11 +36,16 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 
-import java.io.*;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.Properties;
 
 public class RebuildIndexMain {
     public static void main(String[] args) throws IOException, JsonException, ServerConfigurationException {
+        LogFactory.configureSync();
+
         CommandLineArgs params = parseCommandArgs(args);
         if (params == null) {
             // Invalid params, usage already printed
