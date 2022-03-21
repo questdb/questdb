@@ -486,15 +486,28 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             case ColumnType.LONG256:
                 rec.getLong256(col, socket);
                 break;
+            case ColumnType.GEOBYTE:
+                putGeoHashStringValue(socket, rec.getGeoByte(col), type);
+                break;
+            case ColumnType.GEOSHORT:
+                putGeoHashStringValue(socket, rec.getGeoShort(col), type);
+                break;
+            case ColumnType.GEOINT:
+                putGeoHashStringValue(socket, rec.getGeoInt(col), type);
+                break;
+            case ColumnType.GEOLONG:
+                putGeoHashStringValue(socket, rec.getGeoLong(col), type);
+                break;
             default:
                 assert false;
         }
     }
 
-    private static void putGeoHashStringValue(HttpChunkedResponseSocket socket, long value, int bitFlags) {
+    private static void putGeoHashStringValue(HttpChunkedResponseSocket socket, long value, int type) {
         if (value == GeoHashes.NULL) {
             socket.put("null");
         } else {
+            int bitFlags = GeoHashes.getBitFlags(type);
             socket.put('\"');
             if (bitFlags < 0) {
                 GeoHashes.appendCharsUnsafe(value, -bitFlags, socket);
@@ -504,7 +517,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             socket.put('\"');
         }
     }
-
 
     private void sendConfirmation(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
         socket.put("DDL Success\n");

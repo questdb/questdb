@@ -2834,6 +2834,76 @@ public class IODispatcherTest {
 
     @Test
     public void testJsonQueryGeoHashColumnChars() throws Exception {
+        testHttpQueryGeoHashColumnChars(
+                "GET /query?query=SELECT+*+FROM+y HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Accept: */*\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "0166\r\n" +
+                        "{\"query\":\"SELECT * FROM y\",\"columns\":[" +
+                        "{\"name\":\"geo1\",\"type\":\"GEOHASH(1c)\"}," +
+                        "{\"name\":\"geo2\",\"type\":\"GEOHASH(3c)\"}," +
+                        "{\"name\":\"geo4\",\"type\":\"GEOHASH(6c)\"}," +
+                        "{\"name\":\"geo8\",\"type\":\"GEOHASH(12c)\"}," +
+                        "{\"name\":\"geo01\",\"type\":\"GEOHASH(1b)\"}" +
+                        "],\"dataset\":[" +
+                        "[null,null,\"questd\",\"u10m99dd3pbj\",\"1\"]," +
+                        "[\"u\",\"u10\",\"questd\",null,\"1\"]," +
+                        "[\"q\",\"u10\",\"questd\",\"questdb12345\",\"1\"]" +
+                        "],\"count\":3}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
+    public void testTextQueryGeoHashColumnChars() throws Exception {
+        testHttpQueryGeoHashColumnChars(
+                "GET /exp?query=SELECT+*+FROM+y HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: */*\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/csv; charset=utf-8\r\n" +
+                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "90\r\n" +
+                        "\"geo1\",\"geo2\",\"geo4\",\"geo8\",\"geo01\"\r\n" +
+                        "null,null,\"questd\",\"u10m99dd3pbj\",\"1\"\r\n" +
+                        "\"u\",\"u10\",\"questd\",null,\"1\"\r\n" +
+                        "\"q\",\"u10\",\"questd\",\"questdb12345\",\"1\"\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    private void testHttpQueryGeoHashColumnChars(String request, String response) throws Exception {
         new HttpQueryTestBuilder()
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()
@@ -2854,25 +2924,7 @@ public class IODispatcherTest {
                                 "from long_sequence(3)\n" +
                                 ")", executionContext);
 
-                        String request = "SELECT+*+FROM+y";
-                        new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                                "GET /query?query=" + request + " HTTP/1.1\r\n",
-                                "0166\r\n" +
-                                        "{\"query\":\"SELECT * FROM y\",\"columns\":[" +
-                                        "{\"name\":\"geo1\",\"type\":\"GEOHASH(1c)\"}," +
-                                        "{\"name\":\"geo2\",\"type\":\"GEOHASH(3c)\"}," +
-                                        "{\"name\":\"geo4\",\"type\":\"GEOHASH(6c)\"}," +
-                                        "{\"name\":\"geo8\",\"type\":\"GEOHASH(12c)\"}," +
-                                        "{\"name\":\"geo01\",\"type\":\"GEOHASH(1b)\"}" +
-                                        "],\"dataset\":[" +
-                                        "[null,null,\"questd\",\"u10m99dd3pbj\",\"1\"]," +
-                                        "[\"u\",\"u10\",\"questd\",null,\"1\"]," +
-                                        "[\"q\",\"u10\",\"questd\",\"questdb12345\",\"1\"]" +
-                                        "],\"count\":3}\r\n" +
-                                        "00\r\n" +
-                                        "\r\n"
-
-                        );
+                        new SendAndReceiveRequestBuilder().execute(request, response);
                     }
                 });
     }
