@@ -218,7 +218,10 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testIsNull() throws SqlException {
         x("aNULL=", "a IS NULL");
+        x("tab.aNULL=", "tab.a IS NULL");
         assertFail("3 is null", 2, "IS [NOT] not allowed here");
+        assertFail("null is null", 5, "IS [NOT] not allowed here");
+        assertFail("'null' is null", 7, "IS [NOT] not allowed here");
         assertFail("column is 3", 7, "IS must be followed by NULL");
         assertFail("column is", 7, "IS must be followed by [NOT] NULL");
     }
@@ -226,7 +229,10 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testIsNotNull() throws SqlException {
         x("aNULL!=", "a is NOT NULL");
+        x("tab.aNULL!=", "tab.a is NOT NULL");
         assertFail("3 is not null", 2, "IS [NOT] not allowed here");
+        assertFail("null is not null", 5, "IS [NOT] not allowed here");
+        assertFail("'null' is not null", 7, "IS [NOT] not allowed here");
         assertFail("column is not 3", 7, "IS NOT must be followed by NULL");
         assertFail("column is not", 7, "IS NOT must be followed by NULL");
     }

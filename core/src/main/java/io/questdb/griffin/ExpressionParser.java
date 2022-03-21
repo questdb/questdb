@@ -759,7 +759,10 @@ class ExpressionParser {
                         break;
                     case 'i':
                     case 'I':
-                        if (SqlKeywords.isIsKeyword(tok)) { // replace 'IS' with '=', and 'IS NOT' with '!='
+                        if (SqlKeywords.isIsKeyword(tok)) {
+                            // replace:
+                            // <literal> IS NULL     -> <literal> = NULL
+                            // <literal> IS NOT NULL -> <literal> != NULL
                             if (prevBranch != BRANCH_LITERAL) {
                                 throw SqlException.$(position, "IS [NOT] not allowed here");
                             }
@@ -767,14 +770,13 @@ class ExpressionParser {
                             if (notTok == null) {
                                 throw SqlException.$(position, "IS must be followed by [NOT] NULL");
                             }
-
                             if (SqlKeywords.isNotKeyword(notTok)) {
-                                int currPosition = lexer.getPosition();
+                                int notTokPosition = lexer.lastTokenPosition();
                                 CharSequence nullTok = SqlUtil.fetchNext(lexer);
                                 if (nullTok == null || !SqlKeywords.isNullKeyword(nullTok)) {
                                     throw SqlException.$(position, "IS NOT must be followed by NULL");
                                 }
-                                lexer.backTo(currPosition, notTok);
+                                lexer.backTo(notTokPosition + 3, notTok);
                                 tok = "!=";
                                 thisChar = '!';
                             } else {

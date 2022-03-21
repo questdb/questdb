@@ -49,7 +49,11 @@ public class InsertNullTest extends AbstractGriffinTest {
             {"string", ""},
             {"symbol", ""},
             {"long256", ""},
-            {"binary", ""}
+            {"binary", ""},
+            {"geohash(5b)", ""},
+            {"geohash(15b)", ""},
+            {"geohash(31b)", ""},
+            {"geohash(60b)", ""}
     };
 
     @Test
@@ -206,7 +210,7 @@ public class InsertNullTest extends AbstractGriffinTest {
                 final String[] type = TYPES[i];
                 assertQuery(
                         "value\n",
-                        "x where value != null",
+                        "x where value is not null",
                         String.format("create table x (value %s)", type[0]),
                         null,
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),

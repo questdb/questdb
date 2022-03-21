@@ -2998,6 +2998,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "IS [NOT] not allowed here"
         );
         assertSyntaxError(
+                "null is null",
+                5,
+                "IS [NOT] not allowed here"
+        );
+        assertSyntaxError(
+                "'null' is null",
+                7,
+                "IS [NOT] not allowed here"
+        );
+        assertSyntaxError(
                 "a where x is 12",
                 10,
                 "IS must be followed by NULL",
@@ -3019,6 +3029,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "IS [NOT] not allowed here"
         );
         assertSyntaxError(
+                "null is not null",
+                5,
+                "IS [NOT] not allowed here"
+        );
+        assertSyntaxError(
+                "'null' is not null",
+                7,
+                "IS [NOT] not allowed here"
+        );
+        assertSyntaxError(
                 "a where x is not 12",
                 10,
                 "IS NOT must be followed by NULL",
@@ -3033,12 +3053,22 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testIsNullIsNotNull() throws Exception {
+    public void testIsNull() throws Exception {
         assertQuery(
-                "select-choose t1.x x, y from (select [x] from (select-choose [x] x from (select [x] from tab_x where x != null latest on ts partition by x)) t1 join (select [y] from tab_y xx2 where y = null) xx2 on xx2.y = t1.x) t1",
+                "select-choose tab1.ts ts, tab1.x x, tab2.y y from (select [ts, x] from tab1 timestamp (ts) join select [y] from tab2 on tab2.y = tab1.x where x = null)",
+                "select * from tab1 join tab2 on tab1.x = tab2.y where tab1.x is null",
+                modelOf("tab1").timestamp("ts").col("x", ColumnType.INT),
+                modelOf("tab2").col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testIsNotNull() throws Exception {
+        assertQuery(
+                "select-choose t1.x x, y from (select [x] from (select-choose [x] x from (select [x] from tab_x where x != null latest on ts partition by x)) t1 join (select [y] from tab_y xx2 where y != null) xx2 on xx2.y = t1.x) t1",
                 "select t1.x, y from (select x from tab_x where x is not null latest on ts partition by x) t1 " +
                         "join tab_y xx2 on xx2.y = t1.x " +
-                        "where y is null",
+                        "where y is not null",
                 modelOf("tab_x").timestamp("ts").col("x", ColumnType.INT),
                 modelOf("tab_y").col("y", ColumnType.INT)
         );

@@ -669,7 +669,7 @@ public class SqlKeywords {
 
         int i = 0;
         return (tok.charAt(i++) | 32) == 'i'
-                && (tok.charAt(i++) | 32) == 's';
+                && (tok.charAt(i) | 32) == 's';
     }
 
     public static boolean isInto(CharSequence tok) {
