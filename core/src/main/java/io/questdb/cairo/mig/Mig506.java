@@ -32,11 +32,15 @@ import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cairo.TableUtils.*;
-
 final class Mig506 {
     private static final long TX_STRUCT_UPDATE_1_META_OFFSET_PARTITION_BY = 4;
     private static final String TX_STRUCT_UPDATE_1_ARCHIVE_FILE_NAME = "_archive";
+
+    private static final String TXN_FILE_NAME = "_txn";
+    private static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
+    private static final long TX_OFFSET_FIXED_ROW_COUNT_64 = TX_OFFSET_TRANSIENT_ROW_COUNT + 8;
+    private static final long TX_OFFSET_MIN_TIMESTAMP = TX_OFFSET_FIXED_ROW_COUNT_64 + 8;
+    private static final long TX_OFFSET_MAX_TIMESTAMP = TX_OFFSET_MIN_TIMESTAMP + 8;
 
     static void migrate(MigrationContext migrationContext) {
         // Update transaction file
@@ -140,7 +144,7 @@ final class Mig506 {
 
         for (long ts = partitionFloorMethod.floor(minTimestamp); ts < tsLimit; ts = partitionAddMethod.calculate(ts, 1)) {
             path.trimTo(rootLen);
-            setPathForPartition(path, partitionBy, ts, false);
+            TableUtils.setPathForPartition(path, partitionBy, ts, false);
             if (ff.exists(path.concat(TX_STRUCT_UPDATE_1_ARCHIVE_FILE_NAME).$())) {
                 if (!removedPartitionsIncludes(ts, txMem, symbolsCount)) {
                     long partitionSize = TableUtils.readLongAtOffset(ff, path, tempMem8b, 0);

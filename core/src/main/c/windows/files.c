@@ -192,6 +192,11 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fsync(JNIEnv *e, jclass cl, jlo
     return -1;
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_sync(JNIEnv *e, jclass cl) {
+    // Windows does not seem to have sync.
+    return -1;
+}
+
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
         (JNIEnv *e, jclass cl, jlong lpszName, jlong millis) {
 

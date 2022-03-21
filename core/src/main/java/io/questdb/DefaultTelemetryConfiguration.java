@@ -39,4 +39,9 @@ public class DefaultTelemetryConfiguration implements TelemetryConfiguration {
     public int getQueueCapacity() {
         return 16;
     }
+
+    @Override
+    public boolean hideTables() {
+        return false;
+    }
 }

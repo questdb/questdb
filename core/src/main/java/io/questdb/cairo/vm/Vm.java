@@ -80,10 +80,6 @@ public class Vm {
         return new MemoryCMARWImpl();
     }
 
-    public static MemoryCMR getCMRInstance(FilesFacade ff, LPSZ fileName, long size, int memoryTag) {
-        return new MemoryCMRImpl(ff, fileName, size, memoryTag);
-    }
-
     public static MemoryMA getMAInstance() {
         return new MemoryPMARImpl();
     }
@@ -101,6 +97,10 @@ public class Vm {
     }
 
     public static MemoryMR getMRInstance() {
+        return new MemoryCMRImpl();
+    }
+
+    public static MemoryCMR getCMRInstance() {
         return new MemoryCMRImpl();
     }
 

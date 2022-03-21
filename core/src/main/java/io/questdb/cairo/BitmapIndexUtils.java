@@ -27,6 +27,8 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.str.Path;
 
+import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
+
 public final class BitmapIndexUtils {
     static final long KEY_ENTRY_SIZE = 32;
     static final int KEY_ENTRY_OFFSET_VALUE_COUNT = 0;
@@ -48,12 +50,20 @@ public final class BitmapIndexUtils {
     static final byte SIGNATURE = (byte) 0xfa;
     static final int VALUE_BLOCK_FILE_RESERVED = 16;
 
-    public static Path keyFileName(Path path, CharSequence name) {
-        return path.concat(name).put(".k").$();
+    public static Path keyFileName(Path path, CharSequence name, long columnNameTxn) {
+        path.concat(name).put(".k");
+        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnNameTxn);
+        }
+        return path.$();
     }
 
-    public static Path valueFileName(Path path, CharSequence name) {
-        return path.concat(name).put(".v").$();
+    public static Path valueFileName(Path path, CharSequence name, long columnNameTxn) {
+        path.concat(name).put(".v");
+        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnNameTxn);
+        }
+        return path.$();
     }
 
     /**

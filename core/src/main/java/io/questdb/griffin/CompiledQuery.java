@@ -46,13 +46,15 @@ public interface CompiledQuery {
     short RENAME_TABLE = 12;
     short BACKUP_TABLE = 13;
     short UPDATE = 14;
-    short LOCK = 14;
-    short UNLOCK = 14;
-    short VACUUM = 15;
-    short BEGIN = 16;
-    short COMMIT = 17;
-    short ROLLBACK = 18;
-    short CREATE_TABLE_AS_SELECT = 19;
+    short LOCK = 15;
+    short UNLOCK = 16;
+    short VACUUM = 17;
+    short BEGIN = 18;
+    short COMMIT = 19;
+    short ROLLBACK = 20;
+    short CREATE_TABLE_AS_SELECT = 21;
+    short SNAPSHOT_DB_PREPARE = 22;
+    short SNAPSHOT_DB_COMPLETE = 23;
 
     RecordCursorFactory getRecordCursorFactory();
 

@@ -94,6 +94,7 @@ public abstract class AbstractMemoryCR implements MemoryCR {
         return long256B;
     }
 
+    @Override
     public long size() {
         return size;
     }

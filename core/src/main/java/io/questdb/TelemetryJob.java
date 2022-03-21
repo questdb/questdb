@@ -48,22 +48,21 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 
 public class TelemetryJob extends SynchronizedJob implements Closeable {
-    private static final Log LOG = LogFactory.getLog(TelemetryJob.class);
-    private static final String WRITER_LOCK_REASON = "telemetryJob";
-    
-    private final static CharSequence tableName = "telemetry";
-    final static CharSequence configTableName = "telemetry_config";
+    public final static CharSequence tableName = "telemetry";
+    public final static CharSequence configTableName = "telemetry_config";
     static final String QDB_PACKAGE = "QDB_PACKAGE";
     static final String OS_NAME = "os.name";
+    private static final Log LOG = LogFactory.getLog(TelemetryJob.class);
+    private static final String WRITER_LOCK_REASON = "telemetryJob";
     private final MicrosecondClock clock;
     private final CairoConfiguration configuration;
     private final RingQueue<TelemetryTask> queue;
     private final SCSequence subSeq;
+    private final SCSequence tempSequence = new SCSequence();
     private boolean enabled;
     private TableWriter writer;
     private final QueueConsumer<TelemetryTask> myConsumer = this::newRowConsumer;
     private TableWriter configWriter;
-    private final SCSequence tempSequence = new SCSequence();
 
     public TelemetryJob(CairoEngine engine) throws SqlException {
         this(engine, null);
@@ -76,7 +75,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
         this.queue = engine.getTelemetryQueue();
         this.subSeq = engine.getTelemetrySubSequence();
 
-        try (final SqlCompiler compiler = new SqlCompiler(engine, functionFactoryCache)) {
+        try (final SqlCompiler compiler = new SqlCompiler(engine, functionFactoryCache, null)) {
             final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
             sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
             if (enabled) {
@@ -106,7 +105,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
                 this.writer = null;
             }
 
-            // todo: close writerConfig. We currently keep it opened to prevent users from
+            // TODO: close writerConfig. We currently keep it opened to prevent users from
             // modifying the table.
             // Once we have a permission system, we can use that instead.
             try {
@@ -124,20 +123,6 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             if (enabled) {
                 newRow(Telemetry.SYSTEM_EVENT_UP);
             }
-        }
-    }
-
-    private void tryAddColumn(SqlCompiler compiler, SqlExecutionContext executionContext, CharSequence columnDetails) {
-        try {
-            CompiledQuery cc = compiler.compile(
-                    "ALTER TABLE " + configTableName + " ADD COLUMN " + columnDetails,
-                    executionContext
-            );
-            try (QueryFuture execution = cc.execute(tempSequence)) {
-                execution.await();
-            }
-        } catch (SqlException ex) {
-            LOG.info().$("Failed to alter telemetry table [table=").$(configTableName).$(",error=").$(ex.getFlyweightMessage()).I$();
         }
     }
 
@@ -160,42 +145,6 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             }
         }
         return false;
-    }
-
-    private TableWriter updateTelemetryConfig(
-            SqlCompiler compiler,
-            SqlExecutionContextImpl sqlExecutionContext,
-            boolean enabled
-    ) throws SqlException {
-        final TableWriter configWriter = compiler.getEngine().getWriter(AllowAllCairoSecurityContext.INSTANCE, configTableName, WRITER_LOCK_REASON);
-        final CompiledQuery cc = compiler.compile(configTableName + " LIMIT -1", sqlExecutionContext);
-        try (final RecordCursor cursor = cc.getRecordCursorFactory().getCursor(sqlExecutionContext)) {
-            if (cursor.hasNext()) {
-                final Record record = cursor.getRecord();
-                final boolean _enabled = record.getBool(1);
-                Long256 l256 = record.getLong256A(0);
-                final CharSequence lastVersion = record.getSym(2);
-
-                // if the configuration changed to enable or disable telemetry
-                // we need to update the table to reflect that
-                if (enabled != _enabled || !configuration.getBuildInformation().getQuestDbVersion().equals(lastVersion)) {
-                    appendConfigRow(compiler, configWriter, l256, enabled);
-                    LOG.advisory()
-                            .$("instance config changes [id=").$256(l256.getLong0(), l256.getLong1(), 0, 0)
-                            .$(", enabled=").$(enabled)
-                            .$(']').$();
-                } else {
-                    LOG.advisory()
-                            .$("instance [id=").$256(l256.getLong0(), l256.getLong1(), 0, 0)
-                            .$(", enabled=").$(enabled)
-                            .$(']').$();
-                }
-            } else {
-                // if there are no record for telemetry id we need to create one using clocks
-                appendConfigRow(compiler, configWriter, null, enabled);
-            }
-        }
-        return configWriter;
     }
 
     private void appendConfigRow(SqlCompiler compiler, TableWriter configWriter, Long256 id, boolean enabled) {
@@ -252,5 +201,55 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
                     .$(", errno=").$(e.getErrno())
                     .$(']').$();
         }
+    }
+
+    private void tryAddColumn(SqlCompiler compiler, SqlExecutionContext executionContext, CharSequence columnDetails) {
+        try {
+            CompiledQuery cc = compiler.compile(
+                    "ALTER TABLE " + configTableName + " ADD COLUMN " + columnDetails,
+                    executionContext
+            );
+            try (QueryFuture execution = cc.execute(tempSequence)) {
+                execution.await();
+            }
+        } catch (SqlException ex) {
+            LOG.info().$("Failed to alter telemetry table [table=").$(configTableName).$(",error=").$(ex.getFlyweightMessage()).I$();
+        }
+    }
+
+    private TableWriter updateTelemetryConfig(
+            SqlCompiler compiler,
+            SqlExecutionContextImpl sqlExecutionContext,
+            boolean enabled
+    ) throws SqlException {
+        final TableWriter configWriter = compiler.getEngine().getWriter(AllowAllCairoSecurityContext.INSTANCE, configTableName, WRITER_LOCK_REASON);
+        final CompiledQuery cc = compiler.compile(configTableName + " LIMIT -1", sqlExecutionContext);
+        try (final RecordCursor cursor = cc.getRecordCursorFactory().getCursor(sqlExecutionContext)) {
+            if (cursor.hasNext()) {
+                final Record record = cursor.getRecord();
+                final boolean _enabled = record.getBool(1);
+                Long256 l256 = record.getLong256A(0);
+                final CharSequence lastVersion = record.getSym(2);
+
+                // if the configuration changed to enable or disable telemetry
+                // we need to update the table to reflect that
+                if (enabled != _enabled || !configuration.getBuildInformation().getQuestDbVersion().equals(lastVersion)) {
+                    appendConfigRow(compiler, configWriter, l256, enabled);
+                    LOG.advisory()
+                            .$("instance config changes [id=").$256(l256.getLong0(), l256.getLong1(), 0, 0)
+                            .$(", enabled=").$(enabled)
+                            .$(']').$();
+                } else {
+                    LOG.advisory()
+                            .$("instance [id=").$256(l256.getLong0(), l256.getLong1(), 0, 0)
+                            .$(", enabled=").$(enabled)
+                            .$(']').$();
+                }
+            } else {
+                // if there are no record for telemetry id we need to create one using clocks
+                appendConfigRow(compiler, configWriter, null, enabled);
+            }
+        }
+        return configWriter;
     }
 }

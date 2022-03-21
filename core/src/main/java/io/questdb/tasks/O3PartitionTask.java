@@ -54,6 +54,11 @@ public class O3PartitionTask {
     private TableWriter tableWriter;
     private AtomicInteger columnCounter;
     private O3Basket o3Basket;
+    private long colTopSinkAddr;
+
+    public long getColTopSinkAddr() {
+        return colTopSinkAddr;
+    }
 
     public ObjList<MemoryMA> getColumns() {
         return columns;
@@ -150,7 +155,8 @@ public class O3PartitionTask {
             long sortedTimestampsAddr,
             TableWriter tableWriter,
             AtomicInteger columnCounter,
-            O3Basket o3Basket
+            O3Basket o3Basket,
+            long colTopSinkAddr
     ) {
         this.pathToTable = path;
         this.txn = txn;
@@ -171,5 +177,6 @@ public class O3PartitionTask {
         this.tableWriter = tableWriter;
         this.columnCounter = columnCounter;
         this.o3Basket = o3Basket;
+        this.colTopSinkAddr = colTopSinkAddr;
     }
 }

@@ -62,6 +62,7 @@ import java.util.Properties;
 public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
+    public static final String SNAPSHOT_DIRECTORY = "snapshot";
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     private final IODispatcherConfiguration httpIODispatcherConfiguration = new PropHttpIODispatcherConfiguration();
@@ -178,6 +179,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean telemetryEnabled;
     private final boolean telemetryDisableCompletely;
     private final int telemetryQueueCapacity;
+    private final boolean telemetryHideTables;
     private final LineTcpReceiverConfiguration lineTcpReceiverConfiguration = new PropLineTcpReceiverConfiguration();
     private final IODispatcherConfiguration lineTcpReceiverDispatcherConfiguration = new PropLineTcpReceiverIODispatcherConfiguration();
     private final boolean lineTcpEnabled;
@@ -198,6 +200,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String root;
     private final String dbDirectory;
     private final String confRoot;
+    private final String snapshotRoot;
+    private final String snapshotInstanceId;
+    private final boolean snapshotRecoveryEnabled;
     private final long maxRerunWaitCapMs;
     private final double rerunExponentialWaitMultiplier;
     private final int rerunInitialWaitQueueSize;
@@ -381,11 +386,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.dbDirectory = getString(properties, env, "cairo.root", DB_DIRECTORY);
         if (new File(this.dbDirectory).isAbsolute()) {
             this.root = this.dbDirectory;
-            this.confRoot = confRoot(this.root); // ../conf
+            this.confRoot = rootSubdir(this.root, PropServerConfiguration.CONFIG_DIRECTORY); // ../conf
+            this.snapshotRoot = rootSubdir(this.root, PropServerConfiguration.SNAPSHOT_DIRECTORY); // ../snapshot
         } else {
             this.root = new File(root, this.dbDirectory).getAbsolutePath();
             this.confRoot = new File(root, CONFIG_DIRECTORY).getAbsolutePath();
+            this.snapshotRoot = new File(root, SNAPSHOT_DIRECTORY).getAbsolutePath();
         }
+
+        this.snapshotInstanceId = getString(properties, env, "cairo.snapshot.instance.id", "");
+        this.snapshotRecoveryEnabled = getBoolean(properties, env, "cairo.snapshot.recovery.enabled", true);
 
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuUsed = 0;
@@ -715,7 +725,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             );
 
             try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
-                inputFormatConfiguration.parseConfiguration(lexer, sqlCopyFormatsFile);
+                inputFormatConfiguration.parseConfiguration(lexer, confRoot, sqlCopyFormatsFile);
             }
 
             this.inputRoot = getString(properties, env, "cairo.sql.copy.root", null);
@@ -748,6 +758,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.telemetryEnabled = getBoolean(properties, env, "telemetry.enabled", true);
             this.telemetryDisableCompletely = getBoolean(properties, env, "telemetry.disable.completely", false);
             this.telemetryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "telemetry.queue.capacity", 512));
+            this.telemetryHideTables = getBoolean(properties, env, "telemetry.hide.tables", true);
             this.o3PartitionPurgeListCapacity = getInt(properties, env, "cairo.o3.partition.purge.list.initial.capacity", 1);
 
             parseBindTo(properties, env, "line.udp.bind.to", "0.0.0.0:9009", (a, p) -> {
@@ -871,7 +882,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    public static String confRoot(CharSequence dbRoot) {
+    public static String rootSubdir(CharSequence dbRoot, CharSequence subdir) {
         if (dbRoot != null) {
             int len = dbRoot.length();
             int end = len;
@@ -891,7 +902,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (needsSlash) {
                 sink.put(Files.SEPARATOR);
             }
-            return sink.put(PropServerConfiguration.CONFIG_DIRECTORY).toString();
+            return sink.put(subdir).toString();
         }
         return null;
     }
@@ -1660,6 +1671,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public CharSequence getConfRoot() {
             return confRoot;
+        }
+
+        @Override
+        public CharSequence getSnapshotRoot() {
+            return snapshotRoot;
+        }
+
+        @Override
+        public CharSequence getSnapshotInstanceId() {
+            return snapshotInstanceId;
+        }
+
+        @Override
+        public boolean isSnapshotRecoveryEnabled() {
+            return snapshotRecoveryEnabled;
         }
 
         @Override
@@ -2889,6 +2915,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getQueueCapacity() {
             return telemetryQueueCapacity;
+        }
+
+        @Override
+        public boolean hideTables() {
+            return telemetryHideTables;
         }
     }
 

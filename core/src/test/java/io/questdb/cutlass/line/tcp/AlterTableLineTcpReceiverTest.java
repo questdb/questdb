@@ -26,6 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.*;
@@ -38,12 +39,16 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedList;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CyclicBarrier;
 
@@ -114,6 +119,171 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 },
                 true, 250
         );
+    }
+
+    @Test
+    public void testDropColumnAddDuplicate() throws Exception {
+        runInContext((server) -> {
+            send(
+                    server,
+                    "plug,room=6A watts=\"1\",power=220 2631819999000\n" +
+                            "plug,room=6B watts=\"22\" 1631817902842\n" +
+                            "plug,room=6C watts=\"333\",power=220 1531817902842\n"
+            );
+
+            try (TableWriter tableWriter = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "plug", "ilp test")) {
+                tableWriter.removeColumn("watts");
+            }
+
+            send(
+                    server,
+                    "plug,room=6A watts=\"1\",watts=2,power=220 2631819999000\n"
+            );
+
+            String expected = "room\tpower\ttimestamp\twatts\n" +
+                    "6C\t220.0\t1970-01-01T00:25:31.817902Z\t\n" +
+                    "6B\tNaN\t1970-01-01T00:27:11.817902Z\t\n" +
+                    "6A\t220.0\t1970-01-01T00:43:51.819999Z\t\n" +
+                    "6A\t220.0\t1970-01-01T00:43:51.819999Z\t1\n";
+            assertTable(expected);
+        });
+    }
+
+    @Test
+    public void testDropColumnInTheMiddle() throws Exception {
+        runInContext((server) -> {
+            String lineData = "plug,room=6A watts=\"1\",power=220 2631819999000\n" +
+                    "plug,room=6B watts=\"22\" 1631817902842\n" +
+                    "plug,room=6C watts=\"333\",power=220 1531817902842\n";
+
+            send(
+                    server,
+                    lineData
+            );
+
+            try (TableWriter tableWriter = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "plug", "ilp test")) {
+                tableWriter.removeColumn("watts");
+            }
+
+            // Send same data again
+            send(
+                    server,
+                    lineData
+            );
+
+            String expected = "room\tpower\ttimestamp\twatts\n" +
+                    "6C\t220.0\t1970-01-01T00:25:31.817902Z\t333\n" +
+                    "6C\t220.0\t1970-01-01T00:25:31.817902Z\t\n" +
+                    "6B\tNaN\t1970-01-01T00:27:11.817902Z\t22\n" +
+                    "6B\tNaN\t1970-01-01T00:27:11.817902Z\t\n" +
+                    "6A\t220.0\t1970-01-01T00:43:51.819999Z\t1\n" +
+                    "6A\t220.0\t1970-01-01T00:43:51.819999Z\t\n";
+            assertTable(expected);
+        });
+    }
+
+    @Test
+    public void testRandomColumnAddedDeleted() throws Exception {
+        runInContext((server) -> {
+            LinkedList<Integer> columnsAdded = new LinkedList<>();
+
+            Rnd rnd = new Rnd();
+            StringSink symbols = new StringSink();
+            StringSink fields = new StringSink();
+
+            for (int i = 1; i < 30; i++) {
+                if (columnsAdded.size() == 0 || rnd.nextPositiveInt() % 3 != 1) {
+                    // add column
+                    boolean isSymbol = rnd.nextBoolean();
+
+                    symbols.clear();
+                    for (int col : columnsAdded) {
+                        if (col > 0) {
+                            symbols.put(",column_").put(col).put("=").put(col);
+                        }
+                    }
+
+                    fields.clear();
+                    int added = 0;
+                    for (int col : columnsAdded) {
+                        if (col < 0) {
+                            col = Math.abs(col);
+                            if (!isSymbol || added++ > 0) {
+                                fields.put(',');
+                            }
+                            fields.put("column_").put(col).put("=\"").put(col).put('\"');
+                        }
+                    }
+
+                    String lineData = isSymbol ?
+                            String.format("plug,column_%d=%d,iteration=%d%s %s %d\n", i, i, i % 5, symbols, fields, i * Timestamps.MINUTE_MICROS * 20 * 1000) :
+                            String.format("plug,iteration=%d%s column_%d=\"%d\"%s %d\n", i % 5, symbols, i, i, fields, i * Timestamps.MINUTE_MICROS * 20 * 1000);
+
+
+                    send(server, lineData);
+                    columnsAdded.add(isSymbol ? i : -i);
+                } else {
+                    try (TableWriter tableWriter = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "plug", "ilp test")) {
+                        int dropCol = columnsAdded.get(rnd.nextPositiveInt() % columnsAdded.size());
+                        tableWriter.removeColumn("column_" + Math.abs(dropCol));
+                        columnsAdded.remove((Object) dropCol);
+                    }
+                }
+            }
+
+            String expected = "iteration\ttimestamp\tcolumn_24\tcolumn_25\tcolumn_26\n" +
+                    "1\t1970-01-01T00:20:00.000000Z\t\t\t\n" +
+                    "2\t1970-01-01T00:40:00.000000Z\t\t\t\n" +
+                    "3\t1970-01-01T01:00:00.000000Z\t\t\t\n" +
+                    "4\t1970-01-01T01:20:00.000000Z\t\t\t\n" +
+                    "2\t1970-01-01T02:20:00.000000Z\t\t\t\n" +
+                    "4\t1970-01-01T03:00:00.000000Z\t\t\t\n" +
+                    "2\t1970-01-01T04:00:00.000000Z\t\t\t\n" +
+                    "3\t1970-01-01T04:20:00.000000Z\t\t\t\n" +
+                    "1\t1970-01-01T05:20:00.000000Z\t\t\t\n" +
+                    "3\t1970-01-01T06:00:00.000000Z\t\t\t\n" +
+                    "0\t1970-01-01T06:40:00.000000Z\t\t\t\n" +
+                    "2\t1970-01-01T07:20:00.000000Z\t\t\t\n" +
+                    "4\t1970-01-01T08:00:00.000000Z\t24\t\t\n" +
+                    "0\t1970-01-01T08:20:00.000000Z\t24\t25\t\n" +
+                    "1\t1970-01-01T08:40:00.000000Z\t24\t25\t26\n" +
+                    "2\t1970-01-01T09:00:00.000000Z\t24\t25\t26\n";
+            assertTable(expected);
+        });
+    }
+
+    @Test
+    public void testSymbolColumnDeletedAndAdded() throws Exception {
+        runInContext((server) -> {
+
+            send(
+                    server,
+                    "plug,room=6A watts=\"1\",power=220 2631819999000\n" +
+                            "plug,room=6B watts=\"22\" 1631817902842\n" +
+                            "plug,room=6C watts=\"333\",power=220 1531817902842\n"
+            );
+
+            try (TableWriter tableWriter = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "plug", "ilp test")) {
+                tableWriter.removeColumn("room");
+            }
+
+            // Send same data again
+            send(
+                    server,
+                    "plug watts=\"1\",power=220 2631819999000\n" +
+                            "plug,room=6BB watts=\"22\" 1631817902842\n" +
+                            "plug,room=6C watts=\"333\",power=220 1531817902842\n"
+            );
+
+            String expected = "watts\tpower\ttimestamp\troom\n" +
+                    "333\t220.0\t1970-01-01T00:25:31.817902Z\t6C\n" +
+                    "333\t220.0\t1970-01-01T00:25:31.817902Z\t\n" +
+                    "22\tNaN\t1970-01-01T00:27:11.817902Z\t6BB\n" +
+                    "22\tNaN\t1970-01-01T00:27:11.817902Z\t\n" +
+                    "1\t220.0\t1970-01-01T00:43:51.819999Z\t\n" +
+                    "1\t220.0\t1970-01-01T00:43:51.819999Z\t\n";
+            assertTable(expected);
+        });
     }
 
     @Test

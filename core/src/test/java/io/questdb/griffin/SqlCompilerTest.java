@@ -3598,7 +3598,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x1", "testing")) {
                     Assert.assertEquals(2, writer.getMetadata().getTimestampIndex());
                     writer.removeColumn("b");
-                    Assert.assertEquals(1, writer.getMetadata().getTimestampIndex());
+                    Assert.assertEquals(2, writer.getMetadata().getTimestampIndex()); // Writer timestamp index doesn't change
                 }
 
                 Assert.assertTrue(reader.reload());

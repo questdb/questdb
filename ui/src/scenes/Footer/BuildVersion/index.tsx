@@ -29,6 +29,7 @@ import * as QuestDB from "utils/questdb"
 import { ClipboardCopy } from "@styled-icons/heroicons-outline/ClipboardCopy"
 import { SecondaryButton } from "components"
 import { formatVersion } from "./services"
+import { copyToClipboard } from "../../../utils"
 
 const Wrapper = styled.div`
   display: flex;
@@ -61,7 +62,7 @@ const BuildVersion = () => {
   })
 
   const handleCopy = useCallback(() => {
-    void navigator.clipboard.writeText(buildVersion)
+    void copyToClipboard(buildVersion)
   }, [buildVersion])
 
   return (
