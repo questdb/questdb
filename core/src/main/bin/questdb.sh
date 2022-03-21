@@ -175,7 +175,7 @@ function start {
     -ea -Dnoebug
     -XX:+UnlockExperimentalVMOptions
     -XX:+AlwaysPreTouch
-    -XX:+UseParallelOldGC
+    -XX:+UseParallelGC
     "
 
     JAVA_MAIN="io.questdb/io.questdb.ServerMain"
