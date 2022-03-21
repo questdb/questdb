@@ -36,6 +36,7 @@ import io.questdb.griffin.QueryFuture;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -6311,6 +6312,32 @@ create table tab as (
                         );
                     }
                 }
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where value is ?")) {
+                    ps.setInt(1, Numbers.INT_NaN);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                        "null,1970-01-01 00:00:00.000001\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where value is not ?")) {
+                    ps.setInt(1, 100);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                        "null,1970-01-01 00:00:00.000001\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
             }
         });
     }
@@ -6348,6 +6375,33 @@ create table tab as (
                         assertResultSet(
                                 "value[INTEGER],ts[TIMESTAMP]\n" +
                                         "100,1970-01-01 00:00:00.0\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where value is not ?")) {
+                    ps.setInt(1, Numbers.INT_NaN);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                        "100,1970-01-01 00:00:00.0\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where value is not ?")) {
+                    ps.setInt(1, 42);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                        "100,1970-01-01 00:00:00.0\n" +
+                                        "null,1970-01-01 00:00:00.000001\n",
                                 sink,
                                 rs
                         );
