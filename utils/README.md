@@ -29,7 +29,7 @@ Rebuilds indexes for a table
 Usage
 
 ```
-io.questdb.cliutil.RebuildIndexMain <table_path> [-p <partition_name>] [-c <column_name>]
+io.questdb.cliutil.RebuildIndex <table_path> [-p <partition_name>] [-c <column_name>]
 ```
 
 - `<table_path>` full path to the table
@@ -39,16 +39,42 @@ io.questdb.cliutil.RebuildIndexMain <table_path> [-p <partition_name>] [-c <colu
 Examples
 
 ```bash
-java -cp utils.jar io.questdb.cliutil.RebuildIndexMain /questdb-root/db/trades-COINBASE
+java -cp utils.jar io.questdb.cliutil.RebuildIndex /questdb-root/db/trades-COINBASE
 
-java -cp utils.jar io.questdb.cliutil.RebuildIndexMain /questdb-root/db/trades-COINBASE -c symbol
+java -cp utils.jar io.questdb.cliutil.RebuildIndex /questdb-root/db/trades-COINBASE -c symbol
 
-java -cp utils.jar io.questdb.cliutil.RebuildIndexMain /questdb-root/db/trades-COINBASE -p 2022-03-21
+java -cp utils.jar io.questdb.cliutil.RebuildIndex /questdb-root/db/trades-COINBASE -p 2022-03-21
 
-java -cp utils.jar io.questdb.cliutil.RebuildIndexMain /questdb-root/db/trades-COINBASE -p 2022-03-21 -c symbol
+java -cp utils.jar io.questdb.cliutil.RebuildIndex /questdb-root/db/trades-COINBASE -p 2022-03-21 -c symbol
 ```
 
-### Build
+### Rebuild variable column index
+
+Rebuilds indexes for a table
+
+Usage
+
+```
+io.questdb.cliutil.RebuildIndex <table_path> [-p <partition_name>] [-c <column_name>]
+```
+
+- `<table_path>` full path to the table
+- `-c` column name, optional. If omitted, all indexed columns will have indexes rebuilt
+- `-p` option transforms existing JSON file into binary \_txn format
+
+Examples
+
+```bash
+java -cp utils.jar io.questdb.cliutil.RebuildIndex /questdb-root/db/trades-COINBASE
+
+java -cp utils.jar io.questdb.cliutil.RebuildIndex /questdb-root/db/trades-COINBASE -c symbol
+
+java -cp utils.jar io.questdb.cliutil.RebuildIndex /questdb-root/db/trades-COINBASE -p 2022-03-21
+
+java -cp utils.jar io.questdb.cliutil.RebuildIndex /questdb-root/db/trades-COINBASE -p 2022-03-21 -c symbol
+```
+
+## Build Utils project
 
 To build single jar with dependencies run
 

@@ -30,7 +30,6 @@ import io.questdb.BuildInformationHolder;
 import io.questdb.PropServerConfiguration;
 import io.questdb.ServerConfigurationException;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.RebuildIndex;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -42,7 +41,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Properties;
 
-public class RebuildIndexMain {
+public class RebuildIndex {
     public static void main(String[] args) throws IOException, JsonException, ServerConfigurationException {
         LogFactory.configureSync();
 
@@ -52,7 +51,7 @@ public class RebuildIndexMain {
             return;
         }
 
-        RebuildIndex ri = new RebuildIndex();
+        io.questdb.cairo.RebuildIndex ri = new io.questdb.cairo.RebuildIndex();
         String rootDirectory = params.tablePath + Files.SEPARATOR + ".." + Files.SEPARATOR + "..";
         final Properties properties = new Properties();
         final String configurationFileName = "/server.conf";
@@ -111,7 +110,7 @@ public class RebuildIndexMain {
     }
 
     private static void printUsage() {
-        System.out.println("usage: " + RebuildIndexMain.class.getName() + " <table_path> [-p <partition_name>] [-c <column_name>]");
+        System.out.println("usage: " + RebuildIndex.class.getName() + " <table_path> [-p <partition_name>] [-c <column_name>]");
     }
 
     private static PropServerConfiguration readServerConfiguration(
