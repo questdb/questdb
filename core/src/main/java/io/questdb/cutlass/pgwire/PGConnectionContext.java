@@ -1302,8 +1302,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     break;
                 default:
                     // in any other case we will commit
-                    UpdateStatement updateStatement2 = typesAndUpdate.getUpdate();
-                    try (updateStatement2) {
+                    try (UpdateStatement updateStatement2 = typesAndUpdate.getUpdate()) {
                         w = engine.getWriter(
                                 sqlExecutionContext.getCairoSecurityContext(),
                                 updateStatement2.getTableName(),
