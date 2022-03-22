@@ -771,16 +771,14 @@ class ExpressionParser {
                                 if (SqlKeywords.isNotKeyword(tokAfterIsTok)) {
                                     int notTokPosition = lexer.lastTokenPosition();
                                     CharSequence peekNullTok = SqlUtil.fetchNext(lexer);
-                                    if (peekNullTok != null && (SqlKeywords.isNullKeyword(peekNullTok) || peekNullTok.charAt(0) == '$')) {
-                                        lexer.backTo(notTokPosition + 3, tokAfterIsTok);
+                                    if (peekNullTok != null && SqlKeywords.isNullKeyword(peekNullTok)) {
                                         tok = "!=";
-                                        thisChar = '!';
+                                        lexer.backTo(notTokPosition + 3, tokAfterIsTok);
                                     } else {
                                         throw SqlException.$(position, "IS NOT must be followed by NULL");
                                     }
-                                } else if (SqlKeywords.isNullKeyword(tokAfterIsTok) || tokAfterIsTok.charAt(0) == '$') {
+                                } else if (SqlKeywords.isNullKeyword(tokAfterIsTok)) {
                                     tok = "=";
-                                    thisChar = '=';
                                     lexer.backTo(position + 2, tok);
                                 } else {
                                     throw SqlException.$(position, "IS must be followed by NULL");

@@ -224,6 +224,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         x("NULLNULL=", "NULL IS NULL");
         x("'null'NULL=", "'null' IS NULL");
         assertFail("column is 3", 7, "IS must be followed by NULL");
+        assertFail("column is $1", 7, "IS must be followed by NULL");
         assertFail("column is", 7, "IS must be followed by [NOT] NULL");
     }
 
@@ -236,6 +237,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         x("NULLNULL!=", "NULL IS NOT NULL");
         x("'null'NULL!=", "'null' IS NOT NULL");
         assertFail("column is not 3", 7, "IS NOT must be followed by NULL");
+        assertFail("column is not $1", 7, "IS NOT must be followed by NULL");
         assertFail("column is not", 7, "IS NOT must be followed by NULL");
     }
 
