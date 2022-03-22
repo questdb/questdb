@@ -914,37 +914,6 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    public void testVarColumnStress() throws Exception {
-        dataAppendPageSize = 1024 * 1024;
-        executeWithPool(4, O3Test::testVarColumnStress, new FilesFacadeImpl() {
-            boolean tooManyFiles = false;
-
-            @Override
-            public int mkdirs(LPSZ path, int mode) {
-                return super.mkdirs(path, mode);
-            }
-
-            @Override
-            public long openRO(LPSZ name) {
-                if (tooManyFiles) {
-                    return -1;
-                }
-                return super.openRO(name);
-            }
-
-            @Override
-            public long openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "1970-01-01.2" + Files.SEPARATOR + "g.d")) {
-                    tooManyFiles = true;
-                    return -1;
-                }
-                return super.openRW(name, opts);
-            }
-        });
-        Os.sleep(2000);
-    }
-
-    @Test
     public void testWriterOpensCorrectTxnPartitionOnRestart() throws Exception {
         executeWithPool(0, O3Test::testWriterOpensCorrectTxnPartitionOnRestart0);
     }
@@ -6158,48 +6127,6 @@ public class O3Test extends AbstractO3Test {
         );
 
         TestUtils.assertEquals(expected, sink2);
-    }
-
-    private static void testVarColumnStress(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-
-        compiler.compile("create table x (f symbol index, a string, b string, c string, d string, e symbol index, g int, t timestamp) timestamp (t) partition by DAY", executionContext);
-        // max timestamp should be 100_000
-        compiler.compile("insert into x select rnd_symbol('aa', 'bb', 'cc'), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_symbol('aa', 'bb', 'cc'), rnd_int(), timestamp_sequence(0, 100) from long_sequence(3000000)", executionContext);
-
-        String[] symbols = new String[]{"ppp", "wrre", "0ppd", "l22z", "wwe32", "pps", "oop2", "00kk"};
-        final int symbolLen = symbols.length;
-
-
-        Rnd rnd = new Rnd(Os.currentTimeMicros(), Os.currentTimeNanos());
-        int batches = 0;
-        int batchCount = 1000;
-        while (batches < batchCount) {
-            try (TableWriter w = engine.getWriter(executionContext.getCairoSecurityContext(), "x", "test")) {
-                for (int i = 0; i < batchCount; i++) {
-                    batches++;
-                    for (int k = 0; k < 100; k++) {
-                        TableWriter.Row r = w.newRow(rnd.nextPositiveInt() % 100_000);
-                        r.putSym(0, symbols[rnd.nextInt(symbolLen)]);
-                        r.putStr(1, rnd.nextChars(7));
-                        r.putStr(2, rnd.nextChars(8));
-                        r.putStr(3, rnd.nextChars(4));
-                        r.putStr(4, rnd.nextChars(6));
-                        r.putSym(5, symbols[rnd.nextInt(symbolLen)]);
-                        r.putInt(6, rnd.nextInt());
-                        r.append();
-                    }
-                    try {
-                        w.commitWithLag(10000L);
-                    } catch (Exception e) {
-                        w.rollback();
-                    }
-                }
-            }
-        }
     }
 
     private static void testColumnTopMidMergeBlankColumn0(
