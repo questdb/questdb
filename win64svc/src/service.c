@@ -1,5 +1,7 @@
 #include <windows.h>
 #include "common.h"
+#include "io.h"
+#include <time.h>
 
 #pragma comment(lib, "advapi32.lib")
 
@@ -50,6 +52,30 @@ void qdbDispatchService(CONFIG *config) {
     if (!StartServiceCtrlDispatcher(DispatchTable)) {
         log_event(EVENTLOG_ERROR_TYPE, config->serviceName, "StartServiceCtrlDispatcher");
     }
+}
+
+HANDLE openLogFile(CONFIG *config) {
+    // create log dir
+    char log[MAX_PATH];
+    strcpy(log, config->dir);
+    strcat(log, "\\log");
+
+    if (!makeDir(log)) {
+        return NULL;
+    }
+
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    strcat(log, "\\service-");
+    strftime(log + strlen(log), MAX_PATH - strlen(log) - 4, "%Y-%m-%dT%H-%M-%S", t);
+    strcat(log, ".txt");
+
+    FILE *stream;
+    if ((stream = fopen(log, "w")) == NULL) {
+        return INVALID_HANDLE_VALUE;
+    }
+
+    return (HANDLE)_get_osfhandle(fileno(stream));
 }
 
 VOID WINAPI qdbService(DWORD argc, LPSTR *argv) {
@@ -105,42 +131,66 @@ VOID WINAPI qdbService(DWORD argc, LPSTR *argv) {
         return;
     }
 
-    STARTUPINFO si;
+    HANDLE log = openLogFile(gConfig);
+    if (log == INVALID_HANDLE_VALUE) {
+        log_event(EVENTLOG_ERROR_TYPE, gConfig->serviceName, "Could not open service log file.");
+        return;
+    }
+
     PROCESS_INFORMATION pi;
+    ZeroMemory(&pi, sizeof(pi));
+
+    STARTUPINFO si;
     ZeroMemory(&si, sizeof(si));
     si.cb = sizeof(si);
-    ZeroMemory(&pi, sizeof(pi));
+    si.hStdError = log;
+    si.hStdOutput = log;
+    si.dwFlags |= STARTF_USESTDHANDLES;
 
     char buf[2048];
     sprintf(buf, "Starting %s %s", gConfig->javaExec, gConfig->javaArgs);
     log_event(EVENTLOG_INFORMATION_TYPE, gConfig->serviceName, buf);
 
-    if (!CreateProcess(gConfig->javaExec, gConfig->javaArgs, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+    if (!CreateProcess(gConfig->javaExec, gConfig->javaArgs, NULL, NULL, TRUE/*handles are inherited to redirect stdout/err*/, 0, NULL, NULL, &si, &pi)) {
         log_event(EVENTLOG_ERROR_TYPE, gConfig->serviceName, "Could not start java");
         ReportSvcStatus(SERVICE_STOPPED, NO_ERROR, 0);
         return;
     }
 
-//    char buf[2048];
     sprintf(buf, "Started %s %s", gConfig->javaExec, gConfig->javaArgs);
     log_event(EVENTLOG_INFORMATION_TYPE, gConfig->serviceName, buf);
 
-
     // Report running status when initialization is complete.
-
     ReportSvcStatus(SERVICE_RUNNING, NO_ERROR, 0);
 
-    WaitForSingleObject(ghSvcStopEvent, INFINITE);
+    HANDLE lpHandles[2] = { ghSvcStopEvent, pi.hProcess };
+    DWORD dwEvent = WaitForMultipleObjects(2, lpHandles, FALSE /* return if state of any object is signalled*/, INFINITE );
 
-    if (!TerminateProcess(pi.hProcess, 0)) {
-        log_event(EVENTLOG_ERROR_TYPE, gConfig->serviceName, "Failed to terminate java process");
+    switch (dwEvent) {
+        // service stop event was signaled
+        case WAIT_FAILED:
+        case WAIT_TIMEOUT:
+        case WAIT_OBJECT_0 + 0:
+            if (WAIT_FAILED == dwEvent) {
+                log_event(EVENTLOG_ERROR_TYPE, gConfig->serviceName, "Java process or service wait failed.");
+            }
+
+            if (!TerminateProcess(pi.hProcess, 0)) {
+                log_event(EVENTLOG_ERROR_TYPE, gConfig->serviceName, "Failed to terminate java process");
+            }
+
+            log_event(EVENTLOG_INFORMATION_TYPE, gConfig->serviceName, "Shutdown Java process");
+            break;
+        // java process exit was signalled
+        case WAIT_OBJECT_0 + 1:
+            log_event(EVENTLOG_ERROR_TYPE, gConfig->serviceName, "Java process was abnormally terminated.");
+            break;
     }
-
-    log_event(EVENTLOG_INFORMATION_TYPE, gConfig->serviceName, "Shutdown Java process");
 
     // Close process and thread handles.
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
+    CloseHandle(log);
 
     ReportSvcStatus(SERVICE_STOPPED, NO_ERROR, 0);
 
