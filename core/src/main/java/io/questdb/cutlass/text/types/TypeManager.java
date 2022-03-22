@@ -130,7 +130,10 @@ public class TypeManager implements Mutable {
             case ColumnType.GEOSHORT:
             case ColumnType.GEOINT:
             case ColumnType.GEOLONG:
-                return GeoHashAdapter.getInstance(columnType);
+                GeoHashAdapter adapter = GeoHashAdapter.getInstance(columnType);
+                if (adapter != null) {
+                    return adapter;
+                }
             default:
                 throw CairoException.instance(0).put("no adapter for type [id=").put(columnType).put(", name=").put(ColumnType.nameOf(columnType)).put(']');
         }
