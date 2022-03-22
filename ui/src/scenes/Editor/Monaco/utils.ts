@@ -175,7 +175,7 @@ export const getQueryFromSelection = (
     if (n > 0) {
       return {
         query: selectedText.substr(0, n + 1),
-        row: selection.startLineNumber,
+        row: selection.startLineNumber - 1,
         column: selection.startColumn,
       }
     }
@@ -215,7 +215,7 @@ export const getErrorRange = (
     let wordAtPosition
     if (selection && selectedText) {
       wordAtPosition = model.getWordAtPosition({
-        column: selection.startColumn,
+        column: selection.startColumn + errorPosition,
         lineNumber: selection.startLineNumber,
       })
     } else {
