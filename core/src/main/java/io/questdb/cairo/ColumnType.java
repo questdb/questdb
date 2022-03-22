@@ -233,7 +233,6 @@ public final class ColumnType {
     }
 
     public static short tagOf(CharSequence name) {
-        // return (short) (nameTypeMap.get(name) & 0xFF);
         return (short) nameTypeMap.get(name);
     }
 
