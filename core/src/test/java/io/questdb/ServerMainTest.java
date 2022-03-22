@@ -30,19 +30,58 @@ import org.hamcrest.MatcherAssert;
 
 import static org.hamcrest.CoreMatchers.*;
 
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.net.URL;
 import java.nio.file.Paths;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 
 public class ServerMainTest {
 
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
+
+    boolean publicZipStubCreated = false;
+
+    @Before
+    public void setUp() throws IOException {
+        //fake public.zip if it's missing to avoid forcing use of build-web-console profile just to run tests 
+        URL resource = ServerMain.class.getResource("/io/questdb/site/public.zip");
+        if (resource == null) {
+            File siteDir = new File(ServerMain.class.getResource("/io/questdb/site/").getFile());
+            File publicZip = new File(siteDir, "public.zip");
+
+            try (ZipOutputStream zip = new ZipOutputStream(new FileOutputStream(publicZip))) {
+                ZipEntry entry = new ZipEntry("test.txt");
+                zip.putNextEntry(entry);
+                zip.write("test".getBytes());
+                zip.closeEntry();
+            }
+
+            publicZipStubCreated = true;
+        }
+    }
+
+    @After
+    public void tearDown() {
+        if (publicZipStubCreated) {
+            File siteDir = new File(ServerMain.class.getResource("/io/questdb/site/").getFile());
+            File publicZip = new File(siteDir, "public.zip");
+
+            if (publicZip.exists()) {
+                publicZip.delete();
+            }
+        }
+    }
 
     @Test
     public void testExtractSiteExtractsDefaultLogConfFileIfItsMissing() throws IOException {
