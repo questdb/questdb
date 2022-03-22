@@ -359,7 +359,6 @@ public class SendAndReceiveRequestBuilder {
         }
     }
 
-
     @FunctionalInterface
     public interface RequestAction {
         void run(RequestExecutor executor) throws InterruptedException, BrokenBarrierException;
