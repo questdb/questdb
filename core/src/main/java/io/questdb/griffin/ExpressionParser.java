@@ -35,8 +35,8 @@ class ExpressionParser {
     private static final IntHashSet nonLiteralBranches = new IntHashSet();
     private static final int BRANCH_NONE = 0;
     private static final int BRANCH_COMMA = 1;
-    private static final int BRANCH_LEFT_BRACE = 2; // brace -> parenthesis
-    private static final int BRANCH_RIGHT_BRACE = 3;
+    private static final int BRANCH_LEFT_PARENTHESIS = 2;
+    private static final int BRANCH_RIGHT_PARENTHESIS = 3;
     private static final int BRANCH_CONSTANT = 4;
     private static final int BRANCH_OPERATOR = 5;
     private static final int BRANCH_LITERAL = 6;
@@ -206,14 +206,14 @@ class ExpressionParser {
                             throw SqlException.$(position, "too many dots");
                         }
 
-                        if (prevBranch == BRANCH_RIGHT_BRACE) {
+                        if (prevBranch == BRANCH_RIGHT_PARENTHESIS) {
                             thisBranch = BRANCH_DOT_DEREFERENCE;
                         } else {
                             thisBranch = BRANCH_DOT;
                         }
                         break;
                     case ',':
-                        if (prevBranch == BRANCH_COMMA || prevBranch == BRANCH_LEFT_BRACE) {
+                        if (prevBranch == BRANCH_COMMA || prevBranch == BRANCH_LEFT_PARENTHESIS) {
                             throw missingArgs(position);
                         }
                         thisBranch = BRANCH_COMMA;
@@ -399,11 +399,11 @@ class ExpressionParser {
                         break;
 
                     case '(':
-                        if (prevBranch == BRANCH_RIGHT_BRACE) {
+                        if (prevBranch == BRANCH_RIGHT_PARENTHESIS) {
                             throw SqlException.$(position, "not a method call");
                         }
 
-                        thisBranch = BRANCH_LEFT_BRACE;
+                        thisBranch = BRANCH_LEFT_PARENTHESIS;
                         // If the token is a left parenthesis, then push it onto the stack.
                         paramCountStack.push(paramCount);
                         paramCount = 0;
@@ -435,8 +435,8 @@ class ExpressionParser {
                             break OUT;
                         }
 
-                        thisBranch = BRANCH_RIGHT_BRACE;
-                        int localParamCount = (prevBranch == BRANCH_LEFT_BRACE ? 0 : paramCount + 1);
+                        thisBranch = BRANCH_RIGHT_PARENTHESIS;
+                        int localParamCount = (prevBranch == BRANCH_LEFT_PARENTHESIS ? 0 : paramCount + 1);
                         final boolean thisWasCast;
 
                         if (castBraceCountStack.size() > 0 && castBraceCountStack.peek() == braceCount) {
@@ -840,7 +840,7 @@ class ExpressionParser {
                         if (thisChar == '-' || thisChar == '~') {
                             switch (prevBranch) {
                                 case BRANCH_OPERATOR:
-                                case BRANCH_LEFT_BRACE:
+                                case BRANCH_LEFT_PARENTHESIS:
                                 case BRANCH_COMMA:
                                 case BRANCH_NONE:
                                 case BRANCH_CASE_CONTROL:
@@ -1154,7 +1154,7 @@ class ExpressionParser {
     }
 
     static {
-        nonLiteralBranches.add(BRANCH_RIGHT_BRACE);
+        nonLiteralBranches.add(BRANCH_RIGHT_PARENTHESIS);
         nonLiteralBranches.add(BRANCH_CONSTANT);
         nonLiteralBranches.add(BRANCH_LITERAL);
         nonLiteralBranches.add(BRANCH_LAMBDA);
