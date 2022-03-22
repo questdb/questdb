@@ -36,8 +36,11 @@ public final class JitUtil {
         return Os.type != Os.LINUX_ARM64 &&
                 Os.type != Os.OSX_ARM64 &&
                 // TODO: excluding OSX_AMD64 as CI is failing on
-                //  "mac os x", version: "11.6.4", arch: "x86_64", family: "mac"
+                //  OS name: "mac os x", version: "11.6.4", arch: "x86_64", family: "mac"
                 //  due to NATIVE_JIT_LONG_LIST leak, will revert if CI still fails
-                Os.type != Os.OSX_AMD64;
+                Os.type != Os.OSX_AMD64 &&
+                // TODO: excluding WINDOWS too
+                //  OS name: "windows server 2022", version: "10.0", arch: "amd64", family: "windows"
+                Os.type != Os.WINDOWS;
     }
 }
