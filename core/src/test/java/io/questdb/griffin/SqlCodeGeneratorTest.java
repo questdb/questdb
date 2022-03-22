@@ -57,6 +57,24 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testRecordJoinExpansion() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x(a int)", sqlExecutionContext);
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "select pg_catalog.pg_class() x, (pg_catalog.pg_class()).relnamespace from long_sequence(2)",
+                    sink,
+                    "x1\tcolumn\n" +
+                            "\t11\n" +
+                            "\t2200\n" +
+                            "\t11\n" +
+                            "\t2200\n"
+            );
+        });
+    }
+
+    @Test
     public void testAvgDoubleColumn() throws Exception {
         final String expected = "a\tk\n";
 

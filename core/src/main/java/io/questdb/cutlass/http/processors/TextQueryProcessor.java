@@ -26,10 +26,7 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.Metrics;
 import io.questdb.Telemetry;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoError;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.Record;
@@ -479,6 +476,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 break;
             case ColumnType.NULL:
             case ColumnType.BINARY:
+            case ColumnType.RECORD:
                 break;
             case ColumnType.STRING:
                 putStringOrNull(socket, rec.getStr(col));
@@ -489,8 +487,35 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             case ColumnType.LONG256:
                 rec.getLong256(col, socket);
                 break;
+            case ColumnType.GEOBYTE:
+                putGeoHashStringValue(socket, rec.getGeoByte(col), type);
+                break;
+            case ColumnType.GEOSHORT:
+                putGeoHashStringValue(socket, rec.getGeoShort(col), type);
+                break;
+            case ColumnType.GEOINT:
+                putGeoHashStringValue(socket, rec.getGeoInt(col), type);
+                break;
+            case ColumnType.GEOLONG:
+                putGeoHashStringValue(socket, rec.getGeoLong(col), type);
+                break;
             default:
                 assert false;
+        }
+    }
+
+    private static void putGeoHashStringValue(HttpChunkedResponseSocket socket, long value, int type) {
+        if (value == GeoHashes.NULL) {
+            socket.put("null");
+        } else {
+            int bitFlags = GeoHashes.getBitFlags(type);
+            socket.put('\"');
+            if (bitFlags < 0) {
+                GeoHashes.appendCharsUnsafe(value, -bitFlags, socket);
+            } else {
+                GeoHashes.appendBinaryStringUnsafe(value, bitFlags, socket);
+            }
+            socket.put('\"');
         }
     }
 
