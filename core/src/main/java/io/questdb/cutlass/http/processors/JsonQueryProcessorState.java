@@ -325,6 +325,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         putStringOrNull(socket, rec.getStr(col));
     }
 
+    private static void putRecValue(HttpChunkedResponseSocket socket) {
+        putStringOrNull(socket, null);
+    }
+
     private static void putSymValue(HttpChunkedResponseSocket socket, Record rec, int col) {
         putStringOrNull(socket, rec.getSym(col));
     }
@@ -537,6 +541,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 case ColumnType.GEOLONG:
                     putGeoHashStringLongValue(socket, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex + 1));
                     break;
+                case ColumnType.RECORD:
+                    putRecValue(socket);
+                    break;
                 default:
                     assert false : "Not supported type in output " + ColumnType.nameOf(columnType);
                     socket.put("null"); // To make JSON valid
@@ -673,17 +680,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             columnType = ColumnType.STRING;
         }
 
-        int flags = 0;
-        int bitSize = ColumnType.getGeoHashBits(columnType);
-        if (bitSize > 0) {
-            if (bitSize % 5 == 0) {
-                // It's 5 bit per char. If it's integer number of chars value to be serialized as chars
-                flags = -bitSize / 5;
-            } else {
-                // value to be serialized as bit array
-                flags = bitSize;
-            }
-        }
+        int flags = GeoHashes.getBitFlags(columnType);
         this.columnTypesAndFlags.add(columnType);
         this.columnTypesAndFlags.add(flags);
         this.columnNames.add(metadata.getColumnName(i));
