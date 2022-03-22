@@ -130,10 +130,6 @@ public final class ColumnType {
         return columnType == BINARY;
     }
 
-    public static boolean isLong256(int columnType) {
-        return columnType == LONG256;
-    }
-
     public static boolean isBoolean(int columnType) {
         return columnType == ColumnType.BOOLEAN;
     }
@@ -237,7 +233,12 @@ public final class ColumnType {
     }
 
     public static short tagOf(CharSequence name) {
+        // return (short) (nameTypeMap.get(name) & 0xFF);
         return (short) nameTypeMap.get(name);
+    }
+
+    public static int typeOf(CharSequence name) {
+        return nameTypeMap.get(name);
     }
 
     public static long truncateGeoHashBits(long value, int fromBits, int toBits) {
@@ -306,19 +307,6 @@ public final class ColumnType {
         typeNameMap.put(VAR_ARG, "VARARG");
         typeNameMap.put(GEOHASH, "GEOHASH");
 
-        StringSink sink = new StringSink();
-
-        for (int b = 1; b <= GEO_HASH_MAX_BITS_LENGTH; b++) {
-            sink.clear();
-
-            if (b % 5 != 0) {
-                sink.put("GEOHASH(").put(b).put("b)");
-            } else {
-                sink.put("GEOHASH(").put(b / 5).put("c)");
-            }
-            typeNameMap.put(getGeoHashTypeWithBits(b), sink.toString());
-        }
-
         nameTypeMap.put("boolean", BOOLEAN);
         nameTypeMap.put("byte", BYTE);
         nameTypeMap.put("double", DOUBLE);
@@ -341,6 +329,20 @@ public final class ColumnType {
         nameTypeMap.put("bigint", LONG);
         nameTypeMap.put("real", FLOAT);
         nameTypeMap.put("bytea", STRING);
+
+        StringSink sink = new StringSink();
+        for (int b = 1; b <= GEO_HASH_MAX_BITS_LENGTH; b++) {
+            sink.clear();
+            if (b % 5 != 0) {
+                sink.put("GEOHASH(").put(b).put("b)");
+            } else {
+                sink.put("GEOHASH(").put(b / 5).put("c)");
+            }
+            String name = sink.toString();
+            int type = getGeoHashTypeWithBits(b);
+            typeNameMap.put(type, name);
+            nameTypeMap.put(name, type);
+        }
 
         TYPE_SIZE_POW2[UNDEFINED] = -1;
         TYPE_SIZE_POW2[BOOLEAN] = 0;
