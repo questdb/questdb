@@ -32,7 +32,12 @@ public final class JitUtil {
     }
 
     public static boolean isJitSupported() {
-        // TODO what about FREEBSD_ARM64?
-        return Os.type != Os.LINUX_ARM64 && Os.type != Os.OSX_ARM64;
+        // TODO: what about FREEBSD_ARM64?
+        return Os.type != Os.LINUX_ARM64 &&
+                Os.type != Os.OSX_ARM64 &&
+                // TODO: excluding OSX_AMD64 as CI is failing on
+                //  "mac os x", version: "11.6.4", arch: "x86_64", family: "mac"
+                //  due to NATIVE_JIT_LONG_LIST leak, will revert if CI still fails
+                Os.type != Os.OSX_AMD64;
     }
 }
