@@ -41,6 +41,10 @@ public final class JitUtil {
                 Os.type != Os.OSX_AMD64 &&
                 // TODO: excluding WINDOWS too
                 //  OS name: "windows server 2022", version: "10.0", arch: "amd64", family: "windows"
-                Os.type != Os.WINDOWS;
+                Os.type != Os.WINDOWS &&
+                // TODO: excluding LINUX_AMD64 too
+                //  OS name: "linux", version: "5.11.0-1028-azure", arch: "amd64", family: "unix"
+                Os.type != Os.LINUX_AMD64
+                ;
     }
 }
