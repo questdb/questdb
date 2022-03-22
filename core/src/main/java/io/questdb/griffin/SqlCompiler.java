@@ -2168,79 +2168,26 @@ public class SqlCompiler implements Closeable {
         throw SqlException.position(0).put("underlying cursor is extremely volatile");
     }
 
-    UpdateStatement generateUpdate(QueryModel updateQueryModel, SqlExecutionContext executionContext) throws SqlException {
+    UpdateStatement generateUpdate(QueryModel updateQueryModel, SqlExecutionContext executionContext) {
         // Update QueryModel structure is
         // QueryModel with SET column expressions
         // |-- QueryModel of select-virtual or select-choose of data selected for update
         final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
 
-        // First generate plan for nested SELECT QueryModel
-        final RecordCursorFactory updateToCursorFactory = codeGenerator.generate(selectQueryModel, executionContext);
-
-        // And then generate plan for UPDATE top level QueryModel
-        final IntList tableColumnTypes = selectQueryModel.getUpdateTableColumnTypes();
-        final ObjList<CharSequence> tableColumnNames = selectQueryModel.getUpdateTableColumnNames();
+        final String tableName = updateQueryModel.getUpdateTableName();
         final int tableId = selectQueryModel.getTableId();
         final long tableVersion = selectQueryModel.getTableVersion();
-        return generateUpdateStatement(
-                updateStatement,
-                updateExecution,
-                executionContext,
-                updateQueryModel,
-                tableColumnTypes,
-                tableColumnNames,
+
+        return updateStatement.of(
+                tableName,
                 tableId,
                 tableVersion,
-                updateToCursorFactory
+                selectQueryModel,
+                updateQueryModel,
+                codeGenerator,
+                updateExecution,
+                executionContext
         );
-    }
-
-    private static UpdateStatement generateUpdateStatement(
-            @Transient UpdateStatement updateStatement,
-            @Transient UpdateExecution updateExecution,
-            @Transient SqlExecutionContext executionContext,
-            @Transient QueryModel updateQueryModel,
-            @Transient IntList tableColumnTypes,
-            @Transient ObjList<CharSequence> tableColumnNames,
-            int tableId,
-            long tableVersion,
-            RecordCursorFactory updateToCursorFactory
-    ) throws SqlException {
-        try {
-            String tableName = updateQueryModel.getUpdateTableName();
-            if (!updateToCursorFactory.supportsUpdateRowId(tableName)) {
-                throw SqlException.$(updateQueryModel.getModelPosition(), "Only simple UPDATE statements without joins are supported");
-            }
-
-            // Check that updateDataFactoryMetadata match types of table to be updated exactly
-            RecordMetadata updateDataFactoryMetadata = updateToCursorFactory.getMetadata();
-
-            for (int i = 0, n = updateDataFactoryMetadata.getColumnCount(); i < n; i++) {
-                int virtualColumnType = updateDataFactoryMetadata.getColumnType(i);
-                CharSequence updateColumnName = updateDataFactoryMetadata.getColumnName(i);
-                int tableColumnIndex = tableColumnNames.indexOf(updateColumnName);
-                int tableColumnType = tableColumnTypes.get(tableColumnIndex);
-
-                if (virtualColumnType != tableColumnType) {
-                    // get column position
-                    ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
-                    int position = setRhs.position;
-                    throw SqlException.inconvertibleTypes(position, virtualColumnType, "", tableColumnType, updateColumnName);
-                }
-            }
-
-            return updateStatement.of(
-                    tableName,
-                    tableId,
-                    tableVersion,
-                    updateToCursorFactory,
-                    updateExecution,
-                    executionContext
-            );
-        } catch (Throwable e) {
-            Misc.free(updateToCursorFactory);
-            throw e;
-        }
     }
 
     RecordCursorFactory generate(QueryModel queryModel, SqlExecutionContext executionContext) throws SqlException {

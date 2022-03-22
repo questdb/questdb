@@ -1283,18 +1283,19 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         try {
             switch (transactionState) {
                 case IN_TRANSACTION:
-                    UpdateStatement updateStatement = typesAndUpdate.getUpdate();
-                    w = getWriter(
-                            sqlExecutionContext.getCairoSecurityContext(),
-                            updateStatement.getTableName(),
-                            "Update table execute"
-                    );
-                    // update contains an implicit commit to make sure all rows inserted up to
-                    // the update will be updated, this breaks the idea of transactions
-                    // we should investigate if there is a way to instruct table reader to include
-                    // uncommitted rows in the query which prepares the set of rows for update
-                    // if table reader can do that we could remove the implicit commit from update executor
-                    rowCount = updateStatement.apply(w);
+                    try (UpdateStatement updateStatement = typesAndUpdate.getUpdate()) {
+                        w = getWriter(
+                                sqlExecutionContext.getCairoSecurityContext(),
+                                updateStatement.getTableName(),
+                                "Update table execute"
+                        );
+                        // update contains an implicit commit to make sure all rows inserted up to
+                        // the update will be updated, this breaks the idea of transactions
+                        // we should investigate if there is a way to instruct table reader to include
+                        // uncommitted rows in the query which prepares the set of rows for update
+                        // if table reader can do that we could remove the implicit commit from update executor
+                        rowCount = updateStatement.apply(w);
+                    }
                     pendingWriters.put(w.getTableName(), w);
                     break;
                 case ERROR_TRANSACTION:

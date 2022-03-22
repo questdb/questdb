@@ -80,7 +80,10 @@ public class UpdateExecution implements Closeable {
             throw ReaderOutOfDateException.of(tableWriter.getTableName());
         }
 
-        RecordMetadata updateMetadata = updateStatement.getUpdateToDataCursorFactory().getMetadata();
+        // Prepare for update, select the rows to be updated
+        final RecordCursorFactory updateStatementDataCursorFactory = updateStatement.prepareForUpdate();
+
+        RecordMetadata updateMetadata = updateStatementDataCursorFactory.getMetadata();
         int updateColumnCount = updateMetadata.getColumnCount();
 
         // Build index column map from table to update to values returned from the update statement row cursors
@@ -96,8 +99,6 @@ public class UpdateExecution implements Closeable {
         initUpdateMemory(writerMetadata, updateColumnCount);
 
         // Start execution frame by frame
-        RecordCursorFactory updateStatementDataCursorFactory = updateStatement.getUpdateToDataCursorFactory();
-
         // Partition to update
         long currentPartitionIndex = -1L;
         long rowsUpdated = 0;

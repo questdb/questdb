@@ -715,7 +715,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
-    RecordCursorFactory generate(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+    public RecordCursorFactory generate(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         return generateQuery(model, executionContext, true);
     }
 

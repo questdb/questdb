@@ -26,9 +26,15 @@ package io.questdb.griffin.update;
 
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 
 import java.io.Closeable;
 
@@ -37,6 +43,9 @@ public class UpdateStatement implements Closeable {
     private int tableId;
     private long tableVersion;
     private RecordCursorFactory updateToDataCursorFactory;
+    private QueryModel selectQueryModel;
+    private QueryModel updateQueryModel;
+    private SqlCodeGenerator codeGenerator;
     private UpdateExecution updateExecution;
     private SqlExecutionContext executionContext;
 
@@ -44,14 +53,18 @@ public class UpdateStatement implements Closeable {
             String tableName,
             int tableId,
             long tableVersion,
-            RecordCursorFactory updateToCursorFactory,
+            QueryModel selectQueryModel,
+            QueryModel updateQueryModel,
+            SqlCodeGenerator codeGenerator,
             UpdateExecution updateExecution,
             SqlExecutionContext executionContext
     ) {
         this.tableName = tableName;
         this.tableId = tableId;
         this.tableVersion = tableVersion;
-        this.updateToDataCursorFactory = updateToCursorFactory;
+        this.selectQueryModel = selectQueryModel;
+        this.updateQueryModel = updateQueryModel;
+        this.codeGenerator = codeGenerator;
         this.updateExecution = updateExecution;
         this.executionContext = executionContext;
         return this;
@@ -78,7 +91,30 @@ public class UpdateStatement implements Closeable {
         return tableVersion;
     }
 
-    public RecordCursorFactory getUpdateToDataCursorFactory() {
+    public RecordCursorFactory prepareForUpdate() throws SqlException {
+        final IntList tableColumnTypes = selectQueryModel.getUpdateTableColumnTypes();
+        final ObjList<CharSequence> tableColumnNames = selectQueryModel.getUpdateTableColumnNames();
+
+        updateToDataCursorFactory = codeGenerator.generate(selectQueryModel, executionContext);
+        if (!updateToDataCursorFactory.supportsUpdateRowId(tableName)) {
+            throw SqlException.$(updateQueryModel.getModelPosition(), "Only simple UPDATE statements without joins are supported");
+        }
+
+        // Check that updateDataFactoryMetadata match types of table to be updated exactly
+        final RecordMetadata updateDataFactoryMetadata = updateToDataCursorFactory.getMetadata();
+        for (int i = 0, n = updateDataFactoryMetadata.getColumnCount(); i < n; i++) {
+            int virtualColumnType = updateDataFactoryMetadata.getColumnType(i);
+            CharSequence updateColumnName = updateDataFactoryMetadata.getColumnName(i);
+            int tableColumnIndex = tableColumnNames.indexOf(updateColumnName);
+            int tableColumnType = tableColumnTypes.get(tableColumnIndex);
+
+            if (virtualColumnType != tableColumnType) {
+                // get column position
+                ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
+                int position = setRhs.position;
+                throw SqlException.inconvertibleTypes(position, virtualColumnType, "", tableColumnType, updateColumnName);
+            }
+        }
         return updateToDataCursorFactory;
     }
 }

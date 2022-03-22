@@ -414,15 +414,8 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(2))" +
                     " timestamp(ts) partition by DAY", sqlExecutionContext);
 
-            CompiledQuery cc = compiler.compile("UPDATE up SET x = $1 WHERE x > 1 and x < 4", sqlExecutionContext);
-            Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
-            Assert.assertEquals(ColumnType.INT, sqlExecutionContext.getBindVariableService().getFunction(0).getType());
-
             sqlExecutionContext.getBindVariableService().setInt(0, 100);
-
-            try (UpdateStatement updateStatement = cc.getUpdateStatement()) {
-                applyUpdate(updateStatement);
-            }
+            executeUpdate("UPDATE up SET x = $1 WHERE x > 1 and x < 4");
 
             assertSql("up", "ts\tx\n" +
                     "1970-01-01T00:00:00.000000Z\t1\n" +
@@ -439,15 +432,8 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(2))" +
                     " timestamp(ts) partition by DAY", sqlExecutionContext);
 
-            CompiledQuery cc = compiler.compile("UPDATE up SET x = 100 WHERE x < $1", sqlExecutionContext);
-            Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
-            Assert.assertEquals(ColumnType.INT, sqlExecutionContext.getBindVariableService().getFunction(0).getType());
-
             sqlExecutionContext.getBindVariableService().setInt(0, 2);
-
-            try (UpdateStatement updateStatement = cc.getUpdateStatement()) {
-                applyUpdate(updateStatement);
-            }
+            executeUpdate("UPDATE up SET x = 100 WHERE x < $1");
 
             assertSql("up", "ts\tx\n" +
                     "1970-01-01T00:00:00.000000Z\t100\n" +
