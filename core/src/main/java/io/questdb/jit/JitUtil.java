@@ -32,19 +32,7 @@ public final class JitUtil {
     }
 
     public static boolean isJitSupported() {
-        // TODO: what about FREEBSD_ARM64?
-        return Os.type != Os.LINUX_ARM64 &&
-                Os.type != Os.OSX_ARM64 &&
-                // TODO: excluding OSX_AMD64 as CI is failing on
-                //  OS name: "mac os x", version: "11.6.4", arch: "x86_64", family: "mac"
-                //  due to NATIVE_JIT_LONG_LIST leak, will revert if CI still fails
-                Os.type != Os.OSX_AMD64 &&
-                // TODO: excluding WINDOWS too
-                //  OS name: "windows server 2022", version: "10.0", arch: "amd64", family: "windows"
-                Os.type != Os.WINDOWS &&
-                // TODO: excluding LINUX_AMD64 too
-                //  OS name: "linux", version: "5.11.0-1028-azure", arch: "amd64", family: "unix"
-                Os.type != Os.LINUX_AMD64
-                ;
+        // TODO what about FREEBSD_ARM64?
+        return Os.type != Os.LINUX_ARM64 && Os.type != Os.OSX_ARM64;
     }
 }
