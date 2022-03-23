@@ -28,11 +28,12 @@ import io.questdb.cairo.sql.RecordMetadata;
 import org.jetbrains.annotations.Nullable;
 
 public class TableColumnMetadata {
-    private final int type;
+    private final int writerIndex;
     private final long hash;
     private final boolean symbolTableStatic;
     @Nullable
     private final RecordMetadata metadata;
+    private int type;
     private String name;
     private int indexValueBlockCapacity;
     private boolean indexed;
@@ -42,7 +43,7 @@ public class TableColumnMetadata {
     }
 
     public TableColumnMetadata(String name, long hash, int type, @Nullable RecordMetadata metadata) {
-        this(name, hash, type, false, 0, false, metadata);
+        this(name, hash, type, false, 0, false, metadata, -1);
         // Do not allow using this constructor for symbol types.
         // Use version where you specify symbol table parameters
         assert !ColumnType.isSymbol(type);
@@ -57,6 +58,19 @@ public class TableColumnMetadata {
             boolean symbolTableStatic,
             @Nullable RecordMetadata metadata
     ) {
+        this(name, hash, type, indexFlag, indexValueBlockCapacity, symbolTableStatic, metadata, -1);
+    }
+
+    public TableColumnMetadata(
+            String name,
+            long hash,
+            int type,
+            boolean indexFlag,
+            int indexValueBlockCapacity,
+            boolean symbolTableStatic,
+            @Nullable RecordMetadata metadata,
+            int writerIndex
+    ) {
         this.name = name;
         this.hash = hash;
         this.type = type;
@@ -64,6 +78,7 @@ public class TableColumnMetadata {
         this.indexValueBlockCapacity = indexValueBlockCapacity;
         this.symbolTableStatic = symbolTableStatic;
         this.metadata = GenericRecordMetadata.copyOf(metadata);
+        this.writerIndex = writerIndex;
     }
 
     public long getHash() {
@@ -72,6 +87,14 @@ public class TableColumnMetadata {
 
     public int getIndexValueBlockCapacity() {
         return indexValueBlockCapacity;
+    }
+
+    public int getWriterIndex() {
+        return writerIndex;
+    }
+
+    public void markDeleted() {
+        type = -Math.abs(type);
     }
 
     public void setIndexValueBlockCapacity(int indexValueBlockCapacity) {

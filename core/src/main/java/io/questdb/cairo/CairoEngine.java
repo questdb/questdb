@@ -35,6 +35,8 @@ import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.AlterStatement;
+import io.questdb.griffin.DatabaseSnapshotAgent;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -45,6 +47,7 @@ import io.questdb.std.str.Path;
 import io.questdb.tasks.TableWriterTask;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicLong;
@@ -94,11 +97,19 @@ public class CairoEngine implements Closeable, WriterSource {
             this.telemetrySubSeq = null;
         }
         this.tableIdMemSize = Files.PAGE_SIZE;
-        // subscribe to table writer commands to provide cold command handling
+        // Subscribe to table writer commands to provide cold command handling.
         this.tableWriterCmdQueue = messageBus.getTableWriterCommandQueue();
         final FanOut fanOut = messageBus.getTableWriterCommandFanOut();
         fanOut.and(tableWriterCmdSubSeq = new MCSequence(fanOut.current(), tableWriterCmdQueue.getCycle()));
         openTableId();
+        // Recover snapshot, if necessary.
+        try {
+            DatabaseSnapshotAgent.recoverSnapshot(this);
+        } catch (Throwable e) {
+            close();
+            throw e;
+        }
+        // Migrate database files.
         try {
             EngineMigration.migrateEngineTo(this, ColumnType.VERSION, false);
         } catch (Throwable e) {
@@ -107,6 +118,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    @TestOnly
     public boolean clear() {
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
@@ -236,6 +248,31 @@ public class CairoEngine implements Closeable, WriterSource {
         return getReader(securityContext, tableName, TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION);
     }
 
+    public TableReader getReaderForStatement(SqlExecutionContext executionContext, CharSequence tableName, CharSequence statement) {
+        try {
+            return getReader(executionContext.getCairoSecurityContext(), tableName);
+        } catch (CairoException ex) {
+            // Cannot open reader on existing table is pretty bad.
+            LOG.error().$("error opening reader for ").$(statement)
+                    .$(" statement [table=").$(tableName)
+                    .$(",errno=").$(ex.getErrno())
+                    .$(",error=").$(ex.getMessage()).I$();
+            // In some messed states, for example after _meta file swap failure Reader cannot be opened
+            // but writer can be. Opening writer fixes the table mess.
+            try (TableWriter ignored = getWriter(executionContext.getCairoSecurityContext(), tableName, statement + " statement")) {
+                return getReader(executionContext.getCairoSecurityContext(), tableName);
+            } catch (EntryUnavailableException wrOpEx) {
+                // This is fine, writer is busy. Throw back origin error.
+                throw ex;
+            } catch (Throwable th) {
+                LOG.error().$("error preliminary opening writer for ").$(statement)
+                        .$(" statement [table=").$(tableName)
+                        .$(",error=").$(ex.getMessage()).I$();
+                throw ex;
+            }
+        }
+    }
+
     public TableReader getReader(
             CairoSecurityContext securityContext,
             CharSequence tableName,
@@ -328,7 +365,7 @@ public class CairoEngine implements Closeable, WriterSource {
         FilesFacade ff = configuration.getFilesFacade();
         Path path = Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
         try {
-            tableIdFd = TableUtils.openFileRWOrFail(ff, path);
+            tableIdFd = TableUtils.openFileRWOrFail(ff, path, configuration.getWriterFileOpenOpts());
             this.tableIdMem = TableUtils.mapRW(ff, tableIdFd, tableIdMemSize, MemoryTag.MMAP_DEFAULT);
         } catch (Throwable e) {
             close();
@@ -365,10 +402,12 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    @TestOnly
     public boolean releaseAllReaders() {
         return readerPool.releaseAll();
     }
 
+    @TestOnly
     public void releaseAllWriters() {
         writerPool.releaseAll();
     }

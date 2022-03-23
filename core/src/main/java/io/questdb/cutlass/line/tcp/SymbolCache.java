@@ -24,33 +24,27 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.SymbolMapReaderImpl;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.SymbolLookup;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMR;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.ObjIntHashMap;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-class SymbolCache implements Closeable {
+class SymbolCache implements Closeable, SymbolLookup {
     private final ObjIntHashMap<CharSequence> symbolValueToKeyMap = new ObjIntHashMap<>(
             256,
             0.5,
             SymbolTable.VALUE_NOT_FOUND
     );
-    private final MemoryMR txMem = Vm.getMRInstance();
+    private TxReader txReader;
     private final SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl();
     private final MicrosecondClock clock;
-    private long transientSymCountOffset;
-    private long lastSymbolReaderReloadTimestamp;
     private final long waitUsBeforeReload;
+    private long lastSymbolReaderReloadTimestamp;
+    private int symbolIndexInTxFile;
 
     SymbolCache(LineTcpReceiverConfiguration configuration) {
         this.clock = configuration.getMicrosecondClock();
@@ -61,55 +55,68 @@ class SymbolCache implements Closeable {
     public void close() {
         symbolMapReader.close();
         symbolValueToKeyMap.clear();
-        txMem.close();
+    }
+
+    @Override
+    public int keyOf(CharSequence value) {
+        final int index = symbolValueToKeyMap.keyIndex(value);
+        if (index < 0) {
+            return symbolValueToKeyMap.valueAt(index);
+        }
+
+        final long ticks = clock.getTicks();
+        int symbolValueCount;
+
+        if (
+                ticks - lastSymbolReaderReloadTimestamp > waitUsBeforeReload &&
+                        (symbolValueCount = safeReadUncommittedSymbolCount(symbolIndexInTxFile, true)) > symbolMapReader.getSymbolCount()
+        ) {
+            symbolMapReader.updateSymbolCount(symbolValueCount);
+            lastSymbolReaderReloadTimestamp = ticks;
+        }
+
+        final int symbolKey = symbolMapReader.keyOf(value);
+
+        if (SymbolTable.VALUE_NOT_FOUND != symbolKey) {
+            symbolValueToKeyMap.putAt(index, Chars.toString(value), symbolKey);
+        }
+
+        return symbolKey;
     }
 
     int getCacheValueCount() {
         return symbolValueToKeyMap.size();
     }
 
-    int getSymbolKey(CharSequence symbolValue) {
-        final int index = symbolValueToKeyMap.keyIndex(symbolValue);
-        if (index < 0) {
-            return symbolValueToKeyMap.valueAt(index);
-        }
-
-        final int symbolValueCount = txMem.getInt(transientSymCountOffset);
-        final long ticks;
-
-        if (
-                symbolValueCount > symbolMapReader.getSymbolCount()
-                        && (ticks = clock.getTicks()) - lastSymbolReaderReloadTimestamp > waitUsBeforeReload
-        ) {
-            symbolMapReader.updateSymbolCount(symbolValueCount);
-            lastSymbolReaderReloadTimestamp = ticks;
-        }
-
-        final int symbolKey = symbolMapReader.keyOf(symbolValue);
-
-        if (SymbolTable.VALUE_NOT_FOUND != symbolKey) {
-            symbolValueToKeyMap.putAt(index, Chars.toString(symbolValue), symbolKey);
-        }
-
-        return symbolKey;
+    void of(CairoConfiguration configuration,
+            Path path,
+            CharSequence columnName,
+            int symbolIndexInTxFile,
+            TxReader txReader,
+            long columnNameTxn
+    ) {
+        this.symbolIndexInTxFile = symbolIndexInTxFile;
+        final int plen = path.length();
+        this.txReader = txReader;
+        int symCount = safeReadUncommittedSymbolCount(symbolIndexInTxFile, false);
+        path.trimTo(plen);
+        symbolMapReader.of(configuration, path, columnName, columnNameTxn, symCount);
+        symbolValueToKeyMap.clear(symCount);
     }
 
-    void of(CairoConfiguration configuration, Path path, CharSequence columnName, int symbolIndexInTxFile) {
-        FilesFacade ff = configuration.getFilesFacade();
-        transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symbolIndexInTxFile);
-        final int plen = path.length();
-        txMem.of(
-                ff,
-                path.concat(TableUtils.TXN_FILE_NAME).$(),
-                transientSymCountOffset,
-                // we will be reading INT value at `transientSymCountOffset`
-                // must ensure there is mapped memory
-                transientSymCountOffset + 4,
-                MemoryTag.MMAP_INDEX_READER
-        );
-        int symCount = txMem.getInt(transientSymCountOffset);
-        path.trimTo(plen);
-        symbolMapReader.of(configuration, path, columnName, symCount);
-        symbolValueToKeyMap.clear(symCount);
+    private int safeReadUncommittedSymbolCount(int symbolIndexInTxFile, boolean initialStateOk) {
+        // TODO: avoid reading dirty distinct counts from _txn file, add new file instead
+        boolean offsetReloadOk = initialStateOk;
+        while (true) {
+            if (offsetReloadOk) {
+                int count = txReader.unsafeReadSymbolTransientCount(symbolIndexInTxFile);
+                Unsafe.getUnsafe().loadFence();
+
+                if (txReader.unsafeReadVersion() == txReader.getVersion()) {
+                    return count;
+                }
+            }
+            offsetReloadOk = txReader.unsafeLoadBaseOffset();
+        }
     }
 }

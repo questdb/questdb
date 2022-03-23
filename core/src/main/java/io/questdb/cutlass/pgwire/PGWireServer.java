@@ -27,6 +27,7 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
@@ -45,7 +46,9 @@ import java.io.Closeable;
 import static io.questdb.network.IODispatcher.*;
 
 public class PGWireServer implements Closeable {
+
     private static final Log LOG = LogFactory.getLog(PGWireServer.class);
+
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final PGConnectionContextFactory contextFactory;
     private final WorkerPool workerPool;
@@ -56,6 +59,7 @@ public class PGWireServer implements Closeable {
             WorkerPool workerPool,
             boolean workerPoolLocal,
             FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent,
             PGConnectionContextFactory contextFactory
     ) {
         this.contextFactory = contextFactory;
@@ -67,7 +71,7 @@ public class PGWireServer implements Closeable {
         workerPool.assign(dispatcher);
 
         for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
-            final PGJobContext jobContext = new PGJobContext(configuration, engine, functionFactoryCache);
+            final PGJobContext jobContext = new PGJobContext(configuration, engine, functionFactoryCache, snapshotAgent);
             workerPool.assign(i, new Job() {
                 private final IORequestProcessor<PGConnectionContext> processor = (operation, context) -> {
                     try {
@@ -112,6 +116,7 @@ public class PGWireServer implements Closeable {
             Log log,
             CairoEngine cairoEngine,
             FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics,
             PGConnectionContextFactory contextFactory
     ) {
@@ -120,8 +125,11 @@ public class PGWireServer implements Closeable {
                 sharedWorkerPool,
                 log,
                 cairoEngine,
-                (conf, engine, workerPool, local, functionFactoryCache1, metrics1) -> new PGWireServer(conf, engine, workerPool, local, functionFactoryCache1, contextFactory),
+                (conf, engine, workerPool, local, functionFactoryCache1, snapshotAgent1, metrics1) -> new PGWireServer(
+                        conf, engine, workerPool, local, functionFactoryCache1, snapshotAgent1, contextFactory
+                ),
                 functionFactoryCache,
+                snapshotAgent,
                 metrics
         );
     }
@@ -133,6 +141,7 @@ public class PGWireServer implements Closeable {
             Log log,
             CairoEngine cairoEngine,
             FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
     ) {
         return WorkerPoolAwareConfiguration.create(
@@ -140,11 +149,12 @@ public class PGWireServer implements Closeable {
                 sharedWorkerPool,
                 log,
                 cairoEngine,
-                (conf, engine, workerPool, local, functionFactoryCache1, metrics1) -> {
+                (conf, engine, workerPool, local, functionFactoryCache1, snapshotAgent1, metrics1) -> {
                     PGConnectionContextFactory contextFactory = new PGConnectionContextFactory(engine, conf, workerPool.getWorkerCount());
-                    return new PGWireServer(conf, engine, workerPool, local, functionFactoryCache1, contextFactory);
+                    return new PGWireServer(conf, engine, workerPool, local, functionFactoryCache1, snapshotAgent1, contextFactory);
                 },
                 functionFactoryCache,
+                snapshotAgent,
                 metrics
         );
     }

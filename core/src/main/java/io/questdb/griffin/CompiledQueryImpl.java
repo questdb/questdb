@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertStatement;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.TextLoader;
+import io.questdb.griffin.update.UpdateStatement;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.FanOut;
@@ -41,9 +42,6 @@ import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.tasks.TableWriterTask;
-
-import java.util.concurrent.locks.LockSupport;
-import io.questdb.griffin.update.UpdateStatement;
 
 public class CompiledQueryImpl implements CompiledQuery {
     private static final Log LOG = LogFactory.getLog(CompiledQueryImpl.class);
@@ -246,6 +244,14 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     CompiledQuery ofVacuum() {
         return of(VACUUM);
+    }
+
+    CompiledQuery ofSnapshotPrepare() {
+        return of(SNAPSHOT_DB_PREPARE);
+    }
+
+    CompiledQuery ofSnapshotComplete() {
+        return of(SNAPSHOT_DB_COMPLETE);
     }
 
     private class AlterTableQueryFuture implements QueryFuture {

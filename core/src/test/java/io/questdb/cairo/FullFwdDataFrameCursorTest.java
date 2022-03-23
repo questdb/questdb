@@ -914,7 +914,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
         BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, direction);
 
-        // because out Symbol column 0 is indexed, frame has to have index.
+        // because out Symbol column 0 is indexed, frame has to have an index.
         Assert.assertNotNull(indexReader);
 
         final long hi = frame.getRowHi();
@@ -1131,12 +1131,12 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long openRW(LPSZ name) {
+                public long openRW(LPSZ name, long opts) {
                     // remember FD of the file we are targeting
                     if (Chars.endsWith(name, fileUnderAttack)) {
-                        return fd = super.openRW(name);
+                        return fd = super.openRW(name, opts);
                     }
-                    return super.openRW(name);
+                    return super.openRW(name, opts);
                 }
             };
 
@@ -1281,12 +1281,12 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long openRW(LPSZ name) {
+                public long openRW(LPSZ name, long opts) {
                     // remember FD of the file we are targeting
                     if (Chars.endsWith(name, fileUnderAttack)) {
-                        return fd = super.openRW(name);
+                        return fd = super.openRW(name, opts);
                     }
-                    return super.openRW(name);
+                    return super.openRW(name, opts);
                 }
 
                 @Override
@@ -1480,12 +1480,12 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long openRW(LPSZ name) {
+                public long openRW(LPSZ name, long opts) {
                     // remember FD of the file we are targeting
                     if (Chars.endsWith(name, fileUnderAttack)) {
-                        return fd = super.openRW(name);
+                        return fd = super.openRW(name, opts);
                     }
-                    return super.openRW(name);
+                    return super.openRW(name, opts);
                 }
             };
 
@@ -1565,7 +1565,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                         TestUtils.assertContains(e.getMessage(), "distressed");
                     }
 
-                    // test that we cannot rollback
+                    // test that we cannot perform a rollback
                     try {
                         writer.rollback();
                         Assert.fail();
@@ -1586,7 +1586,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
                 workerPool.halt();
 
-                // lets see what we can read after this catastrophe
+                // let's see what we can read after this catastrophe
                 try (TableReader reader = createTableReader(AbstractCairoTest.configuration, "ABC")) {
                     FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                     TableReaderRecord record = new TableReaderRecord();
@@ -1689,9 +1689,9 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     // To make sure writer is ok we add more rows
                     for (int i = 0; i < M; i++) {
                         TableWriter.Row row = writer.newRow(timestamp += increment);
-                        row.putSym(0, symbols[rnd.nextPositiveInt() % N]);
-                        row.putInt(1, rnd.nextInt());
-                        row.putSym(2, symbols[rnd.nextPositiveInt() % N]);
+                        row.putSym(1, symbols[rnd.nextPositiveInt() % N]);
+                        row.putInt(2, rnd.nextInt());
+                        row.putSym(3, symbols[rnd.nextPositiveInt() % N]);
                         row.append();
                     }
                     writer.commit();
@@ -1838,7 +1838,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                         TableWriter.Row row = writer.newRow(timestamp += increment);
                         row.putStr(0, rnd.nextChars(20));
                         row.putSym(1, symbols[rnd.nextPositiveInt() % N]);
-                        row.putSym(2, symbols[rnd.nextPositiveInt() % N]);
+                        row.putSym(3, symbols[rnd.nextPositiveInt() % N]);
                         row.append();
                     }
                     writer.commit();
@@ -1919,7 +1919,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                         row.putStr(0, rnd.nextChars(20));
                         row.putSym(1, symbols[rnd.nextPositiveInt() % N]);
                         row.putInt(2, rnd.nextInt());
-                        row.putSym(4, symbols[rnd.nextPositiveInt() % N]);
+                        row.putSym(5, symbols[rnd.nextPositiveInt() % N]);
                         row.append();
                     }
                     writer.commit();
@@ -2021,7 +2021,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                         row.putStr(0, rnd.nextChars(20));
                         row.putSym(1, symbols[rnd.nextPositiveInt() % N]);
                         row.putInt(2, rnd.nextInt());
-                        row.putSym(4, symbols[rnd.nextPositiveInt() % N]);
+                        row.putSym(5, symbols[rnd.nextPositiveInt() % N]);
                         row.append();
                     }
                     writer.commit();
@@ -2099,7 +2099,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                         row.putStr(0, rnd.nextChars(20));
                         row.putSym(1, symbols[rnd.nextPositiveInt() % N]);
                         row.putInt(2, rnd.nextInt());
-                        row.putSym(4, symbols[rnd.nextPositiveInt() % N]);
+                        row.putSym(5, symbols[rnd.nextPositiveInt() % N]);
                         row.append();
                     }
                     writer.commit();
@@ -2177,7 +2177,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                         row.putStr(0, rnd.nextChars(20));
                         row.putSym(1, symbols[rnd.nextPositiveInt() % N]);
                         row.putInt(2, rnd.nextInt());
-                        row.putSym(4, rnd.nextPositiveInt() % 16 == 0 ? null : symbols[rnd.nextPositiveInt() % N]);
+                        row.putSym(5, rnd.nextPositiveInt() % 16 == 0 ? null : symbols[rnd.nextPositiveInt() % N]);
                         row.append();
                     }
                     writer.commit();

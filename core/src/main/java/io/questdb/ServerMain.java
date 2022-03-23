@@ -24,15 +24,14 @@
 
 package io.questdb;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.O3Utils;
-import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.*;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.line.udp.LineUdpReceiver;
 import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
 import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.jit.JitUtil;
@@ -55,6 +54,7 @@ import java.util.zip.ZipInputStream;
 
 public class ServerMain {
     private static final String VERSION_TXT = "version.txt";
+    private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
 
     protected PropServerConfiguration configuration;
 
@@ -78,15 +78,17 @@ public class ServerMain {
         }
 
         final CharSequenceObjHashMap<String> optHash = hashArgs(args);
-
-        final Log log = LogFactory.getLog("server-main");
         // expected flags:
         // -d <root dir> = sets root directory
         // -f = forces copy of site to root directory even if site exists
         // -n = disables handling of HUP signal
 
         final String rootDirectory = optHash.get("-d");
-        extractSite(rootDirectory, log);
+
+        LogFactory.configureFromSystemProperties(LogFactory.INSTANCE, null, rootDirectory);
+        final Log log = LogFactory.getLog("server-main");
+
+        extractSite(buildInformation, rootDirectory, log);
         final Properties properties = new Properties();
         final String configurationFileName = "/server.conf";
         final File configurationFile = new File(new File(rootDirectory, PropServerConfiguration.CONFIG_DIRECTORY), configurationFileName);
@@ -96,13 +98,15 @@ public class ServerMain {
         }
 
         readServerConfiguration(rootDirectory, properties, log, buildInformation);
+        final CairoConfiguration cairoConfiguration = configuration.getCairoConfiguration();
+
         log.advisory().$("Server config : ").$(configurationFile.getAbsoluteFile()).$();
         log.advisory().$("Config changes applied:").$();
         log.advisory().$("  http.enabled : ").$(configuration.getHttpServerConfiguration().isEnabled()).$();
         log.advisory().$("  tcp.enabled  : ").$(configuration.getLineTcpReceiverConfiguration().isEnabled()).$();
         log.advisory().$("  pg.enabled   : ").$(configuration.getPGWireConfiguration().isEnabled()).$();
 
-        log.advisory().$("open database [id=").$(configuration.getCairoConfiguration().getDatabaseIdLo()).$('.').$(configuration.getCairoConfiguration().getDatabaseIdHi()).$(']').$();
+        log.advisory().$("open database [id=").$(cairoConfiguration.getDatabaseIdLo()).$('.').$(cairoConfiguration.getDatabaseIdHi()).$(']').$();
         log.advisory().$("platform [bit=").$(System.getProperty("sun.arch.data.model")).$(']').$();
         switch (Os.type) {
             case Os.WINDOWS:
@@ -128,11 +132,12 @@ public class ServerMain {
                 break;
         }
         log.advisory().$("available CPUs: ").$(Runtime.getRuntime().availableProcessors()).$();
-        log.advisory().$("db root: ").$(configuration.getCairoConfiguration().getRoot()).$();
-        log.advisory().$("backup root: ").$(configuration.getCairoConfiguration().getBackupRoot()).$();
+        log.advisory().$("db root: ").$(cairoConfiguration.getRoot()).$();
+        log.advisory().$("backup root: ").$(cairoConfiguration.getBackupRoot()).$();
         try (Path path = new Path()) {
-            verifyFileSystem("db", configuration.getCairoConfiguration().getRoot(), path, log);
-            verifyFileSystem("backup", configuration.getCairoConfiguration().getBackupRoot(), path, log);
+            verifyFileSystem("db", cairoConfiguration.getRoot(), path, log);
+            verifyFileSystem("backup", cairoConfiguration.getBackupRoot(), path, log);
+            verifyFileOpts(cairoConfiguration, path);
         }
 
         if (JitUtil.isJitSupported()) {
@@ -174,6 +179,9 @@ public class ServerMain {
         workerPool.assign(cairoEngine.getEngineMaintenanceJob());
         instancesToClean.add(cairoEngine);
 
+        final DatabaseSnapshotAgent snapshotAgent = new DatabaseSnapshotAgent(cairoEngine);
+        instancesToClean.add(snapshotAgent);
+
         if (!configuration.getCairoConfiguration().getTelemetryConfiguration().getDisableCompletely()) {
             final TelemetryJob telemetryJob = new TelemetryJob(cairoEngine, functionFactoryCache);
             instancesToClean.add(telemetryJob);
@@ -189,8 +197,8 @@ public class ServerMain {
         try {
             initQuestDb(workerPool, cairoEngine, log);
 
-            instancesToClean.add(createHttpServer(workerPool, log, cairoEngine, functionFactoryCache, metrics));
-            instancesToClean.add(createMinHttpServer(workerPool, log, cairoEngine, functionFactoryCache, metrics));
+            instancesToClean.add(createHttpServer(workerPool, log, cairoEngine, functionFactoryCache, snapshotAgent, metrics));
+            instancesToClean.add(createMinHttpServer(workerPool, log, cairoEngine, functionFactoryCache, snapshotAgent, metrics));
 
             if (configuration.getPGWireConfiguration().isEnabled()) {
                 instancesToClean.add(PGWireServer.create(
@@ -199,6 +207,7 @@ public class ServerMain {
                         log,
                         cairoEngine,
                         functionFactoryCache,
+                        snapshotAgent,
                         metrics
                 ));
             }
@@ -254,22 +263,6 @@ public class ServerMain {
         }
     }
 
-    private void verifyFileSystem(String kind, CharSequence dir, Path path, Log log) {
-        if (dir != null) {
-            path.of(dir).$();
-            // path will contain file system name
-            long fsStatus = Files.getFileSystemStatus(path);
-            path.seekZ();
-            LogRecord rec = log.advisory().$(kind).$(" file system magic: 0x");
-            if (fsStatus < 0) {
-                rec.$hex(-fsStatus).$(" [").$(path).$("] SUPPORTED").$();
-            } else {
-                rec.$hex(fsStatus).$(" [").$(path).$("] EXPERIMENTAL").$();
-                log.advisory().$("\n\n\n\t\t\t*** SYSTEM IS USING UNSUPPORTED FILE SYSTEM AND COULD BE UNSTABLE ***\n\n").$();
-            }
-        }
-    }
-
     public static void deleteOrException(File file) {
         if (!file.exists()) {
             return;
@@ -290,6 +283,34 @@ public class ServerMain {
 
     public static void main(String[] args) throws Exception {
         new ServerMain(args);
+    }
+
+    static void verifyFileOpts(CairoConfiguration cairoConfiguration, Path path) {
+        final FilesFacade ff = cairoConfiguration.getFilesFacade();
+
+        path.of(cairoConfiguration.getRoot()).concat("_verify_").put(cairoConfiguration.getRandom().nextPositiveInt()).put(".d");
+        long fd = ff.openRW(path.$(), cairoConfiguration.getWriterFileOpenOpts());
+
+        try {
+            if (fd > -1) {
+                long mem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    TableUtils.writeLongOrFail(
+                            ff,
+                            fd,
+                            0,
+                            123456789L,
+                            mem,
+                            path
+                    );
+                } finally {
+                    Unsafe.free(mem, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        } finally {
+            ff.close(fd);
+        }
+        ff.remove(path);
     }
 
     private static void logWebConsoleUrls(Log log, PropServerConfiguration configuration) throws SocketException {
@@ -339,28 +360,28 @@ public class ServerMain {
         return optHash;
     }
 
-
-    private static long getPublicVersion(String publicDir) throws IOException {
+    private static String getPublicVersion(String publicDir) throws IOException {
         File f = new File(publicDir, VERSION_TXT);
         if (f.exists()) {
             try (FileInputStream fis = new FileInputStream(f)) {
                 byte[] buf = new byte[128];
                 int len = fis.read(buf);
-                return Long.parseLong(new String(buf, 0, len));
+                return new String(buf, 0, len);
             }
         }
-        return Long.MIN_VALUE;
+        return null;
     }
 
-    private static void setPublicVersion(String publicDir, long version) throws IOException {
+    private static void setPublicVersion(String publicDir, String version) throws IOException {
         File f = new File(publicDir, VERSION_TXT);
         try (FileOutputStream fos = new FileOutputStream(f)) {
-            byte[] buf = Long.toString(version).getBytes();
+            byte[] buf = version.getBytes();
             fos.write(buf, 0, buf.length);
         }
     }
 
-    private static void extractSite(String dir, Log log) throws IOException {
+    //made package level for testing only  
+    static void extractSite(BuildInformation buildInformation, String dir, Log log) throws IOException {
         final String publicZip = "/io/questdb/site/public.zip";
         final String publicDir = dir + "/public";
         final byte[] buffer = new byte[1024 * 1024];
@@ -371,31 +392,70 @@ public class ServerMain {
         } else {
             thisVersion = resource.openConnection().getLastModified();
         }
-        final long oldVersion = getPublicVersion(publicDir);
-        if (thisVersion > oldVersion) {
-            try (final InputStream is = ServerMain.class.getResourceAsStream(publicZip)) {
-                if (is != null) {
-                    try (ZipInputStream zip = new ZipInputStream(is)) {
-                        ZipEntry ze;
-                        while ((ze = zip.getNextEntry()) != null) {
-                            final File dest = new File(publicDir, ze.getName());
-                            if (!ze.isDirectory()) {
-                                copyInputStream(true, buffer, dest, zip, log);
-                            }
-                            zip.closeEntry();
-                        }
+
+        boolean extracted = false;
+        final String oldVersionStr = getPublicVersion(publicDir);
+        final CharSequence dbVersion = buildInformation.getQuestDbVersion();
+        if (oldVersionStr == null) {
+            if (thisVersion != 0) {
+                extractSite0(dir, log, publicDir, buffer, Long.toString(thisVersion));
+            } else {
+                extractSite0(dir, log, publicDir, buffer, Chars.toString(dbVersion));
+            }
+            extracted = true;
+        } else {
+            // This is a hack to deal with RT package problem
+            // in this package "thisVersion" is always 0, and we need to fall back
+            // to the database version.
+            if (thisVersion == 0) {
+                if (!Chars.equals(oldVersionStr, dbVersion)) {
+                    extractSite0(dir, log, publicDir, buffer, Chars.toString(dbVersion));
+                    extracted = true;
+                }
+            } else {
+                // it is possible that old version is the database version
+                // which means user might have switched from RT distribution to no-JVM on the same data dir
+                // in this case we might fail to parse the version string
+                try {
+                    final long oldVersion = Numbers.parseLong(oldVersionStr);
+                    if (thisVersion > oldVersion) {
+                        extractSite0(dir, log, publicDir, buffer, Long.toString(thisVersion));
+                        extracted = true;
                     }
-                } else {
-                    log.error().$("could not find site [resource=").$(publicZip).$(']').$();
+                } catch (NumericException e) {
+                    extractSite0(dir, log, publicDir, buffer, Long.toString(thisVersion));
+                    extracted = true;
                 }
             }
-            setPublicVersion(publicDir, thisVersion);
-            copyConfResource(dir, false, buffer, "conf/date.formats", log);
-            copyConfResource(dir, true, buffer, "conf/mime.types", log);
-            copyConfResource(dir, false, buffer, "conf/server.conf", log);
-        } else {
+        }
+
+        if (!extracted) {
             log.info().$("web console is up to date").$();
         }
+    }
+
+    private static void extractSite0(String dir, Log log, String publicDir, byte[] buffer, String thisVersion) throws IOException {
+        try (final InputStream is = ServerMain.class.getResourceAsStream(PUBLIC_ZIP)) {
+            if (is != null) {
+                try (ZipInputStream zip = new ZipInputStream(is)) {
+                    ZipEntry ze;
+                    while ((ze = zip.getNextEntry()) != null) {
+                        final File dest = new File(publicDir, ze.getName());
+                        if (!ze.isDirectory()) {
+                            copyInputStream(true, buffer, dest, zip, log);
+                        }
+                        zip.closeEntry();
+                    }
+                }
+            } else {
+                log.error().$("could not find site [resource=").$(PUBLIC_ZIP).$(']').$();
+            }
+        }
+        setPublicVersion(publicDir, thisVersion);
+        copyConfResource(dir, false, buffer, "conf/date.formats", log);
+        copyConfResource(dir, true, buffer, "conf/mime.types", log);
+        copyConfResource(dir, false, buffer, "conf/server.conf", log);
+        copyConfResource(dir, false, buffer, "conf/log.conf", log);
     }
 
     private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
@@ -469,11 +529,28 @@ public class ServerMain {
         Misc.freeObjList(instancesToClean);
     }
 
+    private static void verifyFileSystem(String kind, CharSequence dir, Path path, Log log) {
+        if (dir != null) {
+            path.of(dir).$();
+            // path will contain file system name
+            long fsStatus = Files.getFileSystemStatus(path);
+            path.seekZ();
+            LogRecord rec = log.advisory().$(kind).$(" file system magic: 0x");
+            if (fsStatus < 0) {
+                rec.$hex(-fsStatus).$(" [").$(path).$("] SUPPORTED").$();
+            } else {
+                rec.$hex(fsStatus).$(" [").$(path).$("] EXPERIMENTAL").$();
+                log.advisory().$("\n\n\n\t\t\t*** SYSTEM IS USING UNSUPPORTED FILE SYSTEM AND COULD BE UNSTABLE ***\n\n").$();
+            }
+        }
+    }
+
     protected HttpServer createHttpServer(
             final WorkerPool workerPool,
             final Log log,
             final CairoEngine cairoEngine,
             FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics) {
         return HttpServer.create(
                 configuration.getHttpServerConfiguration(),
@@ -481,6 +558,7 @@ public class ServerMain {
                 log,
                 cairoEngine,
                 functionFactoryCache,
+                snapshotAgent,
                 metrics
         );
     }
@@ -490,6 +568,7 @@ public class ServerMain {
             final Log log,
             final CairoEngine cairoEngine,
             FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics) {
         if (!metrics.isEnabled()) {
             log.advisory().$("Min health server is starting. Health check endpoint will not consider unhandled errors when metrics are disabled.").$();
@@ -500,6 +579,7 @@ public class ServerMain {
                 log,
                 cairoEngine,
                 functionFactoryCache,
+                snapshotAgent,
                 metrics
         );
     }
@@ -513,10 +593,12 @@ public class ServerMain {
         // For extension
     }
 
-    protected void readServerConfiguration(final String rootDirectory,
-                                           final Properties properties,
-                                           Log log,
-                                           final BuildInformation buildInformation) throws ServerConfigurationException, JsonException {
+    protected void readServerConfiguration(
+            final String rootDirectory,
+            final Properties properties,
+            Log log,
+            final BuildInformation buildInformation
+    ) throws ServerConfigurationException, JsonException {
         configuration = new PropServerConfiguration(rootDirectory, properties, System.getenv(), log, buildInformation);
     }
 

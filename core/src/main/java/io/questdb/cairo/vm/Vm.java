@@ -72,16 +72,12 @@ public class Vm {
         return new MemoryCARWImpl(pageSize, maxPages, memoryTag);
     }
 
-    public static MemoryCMARW getCMARWInstance(FilesFacade ff, LPSZ name, long pageSize, long size, int memoryTag) {
-        return new MemoryCMARWImpl(ff, name, pageSize, size, memoryTag);
+    public static MemoryCMARW getCMARWInstance(FilesFacade ff, LPSZ name, long pageSize, long size, int memoryTag, long opts) {
+        return new MemoryCMARWImpl(ff, name, pageSize, size, memoryTag, opts);
     }
 
     public static MemoryCMARW getCMARWInstance() {
         return new MemoryCMARWImpl();
-    }
-
-    public static MemoryCMR getCMRInstance(FilesFacade ff, LPSZ fileName, long size, int memoryTag) {
-        return new MemoryCMRImpl(ff, fileName, size, memoryTag);
     }
 
     public static MemoryMA getMAInstance() {
@@ -96,11 +92,15 @@ public class Vm {
         return new MemoryCMARWImpl();
     }
 
-    public static MemoryMARW getMARWInstance(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
-        return new MemoryCMARWImpl(ff, name, extendSegmentSize, size, memoryTag);
+    public static MemoryMARW getMARWInstance(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+        return new MemoryCMARWImpl(ff, name, extendSegmentSize, size, memoryTag, opts);
     }
 
     public static MemoryMR getMRInstance() {
+        return new MemoryCMRImpl();
+    }
+
+    public static MemoryCMR getCMRInstance() {
         return new MemoryCMRImpl();
     }
 
@@ -108,12 +108,12 @@ public class Vm {
         return new MemoryCMRImpl(ff, name, size, memoryTag);
     }
 
-    public static MemoryMA getSmallMAInstance(FilesFacade ff, LPSZ name, int memoryTag) {
-        return new MemoryCMARWImpl(ff, name, ff.getPageSize(), -1, memoryTag);
+    public static MemoryMA getSmallMAInstance(FilesFacade ff, LPSZ name, int memoryTag, long opts) {
+        return new MemoryCMARWImpl(ff, name, ff.getPageSize(), -1, memoryTag, opts);
     }
 
-    public static MemoryCMARW getSmallCMARWInstance(FilesFacade ff, LPSZ name, int memoryTag) {
-        return new MemoryCMARWImpl(ff, name, ff.getPageSize(), -1, memoryTag);
+    public static MemoryCMARW getSmallCMARWInstance(FilesFacade ff, LPSZ name, int memoryTag, long opts) {
+        return new MemoryCMARWImpl(ff, name, ff.getPageSize(), -1, memoryTag, opts);
     }
 
     public static long getStorageLength(int len) {
@@ -128,7 +128,7 @@ public class Vm {
         return STRING_LENGTH_BYTES + s.length() * 2;
     }
 
-    public static MemoryMARW getWholeMARWInstance(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag) {
-        return new MemoryCMARWImpl(ff, name, extendSegmentSize, -1, memoryTag);
+    public static MemoryMARW getWholeMARWInstance(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
+        return new MemoryCMARWImpl(ff, name, extendSegmentSize, -1, memoryTag, opts);
     }
 }

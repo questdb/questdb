@@ -31,6 +31,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -146,6 +147,10 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
                     try {
                         Rnd rnd = new Rnd();
                         for (int i = 0; i < n; i++) {
+                            if (errorCount.get() > 0) {
+                                // Reader already failed
+                                return;
+                            }
                             TableWriter.Row row = writer.newRow(ts);
                             row.putInt(0, i);
                             for (int k = 0; k < 128; k++) {
@@ -179,7 +184,18 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
                     while (count < n) {
                         if (cursor.reload()) {
                             while (cursor.hasNext()) {
-                                Assert.assertEquals(count, record.getInt(0));
+                                if (count != record.getInt(0)) {
+                                    errorCount.incrementAndGet();
+                                    StringSink ss = new StringSink();
+                                    ss.put("[");
+                                    for (int i = 0; i < reader.getPartitionCount(); i++) {
+                                        ss.put(reader.getPartitionRowCount(i));
+                                        ss.put(",");
+                                    }
+                                    ss.put("]:").put(reader.getTxn());
+                                    int val = record.getInt(0);
+                                    Assert.assertEquals(ss.toString(), count, record.getInt(0));
+                                }
                                 BinarySequence binarySequence = record.getBin(1);
                                 for (int i = 0; i < 128; i++) {
                                     Assert.assertEquals(rnd.nextByte(), binarySequence.byteAt(i));
@@ -199,6 +215,7 @@ public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
 
             Assert.assertTrue(latch.await(600, TimeUnit.SECONDS));
             Assert.assertEquals(0, errorCount.get());
+            Thread.sleep(1000);
         });
     }
 

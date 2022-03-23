@@ -22,28 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.groupby;
+package io.questdb.cairo.sql;
 
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.sql.DelegatingRecordCursor;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
-import org.jetbrains.annotations.NotNull;
-
-@FunctionalInterface
-public interface SampleByCursorLambda {
-    @NotNull
-    DelegatingRecordCursor createCursor(
-            Map map,
-            RecordSink sink,
-            @NotNull TimestampSampler timestampSampler,
-            int timestampIndex,
-            ObjList<GroupByFunction> groupByFunctions,
-            ObjList<Function> recordFunctions,
-            IntList symbolTableSkewIndex,
-            int keyCount
-    );
+public interface SymbolLookup {
+    int keyOf(CharSequence value);
 }

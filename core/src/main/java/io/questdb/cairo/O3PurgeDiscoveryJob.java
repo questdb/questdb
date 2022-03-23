@@ -37,6 +37,7 @@ import io.questdb.tasks.O3PurgeDiscoveryTask;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscoveryTask> implements Closeable {
 
@@ -47,6 +48,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
     private final ObjList<DirectLongList> partitionList;
     private final ObjList<TxnScoreboard> txnScoreboards;
     private final ObjList<TxReader> txnReaders;
+    private final AtomicBoolean halted = new AtomicBoolean(false);
 
     public O3PurgeDiscoveryJob(MessageBus messageBus, int workerCount) {
         super(messageBus.getO3PurgeDiscoveryQueue(), messageBus.getO3PurgeDiscoverySubSeq());
@@ -68,9 +70,11 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
 
     @Override
     public void close() throws IOException {
-        Misc.freeObjList(partitionList);
-        Misc.freeObjList(txnReaders);
-        Misc.freeObjList(txnScoreboards);
+        if (halted.compareAndSet(false, true)) {
+            Misc.freeObjList(partitionList);
+            Misc.freeObjList(txnReaders);
+            Misc.freeObjList(txnScoreboards);
+        }
     }
 
     private static void processPartition(
@@ -190,7 +194,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
                             .$("purging [ts=")
                             .$ts(partitionTimestamp)
                             .$(", nameTxn=").$(previousNameVersion - 1)
-                            .$(", nameTxnNext=").$(nextNameVersion)
+                            .$(", nameTxnNext=").$(nextNameVersion - 1)
                             .$(", lastCommittedPartitionName=").$(lastCommittedPartitionName)
                             .I$();
                     deletePartitionDirectory(
@@ -247,7 +251,6 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
         path.concat(tableName).slash$();
         sink.clear();
         path.slash$();
-
         partitionList.clear();
         DateFormat partitionByFormat = PartitionBy.getPartitionDirFormatMethod(partitionBy);
 

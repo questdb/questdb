@@ -299,7 +299,7 @@ public class LongList implements Mutable, LongVec {
         final CharSink sb = Misc.getThreadLocalBuilder();
 
         sb.put('[');
-        for (int i = 0, k = size(); i < k; i++) {
+        for (int i = 0, k = pos; i < k; i++) {
             if (i > 0) {
                 sb.put(',');
             }

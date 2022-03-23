@@ -35,6 +35,9 @@ import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
+import static io.questdb.cairo.TableUtils.charFileName;
+import static io.questdb.cairo.TableUtils.offsetFileName;
+
 public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
     private final BitmapIndexBwdReader indexReader = new BitmapIndexBwdReader();
@@ -51,8 +54,8 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     public SymbolMapReaderImpl() {
     }
 
-    public SymbolMapReaderImpl(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
-        of(configuration, path, name, symbolCount);
+    public SymbolMapReaderImpl(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, int symbolCount) {
+        of(configuration, path, name, columnNameTxn, symbolCount);
     }
 
     @Override
@@ -107,7 +110,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return -1;
     }
 
-    public void of(CairoConfiguration configuration, Path path, CharSequence columnName, int symbolCount) {
+    public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn, int symbolCount) {
         FilesFacade ff = configuration.getFilesFacade();
         this.symbolCount = symbolCount;
         this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount);
@@ -115,7 +118,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         try {
             // this constructor does not create index. Index must exist,
             // and we use "offset" file to store "header"
-            SymbolMapWriter.offsetFileName(path.trimTo(plen), columnName);
+            offsetFileName(path.trimTo(plen), columnName, columnNameTxn);
             if (!ff.exists(path)) {
                 LOG.error().$(path).$(" is not found").$();
                 throw CairoException.instance(0).put("SymbolMap does not exist: ").put(path);
@@ -139,10 +142,10 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             this.nullValue = offsetMem.getBool(SymbolMapWriter.HEADER_NULL_FLAG);
 
             // index writer is used to identify attempts to store duplicate symbol value
-            this.indexReader.of(configuration, path.trimTo(plen), columnName, 0, -1);
+            this.indexReader.of(configuration, path.trimTo(plen), columnName, columnNameTxn, 0, -1);
 
             // this is the place where symbol values are stored
-            this.charMem.wholeFile(ff, SymbolMapWriter.charFileName(path.trimTo(plen), columnName), MemoryTag.MMAP_INDEX_READER);
+            this.charMem.wholeFile(ff, charFileName(path.trimTo(plen), columnName, columnNameTxn), MemoryTag.MMAP_INDEX_READER);
 
             // move append pointer for symbol values in the correct place
             this.charMem.extend(this.offsetMem.getLong(maxOffset));

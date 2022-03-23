@@ -33,9 +33,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
 
-import java.io.Closeable;
+public class LineTcpParser {
 
-public class LineTcpParser implements Closeable {
     public static final long NULL_TIMESTAMP = Numbers.LONG_NaN;
     public static final byte ENTITY_TYPE_NULL = 0;
     public static final byte ENTITY_TYPE_TAG = 1;
@@ -51,16 +50,26 @@ public class LineTcpParser implements Closeable {
     public static final byte ENTITY_TYPE_GEOINT = 11;
     public static final byte ENTITY_TYPE_GEOLONG = 12;
     public static final byte ENTITY_TYPE_TIMESTAMP = 13;
-    public static final int N_ENTITY_TYPES = ENTITY_TYPE_TIMESTAMP + 1;
+    public static final byte ENTITY_TYPE_LONG = 14;
+    public static final byte ENTITY_TYPE_DOUBLE = 15;
+    public static final int N_ENTITY_TYPES = ENTITY_TYPE_DOUBLE + 1;
+    public static final byte ENTITY_TYPE_SHORT = 16;
+    public static final byte ENTITY_TYPE_BYTE = 17;
+    public static final byte ENTITY_TYPE_DATE = 18;
+    public static final byte ENTITY_TYPE_CHAR = 19;
     static final byte ENTITY_TYPE_NONE = (byte) 0xff; // visible for testing
     private static final Log LOG = LogFactory.getLog(LineTcpParser.class);
+
     private final DirectByteCharSequence measurementName = new DirectByteCharSequence();
     private final DirectByteCharSequence charSeq = new DirectByteCharSequence();
     private final ObjList<ProtoEntity> entityCache = new ObjList<>();
     private final EntityHandler entityEndOfLineHandler = this::expectEndOfLine;
+    private final boolean stringAsTagSupported;
+    private final boolean symbolAsFieldSupported;
     private long bufAt;
     private long entityLo;
     private boolean tagsComplete;
+    private boolean tagStartsWithQuote;
     private int nEscapedChars;
     private boolean isQuotedFieldValue;
     private int nEntities;
@@ -69,16 +78,17 @@ public class LineTcpParser implements Closeable {
     private EntityHandler entityHandler;
     private long timestamp;
     private final EntityHandler entityTimestampHandler = this::expectTimestamp;
-    private final EntityHandler entityTableHandler = this::expectTableName;
-    private final EntityHandler entityValueHandler = this::expectEntityValue;
-    private final EntityHandler entityNameHandler = this::expectEntityName;
     private int nQuoteCharacters;
+    private final EntityHandler entityTableHandler = this::expectTableName;
     private boolean scape;
+    private final EntityHandler entityValueHandler = this::expectEntityValue;
     private boolean nextValueCanBeOpenQuote;
+    private final EntityHandler entityNameHandler = this::expectEntityName;
     private boolean hasNonAscii;
 
-    @Override
-    public void close() {
+    public LineTcpParser(boolean stringAsTagSupported, boolean symbolAsFieldSupported) {
+        this.stringAsTagSupported = stringAsTagSupported;
+        this.symbolAsFieldSupported = symbolAsFieldSupported;
     }
 
     public long getBufferAddress() {
@@ -88,6 +98,10 @@ public class LineTcpParser implements Closeable {
     public ProtoEntity getEntity(int n) {
         assert n < nEntities;
         return entityCache.get(n);
+    }
+
+    public int getEntityCount() {
+        return nEntities;
     }
 
     public ErrorCode getErrorCode() {
@@ -100,10 +114,6 @@ public class LineTcpParser implements Closeable {
 
     public long getTimestamp() {
         return timestamp;
-    }
-
-    public int getEntityCount() {
-        return nEntities;
     }
 
     public boolean hasNonAsciiChars() {
@@ -226,6 +236,8 @@ public class LineTcpParser implements Closeable {
                         break;
                     } else if (isQuotedFieldValue) {
                         return getError();
+                    } else if (entityLo == bufAt) {
+                        tagStartsWithQuote = true;
                     }
 
                 default:
@@ -287,6 +299,7 @@ public class LineTcpParser implements Closeable {
         isQuotedFieldValue = false;
         entityLo = bufAt;
         tagsComplete = false;
+        tagStartsWithQuote = false;
         nEntities = 0;
         currentEntity = null;
         entityHandler = entityTableHandler;
@@ -387,7 +400,7 @@ public class LineTcpParser implements Closeable {
                 return true;
             }
 
-            errorCode = ErrorCode.INVALID_FIELD_VALUE;
+            errorCode = tagsComplete ? ErrorCode.INVALID_FIELD_VALUE : ErrorCode.INVALID_TAG_VALUE;
             return false;
         }
 
@@ -415,7 +428,9 @@ public class LineTcpParser implements Closeable {
     private boolean expectTimestamp(byte endOfEntityByte, long bufHi) {
         try {
             if (endOfEntityByte == (byte) '\n') {
-                timestamp = Numbers.parseLong(charSeq.of(entityLo, bufAt - nEscapedChars));
+                if (entityLo < bufAt - nEscapedChars) {
+                    timestamp = Numbers.parseLong(charSeq.of(entityLo, bufAt - nEscapedChars));
+                }
                 entityHandler = null;
                 return true;
             }
@@ -499,6 +514,7 @@ public class LineTcpParser implements Closeable {
         INCOMPLETE_FIELD,
         INVALID_FIELD_SEPARATOR,
         INVALID_TIMESTAMP,
+        INVALID_TAG_VALUE,
         INVALID_FIELD_VALUE,
         INVALID_FIELD_VALUE_STR_UNDERFLOW,
         INVALID_TABLE_NAME,
@@ -646,14 +662,13 @@ public class LineTcpParser implements Closeable {
             if (tagsComplete) {
                 if (valueLen > 0) {
                     byte lastByte = value.byteAt(valueLen - 1);
-                    return parse(lastByte, valueLen);
-                } else {
-                    type = ENTITY_TYPE_NULL;
-                    return true;
+                    return parse(lastByte, valueLen) && (symbolAsFieldSupported || type != ENTITY_TYPE_SYMBOL);
                 }
+                type = ENTITY_TYPE_NULL;
+                return true;
             }
             type = ENTITY_TYPE_TAG;
-            return true;
+            return !tagStartsWithQuote || valueLen < 2 || value.byteAt(valueLen - 1) != '"' || stringAsTagSupported;
         }
     }
 }

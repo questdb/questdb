@@ -29,12 +29,15 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.cast.CastIntToByteFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntToShortFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToDateFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToTimestampFunctionFactory;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -49,11 +52,26 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
     private static int toByteRefs = 0;
     private FunctionFactory factory;
 
-    public void assertFailure(int expectedPosition, CharSequence expectedMsg, Object... args) {
+    protected void assertQuery(CharSequence expected, CharSequence sql) throws SqlException {
+        RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
+        assertCursor(expected, factory.getCursor(sqlExecutionContext), factory.getMetadata(), true);
+    }
+
+    protected void assertFailure(CharSequence expectedMsg, CharSequence sql) {
+        try {
+            RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
+            factory.getCursor(sqlExecutionContext);
+            Assert.fail();
+        } catch (Exception e) {
+            Assert.assertEquals(expectedMsg, e.getMessage());
+        }
+    }
+
+    protected void assertFailure(int expectedPosition, CharSequence expectedMsg, Object... args) {
         assertFailure(false, expectedPosition, expectedMsg, args);
     }
 
-    public void assertFailure(boolean forceConstant, int expectedPosition, CharSequence expectedMsg, Object... args) {
+    protected void assertFailure(boolean forceConstant, int expectedPosition, CharSequence expectedMsg, Object... args) {
         try {
             callCustomised(forceConstant, true, args);
             Assert.fail();
@@ -323,7 +341,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         final boolean constantArg;
         final int argType;
 
-
         if (b) {
             final char typeChar = signature.charAt(signatureTypeOffset + i + 1);
             constantArg = Character.isLowerCase(typeChar);
@@ -406,6 +423,14 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 break;
             case ColumnType.CHAR:
                 sink.put('\'').put((char) value).put('\'');
+                break;
+            case ColumnType.LONG256:
+                if (value.equals(Long256Impl.NULL_LONG256)) {
+                    sink.put("null");
+                } else {
+                    Long256Impl value1 = (Long256Impl) value;
+                    value1.toSink(sink);
+                }
                 break;
             default:
                 // byte
@@ -614,6 +639,15 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         @Override
         public CharSequence getSymB(int col) {
             return (CharSequence) args[col];
+        }
+
+        @Override
+        public Long256 getLong256A(int col) {
+            Object o = args[col];
+            if (o == null) {
+                return null;
+            }
+            return (Long256Impl)o;
         }
     }
 }

@@ -42,10 +42,10 @@ import java.util.concurrent.locks.LockSupport;
 public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
 
     private final static ReceiverFactory LINUX_FACTORY =
-            (configuration, engine, workerPool, localPool, functionFactoryCache, metrics) -> new LinuxMMLineUdpReceiver(configuration, engine, workerPool);
+            (configuration, engine, workerPool, localPool, functionFactoryCache, snapshotAgent, metrics) -> new LinuxMMLineUdpReceiver(configuration, engine, workerPool);
 
     private final static ReceiverFactory GENERIC_FACTORY =
-            (configuration, engine, workerPool, localPool, functionFactoryCache, metrics) -> new LineUdpReceiver(configuration, engine, workerPool);
+            (configuration, engine, workerPool, localPool, functionFactoryCache, snapshotAgent, metrics) -> new LineUdpReceiver(configuration, engine, workerPool);
 
     @Test
     public void testGenericCannotBindSocket() throws Exception {
@@ -206,7 +206,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
     private void assertConstructorFail(LineUdpReceiverConfiguration receiverCfg, ReceiverFactory factory) {
         try (CairoEngine engine = new CairoEngine(configuration)) {
             try {
-                factory.create(receiverCfg, engine, null, true, null, metrics);
+                factory.create(receiverCfg, engine, null, true, null, null, metrics);
                 Assert.fail();
             } catch (NetworkError ignore) {
             }
@@ -238,7 +238,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
                     "blue\tx square\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n";
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (AbstractLineProtoUdpReceiver receiver = factory.create(receiverCfg, engine, null, false, null, metrics)) {
+                try (AbstractLineProtoUdpReceiver receiver = factory.create(receiverCfg, engine, null, false, null, null, metrics)) {
                     // create table
                     try (TableModel model = new TableModel(configuration, "tab", PartitionBy.NONE)
                             .col("colour", ColumnType.SYMBOL)

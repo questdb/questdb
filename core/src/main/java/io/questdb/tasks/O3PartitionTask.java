@@ -27,6 +27,7 @@ package io.questdb.tasks;
 import io.questdb.cairo.O3Basket;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
@@ -36,7 +37,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class O3PartitionTask {
     private Path pathToTable;
     private int partitionBy;
-    private ObjList<MemoryMAR> columns;
+    private ObjList<MemoryMA> columns;
     private ObjList<MemoryCARW> o3Columns;
     private long srcOooLo;
     private long srcOooHi;
@@ -53,8 +54,13 @@ public class O3PartitionTask {
     private TableWriter tableWriter;
     private AtomicInteger columnCounter;
     private O3Basket o3Basket;
+    private long colTopSinkAddr;
 
-    public ObjList<MemoryMAR> getColumns() {
+    public long getColTopSinkAddr() {
+        return colTopSinkAddr;
+    }
+
+    public ObjList<MemoryMA> getColumns() {
         return columns;
     }
 
@@ -133,7 +139,7 @@ public class O3PartitionTask {
     public void of(
             Path path,
             int partitionBy,
-            ObjList<MemoryMAR> columns,
+            ObjList<MemoryMA> columns,
             ObjList<MemoryCARW> o3Columns,
             long srcOooLo,
             long srcOooHi,
@@ -149,7 +155,8 @@ public class O3PartitionTask {
             long sortedTimestampsAddr,
             TableWriter tableWriter,
             AtomicInteger columnCounter,
-            O3Basket o3Basket
+            O3Basket o3Basket,
+            long colTopSinkAddr
     ) {
         this.pathToTable = path;
         this.txn = txn;
@@ -170,5 +177,6 @@ public class O3PartitionTask {
         this.tableWriter = tableWriter;
         this.columnCounter = columnCounter;
         this.o3Basket = o3Basket;
+        this.colTopSinkAddr = colTopSinkAddr;
     }
 }

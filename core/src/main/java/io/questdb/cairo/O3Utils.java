@@ -33,46 +33,18 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
-import java.io.Closeable;
-
 public class O3Utils {
 
     private static final Log LOG = LogFactory.getLog(O3Utils.class);
-    private static long[] temp8ByteBuf;
 
-    public static void freeBuf() {
-        if (temp8ByteBuf != null) {
-            for (int i = 0, n = temp8ByteBuf.length; i < n; i++) {
-                Unsafe.free(temp8ByteBuf[i], Long.BYTES, MemoryTag.NATIVE_O3);
-            }
-            temp8ByteBuf = null;
-        }
-    }
-
-    public static void initBuf() {
-        initBuf(1);
-    }
-
-    public static void initBuf(int workerCount) {
-        temp8ByteBuf = new long[workerCount];
-        for (int i = 0; i < workerCount; i++) {
-            temp8ByteBuf[i] = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_O3);
-        }
-    }
-
-    public static Closeable setupWorkerPool(WorkerPool workerPool, MessageBus messageBus) {
+    public static void setupWorkerPool(WorkerPool workerPool, MessageBus messageBus) {
         O3PurgeDiscoveryJob purgeDiscoveryJob = new O3PurgeDiscoveryJob(messageBus, workerPool.getWorkerCount());
         workerPool.assign(purgeDiscoveryJob);
         workerPool.assign(new O3PartitionJob(messageBus));
         workerPool.assign(new O3OpenColumnJob(messageBus));
         workerPool.assign(new O3CopyJob(messageBus));
         workerPool.assign(new O3CallbackJob(messageBus));
-        initBuf(workerPool.getWorkerCount() + 1);
-        return purgeDiscoveryJob;
-    }
-
-    static long get8ByteBuf(int worker) {
-        return temp8ByteBuf[worker];
+        workerPool.freeOnHalt(purgeDiscoveryJob);
     }
 
     static long getVarColumnLength(long srcLo, long srcHi, long srcFixAddr) {

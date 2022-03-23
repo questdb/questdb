@@ -40,24 +40,24 @@ import io.questdb.std.str.Path;
 import io.questdb.tasks.O3PurgeDiscoveryTask;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
+
 public final class TableUtils {
     public static final int TABLE_EXISTS = 0;
     public static final int TABLE_DOES_NOT_EXIST = 1;
     public static final int TABLE_RESERVED = 2;
     public static final String META_FILE_NAME = "_meta";
     public static final String TXN_FILE_NAME = "_txn";
+    public static final String COLUMN_VERSION_FILE_NAME = "_cv";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
     public static final String DETACHED_DIR_MARKER = ".detached";
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
+    public static final String SNAPSHOT_META_FILE_NAME = "_snapshot";
     public static final int INITIAL_TXN = 0;
     public static final int NULL_LEN = -1;
     public static final int ANY_TABLE_ID = -1;
     public static final int ANY_TABLE_VERSION = -1;
-    public static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
-    public static final long TX_OFFSET_FIXED_ROW_COUNT = 16;
-    public static final long TX_OFFSET_STRUCT_VERSION = 40;
-    public static final long TX_OFFSET_TXN_CHECK = 64;
     public static final long META_OFFSET_COUNT = 0;
     public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
     public static final long META_OFFSET_VERSION = 12;
@@ -71,17 +71,40 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final String DEFAULT_PARTITION_NAME = "default";
     public static final long META_OFFSET_COLUMN_TYPES = 128;
-    public static final long TX_OFFSET_MIN_TIMESTAMP = 24;
-    public static final long TX_OFFSET_MAX_TIMESTAMP = 32;
     public static final long META_COLUMN_DATA_SIZE = 32;
-    public static final long TX_OFFSET_MAP_WRITER_COUNT = 128;
     static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
+    static final int COLUMN_VERSION_FILE_HEADER_SIZE = 40;
+
     // transaction file structure
-    static final long TX_OFFSET_TXN = 0;
-    static final long TX_OFFSET_DATA_VERSION = 48;
-    static final long TX_OFFSET_PARTITION_TABLE_VERSION = 56;
+    public static final int TX_BASE_HEADER_SECTION_PADDING = 12; // Add some free space into header for future use
+    public static final long TX_BASE_OFFSET_VERSION_64 = 0;
+
+    public static final long TX_BASE_OFFSET_A_32 = TX_BASE_OFFSET_VERSION_64 + 8;
+    public static final long TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 = TX_BASE_OFFSET_A_32 + 4;
+    public static final long TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 = TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 + 4;
+
+    public static final long TX_BASE_OFFSET_B_32 = TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 + 4 + TX_BASE_HEADER_SECTION_PADDING;
+    public static final long TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 = TX_BASE_OFFSET_B_32 + 4;
+    public static final long TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 = TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 + 4;
+
+    public static final int TX_BASE_HEADER_SIZE = (int) Math.max(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 + 4 + TX_BASE_HEADER_SECTION_PADDING, 64);
+
+    public static final long TX_OFFSET_TXN_64 = 0;
+    public static final long TX_OFFSET_TRANSIENT_ROW_COUNT_64 = TX_OFFSET_TXN_64 + 8;
+    public static final long TX_OFFSET_FIXED_ROW_COUNT_64 = TX_OFFSET_TRANSIENT_ROW_COUNT_64 + 8;
+    public static final long TX_OFFSET_MIN_TIMESTAMP_64 = TX_OFFSET_FIXED_ROW_COUNT_64 + 8;
+    public static final long TX_OFFSET_MAX_TIMESTAMP_64 = TX_OFFSET_MIN_TIMESTAMP_64 + 8;
+    public static final long TX_OFFSET_STRUCT_VERSION_64 = TX_OFFSET_MAX_TIMESTAMP_64 + 8;
+    public static final long TX_OFFSET_DATA_VERSION_64 = TX_OFFSET_STRUCT_VERSION_64 + 8;
+    public static final long TX_OFFSET_PARTITION_TABLE_VERSION_64 = TX_OFFSET_DATA_VERSION_64 + 8;
+    public static final long TX_OFFSET_COLUMN_VERSION_64 = TX_OFFSET_PARTITION_TABLE_VERSION_64 + 8;
+    public static final long TX_OFFSET_MAP_WRITER_COUNT_32 = 128;
+    public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
+
+    public static final long COLUMN_NAME_TXN_NONE = -1L;
+
     /**
      * TXN file structure
      * struct {
@@ -130,6 +153,21 @@ public final class TableUtils {
             int tableId
     ) {
         createTable(configuration, memory, path, structure, ColumnType.VERSION, tableId);
+    }
+
+    public static void createColumnVersionFile(MemoryMARW mem) {
+        // Create page of 0s for Column Version file "_cv"
+        mem.extend(COLUMN_VERSION_FILE_HEADER_SIZE);
+        mem.jumpTo(COLUMN_VERSION_FILE_HEADER_SIZE);
+        mem.zero();
+    }
+
+    public static Path charFileName(Path path, CharSequence columnName, long columnNameTxn) {
+        path.concat(columnName).put(".c");
+        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnNameTxn);
+        }
+        return path.$();
     }
 
     public static void createTable(
@@ -195,11 +233,12 @@ public final class TableUtils {
             int symbolMapCount = 0;
             for (int i = 0; i < count; i++) {
                 if (ColumnType.isSymbol(structure.getColumnType(i))) {
-                    SymbolMapWriter.createSymbolMapFiles(
+                    createSymbolMapFiles(
                             ff,
                             mem,
                             path.trimTo(rootLen),
                             structure.getColumnName(i),
+                            COLUMN_NAME_TXN_NONE,
                             structure.getSymbolCapacity(i),
                             structure.getSymbolCacheFlag(i)
                     );
@@ -207,7 +246,13 @@ public final class TableUtils {
                 }
             }
             mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-            TableUtils.resetTxn(mem, symbolMapCount, 0L, INITIAL_TXN, 0L, 0L);
+            createTxn(mem, symbolMapCount, 0L, INITIAL_TXN, 0L, 0L, 0L);
+
+
+            mem.smallFile(ff, path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+            createColumnVersionFile(mem);
+            mem.close();
+
             resetTodoLog(ff, path, rootLen, mem);
             // allocate txn scoreboard
             path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();
@@ -226,55 +271,99 @@ public final class TableUtils {
 
     public static long createTransitionIndex(
             MemoryR masterMeta,
-            MemoryR slaveMeta,
-            int slaveColumnCount,
-            LowerCaseCharSequenceIntHashMap slaveColumnNameIndexMap
+            BaseRecordMetadata slaveMeta
     ) {
+        int slaveColumnCount = slaveMeta.columnCount;
         int masterColumnCount = masterMeta.getInt(META_OFFSET_COUNT);
-        int n = Math.max(slaveColumnCount, masterColumnCount);
         final long pTransitionIndex;
-        final int size = n * 16;
+        final int size = 8 + masterColumnCount * 8;
 
         long index = pTransitionIndex = Unsafe.calloc(size, MemoryTag.NATIVE_DEFAULT);
         Unsafe.getUnsafe().putInt(index, size);
-        Unsafe.getUnsafe().putInt(index + 4, masterColumnCount);
         index += 8;
 
         // index structure is
-        // [copy from, copy to] int tuples, each of which is index into original column metadata
-        // the number of these tuples is DOUBLE of maximum of old and new column count.
-        // Tuples are separated into two areas, one is immutable, which drives how metadata should be moved,
-        // the other is the state of moving algo. Moving algo will start with copy of immutable area and will
-        // continue to zero out tuple values in mutable area when metadata is moved. Mutable area is
+        // [action: int, copy from:int]
 
-        // "copy from" == 0 indicates that column is newly added, similarly
-        // "copy to" == 0 indicates that old column has been deleted
-        //
+        // action: if -1 then current column in slave is deleted or renamed, else it's reused
+        // "copy from" >= 0 indicates that column is to be copied from slave position
+        // "copy from" < 0  indicates that column is new and should be taken from updated metadata position
+        // "copy from" == Integer.MIN_VALUE  indicates that column is deleted for good and should not be re-added from any source
 
         long offset = getColumnNameOffset(masterColumnCount);
-        for (int i = 0; i < masterColumnCount; i++) {
+        int slaveIndex = 0;
+        int shiftLeft = 0;
+        for (int masterIndex = 0; masterIndex < masterColumnCount; masterIndex++) {
             CharSequence name = masterMeta.getStr(offset);
             offset += Vm.getStorageLength(name);
-            int oldPosition = slaveColumnNameIndexMap.get(name);
-            // write primary (immutable) index
-            boolean hashMatch = true;
-            if (
-                    oldPosition > -1
-                            && getColumnType(masterMeta, i) == getColumnType(slaveMeta, oldPosition)
-                            && isColumnIndexed(masterMeta, i) == isColumnIndexed(slaveMeta, oldPosition)
-                            && (hashMatch = (getColumnHash(masterMeta, i) == getColumnHash(slaveMeta, oldPosition)))
-            ) {
-                Unsafe.getUnsafe().putInt(index + i * 8L, oldPosition + 1);
-                Unsafe.getUnsafe().putInt(index + oldPosition * 8L + 4, i + 1);
-            } else {
-                Unsafe.getUnsafe().putLong(index + i * 8L, hashMatch ? 0 : -1);
+            int masterColumnType = getColumnType(masterMeta, masterIndex);
+
+            if (slaveIndex < slaveColumnCount) {
+                int existingWriterIndex = slaveMeta.getWriterIndex(slaveIndex);
+                if (existingWriterIndex > masterIndex) {
+                    // This column must be deleted so existing dense columns do not contain it
+                    assert masterColumnType < 0;
+                    continue;
+                }
+                assert existingWriterIndex == masterIndex;
             }
+
+            int outIndex = slaveIndex - shiftLeft;
+            if (masterColumnType < 0) {
+                shiftLeft++; // Deleted in master
+                if (slaveIndex < slaveColumnCount) {
+                    Unsafe.getUnsafe().putInt(index + slaveIndex * 8L, -1);
+                    Unsafe.getUnsafe().putInt(index + slaveIndex * 8L + 4, Integer.MIN_VALUE);
+                }
+            } else {
+                if (
+                        slaveIndex < slaveColumnCount
+                                && isColumnIndexed(masterMeta, masterIndex) == slaveMeta.isColumnIndexed(slaveIndex)
+                                && Chars.equals(name, slaveMeta.getColumnName(slaveIndex))
+                ) {
+                    // reuse
+                    Unsafe.getUnsafe().putInt(index + outIndex * 8L + 4, slaveIndex);
+                    if (slaveIndex > outIndex) {
+                        // mark to do nothing with existing column, this may be overwritten later
+                        Unsafe.getUnsafe().putInt(index + slaveIndex * 8L + 4, Integer.MIN_VALUE);
+                    }
+                } else {
+                    // new
+                    if (slaveIndex < slaveColumnCount) {
+                        // free
+                        Unsafe.getUnsafe().putInt(index + slaveIndex * 8L, -1);
+                    }
+                    Unsafe.getUnsafe().putInt(index + outIndex * 8L + 4, -masterIndex - 1);
+                }
+            }
+            slaveIndex++;
         }
+        Unsafe.getUnsafe().putInt(pTransitionIndex + 4, slaveIndex - shiftLeft);
         return pTransitionIndex;
     }
 
-    public static LPSZ dFile(Path path, CharSequence columnName) {
-        return path.concat(columnName).put(FILE_SUFFIX_D).$();
+    public static void createTxn(MemoryMW txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion, long structureVersion, long columnVersion) {
+        txMem.putInt(TX_BASE_OFFSET_A_32, TX_BASE_HEADER_SIZE);
+        txMem.putInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32, symbolMapCount * 8);
+        txMem.putInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32, 0);
+        resetTxn(txMem, TX_BASE_HEADER_SIZE, symbolMapCount, txn, dataVersion, partitionTableVersion, structureVersion, columnVersion);
+        txMem.setTruncateSize(TX_BASE_HEADER_SIZE + TX_RECORD_HEADER_SIZE);
+    }
+
+    public static LPSZ dFile(Path path, CharSequence columnName, long columnTxn) {
+        path.concat(columnName).put(FILE_SUFFIX_D);
+        if (columnTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnTxn);
+        }
+        return path.$();
+    }
+
+    public static Path offsetFileName(Path path, CharSequence columnName, long columnNameTxn) {
+        path.concat(columnName).put(".o");
+        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnNameTxn);
+        }
+        return path.$();
     }
 
     public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name) {
@@ -327,25 +416,19 @@ public final class TableUtils {
     }
 
     public static long getSymbolWriterIndexOffset(int index) {
-        return TX_OFFSET_MAP_WRITER_COUNT + 4 + index * 8L;
+        return TX_OFFSET_MAP_WRITER_COUNT_32 + 4 + index * 8L;
     }
 
     public static long getSymbolWriterTransientIndexOffset(int index) {
         return getSymbolWriterIndexOffset(index) + Integer.BYTES;
     }
 
-    public static long getTxMemSize(int symbolWriterCount, int attachedPartitionsSize) {
-        return getPartitionTableIndexOffset(symbolWriterCount, attachedPartitionsSize);
-    }
-
-    public static long getTxMemorySize(long txMem) {
-        final int symbolsCount = Unsafe.getUnsafe().getInt(txMem + TX_OFFSET_MAP_WRITER_COUNT);
-        final int partitionCount = Unsafe.getUnsafe().getInt(txMem + getPartitionTableSizeOffset(symbolsCount)) / 8;
-        return getPartitionTableIndexOffset(symbolsCount, partitionCount);
-    }
-
-    public static LPSZ iFile(Path path, CharSequence columnName) {
-        return path.concat(columnName).put(FILE_SUFFIX_I).$();
+    public static LPSZ iFile(Path path, CharSequence columnName, long columnTxn) {
+        path.concat(columnName).put(FILE_SUFFIX_I);
+        if (columnTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnTxn);
+        }
+        return path.$();
     }
 
     public static boolean isValidColumnName(CharSequence seq) {
@@ -377,45 +460,8 @@ public final class TableUtils {
         return true;
     }
 
-    public static boolean isValidInfluxColumnName(CharSequence seq) {
-        for (int i = 0, l = seq.length(); i < l; i++) {
-            switch (seq.charAt(i)) {
-                default:
-                    break;
-                case '?':
-                case '.':
-                case ',':
-                case '\'':
-                case '\"':
-                case '\\':
-                case '/':
-                case '\0':
-                case ':':
-                case ')':
-                case '(':
-                case '+':
-                case '*':
-                case '%':
-                case '~':
-                case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
-                    return false;
-                case '_':
-                    if (i < 1) {
-                        return false;
-                    }
-                    break;
-                case '-':
-                    if (i == 0 || i == l - 1) {
-                        return false;
-                    }
-                    break;
-            }
-        }
-        return true;
-    }
-
     public static long lock(FilesFacade ff, Path path) {
-        long fd = ff.openRW(path);
+        long fd = ff.openRW(path, CairoConfiguration.O_NONE);
         if (fd == -1) {
             LOG.error().$("cannot open '").utf8(path).$("' to lock [errno=").$(ff.errno()).$(']').$();
             return -1L;
@@ -524,8 +570,8 @@ public final class TableUtils {
         path.put("-x-").put(txn);
     }
 
-    public static long openFileRWOrFail(FilesFacade ff, LPSZ path) {
-        return openRW(ff, path, LOG);
+    public static long openFileRWOrFail(FilesFacade ff, LPSZ path, long opts) {
+        return openRW(ff, path, LOG, opts);
     }
 
     public static long openRO(FilesFacade ff, LPSZ path, Log log) {
@@ -537,54 +583,13 @@ public final class TableUtils {
         throw CairoException.instance(ff.errno()).put("could not open read-only [file=").put(path).put(']');
     }
 
-    public static long openRW(FilesFacade ff, LPSZ path, Log log) {
-        final long fd = ff.openRW(path);
+    public static long openRW(FilesFacade ff, LPSZ path, Log log, long opts) {
+        final long fd = ff.openRW(path, opts);
         if (fd > -1) {
             log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
             return fd;
         }
         throw CairoException.instance(ff.errno()).put("could not open read-write [file=").put(path).put(']');
-    }
-
-    /**
-     * Reads 8 bytes from "top" file.
-     *
-     * @param ff files facade, - intermediary to intercept OS file system calls.
-     * @param path path has to be set to location of "top" file, excluding file name. Zero terminated string.
-     * @param name name of top file
-     * @param plen path length to truncate "path" back to, path is reusable.
-     * @param failIfCouldNotRead if true the method will throw exception if top file cannot be read. Otherwise, 0.
-     *
-     * @return number of rows column doesn't have when column was added to table that already had data.
-     */
-    public static long readColumnTop(FilesFacade ff, Path path, CharSequence name, int plen, boolean failIfCouldNotRead) {
-        try {
-            if (ff.exists(topFile(path.chop$(), name))) {
-                final long fd = TableUtils.openRO(ff, path, LOG);
-                try {
-                    long n;
-                    if ((n = ff.readULong(fd, 0)) < 0) {
-                        if (failIfCouldNotRead) {
-                            throw CairoException.instance(Os.errno())
-                                    .put("could not read top of column [file=").put(path)
-                                    .put(", read=").put(n).put(']');
-                        } else {
-                            LOG.error().$("could not read top of column [file=").$(path)
-                                    .$(", read=").$(n)
-                                    .$(", errno=").$(ff.errno())
-                                    .I$();
-                            return 0L;
-                        }
-                    }
-                    return n;
-                } finally {
-                    ff.close(fd);
-                }
-            }
-            return 0L;
-        } finally {
-            path.trimTo(plen);
-        }
     }
 
     public static int readIntOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {
@@ -632,44 +637,37 @@ public final class TableUtils {
         mem.jumpTo(40);
     }
 
-    public static void resetTxn(MemoryMW txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion, long structureVersion) {
+    public static void resetTxn(MemoryMW txMem, long baseOffset, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion, long structureVersion, long columnVersion) {
         // txn to let readers know table is being reset
-        txMem.putLong(TX_OFFSET_TXN, txn);
-        Unsafe.getUnsafe().storeFence();
+        txMem.putLong(baseOffset + TX_OFFSET_TXN_64, txn);
 
         // transient row count
-        txMem.putLong(TX_OFFSET_TRANSIENT_ROW_COUNT, 0);
+        txMem.putLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT_64, 0);
         // fixed row count
-        txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT, 0);
+        txMem.putLong(baseOffset + TX_OFFSET_FIXED_ROW_COUNT_64, 0);
         // min timestamp value in table
-        txMem.putLong(TX_OFFSET_MIN_TIMESTAMP, Long.MAX_VALUE);
+        txMem.putLong(baseOffset + TX_OFFSET_MIN_TIMESTAMP_64, Long.MAX_VALUE);
         // max timestamp value in table
-        txMem.putLong(TX_OFFSET_MAX_TIMESTAMP, Long.MIN_VALUE);
+        txMem.putLong(baseOffset + TX_OFFSET_MAX_TIMESTAMP_64, Long.MIN_VALUE);
         // structure version
-        txMem.putLong(TX_OFFSET_STRUCT_VERSION, structureVersion);
+        txMem.putLong(baseOffset + TX_OFFSET_STRUCT_VERSION_64, structureVersion);
         // data version
-        txMem.putLong(TX_OFFSET_DATA_VERSION, dataVersion);
+        txMem.putLong(baseOffset + TX_OFFSET_DATA_VERSION_64, dataVersion);
         // partition table version
-        txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, partitionTableVersion);
+        txMem.putLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION_64, partitionTableVersion);
+        // column version
+        txMem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, columnVersion);
 
-        txMem.putInt(TX_OFFSET_MAP_WRITER_COUNT, symbolMapCount);
+        txMem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolMapCount);
         for (int i = 0; i < symbolMapCount; i++) {
             long offset = getSymbolWriterIndexOffset(i);
-            txMem.putInt(offset, 0);
+            txMem.putInt(baseOffset + offset, 0);
             offset += Integer.BYTES;
-            txMem.putInt(offset, 0);
+            txMem.putInt(baseOffset + offset, 0);
         }
 
         // partition update count
-        txMem.putInt(getPartitionTableSizeOffset(symbolMapCount), 0);
-
-        Unsafe.getUnsafe().storeFence();
-        // txn check
-        txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
-
-        // make sure we put append pointer behind our data so that
-        // files does not get truncated when closing
-        txMem.setTruncateSize(getPartitionTableIndexOffset(symbolMapCount, 0));
+        txMem.putInt(baseOffset + getPartitionTableSizeOffset(symbolMapCount), 0);
     }
 
     public static boolean schedulePurgeO3Partitions(MessageBus messageBus, String tableName, int partitionBy) {
@@ -715,25 +713,20 @@ public final class TableUtils {
     }
 
     public static void safeReadTxn(TxReader txReader, MicrosecondClock microsecondClock, long spinLockTimeoutUs) {
-        long txn;
-        int loadCount = 0;
         long deadline = microsecondClock.getTicks() + spinLockTimeoutUs;
+        if (txReader.unsafeReadVersion() == txReader.getVersion()) {
+            LOG.debug().$("checked clean txn, version ").$(txReader.getVersion()).$(", txn=").$(txReader.getTxn()).$();
+            return;
+        }
+
         while (true) {
-            txn = txReader.unsafeReadTxnCheck();
-            Unsafe.getUnsafe().loadFence();
-
-            int symbolColumnCount = txReader.unsafeReadSymbolColumnCount();
-            int partitionSegmentSize = txReader.unsafeReadPartitionSegmentSize(symbolColumnCount);
-            Unsafe.getUnsafe().loadFence();
-
-            if (txn == txReader.unsafeReadTxn()) {
-                txReader.unsafeLoadAll(symbolColumnCount, partitionSegmentSize, loadCount++ > 0);
-                Unsafe.getUnsafe().loadFence();
-
-                if (txn == txReader.unsafeReadTxn()) {
-                    // All good, snapshot read
-                    return;
-                }
+            if (txReader.unsafeLoadAll()) {
+                LOG.debug().$("loaded clean txn, version ").$(txReader.getVersion())
+                        .$(", offset=").$(txReader.getBaseOffset())
+                        .$(", size=").$(txReader.getRecordSize())
+                        .$(", txn=").$(txReader.getTxn()).$();
+                // All good, snapshot read
+                return;
             }
             // This is unlucky, sequences have changed while we were reading transaction data
             // We must discard and try again
@@ -741,14 +734,10 @@ public final class TableUtils {
                 LOG.error().$("tx read timeout [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
                 throw CairoException.instance(0).put("Transaction read timeout");
             }
+
+            LOG.debug().$("loaded __dirty__ txn, version ").$(txReader.getVersion()).$();
             Os.pause();
         }
-    }
-
-    public static void unsafeReadTxFile(TxReader txReader) {
-        int symbolColumnCount = txReader.unsafeReadSymbolColumnCount();
-        int partitionSegmentSize = txReader.unsafeReadPartitionSegmentSize(symbolColumnCount);
-        txReader.unsafeLoadAll(symbolColumnCount, partitionSegmentSize, true);
     }
 
     public static void validate(
@@ -794,7 +783,7 @@ public final class TableUtils {
 
             // validate column types and index attributes
             for (int i = 0; i < columnCount; i++) {
-                int type = getColumnType(metaMem, i);
+                int type = Math.abs(getColumnType(metaMem, i));
                 if (ColumnType.sizeOf(type) == -1) {
                     throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(i).put(']');
                 }
@@ -811,6 +800,7 @@ public final class TableUtils {
             }
 
             // validate column names
+            int denseCount = 0;
             for (int i = 0; i < columnCount; i++) {
                 if (offset + 4 >= memSize) {
                     throw validationException(metaMem).put("File is too small, column length for column ").put(i).put(" is missing");
@@ -829,7 +819,7 @@ public final class TableUtils {
 
                 CharSequence name = metaMem.getStr(offset);
 
-                if (nameIndex.put(name, i)) {
+                if (getColumnType(metaMem, i) < 0 || nameIndex.put(name, denseCount++)) {
                     offset += Vm.getStorageLength(name);
                 } else {
                     throw validationException(metaMem).put("Duplicate column: ").put(name).put(" at [").put(i).put(']');
@@ -869,34 +859,6 @@ public final class TableUtils {
         }
     }
 
-    public static void writeColumnTop(
-            FilesFacade ff,
-            Path path,
-            CharSequence columnName,
-            long columnTop,
-            long tempBuf
-    ) {
-        topFile(path, columnName);
-        long fd = openRW(ff, path, LOG);
-        try {
-            try {
-                allocateDiskSpace(ff, fd, Long.BYTES);
-                writeLongOrFail(ff, fd, 0, columnTop, tempBuf, path);
-            } catch (Throwable e) {
-                ff.close(fd);
-                fd = -1;
-                if (!ff.remove(path)) {
-                    LOG.error().$("could not remove top file, please delete manually [file=").$(path).I$();
-                }
-                throw e;
-            }
-        } finally {
-            if (fd != -1) {
-                Vm.bestEffortClose(ff, LOG, fd, true, Long.BYTES);
-            }
-        }
-    }
-
     public static void writeIntOrFail(FilesFacade ff, long fd, long offset, int value, long tempMem8b, Path path) {
         Unsafe.getUnsafe().putInt(tempMem8b, value);
         if (ff.write(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
@@ -919,10 +881,6 @@ public final class TableUtils {
                     .put(", value=").put(value)
                     .put(']');
         }
-    }
-
-    static LPSZ topFile(Path path, CharSequence columnName) {
-        return path.concat(columnName).put(".top").$();
     }
 
     static long getColumnFlags(MemoryR metaMem, int columnIndex) {

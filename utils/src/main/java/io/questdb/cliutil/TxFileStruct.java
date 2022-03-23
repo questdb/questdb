@@ -26,9 +26,11 @@ package io.questdb.cliutil;
 
 import java.util.ArrayList;
 
+import static io.questdb.cairo.TableUtils.TX_BASE_HEADER_SIZE;
 import static io.questdb.cairo.TableUtils.getPartitionTableIndexOffset;
 
 public class TxFileStruct {
+    public long TX_OFFSET_COLUMN_VERSION;
     public long TX_OFFSET_TXN;
     public long TX_OFFSET_TRANSIENT_ROW_COUNT;
     public long TX_OFFSET_FIXED_ROW_COUNT;
@@ -36,7 +38,6 @@ public class TxFileStruct {
     public long TX_OFFSET_MAX_TIMESTAMP;
     public long TX_OFFSET_DATA_VERSION;
     public long TX_OFFSET_STRUCT_VERSION;
-    public long TX_OFFSET_TXN_CHECK;
     public long TX_OFFSET_PARTITION_TABLE_VERSION;
     public int TX_OFFSET_MAP_WRITER_COUNT;
     public ArrayList<SymbolInfo> SYMBOLS;
@@ -44,7 +45,7 @@ public class TxFileStruct {
     public ArrayList<AttachedPartition> ATTACHED_PARTITIONS;
 
     public long calculateFileSize() {
-        return getPartitionTableIndexOffset(TX_OFFSET_MAP_WRITER_COUNT, ATTACHED_PARTITION_SIZE * 4);
+        return getPartitionTableIndexOffset(TX_OFFSET_MAP_WRITER_COUNT, ATTACHED_PARTITION_SIZE * 4) + TX_BASE_HEADER_SIZE;
     }
 
     static class AttachedPartition {

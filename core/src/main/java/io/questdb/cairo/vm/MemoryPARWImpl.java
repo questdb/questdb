@@ -48,6 +48,7 @@ public class MemoryPARWImpl implements MemoryARW {
     private final int maxPages;
     private final InPageLong256FromCharSequenceDecoder inPageLong256Decoder = new InPageLong256FromCharSequenceDecoder();
     private final StraddlingPageLong256FromCharSequenceDecoder straddlingPageLong256Decoder = new StraddlingPageLong256FromCharSequenceDecoder();
+    protected int memoryTag;
     private long extendSegmentSize;
     private int extendSegmentMsb;
     private long extendSegmentMod;
@@ -58,7 +59,6 @@ public class MemoryPARWImpl implements MemoryARW {
     private long roOffsetLo = 0;
     private long roOffsetHi = 0;
     private long absolutePointer;
-    protected int memoryTag;
 
     public MemoryPARWImpl(long pageSize, int maxPages, int memoryTag) {
         setExtendSegmentSize(pageSize);
@@ -74,6 +74,152 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public long appendAddressFor(long bytes) {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long appendAddressFor(long offset, long bytes) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void putBlockOfBytes(long offset, long from, long len) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void putBool(long offset, boolean value) {
+        putByte(offset, (byte) (value ? 1 : 0));
+    }
+
+    @Override
+    public final void putByte(long offset, byte value) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 1) {
+            Unsafe.getUnsafe().putByte(absolutePointer + offset, value);
+        } else {
+            putByteRnd(offset, value);
+        }
+    }
+
+    @Override
+    public void putChar(long offset, char value) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 2) {
+            Unsafe.getUnsafe().putChar(absolutePointer + offset, value);
+        } else {
+            putCharBytes(offset, value);
+        }
+    }
+
+    @Override
+    public void putDouble(long offset, double value) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 8) {
+            Unsafe.getUnsafe().putDouble(absolutePointer + offset, value);
+        } else {
+            putDoubleBytes(offset, value);
+        }
+    }
+
+    @Override
+    public void putFloat(long offset, float value) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 4) {
+            Unsafe.getUnsafe().putFloat(absolutePointer + offset, value);
+        } else {
+            putFloatBytes(offset, value);
+        }
+    }
+
+    @Override
+    public void putInt(long offset, int value) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Integer.BYTES) {
+            Unsafe.getUnsafe().putInt(absolutePointer + offset, value);
+        } else {
+            putIntBytes(offset, value);
+        }
+    }
+
+    @Override
+    public void putLong(long offset, long value) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 8) {
+            Unsafe.getUnsafe().putLong(absolutePointer + offset, value);
+        } else {
+            putLongBytes(offset, value);
+        }
+    }
+
+    @Override
+    public void putLong256(long offset, Long256 value) {
+        putLong256(
+                offset,
+                value.getLong0(),
+                value.getLong1(),
+                value.getLong2(),
+                value.getLong3()
+        );
+    }
+
+    @Override
+    public void putLong256(long offset, long l0, long l1, long l2, long l3) {
+        if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
+            Unsafe.getUnsafe().putLong(absolutePointer + offset, l0);
+            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES, l1);
+            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES * 2, l2);
+            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES * 3, l3);
+        } else {
+            putLong(offset, l0);
+            putLong(offset + Long.BYTES, l1);
+            putLong(offset + Long.BYTES * 2, l2);
+            putLong(offset + Long.BYTES * 3, l3);
+        }
+    }
+
+    @Override
+    public final void putNullStr(long offset) {
+        putInt(offset, TableUtils.NULL_LEN);
+    }
+
+    @Override
+    public void putShort(long offset, short value) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 2) {
+            Unsafe.getUnsafe().putShort(absolutePointer + offset, value);
+        } else {
+            putShortBytes(offset, value);
+        }
+    }
+
+    @Override
+    public void putStr(long offset, CharSequence value) {
+        if (value == null) {
+            putNullStr(offset);
+        } else {
+            putStr(offset, value, 0, value.length());
+        }
+    }
+
+    @Override
+    public void putStr(long offset, CharSequence value, int pos, int len) {
+        putInt(offset, len);
+        if (roOffsetLo < offset && offset < roOffsetHi - len * 2L - 4) {
+            copyStrChars(value, pos, len, absolutePointer + offset + 4);
+        } else {
+            putStrSplit(offset + 4, value, pos, len);
+        }
+    }
+
+    @Override
+    public void zero() {
+        throw new UnsupportedOperationException();
+    }
+
+    public void clear() {
+        releaseAllPagesButFirst();
+        appendPointer = -1;
+        pageHi = -1;
+        pageLo = -1;
+        baseOffset = 1;
+        clearHotPage();
+    }
+
+    public void clearHotPage() {
+        roOffsetLo = roOffsetHi = 0;
     }
 
     @Override
@@ -356,152 +502,6 @@ public class MemoryPARWImpl implements MemoryARW {
         this.extendSegmentMod = this.extendSegmentSize - 1;
     }
 
-    @Override
-    public long appendAddressFor(long offset, long bytes) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putBlockOfBytes(long offset, long from, long len) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putBool(long offset, boolean value) {
-        putByte(offset, (byte) (value ? 1 : 0));
-    }
-
-    @Override
-    public final void putByte(long offset, byte value) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 1) {
-            Unsafe.getUnsafe().putByte(absolutePointer + offset, value);
-        } else {
-            putByteRnd(offset, value);
-        }
-    }
-
-    @Override
-    public void putChar(long offset, char value) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 2) {
-            Unsafe.getUnsafe().putChar(absolutePointer + offset, value);
-        } else {
-            putCharBytes(offset, value);
-        }
-    }
-
-    @Override
-    public void putDouble(long offset, double value) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 8) {
-            Unsafe.getUnsafe().putDouble(absolutePointer + offset, value);
-        } else {
-            putDoubleBytes(offset, value);
-        }
-    }
-
-    @Override
-    public void putFloat(long offset, float value) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 4) {
-            Unsafe.getUnsafe().putFloat(absolutePointer + offset, value);
-        } else {
-            putFloatBytes(offset, value);
-        }
-    }
-
-    @Override
-    public void putInt(long offset, int value) {
-        if (roOffsetLo < offset && offset < roOffsetHi - Integer.BYTES) {
-            Unsafe.getUnsafe().putInt(absolutePointer + offset, value);
-        } else {
-            putIntBytes(offset, value);
-        }
-    }
-
-    @Override
-    public void putLong(long offset, long value) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 8) {
-            Unsafe.getUnsafe().putLong(absolutePointer + offset, value);
-        } else {
-            putLongBytes(offset, value);
-        }
-    }
-
-    @Override
-    public void putLong256(long offset, Long256 value) {
-        putLong256(
-                offset,
-                value.getLong0(),
-                value.getLong1(),
-                value.getLong2(),
-                value.getLong3()
-        );
-    }
-
-    @Override
-    public void putLong256(long offset, long l0, long l1, long l2, long l3) {
-        if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
-            Unsafe.getUnsafe().putLong(absolutePointer + offset, l0);
-            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES, l1);
-            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES * 2, l2);
-            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES * 3, l3);
-        } else {
-            putLong(offset, l0);
-            putLong(offset + Long.BYTES, l1);
-            putLong(offset + Long.BYTES * 2, l2);
-            putLong(offset + Long.BYTES * 3, l3);
-        }
-    }
-
-    @Override
-    public final void putNullStr(long offset) {
-        putInt(offset, TableUtils.NULL_LEN);
-    }
-
-    @Override
-    public void putShort(long offset, short value) {
-        if (roOffsetLo < offset && offset < roOffsetHi - 2) {
-            Unsafe.getUnsafe().putShort(absolutePointer + offset, value);
-        } else {
-            putShortBytes(offset, value);
-        }
-    }
-
-    @Override
-    public void putStr(long offset, CharSequence value) {
-        if (value == null) {
-            putNullStr(offset);
-        } else {
-            putStr(offset, value, 0, value.length());
-        }
-    }
-
-    @Override
-    public void putStr(long offset, CharSequence value, int pos, int len) {
-        putInt(offset, len);
-        if (roOffsetLo < offset && offset < roOffsetHi - len * 2L - 4) {
-            copyStrChars(value, pos, len, absolutePointer + offset + 4);
-        } else {
-            putStrSplit(offset + 4, value, pos, len);
-        }
-    }
-
-    @Override
-    public void zero() {
-        throw new UnsupportedOperationException();
-    }
-
-    public void clear() {
-        releaseAllPagesButFirst();
-        appendPointer = -1;
-        pageHi = -1;
-        pageLo = -1;
-        baseOffset = 1;
-        clearHotPage();
-    }
-
-    public void clearHotPage() {
-        roOffsetLo = roOffsetHi = 0;
-    }
-
     public void copyTo(long address, long offset, long len) {
         final long pageSize = getPageSize();
         while (len > 0) {
@@ -662,7 +662,7 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public void extend(long size) {
         assert size > 0;
-        mapWritePage(pageIndex(size - 1));
+        mapWritePage(pageIndex(size - 1), size - 1);
     }
 
     @Override
@@ -898,7 +898,7 @@ public class MemoryPARWImpl implements MemoryARW {
 
     private void jumpTo0(long offset) {
         int page = pageIndex(offset);
-        pageLo = mapWritePage(page);
+        pageLo = mapWritePage(page, offset);
         pageHi = pageLo + getPageSize();
         baseOffset = pageOffset(page + 1) - pageHi;
         appendPointer = pageLo + offsetInPage(offset);
@@ -907,7 +907,7 @@ public class MemoryPARWImpl implements MemoryARW {
 
     private long mapRandomWritePage(long offset) {
         int page = pageIndex(offset);
-        long pageAddress = mapWritePage(page);
+        long pageAddress = mapWritePage(page, offset);
         assert pageAddress != 0;
         roOffsetLo = pageOffset(page) - 1;
         roOffsetHi = roOffsetLo + getPageSize() + 1;
@@ -915,7 +915,7 @@ public class MemoryPARWImpl implements MemoryARW {
         return pageAddress;
     }
 
-    protected long mapWritePage(int page) {
+    protected long mapWritePage(int page, long offset) {
         long address;
         if (page < pages.size()) {
             address = pages.getQuick(page);
@@ -928,7 +928,7 @@ public class MemoryPARWImpl implements MemoryARW {
 
     private void pageAt(long offset) {
         int page = pageIndex(offset);
-        updateLimits(page, mapWritePage(page));
+        updateLimits(page, mapWritePage(page, offset));
     }
 
     protected final long pageOffset(int page) {

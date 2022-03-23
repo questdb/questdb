@@ -113,6 +113,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public int sync() {
+        return Files.sync();
+    }
+
+    @Override
     public long getMapPageSize() {
         if (mapPageSize == 0) {
             mapPageSize = computeMapPageSize();
@@ -209,8 +214,8 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long openRW(LPSZ name) {
-        return Files.openRW(name);
+    public long openRW(LPSZ name, long opts) {
+        return Files.openRW(name, opts);
     }
 
     @Override

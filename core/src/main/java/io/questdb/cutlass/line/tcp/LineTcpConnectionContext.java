@@ -48,7 +48,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     private final Metrics metrics;
     private final MillisecondClock milliClock;
     private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
-    private final LineTcpParser parser = new LineTcpParser();
+    private final LineTcpParser parser;
     private final FloatingDirectCharSink floatingDirectCharSink = new FloatingDirectCharSink();
     private final boolean disconnectOnError;
     protected long fd;
@@ -67,6 +67,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         this.scheduler = scheduler;
         this.metrics = metrics;
         this.milliClock = configuration.getMillisecondClock();
+        this.parser = new LineTcpParser(configuration.isStringAsTagSupported(), configuration.isSymbolAsFieldSupported());
         recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_DEFAULT);
         recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
         clear();
@@ -84,7 +85,6 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         this.fd = -1;
         Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_DEFAULT);
         recvBufStart = recvBufEnd = recvBufPos = 0;
-        parser.close();
         floatingDirectCharSink.close();
     }
 
@@ -186,9 +186,9 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                         } else {
                             int position = (int) (parser.getBufferAddress() - recvBufStartOfMeasurement);
                             assert position >= 0;
-                            LOG.error().$('[').$(fd).$("] could not parse measurement, code ").$(parser.getErrorCode()).$(" at ").$(position)
-                                    .$(" line (may be mangled due to partial parsing) is ")
-                                    .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress())).$();
+                            LOG.error().$('[').$(fd).$("] could not parse measurement, ").$(parser.getErrorCode()).$(" at ").$(position)
+                                    .$(", line (may be mangled due to partial parsing): '")
+                                    .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress())).$("'").$();
                             goodMeasurement = true;
                         }
 

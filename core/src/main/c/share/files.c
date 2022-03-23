@@ -127,6 +127,12 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openRW
     return open((const char *) lpszName, O_CREAT | O_RDWR, 0644);
 }
 
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openRWOpts
+        (JNIEnv *e, jclass cl, jlong lpszName, jlong opts) {
+    umask(0);
+    return open((const char *) lpszName, O_CREAT | O_RDWR | opts, 0644);
+}
+
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openAppend
         (JNIEnv *e, jclass cl, jlong lpszName) {
     umask(0);
@@ -258,6 +264,11 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_msync(JNIEnv *e, jclass cl, jlo
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fsync(JNIEnv *e, jclass cl, jlong fd) {
     return fsync((int) fd);
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_sync(JNIEnv *e, jclass cl) {
+    sync();
+    return 0;
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_remove

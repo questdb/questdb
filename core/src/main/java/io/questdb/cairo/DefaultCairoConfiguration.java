@@ -40,8 +40,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     private final CharSequence root;
     private final CharSequence confRoot;
+    private final CharSequence snapshotRoot;
 
-    private final TextConfiguration textConfiguration = new DefaultTextConfiguration();
+    private final TextConfiguration textConfiguration;
 
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
 
@@ -52,7 +53,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     public DefaultCairoConfiguration(CharSequence root) {
         this.root = Chars.toString(root);
-        this.confRoot = PropServerConfiguration.confRoot(root);
+        this.confRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CONFIG_DIRECTORY);
+        this.textConfiguration = new DefaultTextConfiguration(Chars.toString(confRoot));
+        this.snapshotRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.SNAPSHOT_DIRECTORY);
         Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
         this.databaseIdLo = rnd.nextLong();
         this.databaseIdHi = rnd.nextLong();
@@ -131,6 +134,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public CharSequence getConfRoot() {
         return confRoot;
+    }
+
+    @Override
+    public CharSequence getSnapshotRoot() {
+        return snapshotRoot;
+    }
+
+    @Override
+    public CharSequence getSnapshotInstanceId() {
+        return "";
+    }
+
+    @Override
+    public boolean isSnapshotRecoveryEnabled() {
+        return true;
     }
 
     @Override
@@ -359,6 +377,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getRndFunctionMemoryPageSize() {
+        return 8192;
+    }
+
+    @Override
+    public int getRndFunctionMemoryMaxPages() {
+        return 128;
+    }
+
+    @Override
     public long getSpinLockTimeoutUs() {
         return 5000000;
     }
@@ -398,6 +426,15 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         // 1024 seems like a good fit, but tests need
         // smaller capacity so that resize is tested correctly
         return 64;
+    }
+
+    @Override
+    public long getWriterFileOpenOpts() {
+        // In some places we rely on the fact that data written via conventional IO
+        // is immediately visible to mapped memory for the same area of file. While this is the
+        // case on Linux it is absolutely not the case on Windows. We must not enable anything other
+        // than MMAP on Windows.
+        return Os.type != Os.WINDOWS ? O_ASYNC : O_NONE;
     }
 
     @Override

@@ -59,6 +59,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 import java.util.ServiceLoader;
 
+import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.griffin.SqlKeywords.*;
 
 
@@ -83,6 +84,7 @@ public class SqlCompiler implements Closeable {
     private final CairoConfiguration configuration;
     private final Path renamePath = new Path();
     private final DatabaseBackupAgent backupAgent;
+    private final DatabaseSnapshotAgent snapshotAgent;
     private final MemoryMARW mem = Vm.getMARWInstance();
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final MessageBus messageBus;
@@ -114,14 +116,15 @@ public class SqlCompiler implements Closeable {
         }
     };
 
-    //helper var used to pass back count in cases it can't be done via method result
+    // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
 
+    // Exposed for embedded API users.
     public SqlCompiler(CairoEngine engine) {
-        this(engine, null);
+        this(engine, null, null);
     }
 
-    public SqlCompiler(CairoEngine engine, @Nullable FunctionFactoryCache functionFactoryCache) {
+    public SqlCompiler(CairoEngine engine, @Nullable FunctionFactoryCache functionFactoryCache, @Nullable DatabaseSnapshotAgent snapshotAgent) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
@@ -147,6 +150,7 @@ public class SqlCompiler implements Closeable {
         functionParser.setSqlCodeGenerator(codeGenerator);
 
         this.backupAgent = new DatabaseBackupAgent();
+        this.snapshotAgent = snapshotAgent;
 
         // For each 'this::method' reference java compiles a class
         // We need to minimize repetition of this syntax as each site generates garbage
@@ -161,6 +165,7 @@ public class SqlCompiler implements Closeable {
         final KeywordBasedExecutor sqlBackup = backupAgent::sqlBackup;
         final KeywordBasedExecutor sqlShow = this::sqlShow;
         final KeywordBasedExecutor vacuumTable = this::vacuum;
+        final KeywordBasedExecutor snapshotDatabase = this::snapshotDatabase;
 
         keywordBasedExecutors.put("truncate", truncateTables);
         keywordBasedExecutors.put("TRUNCATE", truncateTables);
@@ -192,6 +197,8 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("SHOW", sqlShow);
         keywordBasedExecutors.put("vacuum", vacuumTable);
         keywordBasedExecutors.put("VACUUM", vacuumTable);
+        keywordBasedExecutors.put("snapshot", snapshotDatabase);
+        keywordBasedExecutors.put("SNAPSHOT", snapshotDatabase);
 
         configureLexer(lexer);
 
@@ -318,9 +325,10 @@ public class SqlCompiler implements Closeable {
             final int toColumnType = to.getColumnType(toColumnIndex);
             final int fromColumnType = from.getColumnType(i);
             final int toColumnTypeTag = ColumnType.tagOf(toColumnType);
+            final int toColumnWriterIndex = to.getWriterIndex(toColumnIndex);
 
             asm.aload(2);
-            asm.iconst(toColumnIndex);
+            asm.iconst(toColumnWriterIndex);
             asm.aload(1);
             asm.iconst(i);
 
@@ -345,12 +353,12 @@ public class SqlCompiler implements Closeable {
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.SHORT:
-                            addCheckIntBoundsCall(asm, checkLongBounds, minLongShort, maxLongShort, fromColumnType, toColumnTypeTag, toColumnIndex);
+                            addCheckIntBoundsCall(asm, checkLongBounds, minLongShort, maxLongShort, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
                             asm.i2s();
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.BYTE:
-                            addCheckIntBoundsCall(asm, checkLongBounds, minLongByte, maxLongByte, fromColumnType, toColumnTypeTag, toColumnIndex);
+                            addCheckIntBoundsCall(asm, checkLongBounds, minLongByte, maxLongByte, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
                             asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
                             break;
@@ -371,7 +379,7 @@ public class SqlCompiler implements Closeable {
                     asm.invokeInterface(rGetLong);
                     switch (toColumnTypeTag) {
                         case ColumnType.INT:
-                            addCheckLongBoundsCall(asm, checkLongBounds, minLongInt, maxLongInt, fromColumnType, toColumnTypeTag, toColumnIndex);
+                            addCheckLongBoundsCall(asm, checkLongBounds, minLongInt, maxLongInt, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
                             asm.l2i();
                             asm.invokeInterface(wPutInt, 2);
                             break;
@@ -382,13 +390,13 @@ public class SqlCompiler implements Closeable {
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.SHORT:
-                            addCheckLongBoundsCall(asm, checkLongBounds, minLongShort, maxLongShort, fromColumnType, toColumnTypeTag, toColumnIndex);
+                            addCheckLongBoundsCall(asm, checkLongBounds, minLongShort, maxLongShort, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
                             asm.l2i();
                             asm.i2s();
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.BYTE:
-                            addCheckLongBoundsCall(asm, checkLongBounds, minLongByte, maxLongByte, fromColumnType, toColumnTypeTag, toColumnIndex);
+                            addCheckLongBoundsCall(asm, checkLongBounds, minLongByte, maxLongByte, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
                             asm.l2i();
                             asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
@@ -532,7 +540,7 @@ public class SqlCompiler implements Closeable {
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.BYTE:
-                            addCheckIntBoundsCall(asm, checkLongBounds, minLongByte, maxLongByte, fromColumnType, toColumnTypeTag, toColumnIndex);
+                            addCheckIntBoundsCall(asm, checkLongBounds, minLongByte, maxLongByte, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
                             asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
                             break;
@@ -557,33 +565,33 @@ public class SqlCompiler implements Closeable {
                     asm.invokeInterface(rGetFloat);
                     switch (toColumnTypeTag) {
                         case ColumnType.INT:
-                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleInt, maxDoubleInt, fromColumnType, toColumnTypeTag, toColumnIndex);
+                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleInt, maxDoubleInt, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
                             asm.f2i();
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
-                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnIndex);
+                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
                             asm.f2l();
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.DATE:
-                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnIndex);
+                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
                             asm.f2l();
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
-                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnIndex);
+                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
                             asm.f2l();
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.SHORT:
-                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleShort, maxDoubleShort, fromColumnType, toColumnTypeTag, toColumnIndex);
+                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleShort, maxDoubleShort, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
                             asm.f2i();
                             asm.i2s();
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.BYTE:
-                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleByte, maxDoubleByte, fromColumnType, toColumnTypeTag, toColumnIndex);
+                            addCheckFloatBoundsCall(asm, checkDoubleBounds, minDoubleByte, maxDoubleByte, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
                             asm.f2i();
                             asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
@@ -601,39 +609,39 @@ public class SqlCompiler implements Closeable {
                     asm.invokeInterface(rGetDouble);
                     switch (toColumnTypeTag) {
                         case ColumnType.INT:
-                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleInt, maxDoubleInt, fromColumnType, toColumnTypeTag, toColumnIndex);
+                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleInt, maxDoubleInt, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
                             asm.d2i();
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
-                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnIndex);
+                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
                             asm.d2l();
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.DATE:
-                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnIndex);
+                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
                             asm.d2l();
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
-                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnIndex);
+                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleLong, maxDoubleLong, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
                             asm.d2l();
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.SHORT:
-                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleShort, maxDoubleShort, fromColumnType, toColumnTypeTag, toColumnIndex);
+                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleShort, maxDoubleShort, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
                             asm.d2i();
                             asm.i2s();
                             asm.invokeInterface(wPutShort, 2);
                             break;
                         case ColumnType.BYTE:
-                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleByte, maxDoubleByte, fromColumnType, toColumnTypeTag, toColumnIndex);
+                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleByte, maxDoubleByte, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
                             asm.d2i();
                             asm.i2b();
                             asm.invokeInterface(wPutByte, 2);
                             break;
                         case ColumnType.FLOAT:
-                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleFloat, maxDoubleFloat, fromColumnType, toColumnTypeTag, toColumnIndex);
+                            addCheckDoubleBoundsCall(asm, checkDoubleBounds, minDoubleFloat, maxDoubleFloat, fromColumnType, toColumnTypeTag, toColumnWriterIndex);
                             asm.d2f();
                             asm.invokeInterface(wPutFloat, 2);
                             break;
@@ -1152,7 +1160,7 @@ public class SqlCompiler implements Closeable {
             tableExistsOrFail(tableNamePosition, tok, executionContext);
 
             CharSequence name = GenericLexer.immutableOf(tok);
-            try (TableReader reader = getTableReaderForAlterTable(executionContext, name)) {
+            try (TableReader reader = engine.getReaderForStatement(executionContext, name, "alter table")) {
                 String tableName = reader.getTableName();
                 TableReaderMetadata tableMetadata = reader.getMetadata();
                 tok = expectToken(lexer, "'add', 'alter' or 'drop'");
@@ -2236,29 +2244,6 @@ public class SqlCompiler implements Closeable {
         return codeGenerator.generate(queryModel, executionContext);
     }
 
-    private TableReader getTableReaderForAlterTable(SqlExecutionContext executionContext, CharSequence tableName) {
-        try {
-            return engine.getReader(executionContext.getCairoSecurityContext(), tableName);
-        } catch (CairoException ex) {
-            // Cannot open reader on existing table is pretty bad
-            LOG.error().$("error opening reader for alter table statement [table=").$(tableName)
-                    .$(",errno=").$(ex.getErrno())
-                    .$(",error=").$(ex.getMessage()).I$();
-            // In some messed states, for example after _meta file swap failure Reader cannot be opened
-            // but writer can be
-            // Opening writer fixes the table mess
-            try (TableWriter ignored = engine.getWriter(executionContext.getCairoSecurityContext(), tableName, "alter table statement")) {
-                return engine.getReader(executionContext.getCairoSecurityContext(), tableName);
-            } catch (EntryUnavailableException wrOpEx) {
-                // This is fine, writer is busy. Throw back origin error
-                throw ex;
-            } catch (Throwable th) {
-                LOG.error().$("error preliminary opening writer for alter table statement [table=").$(tableName).$(",error=").$(ex.getMessage()).I$();
-                throw ex;
-            }
-        }
-    }
-
     private CompiledQuery insert(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
         final InsertModel model = (InsertModel) executionModel;
         final ExpressionNode name = model.getTableName();
@@ -2375,7 +2360,8 @@ public class SqlCompiler implements Closeable {
              RecordCursorFactory factory = generate(model.getQueryModel(), executionContext)) {
 
             final RecordMetadata cursorMetadata = factory.getMetadata();
-            final RecordMetadata writerMetadata = writer.getMetadata();
+            // Convert sparse writer metadata into dense
+            final BaseRecordMetadata writerMetadata = writer.getMetadata().copyDense();
             final int writerTimestampIndex = writerMetadata.getTimestampIndex();
             final int cursorTimestampIndex = cursorMetadata.getTimestampIndex();
             final int cursorColumnCount = cursorMetadata.getColumnCount();
@@ -2769,6 +2755,29 @@ public class SqlCompiler implements Closeable {
             throw SqlException.$(lexer.lastTokenPosition(), "end of line or ';' expected");
         }
         throw SqlException.$(lexer.lastTokenPosition(), "'partitions' expected");
+    }
+
+    private CompiledQuery snapshotDatabase(SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getCairoSecurityContext().checkWritePermission();
+        CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
+
+        if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
+            if (snapshotAgent == null) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("Snapshot agent is not configured. Try using different embedded API");
+            }
+            snapshotAgent.prepareSnapshot(executionContext);
+            return compiledQuery.ofSnapshotPrepare();
+        }
+
+        if (Chars.equalsLowerCaseAscii(tok, "complete")) {
+            if (snapshotAgent == null) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("Snapshot agent is not configured. Try using different embedded API");
+            }
+            snapshotAgent.completeSnapshot();
+            return compiledQuery.ofSnapshotComplete();
+        }
+
+        throw SqlException.position(lexer.lastTokenPosition()).put("'prepare' or 'complete' expected");
     }
 
     private Function validateAndConsume(
@@ -3170,7 +3179,7 @@ public class SqlCompiler implements Closeable {
             TableReaderMetadata sourceMetaData = reader.getMetadata();
             try {
                 mem.smallFile(ff, srcPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                sourceMetaData.cloneTo(mem);
+                sourceMetaData.dumpTo(mem);
 
                 // create symbol maps
                 srcPath.trimTo(rootLen).$();
@@ -3178,12 +3187,15 @@ public class SqlCompiler implements Closeable {
                 for (int i = 0, sz = sourceMetaData.getColumnCount(); i < sz; i++) {
                     if (ColumnType.isSymbol(sourceMetaData.getColumnType(i))) {
                         SymbolMapReader mapReader = reader.getSymbolMapReader(i);
-                        SymbolMapWriter.createSymbolMapFiles(ff, mem, srcPath, sourceMetaData.getColumnName(i), mapReader.getSymbolCapacity(), mapReader.isCached());
+                        MapWriter.createSymbolMapFiles(ff, mem, srcPath, sourceMetaData.getColumnName(i), COLUMN_NAME_TXN_NONE, mapReader.getSymbolCapacity(), mapReader.isCached());
                         symbolMapCount++;
                     }
                 }
                 mem.smallFile(ff, srcPath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                TableUtils.resetTxn(mem, symbolMapCount, 0L, TableUtils.INITIAL_TXN, 0L, sourceMetaData.getStructureVersion());
+                TableUtils.createTxn(mem, symbolMapCount, 0L, TableUtils.INITIAL_TXN, 0L, sourceMetaData.getStructureVersion(), 0L);
+
+                mem.smallFile(ff, srcPath.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                TableUtils.createColumnVersionFile(mem);
                 srcPath.trimTo(rootLen).concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
             } finally {
                 mem.close();

@@ -58,6 +58,8 @@ public interface FilesFacade {
 
     int fsync(long fd);
 
+    int sync();
+
     long getMapPageSize();
 
     long getOpenFileCount();
@@ -90,7 +92,7 @@ public interface FilesFacade {
 
     long openRO(LPSZ name);
 
-    long openRW(LPSZ name);
+    long openRW(LPSZ name, long opts);
 
     long openCleanRW(LPSZ name, long size);
 

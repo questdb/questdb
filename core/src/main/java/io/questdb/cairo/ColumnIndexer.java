@@ -47,11 +47,12 @@ public interface ColumnIndexer {
             CairoConfiguration configuration,
             Path path,
             CharSequence name,
+            long columnNameTxn,
             MemoryMA columnMem,
             long columnTop
     );
 
-    void configureWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnTop);
+    void configureWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long columnTop);
 
     void closeSlider();
 

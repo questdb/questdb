@@ -26,10 +26,7 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.Metrics;
 import io.questdb.Telemetry;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoError;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.http.*;
@@ -50,16 +47,19 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
 public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
+
     // Factory cache is thread local due to possibility of factory being
     // closed by another thread. Peer disconnect is a typical example of this.
     // Being asynchronous we may need to be able to return factory to the cache
     // by the same thread that executes the dispatcher.
     private static final LocalValue<TextQueryProcessorState> LV = new LocalValue<>();
     private static final Log LOG = LogFactory.getLog(TextQueryProcessor.class);
+
     private final SqlCompiler compiler;
     private final JsonQueryProcessorConfiguration configuration;
     private final int floatScale;
@@ -69,22 +69,24 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final Metrics metrics;
 
+    @TestOnly
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
             int workerCount
     ) {
-        this(configuration, engine, workerCount, null);
+        this(configuration, engine, workerCount, null, null);
     }
 
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
             int workerCount,
-            @Nullable FunctionFactoryCache functionFactoryCache
+            @Nullable FunctionFactoryCache functionFactoryCache,
+            @Nullable DatabaseSnapshotAgent snapshotAgent
     ) {
         this.configuration = configuration;
-        this.compiler = new SqlCompiler(engine,functionFactoryCache);
+        this.compiler = new SqlCompiler(engine, functionFactoryCache, snapshotAgent);
         this.floatScale = configuration.getFloatScale();
         this.clock = configuration.getClock();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount);
@@ -473,6 +475,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 break;
             case ColumnType.NULL:
             case ColumnType.BINARY:
+            case ColumnType.RECORD:
                 break;
             case ColumnType.STRING:
                 putStringOrNull(socket, rec.getStr(col));
@@ -483,8 +486,35 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             case ColumnType.LONG256:
                 rec.getLong256(col, socket);
                 break;
+            case ColumnType.GEOBYTE:
+                putGeoHashStringValue(socket, rec.getGeoByte(col), type);
+                break;
+            case ColumnType.GEOSHORT:
+                putGeoHashStringValue(socket, rec.getGeoShort(col), type);
+                break;
+            case ColumnType.GEOINT:
+                putGeoHashStringValue(socket, rec.getGeoInt(col), type);
+                break;
+            case ColumnType.GEOLONG:
+                putGeoHashStringValue(socket, rec.getGeoLong(col), type);
+                break;
             default:
                 assert false;
+        }
+    }
+
+    private static void putGeoHashStringValue(HttpChunkedResponseSocket socket, long value, int type) {
+        if (value == GeoHashes.NULL) {
+            socket.put("null");
+        } else {
+            int bitFlags = GeoHashes.getBitFlags(type);
+            socket.put('\"');
+            if (bitFlags < 0) {
+                GeoHashes.appendCharsUnsafe(value, -bitFlags, socket);
+            } else {
+                GeoHashes.appendBinaryStringUnsafe(value, bitFlags, socket);
+            }
+            socket.put('\"');
         }
     }
 

@@ -42,7 +42,7 @@ import io.questdb.std.str.StringSink;
  */
 public final class ColumnType {
     // column type version as written to the metadata file
-    public static final int VERSION = 425;
+    public static final int VERSION = 426;
 
     public static final short UNDEFINED = 0;
     public static final short BOOLEAN = 1;
@@ -128,10 +128,6 @@ public final class ColumnType {
 
     public static boolean isBinary(int columnType) {
         return columnType == BINARY;
-    }
-
-    public static boolean isLong256(int columnType) {
-        return columnType == LONG256;
     }
 
     public static boolean isBoolean(int columnType) {
@@ -240,6 +236,10 @@ public final class ColumnType {
         return (short) nameTypeMap.get(name);
     }
 
+    public static int typeOf(CharSequence name) {
+        return nameTypeMap.get(name);
+    }
+
     public static long truncateGeoHashBits(long value, int fromBits, int toBits) {
         return value >> (fromBits - toBits);
     }
@@ -306,19 +306,6 @@ public final class ColumnType {
         typeNameMap.put(VAR_ARG, "VARARG");
         typeNameMap.put(GEOHASH, "GEOHASH");
 
-        StringSink sink = new StringSink();
-
-        for (int b = 1; b <= GEO_HASH_MAX_BITS_LENGTH; b++) {
-            sink.clear();
-
-            if (b % 5 != 0) {
-                sink.put("GEOHASH(").put(b).put("b)");
-            } else {
-                sink.put("GEOHASH(").put(b / 5).put("c)");
-            }
-            typeNameMap.put(getGeoHashTypeWithBits(b), sink.toString());
-        }
-
         nameTypeMap.put("boolean", BOOLEAN);
         nameTypeMap.put("byte", BYTE);
         nameTypeMap.put("double", DOUBLE);
@@ -341,6 +328,20 @@ public final class ColumnType {
         nameTypeMap.put("bigint", LONG);
         nameTypeMap.put("real", FLOAT);
         nameTypeMap.put("bytea", STRING);
+
+        StringSink sink = new StringSink();
+        for (int b = 1; b <= GEO_HASH_MAX_BITS_LENGTH; b++) {
+            sink.clear();
+            if (b % 5 != 0) {
+                sink.put("GEOHASH(").put(b).put("b)");
+            } else {
+                sink.put("GEOHASH(").put(b / 5).put("c)");
+            }
+            String name = sink.toString();
+            int type = getGeoHashTypeWithBits(b);
+            typeNameMap.put(type, name);
+            nameTypeMap.put(name, type);
+        }
 
         TYPE_SIZE_POW2[UNDEFINED] = -1;
         TYPE_SIZE_POW2[BOOLEAN] = 0;

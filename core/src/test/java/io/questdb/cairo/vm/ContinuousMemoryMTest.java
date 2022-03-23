@@ -25,6 +25,7 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.*;
@@ -294,7 +295,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
         FilesFacade ff = FilesFacadeImpl.INSTANCE;
         try (Path path = new Path().of(root).concat("tmp1").$()) {
             ff.touch(path);
-            final long fd = TableUtils.openRW(ff, path, LOG);
+            final long fd = TableUtils.openRW(ff, path, LOG, configuration.getWriterFileOpenOpts());
             try (MemoryMARW mem = Vm.getMARWInstance()) {
                 mem.of(ff, fd, null, -1, MemoryTag.MMAP_DEFAULT);
 
@@ -363,7 +364,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             try {
                 MemoryMARW mem = Vm.getMARWInstance();
                 try {
-                    mem.of(ff, TableUtils.openRW(ff, path, LOG), null, -1, MemoryTag.MMAP_DEFAULT);
+                    mem.of(ff, TableUtils.openRW(ff, path, LOG, configuration.getWriterFileOpenOpts()), null, -1, MemoryTag.MMAP_DEFAULT);
 
                     mem.extend(ff.getMapPageSize() * 2);
 
@@ -596,7 +597,9 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
                         path,
                         ff.getMapPageSize(),
                         0,
-                        MemoryTag.MMAP_DEFAULT);
+                        MemoryTag.MMAP_DEFAULT,
+                        configuration.getWriterFileOpenOpts()
+                );
                 rwMem.close();
                 Assert.assertEquals(0, rwMem.getPageCount());
             }
@@ -660,7 +663,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             try {
                 MemoryMARW mem = Vm.getMARWInstance();
                 try {
-                    mem.of(ff, path, FilesFacadeImpl._16M, -1, MemoryTag.MMAP_DEFAULT);
+                    mem.of(ff, path, FilesFacadeImpl._16M, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
                     // this is larger than page size
                     for (int i = 0; i < 3_000_000; i++) {
                         mem.putLong(i * 8, i + 1);
@@ -709,7 +712,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
             try {
                 MemoryMARW mem = Vm.getMARWInstance();
                 try {
-                    mem.of(ff, path, FilesFacadeImpl._16M, -1, MemoryTag.MMAP_DEFAULT);
+                    mem.of(ff, path, FilesFacadeImpl._16M, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
                     // this is larger than page size
                     for (int i = 0; i < 3_000_000; i++) {
                         mem.putLong(i * 8, i + 1);
@@ -925,7 +928,8 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
                             path,
                             appendSz,
                             -1,
-                            MemoryTag.MMAP_DEFAULT
+                            MemoryTag.MMAP_DEFAULT,
+                            configuration.getWriterFileOpenOpts()
                     );
 
                     MemoryCMR roMem = new MemoryCMRImpl(

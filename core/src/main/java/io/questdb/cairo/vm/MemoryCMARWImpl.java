@@ -40,13 +40,13 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     private static final Log LOG = LogFactory.getLog(MemoryCMARWImpl.class);
     private final Long256Acceptor long256Acceptor = this::putLong256;
     private long appendAddress = 0;
-    private long minMappedMemorySize;
+    private long minMappedMemorySize = -1;
     private long extendSegmentMsb;
     private int memoryTag = MemoryTag.MMAP_DEFAULT;
     private int commitMode = CommitMode.NOSYNC;
 
-    public MemoryCMARWImpl(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
-        of(ff, name, extendSegmentSize, size, memoryTag);
+    public MemoryCMARWImpl(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+        of(ff, name, extendSegmentSize, size, memoryTag, opts);
     }
 
     public MemoryCMARWImpl() {
@@ -58,33 +58,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         final long result = appendAddress;
         appendAddress += bytes;
         return result;
-    }
-
-    @Override
-    public long getAppendOffset() {
-        return appendAddress - pageAddress;
-    }
-
-    @Override
-    public long getExtendSegmentSize() {
-        return extendSegmentMsb;
-    }
-
-    @Override
-    public void jumpTo(long offset) {
-        checkAndExtend(pageAddress + offset);
-        appendAddress = pageAddress + offset;
-    }
-
-    @Override
-    public void putLong256(@NotNull CharSequence hexString, int start, int end) {
-        putLong256(hexString, start, end, long256Acceptor);
-    }
-
-    @Override
-    public void skip(long bytes) {
-        checkAndExtend(appendAddress + bytes);
-        appendAddress += bytes;
     }
 
     @Override
@@ -189,8 +162,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag) {
-        of(ff, name, extendSegmentSize, -1, memoryTag);
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
+        of(ff, name, extendSegmentSize, -1, memoryTag, opts);
     }
 
     @Override
@@ -206,15 +179,42 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
+    public long getAppendOffset() {
+        return appendAddress - pageAddress;
+    }
+
+    @Override
+    public long getExtendSegmentSize() {
+        return extendSegmentMsb;
+    }
+
+    @Override
+    public void jumpTo(long offset) {
+        checkAndExtend(pageAddress + offset);
+        appendAddress = pageAddress + offset;
+    }
+
+    @Override
+    public void putLong256(@NotNull CharSequence hexString, int start, int end) {
+        putLong256(hexString, start, end, long256Acceptor);
+    }
+
+    @Override
+    public void skip(long bytes) {
+        checkAndExtend(appendAddress + bytes);
+        appendAddress += bytes;
+    }
+
+    @Override
     public long getFd() {
         return fd;
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
         this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
         this.minMappedMemorySize = extendSegmentSize;
-        openFile(ff, name);
+        openFile(ff, name, opts);
         map(ff, name, size, memoryTag);
     }
 
@@ -223,15 +223,16 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         close();
         assert fd > 0;
         this.ff = ff;
-        this.minMappedMemorySize = ff.getMapPageSize();
+        this.extendSegmentMsb = ff.getMapPageSize();
+        this.minMappedMemorySize = this.extendSegmentMsb;
         this.fd = fd;
         map(ff, name, size, memoryTag);
     }
 
     @Override
     public void of(FilesFacade ff, long fd, @Nullable CharSequence name, long extendSegmentSize, long size, int memoryTag) {
-        this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
         of(ff, fd, null, size, memoryTag);
+        this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
     }
 
     @Override
@@ -310,7 +311,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             this.appendAddress = pageAddress + size;
         }
         if (name != null) {
-            LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
+            LOG.debug().$("open [file=").$(name).$(", fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
         } else {
             LOG.debug().$("open [fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
         }
@@ -326,9 +327,9 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         }
     }
 
-    private void openFile(FilesFacade ff, LPSZ name) {
+    private void openFile(FilesFacade ff, LPSZ name, long opts) {
         close();
         this.ff = ff;
-        fd = TableUtils.openFileRWOrFail(ff, name);
+        fd = TableUtils.openFileRWOrFail(ff, name, opts);
     }
 }

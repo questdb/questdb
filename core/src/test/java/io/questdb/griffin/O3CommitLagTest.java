@@ -453,6 +453,26 @@ public class O3CommitLagTest extends AbstractO3Test {
         }
     }
 
+    private void appendRowsWithDroppedColumn(String ts1, String ts2, TableWriter tw, int count, Rnd rnd) throws NumericException {
+        for (int i = 0; i < count; i++) {
+            long timestamp = IntervalUtils.parseFloorPartialDate(ts1) + rnd.nextLong(Timestamps.DAY_MICROS);
+            Row row = tw.newRow(timestamp);
+
+            row.putStr(0, "cc");
+            row.putLong(2, 11111L);
+            row.putStr(4, "dd");
+            row.putLong(5, 22222L);
+            row.append();
+
+            row = tw.newRow(IntervalUtils.parseFloorPartialDate(ts2));
+            row.putStr(0, "cc");
+            row.putLong(2, 333333L);
+            row.putStr(4, "dd");
+            row.putLong(5, 444444L);
+            row.append();
+        }
+    }
+
     private void assertXY(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
@@ -1541,6 +1561,8 @@ public class O3CommitLagTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
+        compiler.compile("alter table x add column dummy string", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x drop column dummy", sqlExecutionContext).execute(null).await();
         compiler.compile("alter table x add column str2 string", sqlExecutionContext).execute(null).await();
         compiler.compile("alter table x add column y long", sqlExecutionContext).execute(null).await();
 
@@ -1554,7 +1576,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         Rnd rnd = new Rnd();
         try (TableWriter tw = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test")) {
             int halfCount = appendCount / 2;
-            appendRows(ts1, ts2, tw, halfCount, rnd);
+            appendRowsWithDroppedColumn(ts1, ts2, tw, halfCount, rnd);
             tw.commitWithLag(Timestamps.HOUR_MICROS);
 
             TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
@@ -1562,7 +1584,7 @@ public class O3CommitLagTest extends AbstractO3Test {
                             "aa\t1970-01-01T11:00:00.000000Z\t1\t\tNaN\n" +
                             "aa\t1970-01-02T00:00:00.000000Z\t1\t\tNaN\n");
 
-            appendRows(ts1, ts2, tw, appendCount - halfCount, rnd);
+            appendRowsWithDroppedColumn(ts1, ts2, tw, appendCount - halfCount, rnd);
             tw.commitWithLag(Timestamps.HOUR_MICROS);
 
             TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,

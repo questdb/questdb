@@ -38,6 +38,11 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface CairoConfiguration {
 
+    long O_NONE = 0;
+    long O_ASYNC = 0x40;
+    long O_SYNC = 0x80;
+    long O_DIRECT = 0x4000;
+
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
     boolean enableDevelopmentUpdates();
@@ -45,8 +50,6 @@ public interface CairoConfiguration {
     boolean enableTestFactories();
 
     int getAnalyticColumnPoolCapacity();
-
-    long getDataAppendPageSize();
 
     DateFormat getBackupDirTimestampFormat();
 
@@ -79,11 +82,31 @@ public interface CairoConfiguration {
 
     CharSequence getConfRoot(); // same as root/../conf
 
+    CharSequence getSnapshotRoot(); // same as root/../snapshot
+
+    /**
+     * Returns database instance id. The instance id is used by the snapshot recovery mechanism:
+     * on database start the id is compared with the id stored in a snapshot, if any. If the ids
+     * are different, snapshot recovery is being triggered.
+     *
+     * @return instance id.
+     */
+    CharSequence getSnapshotInstanceId();
+
+    /**
+     * A flag to enable/disable snapshot recovery mechanism. Defaults to {@code true}.
+     *
+     * @return enable/disable snapshot recovery flag
+     */
+    boolean isSnapshotRecoveryEnabled();
+
     int getCopyPoolCapacity();
 
     int getCreateAsSelectRetryCount();
 
     int getCreateTableModelPoolCapacity();
+
+    long getDataAppendPageSize();
 
     long getDataIndexKeyAppendPageSize();
 
@@ -140,6 +163,8 @@ public interface CairoConfiguration {
 
     MillisecondClock getMillisecondClock();
 
+    long getMiscAppendPageSize();
+
     int getMkDirMode();
 
     default NanosecondClock getNanosecondClock() {
@@ -183,7 +208,9 @@ public interface CairoConfiguration {
 
     int getSampleByIndexSearchPageSize();
 
-    long getMiscAppendPageSize();
+    int getRndFunctionMemoryPageSize();
+
+    int getRndFunctionMemoryMaxPages();
 
     long getSpinLockTimeoutUs();
 
@@ -225,6 +252,20 @@ public interface CairoConfiguration {
 
     int getSqlHashJoinValuePageSize();
 
+    int getSqlJitBindVarsMemoryMaxPages();
+
+    int getSqlJitBindVarsMemoryPageSize();
+
+    int getSqlJitIRMemoryMaxPages();
+
+    int getSqlJitIRMemoryPageSize();
+
+    int getSqlJitMode();
+
+    int getSqlJitPageAddressCacheThreshold();
+
+    int getSqlJitRowsThreshold();
+
     int getSqlJoinContextPoolCapacity();
 
     int getSqlJoinMetadataMaxResizes();
@@ -250,6 +291,8 @@ public interface CairoConfiguration {
 
     int getSqlModelPoolCapacity();
 
+    int getSqlPageFrameMaxSize();
+
     int getSqlSortKeyMaxPages();
 
     long getSqlSortKeyPageSize();
@@ -261,24 +304,6 @@ public interface CairoConfiguration {
     int getSqlSortValueMaxPages();
 
     int getSqlSortValuePageSize();
-
-    int getSqlPageFrameMaxSize();
-
-    int getSqlJitMode();
-
-    int getSqlJitIRMemoryPageSize();
-
-    int getSqlJitIRMemoryMaxPages();
-
-    int getSqlJitBindVarsMemoryPageSize();
-
-    int getSqlJitBindVarsMemoryMaxPages();
-
-    int getSqlJitRowsThreshold();
-
-    int getSqlJitPageAddressCacheThreshold();
-
-    boolean isSqlJitDebugEnabled();
 
     TelemetryConfiguration getTelemetryConfiguration();
 
@@ -298,9 +323,13 @@ public interface CairoConfiguration {
 
     int getWriterCommandQueueCapacity();
 
+    long getWriterFileOpenOpts();
+
     int getWriterTickRowsCountMod();
 
     boolean isO3QuickSortEnabled();
 
     boolean isParallelIndexingEnabled();
+
+    boolean isSqlJitDebugEnabled();
 }
