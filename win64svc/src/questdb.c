@@ -82,7 +82,7 @@ void buildJavaArgs(CONFIG *config) {
     // put together static java opts
     LPCSTR javaOpts = "-XX:+UnlockExperimentalVMOptions"
                       " -XX:+AlwaysPreTouch"
-                      " -XX:+UseParallelOldGC"
+                      " -XX:+UseParallelGC"
                       " ";
 
     // put together classpath

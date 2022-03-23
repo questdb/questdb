@@ -1019,16 +1019,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
         for (int i = 0; i < columnCount; i++) {
             int columnType = m.getColumnType(i);
-            int flags = 0;
-            if (ColumnType.isGeoHash(columnType)) {
-                final int bits = ColumnType.getGeoHashBits(columnType);
-                if (bits > 0 && bits % 5 == 0) {
-                    // It's 5 bit per char. If it's integer number of chars value to be serialized as chars
-                    flags = -bits / 5;
-                } else {
-                    flags = bits;
-                }
-            }
+            int flags = GeoHashes.getBitFlags(columnType);
             activeSelectColumnTypes.setQuick(2 * i, columnType);
             activeSelectColumnTypes.setQuick(2 * i + 1, flags);
         }

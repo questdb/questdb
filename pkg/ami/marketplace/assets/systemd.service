@@ -17,7 +17,7 @@ ExecStart=/usr/bin/java \
     -ea -Dnoebug \
     -XX:+UnlockExperimentalVMOptions \
     -XX:+AlwaysPreTouch \
-    -XX:+UseParallelOldGC \
+    -XX:+UseParallelGC \
     -d /var/lib/questdb
 ExecReload=/bin/kill -s HUP $MAINPID
 # Prevent writes to /usr, /boot, and /etc
