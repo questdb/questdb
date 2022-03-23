@@ -36,6 +36,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.Nullable;
 
 public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
     private static final PageFrameReducer REDUCER_ASC = AsyncFilteredRecordCursorFactory::filterAsc;
@@ -45,12 +46,14 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
     private final Function filter;
     private final PageFrameSequence<Function> frameSequence;
     private final SCSequence collectSubSeq = new SCSequence();
+    private final Function limitHiFunction;
 
     public AsyncFilteredRecordCursorFactory(
             CairoConfiguration configuration,
             MessageBus messageBus,
             RecordCursorFactory base,
-            Function filter
+            Function filter,
+            @Nullable Function limitHiFunction
     ) {
         assert !(base instanceof AsyncFilteredRecordCursorFactory);
         this.base = base;
@@ -61,6 +64,7 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
                 messageBus,
                 base.hasDescendingOrder() ? REDUCER_DESC : REDUCER_ASC
         );
+        this.limitHiFunction = limitHiFunction;
     }
 
     @Override
@@ -71,11 +75,19 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
+    public boolean followedLimitAdvice() {
+        return limitHiFunction != null;
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(
-                collectSubSeq,
-                execute(executionContext, collectSubSeq)
-        );
+        final long rowsRemaining;
+        if (limitHiFunction != null) {
+            rowsRemaining = limitHiFunction.getLong(null);
+        } else {
+            rowsRemaining = Long.MAX_VALUE;
+        }
+        cursor.of(collectSubSeq, execute(executionContext, collectSubSeq), rowsRemaining);
         return cursor;
     }
 

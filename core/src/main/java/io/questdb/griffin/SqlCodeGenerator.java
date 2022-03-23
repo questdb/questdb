@@ -27,7 +27,6 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -774,7 +773,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         if (factory.supportPageFrameCursor()) {
-            return new AsyncFilteredRecordCursorFactory(configuration, executionContext.getMessageBus(), factory, f);
+            Function limitHiFunction;
+            if (model.getLimitHi() != null && model.getLimitLo() == null) {
+                limitHiFunction = getHiFunction(model, executionContext);
+            } else {
+                limitHiFunction = null;
+            }
+            return new AsyncFilteredRecordCursorFactory(configuration, executionContext.getMessageBus(), factory, f, limitHiFunction);
         }
         return new FilteredRecordCursorFactory(factory, f);
     }
@@ -986,7 +991,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 configuration,
                                 executionContext.getMessageBus(),
                                 master,
-                                functionParser.parseFunction(filter, master.getMetadata(), executionContext)
+                                functionParser.parseFunction(filter, master.getMetadata(), executionContext),
+                                null
                         );
                     } else {
                         master = new FilteredRecordCursorFactory(master, functionParser.parseFunction(filter, master.getMetadata(), executionContext));
@@ -1280,13 +1286,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    private RecordCursorFactory generateLimit(RecordCursorFactory factory, QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+    private RecordCursorFactory generateLimit(
+            RecordCursorFactory factory,
+            QueryModel model,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+
+        if (factory.followedLimitAdvice()) {
+            return factory;
+        }
+
         ExpressionNode limitLo = model.getLimitLo();
         ExpressionNode limitHi = model.getLimitHi();
 
         //we've to check model otherwise we could be skipping limit in outer query that's actually different from the one in inner query!
-        if ((limitLo == null && limitHi == null) ||
-                (factory.implementsLimit() && model.isLimitImplemented())) {
+        if ((limitLo == null && limitHi == null) || (factory.implementsLimit() && model.isLimitImplemented())) {
             return factory;
         }
 
