@@ -31,12 +31,17 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.hamcrest.MatcherAssert;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
-import java.io.File;
+import static org.hamcrest.CoreMatchers.*;
+
+import java.io.*;
+import java.nio.file.Paths;
+import java.util.Properties;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LogFactoryTest {
@@ -49,7 +54,7 @@ public class LogFactoryTest {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log-bad-writer.conf");
         try (LogFactory factory = new LogFactory()) {
             try {
-                LogFactory.configureFromSystemProperties(factory, null);
+                LogFactory.configureFromSystemProperties(factory, null, null);
                 Assert.fail();
             } catch (LogError e) {
                 Assert.assertEquals("Class not found com.questdb.log.StdOutWriter2", e.getMessage());
@@ -605,6 +610,43 @@ public class LogFactoryTest {
             assertDisabled(logger1.info());
             assertDisabled(logger1.error());
             assertDisabled(logger1.advisory());
+        }
+    }
+
+    @Test //also tests ${log.di} resolution
+    public void testWhenCustomLogLocationIsNotSpecifiedThenDefaultLogFileIsUsed() throws Exception {
+        System.clearProperty(LogFactory.CONFIG_SYSTEM_PROPERTY);
+
+        testCustomLogIsCreated(true);
+    }
+
+    @Test
+    public void testWhenCustomLogLocationIsSpecifiedThenDefaultLogFileIsNotUsed() throws IOException {
+        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "test-log.conf");
+
+        testCustomLogIsCreated(false);
+    }
+
+    private void testCustomLogIsCreated(boolean isCreated) throws IOException {
+        try (LogFactory factory = new LogFactory()) {
+            File logConfDir = Paths.get(temp.getRoot().getPath(), "conf").toFile();
+            Assert.assertTrue(logConfDir.mkdir());
+
+            File logConfFile = Paths.get(logConfDir.getPath(), LogFactory.DEFAULT_CONFIG_NAME).toFile();
+
+            Properties props = new Properties();
+            props.put("writers", "log_test");
+            props.put("w.log_test.class", "io.questdb.log.LogFileWriter");
+            props.put("w.log_test.location", "${log.dir}\\test.log");
+            props.put("w.log_test.level", "INFO,ERROR");
+            try (FileOutputStream stream = new FileOutputStream(logConfFile)) {
+                props.store(stream, "");
+            }
+
+            LogFactory.configureFromSystemProperties(factory, null, temp.getRoot().getPath());
+
+            File logFile = Paths.get(temp.getRoot().getPath(), "log\\test.log").toFile();
+            MatcherAssert.assertThat(logFile.getAbsolutePath(), logFile.exists(), is(isCreated));
         }
     }
 

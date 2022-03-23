@@ -26,7 +26,10 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.*;
+import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 
 public class GeoHashes {
@@ -186,7 +189,6 @@ public class GeoHashes {
         return ColumnType.truncateGeoHashBits(fromString(hash, start, start + chars), fromBits, toBits);
     }
 
-
     public static long fromStringTruncatingNl(long lo, long hi, int bits) throws NumericException {
         if (lo == hi) {
             return NULL;
@@ -240,7 +242,18 @@ public class GeoHashes {
         return start < len;
     }
 
-
+    public static int getBitFlags(int columnType) {
+        if (!ColumnType.isGeoHash(columnType)) {
+            return 0;
+        }
+        final int bits = ColumnType.getGeoHashBits(columnType);
+        if (bits > 0 && bits % 5 == 0) {
+            // It's 5 bit per char. If it's integer number of chars value to be serialized as chars
+            return -bits / 5;
+        }
+        // Value to be serialized as bit array.
+        return bits;
+    }
 
     private static long fromBitString(CharSequence bits, int start, int limit) throws NumericException {
         long result = 0;
