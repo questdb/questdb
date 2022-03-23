@@ -870,7 +870,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             int index = factory.getMetadata().getColumnIndexQuiet(expectedTimestamp);
             Assert.assertTrue("Column " + expectedTimestamp + " can't be found in metadata", index > -1);
             Assert.assertNotEquals("Expected non-negative value as timestamp index", -1, index);
-            Assert.assertEquals(index, factory.getMetadata().getTimestampIndex());
+            Assert.assertEquals("Timestamp column index", index, factory.getMetadata().getTimestampIndex());
             assertTimestampColumnValues(factory, sqlExecutionContext, expectAscendingOrder);
         }
     }
