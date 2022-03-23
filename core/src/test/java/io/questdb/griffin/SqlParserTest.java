@@ -3035,6 +3035,26 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testExpressionIsNull() throws Exception {
+        assertQuery(
+                "select-choose tab1.ts ts, tab1.x x, tab2.y y from (select [ts, x] from tab1 timestamp (ts) join select [y] from tab2 on tab2.y = tab1.x where coalesce(x,42) = null)",
+                "tab1 join tab2 on tab1.x = tab2.y where coalesce(tab1.x, 42) is null",
+                modelOf("tab1").timestamp("ts").col("x", ColumnType.INT),
+                modelOf("tab2").col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testExpressionIsNotNull() throws Exception {
+        assertQuery(
+                "select-choose tab1.ts ts, tab1.x x, tab2.y y from (select [ts, x] from tab1 timestamp (ts) join select [y] from tab2 on tab2.y = tab1.x where coalesce(x,42) != null)",
+                "tab1 join tab2 on tab1.x = tab2.y where coalesce(tab1.x, 42) is not null",
+                modelOf("tab1").timestamp("ts").col("x", ColumnType.INT),
+                modelOf("tab2").col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testLiteralIsNull() throws Exception {
         assertQuery(
                 "select-choose tab1.ts ts, tab1.x x, tab2.y y from (select [ts, x] from tab1 timestamp (ts) join select [y] from tab2 on tab2.y = tab1.x where x = null)",

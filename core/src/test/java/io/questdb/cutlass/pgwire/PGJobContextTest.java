@@ -6315,6 +6315,20 @@ create table tab as (
                 }
 
                 sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where (? | null) is null")) {
+                    ps.setLong(1, 1066);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                        "100,1970-01-01 00:00:00.0\n" +
+                                        "null,1970-01-01 00:00:00.000001\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                sink.clear();
                 try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
                     // 'is' is an alias for '=', the matching type for this operator
                     // (with null on the right) is DOUBLE, and thus INT is a valid
@@ -6425,6 +6439,22 @@ create table tab as (
 
                 sink.clear();
                 try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
+                    // 'is not' is an alias for '!=', the matching type for this operator
+                    // (with null on the right) is DOUBLE
+                    ps.setDouble(1, 3.14);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                        "100,1970-01-01 00:00:00.0\n" +
+                                        "null,1970-01-01 00:00:00.000001\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where coalesce(?, 12.37) is not null")) {
                     // 'is not' is an alias for '!=', the matching type for this operator
                     // (with null on the right) is DOUBLE
                     ps.setDouble(1, 3.14);

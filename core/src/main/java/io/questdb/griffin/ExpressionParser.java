@@ -763,7 +763,7 @@ class ExpressionParser {
                             // replace:
                             // <literal or constant> IS NULL     -> <literal or constant> = NULL
                             // <literal or constant> IS NOT NULL -> <literal or constant> != NULL
-                            if (prevBranch == BRANCH_LITERAL || prevBranch == BRANCH_CONSTANT) {
+                            if (prevBranch == BRANCH_LITERAL || prevBranch == BRANCH_CONSTANT || prevBranch == BRANCH_RIGHT_PARENTHESIS) {
                                 final CharSequence tokAfterIsTok = SqlUtil.fetchNext(lexer);
                                 if (tokAfterIsTok == null) {
                                     throw SqlException.$(position, "IS must be followed by [NOT] NULL");
