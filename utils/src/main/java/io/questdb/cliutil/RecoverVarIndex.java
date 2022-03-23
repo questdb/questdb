@@ -24,81 +24,23 @@
 
 package io.questdb.cliutil;
 
-import io.questdb.cairo.vm.MemoryCMARWImpl;
-import io.questdb.cairo.vm.MemoryCMRImpl;
-import io.questdb.cairo.vm.api.MemoryCMARW;
-import io.questdb.cairo.vm.api.MemoryCMR;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.str.Path;
+import io.questdb.ServerConfigurationException;
+import io.questdb.cutlass.json.JsonException;
+import io.questdb.log.LogFactory;
+
+import java.io.IOException;
+
+import static io.questdb.cliutil.CmdUtils.runColumnRebuild;
+import static io.questdb.cliutil.RebuildColumnCommandArgs.parseCommandArgs;
 
 public class RecoverVarIndex {
-    public static void main(String[] args) {
-        String[] params = parseCommandArgs(args);
+    public static void main(String[] args) throws IOException, JsonException, ServerConfigurationException {
+        LogFactory.configureSync();
+        RebuildColumnCommandArgs params = parseCommandArgs(args, RecoverVarIndex.class.getName());
         if (params == null) {
             // Invalid params, usage already printed
             return;
         }
-
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
-        String tablePath = args[0];
-        String columnName = args[1];
-
-        Path path1 = new Path().of(tablePath)
-                .concat(columnName)
-                .concat(".d")
-                .$();
-
-        Path path2 = new Path().of(tablePath)
-                .concat(columnName)
-                .concat(".i")
-                .$();
-
-        long maxOffset = ff.length(path1);
-        MemoryCMR roMem = new MemoryCMRImpl(
-                ff,
-                path1,
-                maxOffset,
-                MemoryTag.NATIVE_DEFAULT
-        );
-
-        MemoryCMARW rwMem = new MemoryCMARWImpl(
-                ff,
-                path2,
-                8 * 1024 * 1024,
-                0,
-                MemoryTag.NATIVE_DEFAULT,
-                0
-        );
-
-        // index
-        long offset = 0;
-        while (offset < maxOffset) {
-            int len = roMem.getInt(offset);
-            rwMem.putLong(offset);
-
-            if (len > -1) {
-                offset += 4 + len * 2L;
-            } else {
-                offset += 4;
-            }
-        }
-        rwMem.putLong(offset);
-
-        rwMem.close();
-    }
-
-
-    static String[] parseCommandArgs(String[] args) {
-        if (args.length != 3 || !"-c".equals(args[1])) {
-            printUsage();
-            return null;
-        }
-        return args;
-    }
-
-    private static void printUsage() {
-        System.out.println("usage: " + RecoverVarIndex.class.getName() + " <table_path> -c <column_name>");
+        runColumnRebuild(params, new io.questdb.cairo.RecoverVarIndex());
     }
 }

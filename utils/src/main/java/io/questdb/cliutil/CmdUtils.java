@@ -24,32 +24,45 @@
 
 package io.questdb.cliutil;
 
-
 import io.questdb.BuildInformation;
+import io.questdb.BuildInformationHolder;
 import io.questdb.PropServerConfiguration;
 import io.questdb.ServerConfigurationException;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.RebuildColumnBase;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
 
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.Properties;
 
-import static io.questdb.cliutil.CmdUtils.runColumnRebuild;
-import static io.questdb.cliutil.RebuildColumnCommandArgs.parseCommandArgs;
+public class CmdUtils {
+    static void runColumnRebuild(RebuildColumnCommandArgs params, RebuildColumnBase ri) throws IOException, ServerConfigurationException, JsonException {
+        String rootDirectory = params.tablePath + Files.SEPARATOR + ".." + Files.SEPARATOR + "..";
+        final Properties properties = new Properties();
+        final String configurationFileName = "/server.conf";
+        final File configurationFile = new File(new File(rootDirectory, PropServerConfiguration.CONFIG_DIRECTORY), configurationFileName);
 
-public class RebuildIndex {
-    public static void main(String[] args) throws IOException, JsonException, ServerConfigurationException {
-        LogFactory.configureSync();
-        RebuildColumnCommandArgs params = parseCommandArgs(args, RebuildIndex.class.getName());
-        if (params == null) {
-            // Invalid params, usage already printed
-            return;
+        try (InputStream is = new FileInputStream(configurationFile)) {
+            properties.load(is);
         }
-        runColumnRebuild(params, new io.questdb.cairo.RebuildIndex());
+        final Log log = LogFactory.getLog("recover-var-index");
+        PropServerConfiguration configuration = readServerConfiguration(rootDirectory, properties, log, new BuildInformationHolder());
+
+        ri.of(params.tablePath, configuration.getCairoConfiguration());
+        try {
+            ri.rebuildPartitionColumn(params.partition, params.column);
+        } catch (CairoException ex) {
+            log.error().$(ex.getFlyweightMessage()).$();
+        }
     }
 
-    private static PropServerConfiguration readServerConfiguration(
+    static PropServerConfiguration readServerConfiguration(
             final String rootDirectory,
             final Properties properties,
             Log log,

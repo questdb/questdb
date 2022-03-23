@@ -27,19 +27,23 @@ package io.questdb.cliutil;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.cliutil.RebuildColumnCommandArgs.parseCommandArgs;
+
 public class RebuildIndexTest {
     @Test
     public void testColumnAndPartition() {
-        RebuildIndex.CommandLineArgs params = RebuildIndex.parseCommandArgs(
-                new String[]{"tablePath", "-c", "abc", "-p", "2020"}
+        RebuildColumnCommandArgs params = parseCommandArgs(
+                new String[]{"tablePath", "-c", "abc", "-p", "2020"},
+                RebuildIndex.class.getName()
         );
         Assert.assertNotNull(params);
         Assert.assertEquals("tablePath", params.tablePath);
         Assert.assertEquals("abc", params.column);
         Assert.assertEquals("2020", params.partition);
 
-        params = RebuildIndex.parseCommandArgs(
-                new String[]{"tablePath", "-p", "2020", "-c", "abc"}
+        params = parseCommandArgs(
+                new String[]{"tablePath", "-p", "2020", "-c", "abc"},
+                RebuildIndex.class.getName()
         );
         Assert.assertNotNull(params);
         Assert.assertEquals("tablePath", params.tablePath);
@@ -49,8 +53,9 @@ public class RebuildIndexTest {
 
     @Test
     public void testColumnOnly() {
-        RebuildIndex.CommandLineArgs params = RebuildIndex.parseCommandArgs(
-                new String[]{"tablePath", "-c", "9393"}
+        RebuildColumnCommandArgs params = parseCommandArgs(
+                new String[]{"tablePath", "-c", "9393"},
+                RebuildIndex.class.getName()
         );
         Assert.assertNotNull(params);
         Assert.assertEquals("tablePath", params.tablePath);
@@ -59,22 +64,22 @@ public class RebuildIndexTest {
 
     @Test
     public void testNoArgsFails() {
-        Assert.assertNull(RebuildIndex.parseCommandArgs(
-                new String[]{}
+        Assert.assertNull(parseCommandArgs(
+                new String[]{}, ""
         ));
     }
 
     @Test
     public void testNoTableFails() {
-        Assert.assertNull(RebuildIndex.parseCommandArgs(
-                new String[]{"-p", "2222"}
+        Assert.assertNull(parseCommandArgs(
+                new String[]{"-p", "2222"}, ""
         ));
     }
 
     @Test
     public void testPartitionOnly() {
-        RebuildIndex.CommandLineArgs params = RebuildIndex.parseCommandArgs(
-                new String[]{"tablePath", "-p", "9393"}
+        RebuildColumnCommandArgs params = parseCommandArgs(
+                new String[]{"tablePath", "-p", "9393"}, ""
         );
         Assert.assertNotNull(params);
         Assert.assertEquals("tablePath", params.tablePath);
@@ -83,8 +88,8 @@ public class RebuildIndexTest {
 
     @Test
     public void testTableNameOnly() {
-        RebuildIndex.CommandLineArgs params = RebuildIndex.parseCommandArgs(
-                new String[]{"tablePath"}
+        RebuildColumnCommandArgs params = parseCommandArgs(
+                new String[]{"tablePath"}, ""
         );
         Assert.assertNotNull(params);
         Assert.assertEquals("tablePath", params.tablePath);
@@ -92,18 +97,18 @@ public class RebuildIndexTest {
 
     @Test
     public void testTooColumnManyArgsFails() {
-        Assert.assertNull(RebuildIndex.parseCommandArgs(
-                new String[]{"tablePath", "-c", "2222", "-c", "2223"}
+        Assert.assertNull(parseCommandArgs(
+                new String[]{"tablePath", "-c", "2222", "-c", "2223"}, ""
         ));
-        Assert.assertNull(RebuildIndex.parseCommandArgs(
-                new String[]{"tablePath", "-p", "2222", "-c", "dafda", "-c", "asb"}
+        Assert.assertNull(parseCommandArgs(
+                new String[]{"tablePath", "-p", "2222", "-c", "dafda", "-c", "asb"}, ""
         ));
     }
 
     @Test
     public void testTooManyPartitionArgsFails() {
-        Assert.assertNull(RebuildIndex.parseCommandArgs(
-                new String[]{"tablePath", "-p", "2222", "-p", "2223"}
+        Assert.assertNull(parseCommandArgs(
+                new String[]{"tablePath", "-p", "2222", "-p", "2223"}, ""
         ));
     }
 }
