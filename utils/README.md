@@ -5,7 +5,7 @@
 Serializes binary `_txn` file to / from readable JSON format. Primary usage to
 investigate storage issues
 
-Usage
+#### Usage
 
 ```
 io.questdb.cliutil.TxSerializer -d <json_path> | -s <json_path> <txn_path>
@@ -14,7 +14,7 @@ io.questdb.cliutil.TxSerializer -d <json_path> | -s <json_path> <txn_path>
 - `-d` option prints contents of `_txn` file to std output in JSON format
 - `-s` option transforms existing JSON file into binary \_txn format
 
-Examples
+#### Examples
 
 ```bash
 java -cp utils.jar io.questdb.cliutil.TxSerializer -d /questdb-root/db/trades-COINBASE/_txn > /questdb-root/db/trades-COINBASE/txn.json
@@ -26,17 +26,18 @@ java -cp utils.jar io.questdb.cliutil.TxSerializer -s /questdb-root/db/trades-CO
 
 Rebuilds indexes for a table
 
-Usage
+#### Usage
 
 ```
 io.questdb.cliutil.RebuildIndex <table_path> [-p <partition_name>] [-c <column_name>]
 ```
 
 - `<table_path>` full path to the table
-- `-c` column name, optional. If omitted, all indexed columns will have indexes rebuilt
-- `-p` option transforms existing JSON file into binary \_txn format
+- `-c` column name, optional. If omitted, all indexed columns will have indexes
+  rebuilt
+- `-p` optional partition name. If omitted, all partitions will be affected
 
-Examples
+#### Examples
 
 ```bash
 java -cp utils.jar io.questdb.cliutil.RebuildIndex /questdb-root/db/trades-COINBASE
@@ -48,30 +49,31 @@ java -cp utils.jar io.questdb.cliutil.RebuildIndex /questdb-root/db/trades-COINB
 java -cp utils.jar io.questdb.cliutil.RebuildIndex /questdb-root/db/trades-COINBASE -p 2022-03-21 -c symbol
 ```
 
-### Rebuild variable column index
+### Rebuild String column index `.i` file
 
 Rebuilds indexes for a table
 
-Usage
+#### Usage
 
 ```
-io.questdb.cliutil.RebuildIndex <table_path> [-p <partition_name>] [-c <column_name>]
+io.questdb.cliutil.RecoverVarIndex <table_path> [-p <partition_name>] [-c <column_name>]
 ```
 
 - `<table_path>` full path to the table
-- `-c` column name, optional. If omitted, all indexed columns will have indexes rebuilt
-- `-p` option transforms existing JSON file into binary \_txn format
+- `-c` column name, optional. If omitted, all string columns will have `.i` file
+  rebuild
+- `-p` optional partition name. If omitted, all partitions will be affected
 
-Examples
+#### Examples
 
 ```bash
-java -cp utils.jar io.questdb.cliutil.RebuildIndex /questdb-root/db/trades-COINBASE
+java -cp utils.jar io.questdb.cliutil.RecoverVarIndex /questdb-root/db/trades-COINBASE
 
-java -cp utils.jar io.questdb.cliutil.RebuildIndex /questdb-root/db/trades-COINBASE -c symbol
+java -cp utils.jar io.questdb.cliutil.RecoverVarIndex /questdb-root/db/trades-COINBASE -c stringColumn
 
-java -cp utils.jar io.questdb.cliutil.RebuildIndex /questdb-root/db/trades-COINBASE -p 2022-03-21
+java -cp utils.jar io.questdb.cliutil.RecoverVarIndex /questdb-root/db/trades-COINBASE -p 2022-03-21
 
-java -cp utils.jar io.questdb.cliutil.RebuildIndex /questdb-root/db/trades-COINBASE -p 2022-03-21 -c symbol
+java -cp utils.jar io.questdb.cliutil.RecoverVarIndex /questdb-root/db/trades-COINBASE -p 2022-03-21 -c stringColumn
 ```
 
 ## Build Utils project
@@ -81,4 +83,3 @@ To build single jar with dependencies run
 ```bash
 mvn clean package
 ```
-
