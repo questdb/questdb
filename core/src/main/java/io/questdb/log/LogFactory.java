@@ -80,6 +80,10 @@ public class LogFactory implements Closeable {
         this.clock = clock;
     }
 
+    public static void configureAsync() {
+        overwriteWithSyncLogging = false;
+    }
+
     public static void configureFromProperties(LogFactory factory, Properties properties, WorkerPool workerPool, String logDir) {
 
         factory.workerPool = workerPool;

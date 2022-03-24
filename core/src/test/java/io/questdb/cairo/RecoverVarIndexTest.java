@@ -31,6 +31,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
@@ -62,11 +63,13 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                         -1,
                         null);
         bindVariableService.clear();
+        LogFactory.configureSync();
     }
 
     @AfterClass
     public static void tearDownStatic() {
         compiler.close();
+        LogFactory.configureAsync();
     }
 
     @After
