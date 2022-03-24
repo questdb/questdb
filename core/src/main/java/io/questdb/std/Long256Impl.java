@@ -26,9 +26,11 @@ package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
 
-public class Long256Impl implements Long256, Sinkable, Long256Acceptor {
+public class Long256Impl implements Long256, Sinkable {
 
     public static final Long256Impl NULL_LONG256 = new Long256Impl();
+    public static final Long256Impl ZERO_LONG256 = new Long256Impl();
+
     private long l0;
     private long l1;
     private long l2;
@@ -97,6 +99,16 @@ public class Long256Impl implements Long256, Sinkable, Long256Acceptor {
         Numbers.appendLong256(l0, l1, l2, l3, sink);
     }
 
+    public static Long256Impl add(final Long256 x, final Long256 y) {
+        if (x.equals(Long256Impl.NULL_LONG256) || y.equals(Long256Impl.NULL_LONG256)) {
+            return Long256Impl.NULL_LONG256;
+        }
+        Long256Impl sum = new Long256Impl();
+        sum.copyFrom(x);
+        Long256Util.add(sum, y);
+        return sum;
+    }
+
     static {
         NULL_LONG256.setAll(
                 Numbers.LONG_NaN,
@@ -104,5 +116,6 @@ public class Long256Impl implements Long256, Sinkable, Long256Acceptor {
                 Numbers.LONG_NaN,
                 Numbers.LONG_NaN
         );
+        ZERO_LONG256.setAll(0, 0, 0, 0);
     }
 }
