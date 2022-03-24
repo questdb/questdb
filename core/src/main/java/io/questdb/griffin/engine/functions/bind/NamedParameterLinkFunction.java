@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
@@ -50,11 +49,6 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public char getChar(Record rec) {
-        return getBase().getChar(rec);
-    }
-
-    @Override
     public BinarySequence getBin(Record rec) {
         return getBase().getBin(rec);
     }
@@ -72,6 +66,11 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     @Override
     public byte getByte(Record rec) {
         return getBase().getByte(rec);
+    }
+
+    @Override
+    public char getChar(Record rec) {
+        return getBase().getChar(rec);
     }
 
     @Override
@@ -97,6 +96,11 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     @Override
     public long getLong(Record rec) {
         return getBase().getLong(rec);
+    }
+
+    @Override
+    public void getLong256(Record rec, CharSink sink) {
+        getBase().getLong256(rec, sink);
     }
 
     @Override
@@ -179,9 +183,8 @@ public class NamedParameterLinkFunction implements ScalarFunction {
         return type;
     }
 
-    @Override
-    public void getLong256(Record rec, CharSink sink) {
-        getBase().getLong256(rec, sink);
+    public String getVariableName() {
+        return variableName;
     }
 
     @Override

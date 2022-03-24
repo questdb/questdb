@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
@@ -72,8 +71,8 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public void assignType(int type, BindVariableService bindVariableService) throws SqlException {
-        this.type = bindVariableService.define(variableIndex, type, position);
+    public char getChar(Record rec) {
+        return getBase().getChar(rec);
     }
 
     @Override
@@ -102,13 +101,18 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public char getChar(Record rec) {
-        return getBase().getChar(rec);
+    public void getLong256(Record rec, CharSink sink) {
+        getBase().getLong256(rec, sink);
     }
 
     @Override
-    public void getLong256(Record rec, CharSink sink) {
-        getBase().getLong256(rec, sink);
+    public Long256 getLong256A(Record rec) {
+        return getBase().getLong256A(rec);
+    }
+
+    @Override
+    public Long256 getLong256B(Record rec) {
+        return getBase().getLong256B(rec);
     }
 
     @Override
@@ -182,6 +186,20 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
+    public void assignType(int type, BindVariableService bindVariableService) throws SqlException {
+        this.type = bindVariableService.define(variableIndex, type, position);
+    }
+
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    public int getVariableIndex() {
+        return variableIndex;
+    }
+
+    @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         base = executionContext.getBindVariableService().getFunction(variableIndex);
         if (base == null) {
@@ -190,23 +208,8 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
         base.init(symbolTableSource, executionContext);
     }
 
-    @Override
-    public Long256 getLong256A(Record rec) {
-        return getBase().getLong256A(rec);
-    }
-
-    @Override
-    public Long256 getLong256B(Record rec) {
-        return getBase().getLong256B(rec);
-    }
-
     private Function getBase() {
         assert base != null;
         return base;
-    }
-
-    @Override
-    public boolean isRuntimeConstant() {
-        return true;
     }
 }

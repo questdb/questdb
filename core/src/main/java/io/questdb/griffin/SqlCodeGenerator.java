@@ -38,6 +38,8 @@ import io.questdb.griffin.engine.analytic.AnalyticFunction;
 import io.questdb.griffin.engine.analytic.CachedAnalyticRecordCursorFactory;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
+import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
@@ -773,13 +775,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         if (factory.supportPageFrameCursor()) {
-            Function limitHiFunction;
-            if (model.getLimitHi() != null && model.getLimitLo() == null) {
-                limitHiFunction = getHiFunction(model, executionContext);
+            Function limitLoFunction;
+            if (model.getLimitAdviceLo() != null && model.getLimitAdviceHi() == null) {
+                limitLoFunction = toLimitFunction(executionContext, model.getLimitAdviceLo(), LongConstant.ZERO);
             } else {
-                limitHiFunction = null;
+                limitLoFunction = null;
             }
-            return new AsyncFilteredRecordCursorFactory(configuration, executionContext.getMessageBus(), factory, f, limitHiFunction);
+            return new AsyncFilteredRecordCursorFactory(configuration, executionContext.getMessageBus(), factory, f, limitLoFunction);
         }
         return new FilteredRecordCursorFactory(factory, f);
     }
@@ -3142,12 +3144,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     @Nullable
     private Function getHiFunction(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        return toFunction(executionContext, model.getLimitHi(), null);
+        return toLimitFunction(executionContext, model.getLimitHi(), null);
     }
 
     @NotNull
     private Function getLoFunction(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        return toFunction(executionContext, model.getLimitLo(), LongConstant.ZERO);
+        return toLimitFunction(executionContext, model.getLimitLo(), LongConstant.ZERO);
     }
 
     private int getTimestampIndex(QueryModel model, RecordCursorFactory factory) throws SqlException {
@@ -3304,9 +3306,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         this.fullFatJoins = fullFatJoins;
     }
 
-    private Function toFunction(SqlExecutionContext executionContext,
-                                ExpressionNode limit,
-                                ConstantFunction defaultValue) throws SqlException {
+    private Function toLimitFunction(
+            SqlExecutionContext executionContext,
+                                     ExpressionNode limit,
+                                     ConstantFunction defaultValue
+    ) throws SqlException {
         if (limit == null) {
             return defaultValue;
         }
@@ -3314,6 +3318,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final Function func = functionParser.parseFunction(limit, EmptyRecordMetadata.INSTANCE, executionContext);
         final int type = func.getType();
         if (limitTypes.excludes(type)) {
+            if (type == ColumnType.UNDEFINED) {
+                if (func instanceof IndexedParameterLinkFunction) {
+                    executionContext.getBindVariableService().setLong(((IndexedParameterLinkFunction) func).getVariableIndex(), defaultValue.getLong(null));
+                    return func;
+                }
+
+                if (func instanceof NamedParameterLinkFunction) {
+                    executionContext.getBindVariableService().setLong(((NamedParameterLinkFunction) func).getVariableName(), defaultValue.getLong(null));
+                    return func;
+                }
+            }
             throw SqlException.$(limit.position, "invalid type: ").put(ColumnType.nameOf(type));
         }
         return func;

@@ -81,13 +81,15 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        execute(executionContext, collectSubSeq);
         final long rowsRemaining;
         if (limitHiFunction != null) {
+            limitHiFunction.init(frameSequence.getSymbolTableSource(), executionContext);
             rowsRemaining = limitHiFunction.getLong(null);
         } else {
             rowsRemaining = Long.MAX_VALUE;
         }
-        cursor.of(collectSubSeq, execute(executionContext, collectSubSeq), rowsRemaining);
+        cursor.of(collectSubSeq, frameSequence, rowsRemaining);
         return cursor;
     }
 
