@@ -28,8 +28,8 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -438,17 +438,25 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
 
             @Override
             public void getLong256(int col, CharSink sink) {
-
+                Long256Impl v = (Long256Impl) getLong256A(col);
+                v.toSink(sink);
             }
 
             @Override
             public Long256 getLong256A(int col) {
-                return null;
+                final long offset = getValueOffset(col);
+                final long l0 = Unsafe.getUnsafe().getLong(offset);
+                final long l1 = Unsafe.getUnsafe().getLong(offset + Long.BYTES);
+                final long l2 = Unsafe.getUnsafe().getLong(offset + 2 * Long.BYTES);
+                final long l3 = Unsafe.getUnsafe().getLong(offset + 3 + Long.BYTES);
+                Long256Impl res = new Long256Impl();
+                res.setAll(l0, l1, l2, l3);
+                return res;
             }
 
             @Override
             public Long256 getLong256B(int col) {
-                return null;
+                return getLong256A(col);
             }
 
             @Override

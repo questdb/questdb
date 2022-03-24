@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.map;
 
+import io.questdb.std.Long256;
 import io.questdb.std.Unsafe;
 
 final class FastMapValue implements MapValue {
@@ -205,6 +206,16 @@ final class FastMapValue implements MapValue {
     @Override
     public void setMapRecordHere() {
         this.record.of(address);
+    }
+
+    @Override
+    public void addLong256(int index, Long256 value) {
+
+    }
+
+    @Override
+    public void putLong256(int index, Long256 value) {
+
     }
 
     private long address0(int index) {
