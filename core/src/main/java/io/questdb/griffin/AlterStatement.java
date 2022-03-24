@@ -33,7 +33,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.tasks.TableWriterTask;
 
-public class AlterStatement implements Mutable {
+public class AlterStatement implements Mutable, WriteToQueue<TableWriterTask> {
 
     public final static short DO_NOTHING = 1;
     public final static short ADD_COLUMN = 3;
@@ -60,6 +60,7 @@ public class AlterStatement implements Mutable {
     private int tableId;
     private int tableNamePosition;
     private CharSequenceList charSequenceList;
+    private long commandCorrelationId;
 
     public AlterStatement() {
         this(new LongList(), new ObjList<>());
@@ -139,6 +140,7 @@ public class AlterStatement implements Mutable {
         objCharList.clear();
         directCharList.clear();
         charSequenceList = objCharList;
+        commandCorrelationId = -1;
         longList.clear();
     }
 
@@ -204,6 +206,16 @@ public class AlterStatement implements Mutable {
         for (int i = 0, n = objCharList.size(); i < n; i++) {
             event.putStr(objCharList.getStrA(i));
         }
+    }
+
+    public void setCommandCorrelationId(long commandCorrelationId) {
+        this.commandCorrelationId = commandCorrelationId;
+    }
+
+    @Override
+    public void writeTo(TableWriterTask queueItem) {
+        serialize(queueItem);
+        queueItem.setInstance(commandCorrelationId);
     }
 
     private void applyAddColumn(TableWriter tableWriter) throws SqlException {

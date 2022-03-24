@@ -78,7 +78,6 @@ import java.util.stream.Stream;
 
 import static io.questdb.std.Numbers.hexDigits;
 import static io.questdb.test.tools.TestUtils.assertContains;
-import static io.questdb.test.tools.TestUtils.drainEngineCmdQueue;
 import static org.junit.Assert.*;
 
 @SuppressWarnings("SqlNoDataSourceInspection")
@@ -6205,7 +6204,6 @@ create table tab as (
                     }
                 } finally {
                     pool.halt();
-                    drainEngineCmdQueue(engine);
                     engine.releaseAllWriters();
                 }
                 // Failure may not happen if we're lucky, even when they are expected
