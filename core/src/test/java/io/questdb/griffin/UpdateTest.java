@@ -335,7 +335,6 @@ public class UpdateTest extends AbstractGriffinTest {
                     " timestamp(ts) partition by DAY", sqlExecutionContext);
 
             executeUpdate("UPDATE up SET str1 = 'questdb' WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
-            //, lng2 = 1 WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'
 
             assertSql("up", "ts\tstr1\tlng2\n" +
                     "1970-01-01T00:00:00.000000Z\t15\t1\n" +
@@ -352,22 +351,32 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testUpdateStringAndFixedColumnPageSize() throws Exception {
+    public void testUpdateBinaryColumn() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +
-                    " (select timestamp_sequence(0, 1000000L) ts," +
-                    " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
+                    " (select timestamp_sequence(0, 6 * 60 * 60 * 1000000L) ts," +
+                    " rnd_bin(10, 20, 2) as bin1," +
                     " x as lng2" +
-                    " from long_sequence(100000)" +
+                    " from long_sequence(10)" +
                     " )" +
                     " timestamp(ts) partition by DAY", sqlExecutionContext);
 
-            executeUpdate("UPDATE up SET str1 = 'questdb' + str1, lng2 = -1 WHERE ts between '1970-01-01T08' and '1970-01-01T12' and lng2 % 2 = 1");
+            executeUpdate("UPDATE up SET bin1 = cast(null as binary) WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
 
-            assertSql("select count() from up where str1 = 'questdb'", "count\n" +
-                    "7201\n");
-            assertSql("select count() from up where ts between '1970-01-01T08' and '1970-01-01T12' and lng2 % 2 = 1", "count\n" +
-                    "7201\n");
+            assertSql("up", "ts\tbin1\tlng2\n" +
+                    "1970-01-01T00:00:00.000000Z\t00000000 41 1d 15 55 8a 17 fa d8 cc 14 ce f1 59 88 c4 91\n" +
+                    "00000010 3b 72 db f3\t1\n" +
+                    "1970-01-01T06:00:00.000000Z\t00000000 c7 88 de a0 79 3c 77 15 68 61 26 af 19 c4 95 94\n" +
+                    "00000010 36 53\t2\n" +
+                    "1970-01-01T12:00:00.000000Z\t\t3\n" +
+                    "1970-01-01T18:00:00.000000Z\t\t4\n" +
+                    "1970-01-02T00:00:00.000000Z\t\t5\n" +
+                    "1970-01-02T06:00:00.000000Z\t00000000 08 a1 1e 38 8d 1b 9e f4 c8 39 09 fe d8\t6\n" +
+                    "1970-01-02T12:00:00.000000Z\t\t7\n" +
+                    "1970-01-02T18:00:00.000000Z\t00000000 78 b5 b9 11 53 d0 fb 64 bb 1a d4 f0 2d 40 e2 4b\n" +
+                    "00000010 b1 3e e3 f1\t8\n" +
+                    "1970-01-03T00:00:00.000000Z\t\t9\n" +
+                    "1970-01-03T06:00:00.000000Z\t00000000 9c 1d 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3\t10\n");
         });
     }
 
@@ -387,6 +396,33 @@ public class UpdateTest extends AbstractGriffinTest {
                     "7201\n");
             assertSql("select count() from up where ts between '1970-01-01T08' and '1970-01-01T12' and lng2 % 2 = 1", "count\n" +
                     "7201\n");
+        });
+    }
+
+    @Test
+    public void testUpdateStringAndFixedColumnPageSize() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 6 * 60 * 60 * 1000000L) ts," +
+                    " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
+                    " x as lng2" +
+                    " from long_sequence(10)" +
+                    " )" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET str1 = concat('questdb', str1), lng2 = -1 WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
+
+            assertSql("up", "ts\tstr1\tlng2\n" +
+                    "1970-01-01T00:00:00.000000Z\t15\t1\n" +
+                    "1970-01-01T06:00:00.000000Z\t15\t2\n" +
+                    "1970-01-01T12:00:00.000000Z\tquestdb\t-1\n" +
+                    "1970-01-01T18:00:00.000000Z\t1\t4\n" +
+                    "1970-01-02T00:00:00.000000Z\tquestdb1\t-1\n" +
+                    "1970-01-02T06:00:00.000000Z\t1\t6\n" +
+                    "1970-01-02T12:00:00.000000Z\tquestdb190232\t-1\n" +
+                    "1970-01-02T18:00:00.000000Z\t\t8\n" +
+                    "1970-01-03T00:00:00.000000Z\tquestdb15\t-1\n" +
+                    "1970-01-03T06:00:00.000000Z\t\t10\n");
         });
     }
 

@@ -37,9 +37,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
+import static io.questdb.cairo.ColumnType.isVariableLength;
 import static io.questdb.cairo.TableUtils.dFile;
 import static io.questdb.cairo.TableUtils.iFile;
 
@@ -52,6 +54,7 @@ public class UpdateExecution implements Closeable {
     private final ObjList<MemoryCMARW> updateMemory = new ObjList<>();
     private final long dataAppendPageSize;
     private final long fileOpenOpts;
+    private final StringSink charSink = new StringSink();
     private Path path;
 
     public UpdateExecution(CairoConfiguration configuration) {
@@ -199,27 +202,12 @@ public class UpdateExecution implements Closeable {
         }
     }
 
-    private void initUpdateMemory(RecordMetadata metadata, int columnCount) {
-        for (int i = updateMemory.size(); i < columnCount; i++) {
-            int columnType = metadata.getColumnType(updateColumnIndexes.get(i));
-            switch (columnType) {
-                case ColumnType.STRING:
-                case ColumnType.BINARY:
-                    // Primary and secondary
-                    baseMemory.add(Vm.getCMRInstance());
-                    baseMemory.add(Vm.getCMRInstance());
-                    updateMemory.add(Vm.getCMARWInstance());
-                    updateMemory.add(Vm.getCMARWInstance());
-                    break;
-                default:
-                    baseMemory.add(Vm.getCMRInstance());
-                    baseMemory.add(null);
-                    updateMemory.add(Vm.getCMARWInstance());
-                    updateMemory.add(null);
-                    break;
-
-            }
+    private int getFixedColumnSize(int columnType) {
+        int typeSize = ColumnType.sizeOf(columnType);
+        if (isVariableLength(columnType)) {
+            typeSize = Long.BYTES;
         }
+        return typeSize;
     }
 
     private void copyRecords(
@@ -259,12 +247,27 @@ public class UpdateExecution implements Closeable {
         openPartitionColumns(tableWriter, updateMemory, partitionIndex, updateColumnIndexes, true);
     }
 
-    private int getFixedColumnSize(int columnType) {
-        int typeSize = ColumnType.sizeOf(columnType);
-        if (columnType == ColumnType.STRING || columnType == ColumnType.BINARY) {
-            typeSize = Long.BYTES;
+    private void initUpdateMemory(RecordMetadata metadata, int columnCount) {
+        for (int i = updateMemory.size(); i < columnCount; i++) {
+            int columnType = metadata.getColumnType(updateColumnIndexes.get(i));
+            switch (columnType) {
+                default:
+                    baseMemory.add(Vm.getCMRInstance());
+                    baseMemory.add(null);
+                    updateMemory.add(Vm.getCMARWInstance());
+                    updateMemory.add(null);
+                    break;
+                case ColumnType.STRING:
+                case ColumnType.BINARY:
+                    // Primary and secondary
+                    baseMemory.add(Vm.getCMRInstance());
+                    baseMemory.add(Vm.getCMRInstance());
+                    updateMemory.add(Vm.getCMARWInstance());
+                    updateMemory.add(Vm.getCMARWInstance());
+                    break;
+
+            }
         }
-        return typeSize;
     }
 
     private void openPartitionColumns(TableWriter tableWriter, ObjList<? extends MemoryCM> memList, int partitionIndex, IntList updateColumnIndexes, boolean forWrite) {
@@ -285,7 +288,7 @@ public class UpdateExecution implements Closeable {
                 }
 
                 long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-                if (columnType == ColumnType.STRING) {
+                if (isVariableLength(columnType)) {
                     MemoryCMR colMemIndex = (MemoryCMR) memList.get(2 * i);
                     colMemIndex.close();
                     colMemIndex.of(
@@ -319,7 +322,7 @@ public class UpdateExecution implements Closeable {
                     );
                 }
                 if (forWrite) {
-                    if (columnType == ColumnType.STRING) {
+                    if (isVariableLength(columnType)) {
                         ((MemoryCMARW) memList.get(2 * i)).putLong(0);
                     }
                 }
@@ -392,9 +395,15 @@ public class UpdateExecution implements Closeable {
                     updatedFixedColumnFile.putLong(masterRecord.getGeoLong(columnIndex));
                     break;
                 case ColumnType.STRING:
-                    CharSequence value = masterRecord.getStr(columnIndex);
-                    long offset = updatedVariableColumnFile.putStr(value);
+                    charSink.clear();
+                    masterRecord.getStr(columnIndex, charSink);
+                    long offset = updatedVariableColumnFile.putStr(charSink);
                     updatedFixedColumnFile.putLong(offset);
+                    break;
+                case ColumnType.BINARY:
+                    BinarySequence binValue = masterRecord.getBin(columnIndex);
+                    long binOffset = updatedVariableColumnFile.putBin(binValue);
+                    updatedFixedColumnFile.putLong(binOffset);
                     break;
                 default:
                     throw SqlException.$(0, "Column type ")
