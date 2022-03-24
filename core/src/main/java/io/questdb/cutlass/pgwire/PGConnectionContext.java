@@ -55,6 +55,8 @@ import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT
  */
 public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
+    private final static Log LOG = LogFactory.getLog(PGConnectionContext.class);
+
     public static final String TAG_SET = "SET";
     public static final String TAG_BEGIN = "BEGIN";
     public static final String TAG_COMMIT = "COMMIT";
@@ -63,10 +65,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     public static final String TAG_OK = "OK";
     public static final String TAG_COPY = "COPY";
     public static final String TAG_INSERT = "INSERT";
+
     public static final char STATUS_IN_TRANSACTION = 'T';
     public static final char STATUS_IN_ERROR = 'E';
     public static final char STATUS_IDLE = 'I';
-    private final static Log LOG = LogFactory.getLog(PGConnectionContext.class);
+
     private static final int INT_BYTES_X = Numbers.bswap(Integer.BYTES);
     private static final int INT_NULL_X = Numbers.bswap(-1);
 
@@ -1686,12 +1689,26 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         validateParameterCounts(parameterFormatCount, parameterValueCount, parsePhaseBindVariableCount);
 
         lo += Short.BYTES;
-        if (parameterValueCount > 0) {
-            if (this.parsePhaseBindVariableCount == parameterValueCount) {
-                lo = bindValuesUsingSetters(lo, msgLimit, parameterValueCount);
-            } else {
-                lo = bindValuesAsStrings(lo, msgLimit, parameterValueCount);
+
+        try {
+            if (parameterValueCount > 0) {
+                if (this.parsePhaseBindVariableCount == parameterValueCount) {
+                    lo = bindValuesUsingSetters(lo, msgLimit, parameterValueCount);
+                } else {
+                    lo = bindValuesAsStrings(lo, msgLimit, parameterValueCount);
+                }
             }
+        } catch (SqlException e) {
+            //if statement is named or portal then we've to add it to typesAndSElect 
+            if (typesAndSelect != null &&
+                    queryText != null &&
+                    typesAndSelectCache.peek(queryText) == null
+            ) {
+                Misc.free(typesAndSelect);
+                typesAndSelect = null;
+                //alternative would be to add typesAndSelect to cache  
+            }
+            throw e;
         }
 
         if (typesAndSelect != null) {
@@ -2019,7 +2036,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         //query text
         lo = hi + 1;
         hi = getStringLength(lo, msgLimit, "bad query text length");
-
+        //TODO: parsePhaseBindVariableCount have to be checked before parseQueryText and fed into it to serve as type hints !  
         parseQueryText(lo, hi, compiler);
 
         //parameter type count

@@ -1335,6 +1335,56 @@ public class PGJobContextTest extends BasePGTest {
         testBindVariableIsNotNull(true);
     }
 
+    @Test//FIXME: this test should work fine & return results if we propagate bind types to sql compiler as hint 
+    // (so it doesn't fall back to DOUBLE default and then break when setting value)
+    public void testBindVariableWithAmbiguousTypeInSelectStatementDoesntLeakMemory() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, false)
+            ) {
+                connection.setAutoCommit(false);
+                connection.prepareStatement("create table tab1 (value int, ts timestamp) timestamp(ts)").execute();
+                connection.prepareStatement("insert into tab1 (value, ts) values (100, 0)").execute();
+                connection.prepareStatement("insert into tab1 (value, ts) values (null, 1)").execute();
+                connection.commit();
+
+
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
+                    ps.setString(1, "");
+                    try (ResultSet ignore1 = ps.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "could not parse [value='', as=DOUBLE, index=0]");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test//FIXME: this test should work fine and insert recor if we propagate bind types to sql compiler as hint 
+    // (so it doesn't fall back to DOUBLE default and then break when setting value)  
+    public void testBindVariableWithAmbiguousTypeInInsertStatementDoesntLeakMemory() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                connection.setAutoCommit(false);
+                connection.prepareStatement("create table tab1 (value int, ts timestamp) timestamp(ts)").execute();
+                connection.commit();
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("insert into tab1 values ( case when ? is not null then 1 else 0 end, '2022' )")) {
+                    ps.setString(1, "");
+                    ps.execute();
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "could not parse [value='', as=DOUBLE, index=0]");
+                }
+            }
+        });
+    }
+
     @Test
     public void testBindVariableIsNotNullStringTransfer() throws Exception {
         testBindVariableIsNotNull(false);
