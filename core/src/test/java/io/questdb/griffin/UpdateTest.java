@@ -324,7 +324,6 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testUpdateStringColumn() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +
@@ -338,12 +337,56 @@ public class UpdateTest extends AbstractGriffinTest {
             executeUpdate("UPDATE up SET str1 = 'questdb' WHERE ts > '1970-01-01T08' and lng2 % 2 = 1");
             //, lng2 = 1 WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'
 
-            assertSql("up", "ts\tgeo3\tgeo5\n" +
-                    "1970-01-01T00:00:00.000000Z\t9v1\t46swg\n" +
-                    "1970-01-01T00:00:01.000000Z\tjnw\tzfuqd\n" +
-                    "1970-01-01T00:00:02.000000Z\tque\tquest\n" +
-                    "1970-01-01T00:00:03.000000Z\tque\tquest\n" +
-                    "1970-01-01T00:00:04.000000Z\tmmt\t71ftm\n");
+            assertSql("up", "ts\tstr1\tlng2\n" +
+                    "1970-01-01T00:00:00.000000Z\t15\t1\n" +
+                    "1970-01-01T06:00:00.000000Z\t15\t2\n" +
+                    "1970-01-01T12:00:00.000000Z\tquestdb\t3\n" +
+                    "1970-01-01T18:00:00.000000Z\t1\t4\n" +
+                    "1970-01-02T00:00:00.000000Z\tquestdb\t5\n" +
+                    "1970-01-02T06:00:00.000000Z\t1\t6\n" +
+                    "1970-01-02T12:00:00.000000Z\tquestdb\t7\n" +
+                    "1970-01-02T18:00:00.000000Z\t\t8\n" +
+                    "1970-01-03T00:00:00.000000Z\tquestdb\t9\n" +
+                    "1970-01-03T06:00:00.000000Z\t\t10\n");
+        });
+    }
+
+    @Test
+    public void testUpdateStringAndFixedColumnPageSize() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000L) ts," +
+                    " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
+                    " x as lng2" +
+                    " from long_sequence(100000)" +
+                    " )" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET str1 = 'questdb' + str1, lng2 = -1 WHERE ts between '1970-01-01T08' and '1970-01-01T12' and lng2 % 2 = 1");
+
+            assertSql("select count() from up where str1 = 'questdb'", "count\n" +
+                    "7201\n");
+            assertSql("select count() from up where ts between '1970-01-01T08' and '1970-01-01T12' and lng2 % 2 = 1", "count\n" +
+                    "7201\n");
+        });
+    }
+
+    @Test
+    public void testUpdateStringColumnPageSize() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000L) ts," +
+                    " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
+                    " x as lng2" +
+                    " from long_sequence(100000)" +
+                    " )" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET str1 = 'questdb' WHERE ts between '1970-01-01T08' and '1970-01-01T12' and lng2 % 2 = 1");
+            assertSql("select count() from up where str1 = 'questdb'", "count\n" +
+                    "7201\n");
+            assertSql("select count() from up where ts between '1970-01-01T08' and '1970-01-01T12' and lng2 % 2 = 1", "count\n" +
+                    "7201\n");
         });
     }
 

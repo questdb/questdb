@@ -237,13 +237,13 @@ public class UpdateExecution implements Closeable {
             case ColumnType.STRING:
             case ColumnType.BINARY:
                 long varStartOffset = baseFixedColumnFile.getLong(fromRowId * Long.BYTES);
-                long varEndOffset = baseFixedColumnFile.getLong((toRowId + 1) * Long.BYTES);
+                long varEndOffset = baseFixedColumnFile.getLong((toRowId) * Long.BYTES);
                 long varAddr = baseVariableColumnFile.addressOf(varStartOffset);
                 long copyToOffset = updatedVariableColumnFile.getAppendOffset();
                 updatedVariableColumnFile.putBlockOfBytes(varAddr, varEndOffset - varStartOffset);
-                updatedFixedColumnFile.extend(updatedFixedColumnFile.getAppendOffset() + (toRowId - fromRowId) * typeSize);
-                Vect.shiftCopyFixedSizeColumnData(copyToOffset - varStartOffset, addr + Long.BYTES, fromRowId, toRowId - 1, updatedFixedColumnFile.getAppendAddress());
-                updatedFixedColumnFile.jumpTo(updatedFixedColumnFile.getAppendOffset() + (toRowId - fromRowId) * typeSize);
+                updatedFixedColumnFile.extend((toRowId + 1) * typeSize);
+                Vect.shiftCopyFixedSizeColumnData(varStartOffset - copyToOffset, addr + Long.BYTES, 0, toRowId - fromRowId - 1, updatedFixedColumnFile.getAppendAddress());
+                updatedFixedColumnFile.jumpTo((toRowId + 1) * typeSize);
                 break;
             default:
                 updatedFixedColumnFile.putBlockOfBytes(addr, (toRowId - fromRowId) * typeSize);
