@@ -52,6 +52,10 @@ public class WeakObjectPool<T extends Mutable> implements Closeable {
         fill();
     }
 
+    public int currentSize() {
+        return cache.size();
+    }
+
     @Override
     public void close() {
         while (cache.size() > 0) {
