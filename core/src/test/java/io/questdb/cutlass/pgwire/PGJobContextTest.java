@@ -1335,56 +1335,6 @@ public class PGJobContextTest extends BasePGTest {
         testBindVariableIsNotNull(true);
     }
 
-    @Test//FIXME: this test should work fine & return results if we propagate bind types to sql compiler as hint 
-    // (so it doesn't fall back to DOUBLE default and then break when setting value)
-    public void testBindVariableWithAmbiguousTypeInSelectStatementDoesntLeakMemory() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, false)
-            ) {
-                connection.setAutoCommit(false);
-                connection.prepareStatement("create table tab1 (value int, ts timestamp) timestamp(ts)").execute();
-                connection.prepareStatement("insert into tab1 (value, ts) values (100, 0)").execute();
-                connection.prepareStatement("insert into tab1 (value, ts) values (null, 1)").execute();
-                connection.commit();
-
-
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
-                    ps.setString(1, "");
-                    try (ResultSet ignore1 = ps.executeQuery()) {
-                        Assert.fail();
-                    } catch (PSQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "could not parse [value='', as=DOUBLE, index=0]");
-                    }
-                }
-            }
-        });
-    }
-
-    @Test//FIXME: this test should work fine and insert recor if we propagate bind types to sql compiler as hint 
-    // (so it doesn't fall back to DOUBLE default and then break when setting value)  
-    public void testBindVariableWithAmbiguousTypeInInsertStatementDoesntLeakMemory() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, true)
-            ) {
-                connection.setAutoCommit(false);
-                connection.prepareStatement("create table tab1 (value int, ts timestamp) timestamp(ts)").execute();
-                connection.commit();
-
-                sink.clear();
-                try (PreparedStatement ps = connection.prepareStatement("insert into tab1 values ( case when ? is not null then 1 else 0 end, '2022' )")) {
-                    ps.setString(1, "");
-                    ps.execute();
-                } catch (PSQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "could not parse [value='', as=DOUBLE, index=0]");
-                }
-            }
-        });
-    }
-
     @Test
     public void testBindVariableIsNotNullStringTransfer() throws Exception {
         testBindVariableIsNotNull(false);
@@ -6334,6 +6284,7 @@ create table tab as (
                 connection.prepareStatement("insert into tab1 (value, ts) values (100, 0)").execute();
                 connection.prepareStatement("insert into tab1 (value, ts) values (null, 1)").execute();
                 connection.commit();
+                connection.setAutoCommit(true);
 
                 sink.clear();
                 try (PreparedStatement ps = connection.prepareStatement("tab1 where null is null")) {
@@ -6424,9 +6375,33 @@ create table tab as (
                 try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
                     ps.setString(1, "");
                     try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                        "100,1970-01-01 00:00:00.0\n" +
+                                        "null,1970-01-01 00:00:00.000001\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where value is ?")) {
+                    ps.setString(1, "NULL");
+                    try (ResultSet ignore1 = ps.executeQuery()) {
                         Assert.fail();
                     } catch (PSQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "could not parse [value='', as=DOUBLE, index=0]");
+                        TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
+
+                    }
+                }
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
+                    ps.setString(1, "cha-cha-cha");
+                    try (ResultSet ignore1 = ps.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "could not parse [value='cha-cha-cha', as=DOUBLE, index=0]");
 
                     }
                 }
@@ -6434,7 +6409,7 @@ create table tab as (
                 sink.clear();
                 try (PreparedStatement ps = connection.prepareStatement("tab1 where null is ?")) {
                     ps.setDouble(1, Double.NaN);
-                    try (ResultSet rs = ps.executeQuery()) {
+                    try (ResultSet ignore1 = ps.executeQuery()) {
                         Assert.fail();
                     } catch (PSQLException e) {
                         TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
@@ -6473,6 +6448,7 @@ create table tab as (
                 connection.prepareStatement("insert into tab1 (value, ts) values (100, 0)").execute();
                 connection.prepareStatement("insert into tab1 (value, ts) values (null, 1)").execute();
                 connection.commit();
+                connection.setAutoCommit(true);
 
                 sink.clear();
                 try (PreparedStatement ps = connection.prepareStatement("tab1 where 3 is not null")) {
@@ -6570,17 +6546,19 @@ create table tab as (
                 sink.clear();
                 try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
                     ps.setString(1, "");
-                    try (ResultSet ignore1 = ps.executeQuery()) {
-                        Assert.fail();
-                    } catch (PSQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "could not parse [value='', as=DOUBLE, index=0]");
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n",
+                                sink,
+                                rs
+                        );
                     }
                 }
 
                 sink.clear();
                 try (PreparedStatement ps = connection.prepareStatement("tab1 where null is not ?")) {
                     ps.setDouble(1, Double.NaN);
-                    try (ResultSet rs = ps.executeQuery()) {
+                    try (ResultSet ignore1 = ps.executeQuery()) {
                         Assert.fail();
                     } catch (PSQLException e) {
                         TestUtils.assertContains(e.getMessage(), "IS NOT must be followed by NULL");

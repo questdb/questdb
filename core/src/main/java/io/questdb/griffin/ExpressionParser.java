@@ -764,22 +764,24 @@ class ExpressionParser {
                             // <literal or constant> IS NULL     -> <literal or constant> = NULL
                             // <literal or constant> IS NOT NULL -> <literal or constant> != NULL
                             if (prevBranch == BRANCH_LITERAL || prevBranch == BRANCH_CONSTANT || prevBranch == BRANCH_RIGHT_PARENTHESIS) {
-                                final CharSequence tokAfterIsTok = SqlUtil.fetchNext(lexer);
-                                if (tokAfterIsTok == null) {
+                                final CharSequence isTok = GenericLexer.immutableOf(tok);
+                                tok = SqlUtil.fetchNext(lexer);
+                                if (tok == null) {
                                     throw SqlException.$(position, "IS must be followed by [NOT] NULL");
                                 }
-                                if (SqlKeywords.isNotKeyword(tokAfterIsTok)) {
-                                    int notTokPosition = lexer.lastTokenPosition();
-                                    CharSequence peekNullTok = SqlUtil.fetchNext(lexer);
-                                    if (peekNullTok != null && SqlKeywords.isNullKeyword(peekNullTok)) {
+                                if (SqlKeywords.isNotKeyword(tok)) {
+                                    final int notTokPosition = lexer.lastTokenPosition();
+                                    final CharSequence notTok = GenericLexer.immutableOf(tok);
+                                    tok = SqlUtil.fetchNext(lexer);
+                                    if (tok != null && SqlKeywords.isNullKeyword(tok)) {
+                                        lexer.backTo(notTokPosition + 3, notTok);
                                         tok = "!=";
-                                        lexer.backTo(notTokPosition + 3, tokAfterIsTok);
                                     } else {
                                         throw SqlException.$(position, "IS NOT must be followed by NULL");
                                     }
-                                } else if (SqlKeywords.isNullKeyword(tokAfterIsTok)) {
+                                } else if (SqlKeywords.isNullKeyword(tok)) {
+                                    lexer.backTo(position + 2, isTok);
                                     tok = "=";
-                                    lexer.backTo(position + 2, tok);
                                 } else {
                                     throw SqlException.$(position, "IS must be followed by NULL");
                                 }

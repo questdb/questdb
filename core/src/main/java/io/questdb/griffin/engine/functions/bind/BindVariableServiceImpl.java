@@ -969,28 +969,28 @@ public class BindVariableServiceImpl implements BindVariableService {
                     ((CharBindVariable) function).value = (char) (Chars.nonEmpty(value) ? Numbers.parseShort(value) : 0);
                     break;
                 case ColumnType.INT:
-                    ((IntBindVariable) function).value = value != null ? Numbers.parseInt(value) : Numbers.INT_NaN;
+                    ((IntBindVariable) function).value = Chars.nonEmpty(value) ? Numbers.parseInt(value) : Numbers.INT_NaN;
                     break;
                 case ColumnType.LONG:
-                    ((LongBindVariable) function).value = value != null ? Numbers.parseLong(value) : Numbers.LONG_NaN;
+                    ((LongBindVariable) function).value = Chars.nonEmpty(value) ? Numbers.parseLong(value) : Numbers.LONG_NaN;
                     break;
                 case ColumnType.TIMESTAMP:
-                    ((TimestampBindVariable) function).value = value != null ? parseTimestamp(value) : Numbers.LONG_NaN;
+                    ((TimestampBindVariable) function).value = Chars.nonEmpty(value) ? parseTimestamp(value) : Numbers.LONG_NaN;
                     break;
                 case ColumnType.DATE:
-                    ((DateBindVariable) function).value = value != null ? parseDate(value) : Numbers.LONG_NaN;
+                    ((DateBindVariable) function).value = Chars.nonEmpty(value) ? parseDate(value) : Numbers.LONG_NaN;
                     break;
                 case ColumnType.FLOAT:
-                    ((FloatBindVariable) function).value = value != null ? Numbers.parseFloat(value) : Float.NaN;
+                    ((FloatBindVariable) function).value = Chars.nonEmpty(value) ? Numbers.parseFloat(value) : Float.NaN;
                     break;
                 case ColumnType.DOUBLE:
-                    ((DoubleBindVariable) function).value = value != null ? Numbers.parseDouble(value) : Double.NaN;
+                    ((DoubleBindVariable) function).value = Chars.nonEmpty(value) ? Numbers.parseDouble(value) : Double.NaN;
                     break;
                 case ColumnType.STRING:
                     ((StrBindVariable) function).setValue(value);
                     break;
                 case ColumnType.LONG256:
-                    if (value != null) {
+                    if (Chars.nonEmpty(value)) {
                         Long256FromCharSequenceDecoder.decode(value, 0, value.length(), ((Long256BindVariable) function).value);
                     } else {
                         ((Long256BindVariable) function).value.copyFrom(Long256Impl.NULL_LONG256);
