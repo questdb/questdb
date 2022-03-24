@@ -25,11 +25,7 @@
 package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
 import jdk.internal.math.FDBigInteger;
-//#endif
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -323,7 +319,7 @@ public final class Numbers {
             sink.put("NaN");
             return;
         }
-        int bit = value == 0 ? 0 : 64 - Long.numberOfLeadingZeros(value - 1);
+        int bit = value == 0 ? 0 : 64 - Long.numberOfLeadingZeros(value);
         LongHexAppender[] array = pad ? longHexAppenderPad64 : longHexAppender;
         array[bit].append(sink, value);
     }
