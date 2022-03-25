@@ -693,7 +693,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "dst", "testing")) {
 
             TableWriter.Row row = writer.newRow(timestamp);
-            row.putLong(0, 1L);
             row.putInt(1, 1);
             row.append();
             writer.commit();
