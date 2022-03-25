@@ -107,7 +107,6 @@ public class AddLong256FunctionFactoryTest extends AbstractFunctionFactoryTest {
         for (int i = 0; i < 1000; i++) {
             BigInteger b1 = new BigInteger(256, rnd);
             BigInteger b2 = new BigInteger(256, rnd);
-            System.err.println(b1.toString(16));
             CharSequence expTok = b1.add(b2).toString(16);
             Long256 expected = Numbers.parseLong256(expTok, expTok.length(), new Long256Impl());
 
