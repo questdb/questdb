@@ -35,6 +35,8 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.std.*;
 
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+
 public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory {
     private static final int FILTER_KEY_IS_NULL = 0;
     private static final int ITEMS_PER_OUT_ARRAY_SHIFT = 2;
@@ -105,7 +107,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext);
+        PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
         int groupByIndexKey = symbolFilter.getSymbolFilterKey();
         if (groupByIndexKey == SymbolMapReader.VALUE_NOT_FOUND) {
             Misc.free(pageFrameCursor);

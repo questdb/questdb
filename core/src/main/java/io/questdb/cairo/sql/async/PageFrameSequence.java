@@ -151,7 +151,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             RecordCursorFactory base,
             SqlExecutionContext executionContext,
             Sequence collectSubSeq,
-            T atom
+            T atom,
+            int order
     ) throws SqlException {
 
         this.sqlExecutionContext = executionContext;
@@ -166,7 +167,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
         final Rnd rnd = executionContext.getAsyncRandom();
         try {
-            final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext);
+            final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, order);
             final int frameCount = setupAddressCache(base, pageFrameCursor);
 
             // this method sets a lot of state of the page sequence

@@ -24,6 +24,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.std.Os;
 import org.junit.Test;
 
 /**
@@ -224,6 +225,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
     @Test
     public void testOrderByDescWithStringFilter() throws Exception {
         testOrderByWithFilter("string", ORDER_DESC);
+        Os.sleep(1000);
     }
 
     @Test

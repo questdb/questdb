@@ -38,6 +38,8 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
+
 public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
     private static final PageFrameReducer REDUCER_ASC = AsyncFilteredRecordCursorFactory::filterAsc;
     private static final PageFrameReducer REDUCER_DESC = AsyncFilteredRecordCursorFactory::filterDesc;
@@ -81,15 +83,17 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        execute(executionContext, collectSubSeq);
         final long rowsRemaining;
+        final int order;
         if (limitHiFunction != null) {
             limitHiFunction.init(frameSequence.getSymbolTableSource(), executionContext);
             rowsRemaining = limitHiFunction.getLong(null);
+            order = rowsRemaining > 0 ? ORDER_ASC : ORDER_DESC;
         } else {
             rowsRemaining = Long.MAX_VALUE;
+            order = ORDER_ANY;
         }
-        cursor.of(collectSubSeq, frameSequence, rowsRemaining);
+        cursor.of(collectSubSeq, execute(executionContext, collectSubSeq, ORDER_ANY), rowsRemaining);
         return cursor;
     }
 
@@ -99,8 +103,8 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public PageFrameSequence<Function> execute(SqlExecutionContext executionContext, Sequence collectSubSeq) throws SqlException {
-        return frameSequence.dispatch(base, executionContext, collectSubSeq, filter);
+    public PageFrameSequence<Function> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int direction) throws SqlException {
+        return frameSequence.dispatch(base, executionContext, collectSubSeq, filter, direction);
     }
 
     @Override

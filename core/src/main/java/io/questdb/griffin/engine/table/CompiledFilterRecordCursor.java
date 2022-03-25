@@ -24,18 +24,21 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
 import io.questdb.jit.CompiledFilter;
-import io.questdb.std.*;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rows;
 
 import java.util.function.BooleanSupplier;
+
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
 
 class CompiledFilterRecordCursor implements RecordCursor {
 
@@ -97,7 +100,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
         this.columns = columns;
         this.metadata = factory.getMetadata();
         pageAddressCache.of(metadata);
-        this.pageFrameCursor = factory.getPageFrameCursor(executionContext);
+        this.pageFrameCursor = factory.getPageFrameCursor(executionContext, ORDER_ANY);
         recordA.of(pageFrameCursor, pageAddressCache);
         recordB.of(pageFrameCursor, pageAddressCache);
         this.next = nextPage;

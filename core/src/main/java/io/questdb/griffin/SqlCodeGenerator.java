@@ -65,6 +65,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
 import static io.questdb.griffin.model.ExpressionNode.LITERAL;
@@ -749,7 +750,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 try {
                     int jitOptions;
                     final ObjList<Function> bindVarFunctions = new ObjList<>();
-                    try (PageFrameCursor cursor = factory.getPageFrameCursor(executionContext)) {
+                    try (PageFrameCursor cursor = factory.getPageFrameCursor(executionContext, ORDER_ANY)) {
                         final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
                         jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), cursor, bindVarFunctions);
                         jitOptions = jitIRSerializer.serialize(filter, forceScalar, enableJitDebug, enableJitNullChecks);
@@ -1338,9 +1339,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             final LowerCaseCharSequenceIntHashMap orderBy = model.getOrderHash();
             final ObjList<CharSequence> columnNames = orderBy.keys();
-            final int size = columnNames.size();
+            final int orderByColumnCount = columnNames.size();
 
-            if (size > 0) {
+            if (orderByColumnCount > 0) {
 
                 final RecordMetadata metadata = recordCursorFactory.getMetadata();
                 final int timestampIndex = metadata.getTimestampIndex();
@@ -1350,7 +1351,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 // column index sign indicates direction
                 // therefore 0 index is not allowed
-                for (int i = 0; i < size; i++) {
+                for (int i = 0; i < orderByColumnCount; i++) {
                     final CharSequence column = columnNames.getQuick(i);
                     int index = metadata.getColumnIndexQuiet(column);
 
@@ -1390,7 +1391,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     CharSequence column = columnNames.getQuick(0);
                     int index = metadata.getColumnIndexQuiet(column);
                     if (index == timestampIndex) {
-                        if (size == 1) {
+                        if (orderByColumnCount == 1) {
                             if (orderBy.get(column) == QueryModel.ORDER_DIRECTION_ASCENDING) {
                                 return recordCursorFactory;
                             } else if (orderBy.get(column) == ORDER_DIRECTION_DESCENDING &&
@@ -3308,8 +3309,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private Function toLimitFunction(
             SqlExecutionContext executionContext,
-                                     ExpressionNode limit,
-                                     ConstantFunction defaultValue
+            ExpressionNode limit,
+            ConstantFunction defaultValue
     ) throws SqlException {
         if (limit == null) {
             return defaultValue;

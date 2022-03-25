@@ -43,6 +43,8 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
+
 public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
 
     @BeforeClass
@@ -237,7 +239,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
 
                 Assert.assertEquals("io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory", f.getClass().getName());
                 SCSequence subSeq = new SCSequence();
-                PageFrameSequence<?> frameSequence = f.execute(sqlExecutionContext, subSeq);
+                PageFrameSequence<?> frameSequence = f.execute(sqlExecutionContext, subSeq, ORDER_ANY);
 
                 final RingQueue<PageFrameReduceTask> queue = frameSequence.getPageFrameReduceQueue();
                 int frameCount = 0;

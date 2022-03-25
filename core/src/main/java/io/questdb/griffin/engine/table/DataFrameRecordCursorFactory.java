@@ -80,8 +80,8 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     }
 
     @Override
-    public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
-        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext);
+    public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
+        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, order);
         if (pageFrameCursor != null) {
             return pageFrameCursor.of(dataFrameCursor);
         } else if (framingSupported) {

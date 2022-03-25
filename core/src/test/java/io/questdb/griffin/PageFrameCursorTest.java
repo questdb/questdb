@@ -33,6 +33,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+
 public class PageFrameCursorTest extends AbstractGriffinTest {
     @Test
     public void testSimple() throws Exception {
@@ -61,7 +63,7 @@ public class PageFrameCursorTest extends AbstractGriffinTest {
                     try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
 
                         // test that we can read string column without using index
-                        try (PageFrameCursor pageFrameCursor = factory.getPageFrameCursor(sqlExecutionContext)) {
+                        try (PageFrameCursor pageFrameCursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
                             PageFrame frame;
                             while ((frame = pageFrameCursor.next()) != null) {
                                 long varAddress = frame.getPageAddress(1);
@@ -134,7 +136,7 @@ public class PageFrameCursorTest extends AbstractGriffinTest {
                     try (RecordCursorFactory factory = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
 
                         // test that we can read string column without using index
-                        try (PageFrameCursor pageFrameCursor = factory.getPageFrameCursor(sqlExecutionContext)) {
+                        try (PageFrameCursor pageFrameCursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
                             PageFrame frame;
                             while ((frame = pageFrameCursor.next()) != null) {
                                 long size = frame.getPageSize(1);

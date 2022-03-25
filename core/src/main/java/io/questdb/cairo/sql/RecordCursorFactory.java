@@ -93,11 +93,11 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
      */
     RecordMetadata getMetadata();
 
-    default PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
+    default PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         return null;
     }
 
-    default PageFrameSequence<?> execute(SqlExecutionContext executionContext, Sequence collectSubSeq) throws SqlException {
+    default PageFrameSequence<?> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int direction) throws SqlException {
         return null;
     }
 
