@@ -373,14 +373,11 @@ public class HttpServer implements Closeable {
 
     private static class HttpContextFactory implements IOContextFactory<HttpConnectionContext>, Closeable, EagerThreadSetup {
         private final ThreadLocal<WeakObjectPool<HttpConnectionContext>> contextPool;
-        private final int connectionPoolMaxCapacity;
         private boolean closed = false;
 
         public HttpContextFactory(HttpContextConfiguration configuration, Metrics metrics) {
-            final int connectionPoolInitialCapacity = configuration.getConnectionPoolInitialCapacity();
-            connectionPoolMaxCapacity = 2 * connectionPoolInitialCapacity;
-            contextPool = new ThreadLocal<>(() -> new WeakObjectPool<>(() ->
-                    new HttpConnectionContext(configuration, metrics), connectionPoolInitialCapacity));
+            this.contextPool = new ThreadLocal<>(() -> new WeakObjectPool<>(() ->
+                    new HttpConnectionContext(configuration, metrics), configuration.getConnectionPoolInitialCapacity()));
         }
 
         @Override
@@ -395,7 +392,7 @@ public class HttpServer implements Closeable {
 
         @Override
         public void done(HttpConnectionContext context) {
-            if (closed || contextPool.get().currentSize() > connectionPoolMaxCapacity) {
+            if (closed) {
                 Misc.free(context);
             } else {
                 context.of(-1, null);
