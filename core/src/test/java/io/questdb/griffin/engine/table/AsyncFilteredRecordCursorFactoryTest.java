@@ -124,6 +124,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    // todo: this test hang once on "run all tests", no idea why, could not reproduce again
     public void testPositiveLimit() throws Exception {
         withPool((engine, compiler, sqlExecutionContext) -> {
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(20000000)) timestamp(t) partition by hour", sqlExecutionContext);
