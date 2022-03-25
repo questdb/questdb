@@ -43,12 +43,12 @@ import java.util.ArrayDeque;
  */
 abstract class WeakObjectPoolBase<T> implements Closeable {
     // package private for testing
-    final ArrayDeque<T> cache;
+    final ArrayDeque<T> cache = new ArrayDeque<>();
+
     private final int initSize;
     private final int maxSize;
 
     public WeakObjectPoolBase(int initSize) {
-        this.cache = new ArrayDeque<>();
         this.initSize = initSize;
         this.maxSize = 2 * initSize;
     }
