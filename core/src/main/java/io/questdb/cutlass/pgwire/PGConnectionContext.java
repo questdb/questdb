@@ -1699,11 +1699,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 }
             }
         } catch (SqlException e) {
-            //if statement is named or portal then we've to add it to typesAndSelect
             if (typesAndSelect != null) {
                 Misc.free(typesAndSelect);
                 typesAndSelect = null;
-                //alternative would be to add typesAndSelect to cache  
             }
             throw e;
         }
