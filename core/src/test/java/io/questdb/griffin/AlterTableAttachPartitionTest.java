@@ -625,11 +625,22 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         }
     }
 
-    private void copyAttachPartition(TableModel src, TableModel dst, int countAjdustment, String... partitionList) throws SqlException, NumericException, IOException {
-        copyAttachPartition(src, dst, countAjdustment, false, partitionList);
+    private void copyAttachPartition(
+            TableModel src,
+            TableModel dst,
+            int countAdjustment,
+            String... partitionList
+    ) throws SqlException, NumericException, IOException {
+        copyAttachPartition(src, dst, countAdjustment, false, partitionList);
     }
 
-    private void copyAttachPartition(TableModel src, TableModel dst, int countAjdustment, boolean skipCopy, String... partitionList) throws IOException, SqlException, NumericException {
+    private void copyAttachPartition(
+            TableModel src,
+            TableModel dst,
+            int countAdjustment,
+            boolean skipCopy,
+            String... partitionList
+    ) throws IOException, SqlException, NumericException {
         StringBuilder partitions = new StringBuilder();
         for (int i = 0; i < partitionList.length; i++) {
             if (i > 0) {
@@ -670,7 +681,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
         TestUtils.assertEquals(
                 "cnt\n" +
-                        (-countAjdustment) + "\n",
+                        (-countAdjustment) + "\n",
                 executeSql("with t2 as (select 1 as id, count() as cnt from dst)\n" +
                         withClause +
                         "select t1.cnt - t2.cnt as cnt\n" +
@@ -693,7 +704,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "dst", "testing")) {
 
             TableWriter.Row row = writer.newRow(timestamp);
-            row.putLong(0, 1L);
             row.putInt(1, 1);
             row.append();
             writer.commit();
@@ -701,7 +711,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
         TestUtils.assertEquals(
                 "cnt\n" +
-                        (-1 - countAjdustment) + "\n",
+                        (-1 - countAdjustment) + "\n",
                 executeSql("with " +
                         "t2 as (select 1 as id, count() as cnt from dst)\n" +
                         withClause +
