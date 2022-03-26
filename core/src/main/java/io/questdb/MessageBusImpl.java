@@ -65,10 +65,6 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence latestByPubSeq;
     private final MCSequence latestBySubSeq;
 
-    private final RingQueue<TableWriterTask> tableWriterCommandQueue;
-    private final MPSequence tableWriterCommandPubSeq;
-    private final FanOut tableWriterCommandSubSeq;
-
     private final RingQueue<TableWriterTask> tableWriterEventQueue;
     private final MPSequence tableWriterEventPubSeq;
     private final FanOut tableWriterEventSubSeq;
@@ -141,7 +137,7 @@ public class MessageBusImpl implements MessageBus {
                 MemoryTag.NATIVE_REPL
 
         );
-        this.tableWriterEventPubSeq = new MPSequence(this.tableWriterCommandQueue.getCycle());
+        this.tableWriterEventPubSeq = new MPSequence(this.tableWriterEventQueue.getCycle());
         this.tableWriterEventSubSeq = new FanOut();
         this.tableWriterEventPubSeq.then(this.tableWriterEventSubSeq).then(this.tableWriterEventPubSeq);
 

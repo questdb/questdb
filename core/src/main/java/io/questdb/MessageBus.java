@@ -37,7 +37,6 @@ public interface MessageBus extends Closeable {
     @Override
     default void close() {
         Misc.free(getO3PartitionQueue());
-        Misc.free(getTableWriterCommandQueue());
         Misc.free(getTableWriterEventQueue());
         for (int i = 0, n = getPageFrameReduceShardCount(); i < n; i++) {
             Misc.free(getPageFrameReduceQueue(i));
