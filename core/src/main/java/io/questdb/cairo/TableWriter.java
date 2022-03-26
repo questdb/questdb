@@ -2430,6 +2430,7 @@ public class TableWriter implements Closeable {
             final long sortedTimestampsAddr = o3TimestampMem.getAddress();
 
             // ensure there is enough size
+            assert o3TimestampMem.getAppendOffset() == o3RowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
             if (o3RowCount > 600 || !o3QuickSortEnabled) {
                 o3TimestampMemCpy.jumpTo(o3TimestampMem.getAppendOffset());
                 Vect.radixSortLongIndexAscInPlace(sortedTimestampsAddr, o3RowCount, o3TimestampMemCpy.addressOf(0));
