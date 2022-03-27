@@ -192,6 +192,7 @@ public class TableUpdateDetails implements Closeable {
                 } catch (Throwable th) {
                     LOG.error().$("could not perform emergency rollback [table=").$(tableNameUtf16).$(", e=").$(th).I$();
                 }
+                throw CommitFailedException.instance(ex);
             }
         }
     }
@@ -219,7 +220,19 @@ public class TableUpdateDetails implements Closeable {
         }
         LOG.debug().$("max-uncommitted-rows commit with lag [").$(tableNameUtf16).I$();
         nextCommitTime = millisecondClock.getTicks() + writer.getCommitInterval();
-        writer.commitWithLag();
+
+        try {
+            writer.commitWithLag();
+        } catch (Throwable th) {
+            LOG.error()
+                    .$("could not commit line protocol measurement [tableName=").$(writer.getTableName())
+                    .$(", message=").$(th.getMessage())
+                    .$(th)
+                    .I$();
+            writer.rollback();
+            throw CommitFailedException.instance(th);
+        }
+
         // Tick after commit.
         writer.tick(false);
     }

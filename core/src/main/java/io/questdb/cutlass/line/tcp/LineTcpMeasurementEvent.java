@@ -24,10 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -208,10 +205,13 @@ class LineTcpMeasurementEvent implements Closeable {
             }
             row.append();
             tableUpdateDetails.commitIfMaxUncommittedRowsCountReached();
+        } catch (CommitFailedException commitFailedException) {
+            throw commitFailedException;
         } catch (Throwable th) {
             LOG.error()
                     .$("could not write line protocol measurement [tableName=").$(tableUpdateDetails.getTableNameUtf16())
                     .$(", message=").$(th.getMessage())
+                    .$(th)
                     .I$();
             if (row != null) {
                 row.cancel();
