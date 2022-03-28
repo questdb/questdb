@@ -45,6 +45,8 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+
 public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory {
 
     private static final PageFrameReducer REDUCER = AsyncJitFilteredRecordCursorFactory::filter;
@@ -91,7 +93,8 @@ public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory 
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         cursor.of(
                 collectSubSeq,
-                execute(executionContext, collectSubSeq)
+                execute(executionContext, collectSubSeq, ORDER_ASC),
+                Long.MAX_VALUE
         );
         return this.cursor;
     }
@@ -102,8 +105,8 @@ public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory 
     }
 
     @Override
-    public PageFrameSequence<FilterAtom> execute(SqlExecutionContext executionContext, Sequence collectSubSeq) throws SqlException {
-        return frameSequence.dispatch(base, executionContext, collectSubSeq, atom);
+    public PageFrameSequence<FilterAtom> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int order) throws SqlException {
+        return frameSequence.dispatch(base, executionContext, collectSubSeq, atom, order);
     }
 
     @Override
