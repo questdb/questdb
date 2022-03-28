@@ -53,22 +53,26 @@ public class TableWriterMetadata extends BaseRecordMetadata {
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;
+        columnNameIndexMap.clear();
         // don't create strings in this loop, we already have them in columnNameIndexMap
         for (int i = 0; i < columnCount; i++) {
             CharSequence name = metaMem.getStr(offset);
             assert name != null;
             int type = TableUtils.getColumnType(metaMem, i);
+            String nameStr = Chars.toString(name);
             columnMetadata.add(
                     new TableColumnMetadata(
-                            Chars.toString(name),
+                            nameStr,
                             TableUtils.getColumnHash(metaMem, i),
                             type,
                             TableUtils.isColumnIndexed(metaMem, i),
                             TableUtils.getIndexBlockCapacity(metaMem, i),
                             true,
-                            null
+                            null,
+                            i
                     )
             );
+            columnNameIndexMap.put(nameStr, i);
             if (ColumnType.isSymbol(type)) {
                 symbolMapCount++;
             }
@@ -79,6 +83,16 @@ public class TableWriterMetadata extends BaseRecordMetadata {
 
     public long getCommitLag() {
         return commitLag;
+    }
+
+    public int getDenseColumnCount() {
+        int count = 0;
+        for (int i = 0; i < columnCount; i++) {
+            if (columnMetadata.getQuick(i).getType() > 0) {
+                count++;
+            }
+        }
+        return count;
     }
 
     public void setCommitLag(long micros) {
@@ -121,7 +135,21 @@ public class TableWriterMetadata extends BaseRecordMetadata {
         version = ColumnType.VERSION;
     }
 
-    void addColumn(CharSequence name, long hash, int type, boolean indexFlag, int indexValueBlockCapacity) {
+    public GenericRecordMetadata copyDense() {
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        for (int i = 0; i < columnCount; i++) {
+            TableColumnMetadata column = columnMetadata.getQuick(i);
+            if (column.getType() >= 0) {
+                metadata.add(column);
+                if (i == timestampIndex) {
+                    metadata.setTimestampIndex(metadata.getColumnCount() - 1);
+                }
+            }
+        }
+        return metadata;
+    }
+
+    void addColumn(CharSequence name, long hash, int type, boolean indexFlag, int indexValueBlockCapacity, int columnIndex) {
         String str = name.toString();
         columnNameIndexMap.put(str, columnMetadata.size());
         columnMetadata.add(
@@ -132,7 +160,8 @@ public class TableWriterMetadata extends BaseRecordMetadata {
                         indexFlag,
                         indexValueBlockCapacity,
                         true,
-                        null
+                        null,
+                        columnIndex
                 )
         );
         columnCount++;
@@ -141,19 +170,20 @@ public class TableWriterMetadata extends BaseRecordMetadata {
         }
     }
 
-    void removeColumn(CharSequence name) {
-        int index = columnNameIndexMap.keyIndex(name);
-        int columnIndex = columnNameIndexMap.valueAt(index);
-        if (ColumnType.isSymbol(columnMetadata.getQuick(columnIndex).getType())) {
+    void removeColumn(int columnIndex) {
+        TableColumnMetadata deletedMeta = columnMetadata.getQuick(columnIndex);
+        if (ColumnType.isSymbol(deletedMeta.getType())) {
             symbolMapCount--;
         }
-        columnMetadata.remove(columnIndex);
-        columnNameIndexMap.removeAt(index);
-        columnCount--;
+        deletedMeta.markDeleted();
+        columnNameIndexMap.remove(deletedMeta.getName());
 
         // enumerate columns that would have moved up after column deletion
-        for (int i = columnIndex; i < columnCount; i++) {
-            columnNameIndexMap.put(columnMetadata.getQuick(i).getName(), i);
+        for (int i = columnIndex + 1; i < columnCount; i++) {
+            TableColumnMetadata columnMeta = columnMetadata.getQuick(i);
+            if (columnMeta.getType() > 0) {
+                columnNameIndexMap.put(columnMeta.getName(), i);
+            }
         }
     }
 

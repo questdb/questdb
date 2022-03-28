@@ -103,6 +103,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Closeable, Mutable {
             CairoConfiguration configuration,
             Path path,
             CharSequence name,
+            long columnNameTxn,
             MemoryMA columnMem,
             long columnTop
     ) {
@@ -112,6 +113,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Closeable, Mutable {
                     configuration,
                     path,
                     name,
+                    columnNameTxn,
                     configuration.getDataIndexKeyAppendPageSize(),
                     configuration.getDataIndexValueAppendPageSize()
             );
@@ -123,13 +125,14 @@ public class SymbolColumnIndexer implements ColumnIndexer, Closeable, Mutable {
     }
 
     @Override
-    public void configureWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnTop) {
+    public void configureWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long columnTop) {
         this.columnTop = columnTop;
         try {
             this.writer.of(
                     configuration,
                     path,
                     name,
+                    columnNameTxn,
                     configuration.getDataIndexKeyAppendPageSize(),
                     configuration.getDataIndexValueAppendPageSize()
             );

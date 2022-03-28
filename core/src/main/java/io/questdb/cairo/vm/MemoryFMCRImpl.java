@@ -22,11 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cairo.vm;
 
-import java.io.Closeable;
+import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
 
-public interface CleanClosable extends Closeable {
+public class MemoryFMCRImpl extends MemoryFCRImpl implements MemoryMR {
     @Override
-    void close();
+    public boolean isMapped(long offset, long len) {
+        return false;
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
+        throw new UnsupportedOperationException();
+    }
 }

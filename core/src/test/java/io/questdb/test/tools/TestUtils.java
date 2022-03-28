@@ -628,15 +628,6 @@ public final class TestUtils {
         }
     }
 
-    public static boolean drainEngineCmdQueue(CairoEngine engine) {
-        boolean useful = false;
-        while (engine.tick()) {
-            useful = true;
-            // drain the engine queue
-        }
-        return useful;
-    }
-
     @NotNull
     public static Rnd generateRandom(Log log) {
         long s0 = System.nanoTime();
@@ -788,6 +779,15 @@ public final class TestUtils {
         for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
             Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
             Assert.assertEquals("Column type " + i, metadataExpected.getColumnType(i), metadataActual.getColumnType(i));
+        }
+    }
+
+    public static void assertEquals(LongList expected, LongList actual) {
+        Assert.assertEquals(expected.size(), actual.size());
+        for (int i = 0, n = expected.size(); i < n; i++) {
+            if (expected.getQuick(i) != actual.getQuick(i)) {
+                Assert.assertEquals("index " + i, expected.getQuick(i), actual.getQuick(i));
+            }
         }
     }
 

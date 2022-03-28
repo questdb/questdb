@@ -25,9 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.ObjIntHashMap;
-import io.questdb.std.Os;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -35,6 +33,9 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -61,7 +62,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bin:BINARY\n" +
                 "date:DATE\n" +
                 "xyz:STRING\n";
-        assertThat(expected, (w) -> w.addColumn("xyz", ColumnType.STRING), 12);
+        assertThat(expected, 12, (w) -> w.addColumn("xyz", ColumnType.STRING));
     }
 
     @Test
@@ -118,6 +119,28 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddRemoveAddRemove() throws Exception {
+        final String expected = "short:SHORT\n" +
+                "byte:BYTE\n" +
+                "double:DOUBLE\n" +
+                "float:FLOAT\n" +
+                "long:LONG\n" +
+                "str:STRING\n" +
+                "sym:SYMBOL\n" +
+                "bool:BOOLEAN\n" +
+                "bin:BINARY\n" +
+                "date:DATE\n" +
+                "int:INT\n";
+
+        assertThat(expected, 11,
+                w -> w.addColumn("bin2", ColumnType.BINARY),
+                w -> w.removeColumn("bin2"),
+                w -> w.removeColumn("int"),
+                w -> w.addColumn("int", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testColumnIndex() {
         ObjIntHashMap<String> expected = new ObjIntHashMap<>();
         expected.put("int", 0);
@@ -154,12 +177,11 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bin:BINARY\n" +
                 "date:DATE\n" +
                 "xyz:STRING\n";
-        assertThat(expected, (w) -> {
+        assertThat(expected, 10, (w) -> {
             w.removeColumn("double");
             w.removeColumn("str");
             w.addColumn("xyz", ColumnType.STRING);
-
-        }, 10);
+        });
     }
 
     @Test
@@ -170,7 +192,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     @Test
     public void testRemoveAllColumns() throws Exception {
         final String expected = "";
-        assertThat(expected, (w) -> {
+        assertThat(expected, 0, (w) -> {
             w.removeColumn("int");
             w.removeColumn("short");
             w.removeColumn("byte");
@@ -182,7 +204,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
             w.removeColumn("bin");
             w.removeColumn("date");
             w.removeColumn("double");
-        }, 0);
+        });
     }
 
     @Test
@@ -198,10 +220,10 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bin:BINARY\n" +
                 "date:DATE\n" +
                 "str:STRING\n";
-        assertThat(expected, (w) -> {
-            w.removeColumn("str");
-            w.addColumn("str", ColumnType.STRING);
-        }, 11);
+        assertThat(expected, 11,
+                w -> w.removeColumn("str"),
+                w -> w.addColumn("str", ColumnType.STRING)
+        );
     }
 
     @Test
@@ -217,14 +239,14 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "str:STRING\n" +
                 "short:INT\n";
 
-        assertThat(expected, (w) -> {
-            w.removeColumn("short");
-            w.removeColumn("str");
-            w.removeColumn("int");
-            w.addColumn("str", ColumnType.STRING);
-            // change column type
-            w.addColumn("short", ColumnType.INT);
-        }, 10);
+        assertThat(expected, 10,
+                w -> w.removeColumn("short"),
+                w -> w.removeColumn("str"),
+                w -> w.removeColumn("int"),
+                w -> w.addColumn("str", ColumnType.STRING),
+                // change column type
+                w -> w.addColumn("short", ColumnType.INT)
+        );
     }
 
     @Test
@@ -238,10 +260,10 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
                 "date:DATE\n";
-        assertThat(expected, (w) -> {
-            w.removeColumn("double");
-            w.removeColumn("float");
-        }, 9);
+        assertThat(expected, 9,
+                w -> w.removeColumn("double"),
+                w -> w.removeColumn("float")
+        );
     }
 
     @Test
@@ -255,10 +277,10 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "sym:SYMBOL\n" +
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n";
-        assertThat(expected, (w) -> {
-            w.removeColumn("date");
-            w.removeColumn("int");
-        }, 9);
+        assertThat(expected, 9,
+                w -> w.removeColumn("date"),
+                w -> w.removeColumn("int")
+        );
     }
 
     @Test
@@ -274,7 +296,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                         "bool:BOOLEAN\n" +
                         "bin:BINARY\n" +
                         "date:DATE\n";
-        assertThat(expected, (w) -> w.removeColumn("int"), 10);
+        assertThat(expected, 10, (w) -> w.removeColumn("int"));
     }
 
     @Test
@@ -289,7 +311,41 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "sym:SYMBOL\n" +
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n";
-        assertThat(expected, (w) -> w.removeColumn("date"), 10);
+        assertThat(expected, 10, (w) -> w.removeColumn("date"));
+    }
+
+    @Test
+    public void testRemoveRandomColumns() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        final String allColumns = "int:INT\n" +
+                "short:SHORT\n" +
+                "byte:BYTE\n" +
+                "double:DOUBLE\n" +
+                "float:FLOAT\n" +
+                "long:LONG\n" +
+                "str:STRING\n" +
+                "sym:SYMBOL\n" +
+                "bool:BOOLEAN\n" +
+                "bin:BINARY\n" +
+                "date:DATE\n";
+
+        List<String> lines = new ArrayList<>(Arrays.asList(allColumns.split("\n")));
+
+        while (lines.size() > 0) {
+            int removeIndex = rnd.nextInt() % lines.size();
+            if (removeIndex >= 0 && removeIndex < lines.size()) {
+                String line = lines.get(removeIndex);
+                String name = line.substring(0, line.indexOf(':'));
+
+                lines.remove(removeIndex);
+                String expected = String.join("\n", lines);
+                if (lines.size() > 0) {
+                    expected += "\n";
+                }
+
+                runWithManipulators(expected, lines.size(), w -> w.removeColumn(name));
+            }
+        }
     }
 
     @Test
@@ -304,10 +360,9 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bin:BINARY\n" +
                 "date:DATE\n";
 
-        assertThat(expected, (w) -> {
-            w.removeColumn("double");
-            w.removeColumn("str");
-        }, 9);
+        assertThat(expected, 9,
+                w -> w.removeColumn("double"),
+                w -> w.removeColumn("str"));
     }
 
     @Test
@@ -323,44 +378,59 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
                 "date:DATE\n";
-        assertThat(expected, (w) -> w.renameColumn("str", "str1"), 11);
+        assertThat(expected, 11, (w) -> w.renameColumn("str", "str1"));
     }
 
-    private void assertThat(String expected, ColumnManipulator manipulator, int columnCount) throws Exception {
+    private void assertThat(String expected, int columnCount, ColumnManipulator... manipulators) throws Exception {
+        // Test one by one
+        runWithManipulators(expected, columnCount, manipulators);
+        try (Path path = new Path()) {
+            engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "all");
+        }
+        CairoTestUtils.createAllTable(configuration, PartitionBy.DAY);
+
+        // Test in one go
+        runWithManipulators(expected, columnCount, w -> {
+            for (ColumnManipulator manipulator : manipulators) {
+                manipulator.restructure(w);
+            }
+        });
+    }
+
+    private void runWithManipulators(String expected, int columnCount, ColumnManipulator... manipulators) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(root).concat("all")) {
                 int tableId;
                 try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path.concat(TableUtils.META_FILE_NAME).$())) {
-
                     tableId = metadata.getId();
-                    long structVersion;
-                    try (TableWriter writer = new TableWriter(configuration, "all", metrics)) {
-                        manipulator.restructure(writer);
-                        structVersion = writer.getStructureVersion();
+                    for (ColumnManipulator manipulator : manipulators) {
+                        long structVersion;
+                        try (TableWriter writer = new TableWriter(configuration, "all", metrics)) {
+                            manipulator.restructure(writer);
+                            structVersion = writer.getStructureVersion();
+                        }
+                        long pTransitionIndex = metadata.createTransitionIndex(structVersion);
+                        try {
+                            metadata.applyTransitionIndex();
+                        } finally {
+                            TableUtils.freeTransitionIndex(pTransitionIndex);
+                        }
+                    }
+                    StringSink sink = new StringSink();
+                    for (int i = 0; i < metadata.getColumnCount(); i++) {
+                        sink.put(metadata.getColumnName(i)).put(':').put(ColumnType.nameOf(metadata.getColumnType(i))).put('\n');
                     }
 
-                    long pTransitionIndex = metadata.createTransitionIndex(structVersion);
-                    StringSink sink = new StringSink();
-                    try {
-                        metadata.applyTransitionIndex(pTransitionIndex);
-                        Assert.assertEquals(columnCount, metadata.getColumnCount());
-                        for (int i = 0; i < columnCount; i++) {
-                            sink.put(metadata.getColumnName(i)).put(':').put(ColumnType.nameOf(metadata.getColumnType(i))).put('\n');
+                    TestUtils.assertEquals(expected, sink);
+
+                    if (expected.length() > 0) {
+                        String[] lines = expected.split("\n");
+                        Assert.assertEquals(lines.length, metadata.columnCount);
+
+                        for (int i = 0; i < lines.length; i++) {
+                            int p = lines[i].indexOf(':');
+                            Assert.assertEquals(i, metadata.getColumnIndexQuiet(lines[i].substring(0, p)));
                         }
-
-                        TestUtils.assertEquals(expected, sink);
-
-                        if (expected.length() > 0) {
-                            String[] lines = expected.split("\n");
-                            Assert.assertEquals(columnCount, lines.length);
-
-                            for (int i = 0; i < columnCount; i++) {
-                                int p = lines[i].indexOf(':');
-                                Assert.assertEquals(i, metadata.getColumnIndexQuiet(lines[i].substring(0, p)));
-                            }
-                        }
-                    } finally {
-                        TableUtils.freeTransitionIndex(pTransitionIndex);
                     }
                 }
 

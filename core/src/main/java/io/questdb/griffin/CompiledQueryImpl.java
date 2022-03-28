@@ -246,6 +246,14 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(VACUUM);
     }
 
+    CompiledQuery ofSnapshotPrepare() {
+        return of(SNAPSHOT_DB_PREPARE);
+    }
+
+    CompiledQuery ofSnapshotComplete() {
+        return of(SNAPSHOT_DB_COMPLETE);
+    }
+
     private class AlterTableQueryFuture implements QueryFuture {
         private SCSequence eventSubSeq;
         private int status;
@@ -290,24 +298,45 @@ public class CompiledQueryImpl implements CompiledQuery {
          * Initializes instance of AlterTableQueryFuture with the parameters to wait for the new command
          * @param eventSubSeq - event sequence used to wait for the command execution to be signaled as complete
          */
-        public void of(SqlExecutionContext executionContext, SCSequence eventSubSeq) {
+        public void of(SqlExecutionContext executionContext, SCSequence eventSubSeq) throws SqlException {
             assert eventSubSeq != null : "event subscriber sequence must be provided";
 
             this.queryFutureUpdateListener = executionContext.getQueryFutureUpdateListener();
             // Set up execution wait sequence to listen to the Engine async writer events
             final FanOut writerEventFanOut = engine.getMessageBus().getTableWriterEventFanOut();
             writerEventFanOut.and(eventSubSeq);
-            this.eventSubSeq = eventSubSeq;
 
             try {
-                // Publish new command and get published Command Id
-                commandId = engine.publishTableWriterCommand(alterStatement);
-                queryFutureUpdateListener.reportStart(alterStatement.getTableName(), commandId);
-                status = QUERY_NO_RESPONSE;
-            } catch (Throwable ex) {
-                close();
-                throw ex;
+                this.eventSubSeq = eventSubSeq;
+                try {
+                    // Publish new command and get published Command Id
+                    commandId = publishTableWriterCommand(alterStatement);
+                    queryFutureUpdateListener.reportStart(alterStatement.getTableName(), commandId);
+                    status = QUERY_NO_RESPONSE;
+                } catch (TableStructureChangesException e) {
+                    assert false : "Should never throw TableStructureChangesException when executed with acceptStructureChange=true";
+                }
+            } catch (Throwable throwable) {
+                engine.getMessageBus().getTableWriterEventFanOut().remove(eventSubSeq);
+                throw throwable;
             }
+        }
+
+        private long publishTableWriterCommand(AlterStatement alterTableStatement) throws TableStructureChangesException, SqlException {
+            CharSequence tableName = alterTableStatement.getTableName();
+            final long commandCorrelationId = engine.getCommandCorrelationId();
+            alterTableStatement.setCommandCorrelationId(commandCorrelationId);
+            try (TableWriter writer = engine.getWriterOrPublishCommand(sqlExecutionContext.getCairoSecurityContext(), tableName, "alter table", alterTableStatement)) {
+                if (writer != null) {
+                    alterTableStatement.apply(writer, true);
+                }
+            }
+
+            LOG.info()
+                    .$("published ASYNC writer ALTER TABLE task [table=").$(tableName)
+                    .$(",instance=").$(commandCorrelationId)
+                    .I$();
+            return commandCorrelationId;
         }
 
         private int awaitWriterEvent(

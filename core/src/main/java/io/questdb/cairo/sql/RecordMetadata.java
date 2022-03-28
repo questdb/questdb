@@ -141,6 +141,14 @@ public interface RecordMetadata extends ColumnTypes {
     int getTimestampIndex();
 
     /**
+     * Writing index for the column
+     *
+     * @param columnIndex column index
+     * @return writing index
+     */
+    int getWriterIndex(int columnIndex);
+
+    /**
      * @param columnName name of the column
      * @return true if symbol table is static, otherwise false.
      */

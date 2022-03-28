@@ -69,8 +69,11 @@ public class O3OpenColumnTask {
     private long suffixHi;
     private long activeFixFd;
     private long activeVarFd;
+    private long colTopSinkAddr;
     private TableWriter tableWriter;
     private BitmapIndexWriter indexWriter;
+    private int columnIndex;
+    private long columnNameTxn;
 
     public long getActiveFixFd() {
         return activeFixFd;
@@ -80,12 +83,24 @@ public class O3OpenColumnTask {
         return activeVarFd;
     }
 
+    public long getColTopSinkAddr() {
+        return colTopSinkAddr;
+    }
+
     public AtomicInteger getColumnCounter() {
         return columnCounter;
     }
 
+    public int getColumnIndex() {
+        return columnIndex;
+    }
+
     public CharSequence getColumnName() {
         return columnName;
+    }
+
+    public long getColumnNameTxn() {
+        return columnNameTxn;
     }
 
     public int getColumnType() {
@@ -272,7 +287,10 @@ public class O3OpenColumnTask {
             long activeFixFd,
             long activeVarFd,
             TableWriter tableWriter,
-            BitmapIndexWriter indexWriter
+            BitmapIndexWriter indexWriter,
+            long colTopSinkAddr,
+            int columnIndex,
+            long columnNameTxn
     ) {
         this.openColumnMode = openColumnMode;
         this.pathToTable = pathToTable;
@@ -314,5 +332,8 @@ public class O3OpenColumnTask {
         this.activeVarFd = activeVarFd;
         this.tableWriter = tableWriter;
         this.indexWriter = indexWriter;
+        this.colTopSinkAddr = colTopSinkAddr;
+        this.columnIndex = columnIndex;
+        this.columnNameTxn = columnNameTxn;
     }
 }

@@ -26,7 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -51,7 +50,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     @BeforeClass
     public static void setUpStatic() {
         AbstractCairoTest.setUpStatic();
-        compiler = new SqlCompiler(engine);
+        compiler = new SqlCompiler(engine, null, snapshotAgent);
         bindVariableService = new BindVariableServiceImpl(configuration);
         sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                 .with(
@@ -313,7 +312,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            Assert.assertEquals(supportsRandomAccess, factory.recordCursorSupportsRandomAccess());
+            Assert.assertEquals("supports random access", supportsRandomAccess, factory.recordCursorSupportsRandomAccess());
             if (
                     assertCursor(
                             expected,
@@ -871,7 +870,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             int index = factory.getMetadata().getColumnIndexQuiet(expectedTimestamp);
             Assert.assertTrue("Column " + expectedTimestamp + " can't be found in metadata", index > -1);
             Assert.assertNotEquals("Expected non-negative value as timestamp index", -1, index);
-            Assert.assertEquals(index, factory.getMetadata().getTimestampIndex());
+            Assert.assertEquals("Timestamp column index", index, factory.getMetadata().getTimestampIndex());
             assertTimestampColumnValues(factory, sqlExecutionContext, expectAscendingOrder);
         }
     }

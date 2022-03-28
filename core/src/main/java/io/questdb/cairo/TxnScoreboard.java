@@ -168,7 +168,7 @@ public class TxnScoreboard implements Closeable, Mutable {
 
     private static long acquireTxn(long pTxnScoreboard, long txn) {
         assert pTxnScoreboard > 0;
-        LOG.debug().$("acquire [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
+        LOG.debug().$("acquire [p=").$(pTxnScoreboard).$(", txn=").$(fromInternalTxn(txn)).$(']').$();
         return acquireTxn0(pTxnScoreboard, txn);
     }
 
