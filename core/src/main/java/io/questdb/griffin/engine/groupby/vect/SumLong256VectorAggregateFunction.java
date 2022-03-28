@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.mp.SimpleSpinLock;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
@@ -37,8 +38,10 @@ import java.util.concurrent.atomic.LongAdder;
 import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
 public class SumLong256VectorAggregateFunction extends Long256Function implements VectorAggregateFunction {
+    private static final ThreadLocal<Long256Impl> partialSums = new ThreadLocal<>(Long256Impl::new);
     private final SimpleSpinLock lock = new SimpleSpinLock();
-    private final Long256Impl sum = new Long256Impl();
+    private final Long256Impl sumA = new Long256Impl();
+    private final Long256Impl sumB = new Long256Impl();
     private final LongAdder count = new LongAdder();
     private final int columnIndex;
     private final DistinctFunc distinctFunc;
@@ -60,11 +63,11 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
     public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
         if (address != 0) {
             final long count = addressSize / (Long.BYTES * 4);
-            Long256Impl value = sumLong256(address, count);
-            if (!value.equals(Long256Impl.NULL_LONG256)) {
+            Long256Impl value = sumLong256(partialSums.get(), address, count);
+            if (value != Long256Impl.NULL_LONG256) {
                 lock.lock();
                 try {
-                    Long256Util.add(sum, value);
+                    Long256Util.add(sumA, value);
                     this.count.increment();
                 } finally {
                     lock.unlock();
@@ -115,12 +118,13 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
 
     @Override
     public void wrapUp(long pRosti) {
-        Rosti.keyedIntSumLong256WrapUp(pRosti, valueOffset, sum.getLong0(), sum.getLong1(), sum.getLong2(), sum.getLong3(), count.sum());
+        Rosti.keyedIntSumLong256WrapUp(pRosti, valueOffset, sumA.getLong0(), sumA.getLong1(), sumA.getLong2(), sumA.getLong3(), count.sum());
     }
 
     @Override
     public void clear() {
-        sum.setAll(0, 0, 0, 0);
+        sumA.setAll(0, 0, 0, 0);
+        sumB.setAll(0, 0, 0, 0);
         count.reset();
     }
 
@@ -132,23 +136,25 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
 
     @Override
     public Long256 getLong256A(Record rec) {
-        Long256Impl res = new Long256Impl();
         if (count.sum() > 0) {
-            res.copyFrom(sum);
-            return res;
+            return sumA;
         }
         return Long256Impl.NULL_LONG256;
     }
 
     @Override
     public Long256 getLong256B(Record rec) {
-        return getLong256A(rec);
+        if (count.sum() > 0) {
+            sumB.copyFrom(sumA);
+            return sumB;
+        }
+        return Long256Impl.NULL_LONG256;
     }
 
-    private Long256Impl sumLong256(long address, long count) {
-        Long256Impl sum = new Long256Impl();
+    private Long256Impl sumLong256(Long256Impl sum, long address, long count) {
         boolean hasData = false;
         long offset = 0;
+        sum.setAll(0, 0, 0, 0);
         for (long i = 0; i < count; i++) {
             final long l0 = Unsafe.getUnsafe().getLong(address + offset);
             final long l1 = Unsafe.getUnsafe().getLong(address + offset + Long.BYTES);
