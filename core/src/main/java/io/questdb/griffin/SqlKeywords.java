@@ -662,6 +662,16 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 't';
     }
 
+    public static boolean isIsKeyword(CharSequence tok) {
+        if (tok.length() != 2) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i) | 32) == 's';
+    }
+
     public static boolean isInto(CharSequence tok) {
         if (tok.length() != 4) {
             return false;

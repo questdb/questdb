@@ -1320,6 +1320,26 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
+    public void testBindVariableIsNullBinaryTransfer() throws Exception {
+        testBindVariableIsNull(true);
+    }
+
+    @Test
+    public void testBindVariableIsNullStringTransfer() throws Exception {
+        testBindVariableIsNull(false);
+    }
+
+    @Test
+    public void testBindVariableIsNotNullBinaryTransfer() throws Exception {
+        testBindVariableIsNotNull(true);
+    }
+
+    @Test
+    public void testBindVariableIsNotNullStringTransfer() throws Exception {
+        testBindVariableIsNotNull(false);
+    }
+
+    @Test
     public void testBindVariableInFilterBinaryTransfer() throws Exception {
         testBindVariableInFilter(true);
     }
@@ -6245,6 +6265,325 @@ create table tab as (
 
                             Assert.assertEquals(totalCount, count);
                         }
+                    }
+                }
+            }
+        });
+    }
+
+    private void testBindVariableIsNull(boolean binary) throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, binary)
+            ) {
+                connection.setAutoCommit(false);
+                connection.prepareStatement("create table tab1 (value int, ts timestamp) timestamp(ts)").execute();
+                connection.prepareStatement("insert into tab1 (value, ts) values (100, 0)").execute();
+                connection.prepareStatement("insert into tab1 (value, ts) values (null, 1)").execute();
+                connection.commit();
+                connection.setAutoCommit(true);
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where null is null")) {
+                    try (ResultSet rs = ps.executeQuery()) {
+                        // all rows, null = null is always true
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                        "100,1970-01-01 00:00:00.0\n" +
+                                        "null,1970-01-01 00:00:00.000001\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where (? | null) is null")) {
+                    ps.setLong(1, 1066);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                        "100,1970-01-01 00:00:00.0\n" +
+                                        "null,1970-01-01 00:00:00.000001\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
+                    // 'is' is an alias for '=', the matching type for this operator, with null
+                    // on the right, is DOUBLE (EqDoubleFunctionFactory)
+                    ps.setDouble(1, Double.NaN);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                        "100,1970-01-01 00:00:00.0\n" +
+                                        "null,1970-01-01 00:00:00.000001\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
+                    // INTEGER fits in a DOUBLE, however it is interpreted differently depending on
+                    // transfer type (binary, string)
+                    ps.setInt(1, Numbers.INT_NaN);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (binary) {
+                            // in binary protocol DOUBLE.null == INT.null
+                            assertResultSet(
+                                    "value[INTEGER],ts[TIMESTAMP]\n" +
+                                            "100,1970-01-01 00:00:00.0\n" +
+                                            "null,1970-01-01 00:00:00.000001\n",
+                                    sink,
+                                    rs
+                            );
+                        } else {
+                            // in string protocol DOUBLE.null != INT.null
+                            assertResultSet(
+                                    "value[INTEGER],ts[TIMESTAMP]\n",
+                                    sink,
+                                    rs
+                            );
+                        }
+                    }
+                }
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
+                    // 'is' is an alias for '=', the matching type for this operator
+                    // (with null on the right) is DOUBLE, and thus INT is a valid
+                    // value type
+                    ps.setInt(1, 21);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
+                    ps.setString(1, "");
+                    try (ResultSet ignore1 = ps.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "could not parse [value='', as=DOUBLE, index=0]");
+                    }
+                }
+
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
+                    ps.setString(1, "cha-cha-cha");
+                    try (ResultSet ignore1 = ps.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "could not parse [value='cha-cha-cha', as=DOUBLE, index=0]");
+                    }
+                }
+
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where value is ?")) {
+                    ps.setString(1, "NULL");
+                    try (ResultSet ignore1 = ps.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
+
+                    }
+                }
+
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where null is ?")) {
+                    ps.setDouble(1, Double.NaN);
+                    try (ResultSet ignore1 = ps.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
+                    }
+                }
+
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where null is ?")) {
+                    ps.setNull(1, Types.NULL);
+                    try (ResultSet ignored1 = ps.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
+                    }
+                }
+
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where value is ?")) {
+                    ps.setString(1, "NULL");
+                    try (ResultSet ignored1 = ps.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
+                    }
+                }
+            }
+        });
+    }
+
+    private void testBindVariableIsNotNull(boolean binary) throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, binary)
+            ) {
+                connection.setAutoCommit(false);
+                connection.prepareStatement("create table tab1 (value int, ts timestamp) timestamp(ts)").execute();
+                connection.prepareStatement("insert into tab1 (value, ts) values (100, 0)").execute();
+                connection.prepareStatement("insert into tab1 (value, ts) values (null, 1)").execute();
+                connection.commit();
+                connection.setAutoCommit(true);
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where 3 is not null")) {
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                        "100,1970-01-01 00:00:00.0\n" +
+                                        "null,1970-01-01 00:00:00.000001\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where coalesce(?, 12.37) is not null")) {
+                    // 'is not' is an alias for '!=', the matching type for this operator
+                    // (with null on the right) is DOUBLE
+                    ps.setDouble(1, 3.14);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                        "100,1970-01-01 00:00:00.0\n" +
+                                        "null,1970-01-01 00:00:00.000001\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
+                    // 'is not' is an alias for '!=', the matching type for this operator
+                    // (with null on the right) is DOUBLE
+                    ps.setDouble(1, 3.14);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                        "100,1970-01-01 00:00:00.0\n" +
+                                        "null,1970-01-01 00:00:00.000001\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
+                    ps.setDouble(1, Double.NaN);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
+                    ps.setInt(1, Numbers.INT_NaN);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (binary) {
+                            assertResultSet(
+                                    "value[INTEGER],ts[TIMESTAMP]\n",
+                                    sink,
+                                    rs
+                            );
+                        } else {
+                            assertResultSet(
+                                    "value[INTEGER],ts[TIMESTAMP]\n" +
+                                            "100,1970-01-01 00:00:00.0\n" +
+                                            "null,1970-01-01 00:00:00.000001\n",
+                                    sink,
+                                    rs
+                            );
+                        }
+                    }
+                }
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
+                    ps.setInt(1, 12);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                        "100,1970-01-01 00:00:00.0\n" +
+                                        "null,1970-01-01 00:00:00.000001\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
+                    ps.setString(1, "");
+                    try (ResultSet ignore1 = ps.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "could not parse [value='', as=DOUBLE, index=0]");
+                    }
+                }
+
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
+                    ps.setString(1, "cah-cha-cha");
+                    try (ResultSet ignore1 = ps.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "could not parse [value='cah-cha-cha', as=DOUBLE, index=0]");
+                    }
+                }
+
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where null is not ?")) {
+                    ps.setString(1, "NULL");
+                    try (ResultSet ignore1 = ps.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "IS NOT must be followed by NULL");
+                    }
+                }
+
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where null is not ?")) {
+                    ps.setDouble(1, Double.NaN);
+                    try (ResultSet ignore1 = ps.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "IS NOT must be followed by NULL");
+                    }
+                }
+
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where null is not ?")) {
+                    ps.setNull(1, Types.NULL);
+                    try (ResultSet ignored1 = ps.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "IS NOT must be followed by NULL");
+                    }
+                }
+
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where value is not ?")) {
+                    ps.setString(1, "NULL");
+                    try (ResultSet ignored1 = ps.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "IS NOT must be followed by NULL");
                     }
                 }
             }
