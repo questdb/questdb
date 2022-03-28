@@ -22,20 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.griffin.engine.functions.groupby;
 
-/**
- * A 256 bit hash with string representation up to 64 hex digits following a prefix '0x'.
- * (e.g. 0xaba86bf575ba7fde98b6673bb7d85bf489fd71a619cddaecba5de0378e3d22ed)
- */
-public interface Long256 extends Long256Acceptor {
-    int BYTES = 32;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-    long getLong0();
+public class SumLong256GroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "sum(H)";
+    }
 
-    long getLong1();
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
 
-    long getLong2();
-
-    long getLong3();
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new SumLong256GroupByFunction(args.getQuick(0));
+    }
 }

@@ -3387,6 +3387,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         sumConstructors.put(ColumnType.DOUBLE, SumDoubleVectorAggregateFunction::new);
         sumConstructors.put(ColumnType.INT, SumIntVectorAggregateFunction::new);
         sumConstructors.put(ColumnType.LONG, SumLongVectorAggregateFunction::new);
+        sumConstructors.put(ColumnType.LONG256, SumLong256VectorAggregateFunction::new);
         sumConstructors.put(ColumnType.DATE, SumDateVectorAggregateFunction::new);
         sumConstructors.put(ColumnType.TIMESTAMP, SumTimestampVectorAggregateFunction::new);
 
