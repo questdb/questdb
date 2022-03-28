@@ -67,6 +67,8 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence tableWriterEventPubSeq;
     private final FanOut tableWriterEventSubSeq;
     private final CairoConfiguration configuration;
+    private final RingQueue<ColumnVersionPurgeTask> columnVersionPurgeQueue;
+    private final SCSequence columnVersionPurgeSubSeq;
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -120,6 +122,19 @@ public class MessageBusImpl implements MessageBus {
         this.tableWriterEventPubSeq = new MPSequence(this.tableWriterEventQueue.getCycle());
         this.tableWriterEventSubSeq = new FanOut();
         this.tableWriterEventPubSeq.then(this.tableWriterEventSubSeq).then(this.tableWriterEventPubSeq);
+
+        this.columnVersionPurgeQueue = new RingQueue<>(ColumnVersionPurgeTask::new, configuration.getColumnVersionPurgeQueueCapacity());
+        this.columnVersionPurgeSubSeq = new SCSequence();
+    }
+
+    @Override
+    public RingQueue<ColumnVersionPurgeTask> getColumnVersionPurgeQueue() {
+        return columnVersionPurgeQueue;
+    }
+
+    @Override
+    public SCSequence getColumnVersionPurgeSubSeq() {
+        return columnVersionPurgeSubSeq;
     }
 
     @Override

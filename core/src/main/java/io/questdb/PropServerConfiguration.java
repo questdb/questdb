@@ -375,6 +375,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean stringToCharCastAllowed;
     private boolean symbolAsFieldSupported;
     private boolean isStringAsTagSupported;
+    private final int columnVersionPurgeQueueCapacity;
+    private final long columnVersionPurgeMaxTimeoutMicros;
 
     public PropServerConfiguration(
             String root,
@@ -682,6 +684,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlInsertModelPoolCapacity = getInt(properties, env, "cairo.sql.insert.model.pool.capacity", 64);
             this.sqlCopyModelPoolCapacity = getInt(properties, env, "cairo.sql.copy.model.pool.capacity", 32);
             this.sqlCopyBufferSize = getIntSize(properties, env, "cairo.sql.copy.buffer.size", 2 * 1024 * 1024);
+            this.columnVersionPurgeQueueCapacity = getQueueCapacity(properties, env,"cairo.sql.column.version.clean.queue.capacity", 1024);
+            this.columnVersionPurgeMaxTimeoutMicros = getLong(properties, env, "cairo.sql.column.version.clean.timeout", 60_000_000L);
 
             this.writerDataIndexKeyAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, "cairo.writer.data.index.key.append.page.size", 512 * 1024));
             this.writerDataIndexValueAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, "cairo.writer.data.index.value.append.page.size", 16 * 1024 * 1024));
@@ -1662,6 +1666,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getColumnVersionPurgeQueueCapacity() {
+            return columnVersionPurgeQueueCapacity;
+        }
+
+        @Override
         public long getCommitLag() {
             return commitLag;
         }
@@ -1677,6 +1686,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getColumnVersionPurgeMaxTimeoutMicros() {
+            return columnVersionPurgeMaxTimeoutMicros;
+        }
+
+        @Override
         public CharSequence getSnapshotRoot() {
             return snapshotRoot;
         }
@@ -1684,6 +1698,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public CharSequence getSnapshotInstanceId() {
             return snapshotInstanceId;
+        }
+
+        @Override
+        public CharSequence getSystemTableNamePrefix() {
+            return null;
         }
 
         @Override

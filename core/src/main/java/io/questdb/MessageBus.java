@@ -38,6 +38,10 @@ public interface MessageBus extends Closeable {
         Misc.free(getTableWriterEventQueue());
     }
 
+    RingQueue<ColumnVersionPurgeTask> getColumnVersionPurgeQueue();
+
+    SCSequence getColumnVersionPurgeSubSeq();
+
     CairoConfiguration getConfiguration();
 
     Sequence getIndexerPubSequence();
@@ -82,11 +86,11 @@ public interface MessageBus extends Closeable {
 
     MCSequence getO3PurgeDiscoverySubSeq();
 
+    FanOut getTableWriterEventFanOut();
+
     MPSequence getTableWriterEventPubSeq();
 
     RingQueue<TableWriterTask> getTableWriterEventQueue();
-
-    FanOut getTableWriterEventFanOut();
 
     Sequence getVectorAggregatePubSeq();
 

@@ -122,6 +122,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getColumnVersionPurgeQueueCapacity() {
+        return 64;
+    }
+
+    @Override
     public long getCommitLag() {
         return 0;
     }
@@ -137,6 +142,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getColumnVersionPurgeMaxTimeoutMicros() {
+        return 60_000_000;
+    }
+
+    @Override
     public CharSequence getSnapshotRoot() {
         return snapshotRoot;
     }
@@ -144,6 +154,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public CharSequence getSnapshotInstanceId() {
         return "";
+    }
+
+    @Override
+    public CharSequence getSystemTableNamePrefix() {
+        return null;
     }
 
     @Override
