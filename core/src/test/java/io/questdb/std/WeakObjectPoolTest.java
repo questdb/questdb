@@ -26,6 +26,7 @@ package io.questdb.std;
 
 import org.junit.Test;
 
+import java.io.Closeable;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -46,6 +47,7 @@ public class WeakObjectPoolTest {
         for (int i = 0; i < initSize; i++) {
             MutablePoolElement element = tmp.get(i);
             assertFalse(element.cleared);
+            assertFalse(element.closed);
         }
 
         pool.close();
@@ -53,6 +55,7 @@ public class WeakObjectPoolTest {
         for (int i = 0; i < initSize; i++) {
             MutablePoolElement element = tmp.get(i);
             assertFalse(element.cleared);
+            assertTrue(element.closed);
         }
     }
 
@@ -65,6 +68,7 @@ public class WeakObjectPoolTest {
             MutablePoolElement element = new MutablePoolElement();
             pool.push(element);
             assertTrue(element.cleared);
+            assertFalse(element.closed);
             assertEquals(initSize + 1 + i, pool.cache.size());
         }
 
@@ -72,6 +76,7 @@ public class WeakObjectPoolTest {
             MutablePoolElement element = new MutablePoolElement();
             pool.push(element);
             assertFalse(element.cleared);
+            assertTrue(element.closed);
             assertEquals(2 * initSize, pool.cache.size());
         }
     }
@@ -85,6 +90,7 @@ public class WeakObjectPoolTest {
         for (int i = 0; i < initSize; i++) {
             MutablePoolElement element = pool.pop();
             assertFalse(element.cleared);
+            assertFalse(element.closed);
             tmp.add(element);
         }
         assertEquals(0, pool.cache.size());
@@ -93,16 +99,23 @@ public class WeakObjectPoolTest {
             MutablePoolElement element = tmp.get(i);
             pool.push(element);
             assertTrue(element.cleared);
+            assertFalse(element.closed);
         }
         assertEquals(initSize, pool.cache.size());
     }
 
-    private static class MutablePoolElement implements Mutable {
+    private static class MutablePoolElement implements Mutable, Closeable {
         private boolean cleared = false;
+        private boolean closed = false;
 
         @Override
         public void clear() {
             cleared = true;
+        }
+
+        @Override
+        public void close() {
+            closed = true;
         }
     }
 }
