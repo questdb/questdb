@@ -28,16 +28,16 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.Long256Function;
+import io.questdb.mp.SimpleSpinLock;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.LongAdder;
 
 import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
 public class SumLong256VectorAggregateFunction extends Long256Function implements VectorAggregateFunction {
-    private final AtomicBoolean lock = new AtomicBoolean();
+    private final SimpleSpinLock lock = new SimpleSpinLock();
     private final Long256Impl sum = new Long256Impl();
     private final LongAdder count = new LongAdder();
     private final int columnIndex;
@@ -62,14 +62,12 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
             final long count = addressSize / (Long.BYTES * 4);
             Long256Impl value = sumLong256(address, count);
             if (!value.equals(Long256Impl.NULL_LONG256)) {
-                while (!lock.compareAndSet(false, true)) {
-                    Os.pause();
-                }
+                lock.lock();
                 try {
                     Long256Util.add(sum, value);
                     this.count.increment();
                 } finally {
-                    lock.set(false);
+                    lock.unlock();
                 }
             }
         }
