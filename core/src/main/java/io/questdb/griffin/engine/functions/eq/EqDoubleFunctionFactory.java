@@ -59,40 +59,41 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         Function left = args.getQuick(0);
         Function right = args.getQuick(1);
 
-        if (left.isConstant() && ColumnType.isDouble(left.getType()) && Double.isNaN(left.getDouble(null))) {
-            switch (ColumnType.tagOf(right.getType())) {
-                case ColumnType.INT:
-                    return new FuncIntIsNaN(right);
-                case ColumnType.LONG:
-                    return new FuncLongIsNaN(right);
-                case ColumnType.DATE:
-                    return new FuncDateIsNaN(right);
-                case ColumnType.TIMESTAMP:
-                    return new FuncTimestampIsNaN(right);
-                case ColumnType.FLOAT:
-                    return new FuncFloatIsNaN(right);
-                default:
-                    // double
-                    return new FuncDoubleIsNaN(right);
-            }
-        } else if (right.isConstant() && ColumnType.isDouble(right.getType()) && Double.isNaN(right.getDouble(null))) {
-            switch (ColumnType.tagOf(left.getType())) {
-                case ColumnType.INT:
-                    return new FuncIntIsNaN(left);
-                case ColumnType.LONG:
-                    return new FuncLongIsNaN(left);
-                case ColumnType.DATE:
-                    return new FuncDateIsNaN(left);
-                case ColumnType.TIMESTAMP:
-                    return new FuncTimestampIsNaN(left);
-                case ColumnType.FLOAT:
-                    return new FuncFloatIsNaN(left);
-                default:
-                    // double
-                    return new FuncDoubleIsNaN(left);
-            }
+        int leftType = left.getType();
+        int rightType = right.getType();
+
+        if (isNullConstant(left, leftType)) {
+            return dispatchUnaryFunc(right, rightType);
+        }
+        if (isNullConstant(right, rightType)) {
+            return dispatchUnaryFunc(left, leftType);
         }
         return new Func(args.getQuick(0), args.getQuick(1));
+    }
+
+    private static boolean isNullConstant(Function operand, int operandType) {
+        return operand.isConstant() &&
+                (ColumnType.isDouble(operandType) && Double.isNaN(operand.getDouble(null))
+                        ||
+                        operandType == ColumnType.NULL);
+    }
+
+    private static Function dispatchUnaryFunc(Function operand, int operandType) {
+        switch (ColumnType.tagOf(operandType)) {
+            case ColumnType.INT:
+                return new FuncIntIsNaN(operand);
+            case ColumnType.LONG:
+                return new FuncLongIsNaN(operand);
+            case ColumnType.DATE:
+                return new FuncDateIsNaN(operand);
+            case ColumnType.TIMESTAMP:
+                return new FuncTimestampIsNaN(operand);
+            case ColumnType.FLOAT:
+                return new FuncFloatIsNaN(operand);
+            default:
+                // double
+                return new FuncDoubleIsNaN(operand);
+        }
     }
 
     protected static class Func extends NegatableBooleanFunction implements BinaryFunction {
