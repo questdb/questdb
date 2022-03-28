@@ -58,6 +58,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private final MessageBus messageBus;
     private final AtomicInteger owner = new AtomicInteger(OWNER_NONE);
     private final MicrosecondClock microsecondClock;
+    private final AtomicInteger dispatchStartIndex = new AtomicInteger();
     private long id;
     private int shard;
     private int frameCount;
@@ -68,10 +69,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     // we need this to restart execution for `toTop`
     private MPSequence dispatchPubSeq;
     private RingQueue<PageFrameDispatchTask> pageFrameDispatchQueue;
-    private final AtomicInteger dispatchStartIndex = new AtomicInteger();
     private SqlExecutionCircuitBreaker[] circuitBreakers;
     private long startTimeUs;
     private long circuitBreakerFd;
+    private SqlExecutionContext sqlExecutionContext;
 
     public PageFrameSequence(
             CairoConfiguration configuration,
@@ -150,9 +151,11 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             RecordCursorFactory base,
             SqlExecutionContext executionContext,
             Sequence collectSubSeq,
-            T atom
+            T atom,
+            int order
     ) throws SqlException {
 
+        this.sqlExecutionContext = executionContext;
         this.startTimeUs = microsecondClock.getTicks();
         this.circuitBreakerFd = executionContext.getCircuitBreaker().getFd();
 
@@ -164,7 +167,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
         final Rnd rnd = executionContext.getAsyncRandom();
         try {
-            final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext);
+            final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, order);
             final int frameCount = setupAddressCache(base, pageFrameCursor);
 
             // this method sets a lot of state of the page sequence
@@ -231,6 +234,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
     public int getShard() {
         return shard;
+    }
+
+    public SqlExecutionContext getSqlExecutionContext() {
+        return sqlExecutionContext;
     }
 
     public long getStartTimeUs() {

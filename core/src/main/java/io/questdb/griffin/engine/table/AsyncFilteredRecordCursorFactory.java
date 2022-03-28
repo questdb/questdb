@@ -36,6 +36,9 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.Nullable;
+
+import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
 
 public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
 
@@ -46,18 +49,21 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
     private final Function filter;
     private final PageFrameSequence<Function> frameSequence;
     private final SCSequence collectSubSeq = new SCSequence();
+    private final Function limitHiFunction;
 
     public AsyncFilteredRecordCursorFactory(
             CairoConfiguration configuration,
             MessageBus messageBus,
             RecordCursorFactory base,
-            Function filter
+            Function filter,
+            @Nullable Function limitHiFunction
     ) {
         assert !(base instanceof AsyncFilteredRecordCursorFactory);
         this.base = base;
         this.cursor = new AsyncFilteredRecordCursor(filter, base.hasDescendingOrder());
         this.filter = filter;
         this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER);
+        this.limitHiFunction = limitHiFunction;
     }
 
     @Override
@@ -68,11 +74,23 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
+    public boolean followedLimitAdvice() {
+        return limitHiFunction != null;
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(
-                collectSubSeq,
-                execute(executionContext, collectSubSeq)
-        );
+        final long rowsRemaining;
+        final int order;
+        if (limitHiFunction != null) {
+            limitHiFunction.init(frameSequence.getSymbolTableSource(), executionContext);
+            rowsRemaining = limitHiFunction.getLong(null);
+            order = rowsRemaining > 0 ? ORDER_ASC : ORDER_DESC;
+        } else {
+            rowsRemaining = Long.MAX_VALUE;
+            order = ORDER_ANY;
+        }
+        cursor.of(collectSubSeq, execute(executionContext, collectSubSeq, ORDER_ANY), rowsRemaining);
         return cursor;
     }
 
@@ -82,8 +100,8 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public PageFrameSequence<Function> execute(SqlExecutionContext executionContext, Sequence collectSubSeq) throws SqlException {
-        return frameSequence.dispatch(base, executionContext, collectSubSeq, filter);
+    public PageFrameSequence<Function> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int direction) throws SqlException {
+        return frameSequence.dispatch(base, executionContext, collectSubSeq, filter, direction);
     }
 
     @Override

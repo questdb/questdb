@@ -61,9 +61,13 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
     }
 
     /**
-     * True if record cusor factory followed order by advice and doesn't require sorting .
+     * True if record cursor factory followed order by advice and doesn't require sorting .
      */
     default boolean followedOrderByAdvice() {
+        return false;
+    }
+
+    default boolean followedLimitAdvice() {
         return false;
     }
 
@@ -89,11 +93,11 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
      */
     RecordMetadata getMetadata();
 
-    default PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
+    default PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         return null;
     }
 
-    default PageFrameSequence<?> execute(SqlExecutionContext executionContext, Sequence collectSubSeq) throws SqlException {
+    default PageFrameSequence<?> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int direction) throws SqlException {
         return null;
     }
 

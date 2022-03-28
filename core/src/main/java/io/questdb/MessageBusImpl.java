@@ -65,10 +65,6 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence latestByPubSeq;
     private final MCSequence latestBySubSeq;
 
-    private final RingQueue<TableWriterTask> tableWriterCommandQueue;
-    private final MPSequence tableWriterCommandPubSeq;
-    private final FanOut tableWriterCommandSubSeq;
-
     private final RingQueue<TableWriterTask> tableWriterEventQueue;
     private final MPSequence tableWriterEventPubSeq;
     private final FanOut tableWriterEventSubSeq;
@@ -124,16 +120,6 @@ public class MessageBusImpl implements MessageBus {
         this.latestBySubSeq = new MCSequence(latestByQueue.getCycle());
         latestByPubSeq.then(latestBySubSeq).then(latestByPubSeq);
 
-        this.tableWriterCommandQueue = new RingQueue<>(
-                TableWriterTask::new,
-                configuration.getWriterCommandQueueSlotSize(),
-                configuration.getWriterCommandQueueCapacity(),
-                MemoryTag.NATIVE_REPL
-        );
-        this.tableWriterCommandPubSeq = new MPSequence(this.tableWriterCommandQueue.getCycle());
-        this.tableWriterCommandSubSeq = new FanOut();
-        this.tableWriterCommandPubSeq.then(this.tableWriterCommandSubSeq).then(this.tableWriterCommandPubSeq);
-
         this.tableWriterEventQueue = new RingQueue<>(
                 TableWriterTask::new,
                 configuration.getWriterCommandQueueSlotSize(),
@@ -141,7 +127,7 @@ public class MessageBusImpl implements MessageBus {
                 MemoryTag.NATIVE_REPL
 
         );
-        this.tableWriterEventPubSeq = new MPSequence(this.tableWriterCommandQueue.getCycle());
+        this.tableWriterEventPubSeq = new MPSequence(this.tableWriterEventQueue.getCycle());
         this.tableWriterEventSubSeq = new FanOut();
         this.tableWriterEventPubSeq.then(this.tableWriterEventSubSeq).then(this.tableWriterEventPubSeq);
 
@@ -182,21 +168,6 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public CairoConfiguration getConfiguration() {
         return configuration;
-    }
-
-    @Override
-    public MPSequence getPageFrameDispatchPubSeq() {
-        return pageFrameDispatchPubSeq;
-    }
-
-    @Override
-    public RingQueue<PageFrameDispatchTask> getPageFrameDispatchQueue() {
-        return pageFrameDispatchQueue;
-    }
-
-    @Override
-    public MCSequence getPageFrameDispatchSubSeq() {
-        return pageFrameDispatchSubSeq;
     }
 
     @Override
@@ -310,6 +281,21 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
+    public MPSequence getPageFrameDispatchPubSeq() {
+        return pageFrameDispatchPubSeq;
+    }
+
+    @Override
+    public RingQueue<PageFrameDispatchTask> getPageFrameDispatchQueue() {
+        return pageFrameDispatchQueue;
+    }
+
+    @Override
+    public MCSequence getPageFrameDispatchSubSeq() {
+        return pageFrameDispatchSubSeq;
+    }
+
+    @Override
     public MPSequence getPageFrameReducePubSeq(int shard) {
         return pageFrameReducePubSeq[shard];
     }
@@ -327,21 +313,6 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MCSequence getPageFrameReduceSubSeq(int shard) {
         return pageFrameReduceSubSeq[shard];
-    }
-
-    @Override
-    public FanOut getTableWriterCommandFanOut() {
-        return tableWriterCommandSubSeq;
-    }
-
-    @Override
-    public MPSequence getTableWriterCommandPubSeq() {
-        return tableWriterCommandPubSeq;
-    }
-
-    @Override
-    public RingQueue<TableWriterTask> getTableWriterCommandQueue() {
-        return tableWriterCommandQueue;
     }
 
     @Override

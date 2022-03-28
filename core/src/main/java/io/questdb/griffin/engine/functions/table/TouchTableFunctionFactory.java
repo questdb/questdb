@@ -40,6 +40,8 @@ import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+
 public class TouchTableFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
@@ -131,7 +133,7 @@ public class TouchTableFunctionFactory implements FunctionFactory {
             clearCounters();
             final long pageSize = Files.PAGE_SIZE;
             try (RecordCursorFactory recordCursorFactory = arg.getRecordCursorFactory()) {
-                try (PageFrameCursor pageFrameCursor = recordCursorFactory.getPageFrameCursor(sqlExecutionContext)) {
+                try (PageFrameCursor pageFrameCursor = recordCursorFactory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
                     PageFrame frame;
                     RecordMetadata metadata = recordCursorFactory.getMetadata();
                     while ((frame = pageFrameCursor.next()) != null) {

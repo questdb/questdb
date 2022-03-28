@@ -139,7 +139,6 @@ public class TableWriter implements Closeable {
     private final LongConsumer appendTimestampSetter;
     private final MemoryMR indexMem = Vm.getMRInstance();
     private final MemoryFR slaveMetaMem = new MemoryFCRImpl();
-    private final SCSequence commandSubSeq;
     private final LongIntHashMap replPartitionHash = new LongIntHashMap();
     private final MemoryFMCRImpl slaveTxMemory = new MemoryFMCRImpl();
     // Latest command sequence per command source.
@@ -148,6 +147,9 @@ public class TableWriter implements Closeable {
     private final AlterStatement alterTableStatement = new AlterStatement();
     private final ColumnVersionWriter columnVersionWriter;
     private final Metrics metrics;
+    private final RingQueue<TableWriterTask> commandQueue;
+    private final SCSequence commandSubSeq;
+    private final MPSequence commandPubSeq;
     private Row row = regularRow;
     private long todoTxn;
     private MemoryMAT o3TimestampMem;
@@ -237,16 +239,6 @@ public class TableWriter implements Closeable {
         this.o3PartitionUpdatePubSeq = new MPSequence(this.o3PartitionUpdateQueue.getCycle());
         this.o3PartitionUpdateSubSeq = new SCSequence();
         o3PartitionUpdatePubSeq.then(o3PartitionUpdateSubSeq).then(o3PartitionUpdatePubSeq);
-        final FanOut commandFanOut = this.messageBus.getTableWriterCommandFanOut();
-        if (commandFanOut != null) {
-            // align our subscription to the current value of the fan out
-            // to avoid picking up commands fired ahead of this instantiation
-            commandSubSeq = new SCSequence(commandFanOut.current(), null);
-            commandFanOut.and(commandSubSeq);
-        } else {
-            // dandling sequence
-            commandSubSeq = new SCSequence();
-        }
         this.o3ColumnMemorySize = configuration.getO3ColumnMemorySize();
         this.path = new Path();
         this.path.of(root).concat(tableName);
@@ -323,6 +315,15 @@ public class TableWriter implements Closeable {
             purgeUnusedPartitions();
             clearTodoLog();
             this.slaveTxReader = new TxReader(ff);
+            commandQueue = new RingQueue<>(
+                    TableWriterTask::new,
+                    2048,
+                    configuration.getWriterCommandQueueCapacity(),
+                    MemoryTag.NATIVE_REPL
+            );
+            commandSubSeq = new SCSequence();
+            commandPubSeq = new MPSequence(commandQueue.getCycle());
+            commandPubSeq.then(commandSubSeq).then(commandPubSeq);
         } catch (Throwable e) {
             doClose(false);
             throw e;
@@ -871,6 +872,20 @@ public class TableWriter implements Closeable {
 
     public void o3BumpErrorCount() {
         o3ErrorCount.incrementAndGet();
+    }
+
+    public void processCommandAsync(WriteToQueue<TableWriterTask> writeFunc) {
+        while (true) {
+            long seq = commandPubSeq.next();
+            if (seq > -1) {
+                TableWriterTask cmd = commandQueue.get(seq);
+                writeFunc.writeTo(cmd);
+                commandPubSeq.done(seq);
+                return;
+            } else if (seq == -1) {
+                throw CairoException.instance(0).put("cannot publish, command queue is full [table=").put(tableName).put(']');
+            }
+        }
     }
 
     public void processCommandQueue(TableWriterTask cmd, Sequence commandSubSeq, long cursor, boolean acceptStructureChange) {
@@ -2096,6 +2111,7 @@ public class TableWriter implements Closeable {
         Misc.free(todoMem);
         Misc.free(columnVersionWriter);
         Misc.free(o3ColumnTopSink);
+        Misc.free(commandQueue);
         freeColumns(truncate & !distressed);
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
@@ -2103,10 +2119,6 @@ public class TableWriter implements Closeable {
             Misc.free(txnScoreboard);
             Misc.free(path);
             Misc.free(o3TimestampMemCpy);
-            final FanOut commandFanOut = messageBus.getTableWriterCommandFanOut();
-            if (commandFanOut != null) {
-                commandFanOut.remove(commandSubSeq);
-            }
             Misc.free(ownMessageBus);
             freeTempMem();
             LOG.info().$("closed '").utf8(tableName).$('\'').$();
@@ -2418,6 +2430,7 @@ public class TableWriter implements Closeable {
             final long sortedTimestampsAddr = o3TimestampMem.getAddress();
 
             // ensure there is enough size
+            assert o3TimestampMem.getAppendOffset() == o3RowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
             if (o3RowCount > 600 || !o3QuickSortEnabled) {
                 o3TimestampMemCpy.jumpTo(o3TimestampMem.getAppendOffset());
                 Vect.radixSortLongIndexAscInPlace(sortedTimestampsAddr, o3RowCount, o3TimestampMemCpy.addressOf(0));
@@ -3656,7 +3669,7 @@ public class TableWriter implements Closeable {
 
         try {
             mem1.of(ff, dFile(
-                            path.trimTo(pathTrimToLen), name, columnNameTxn),
+                    path.trimTo(pathTrimToLen), name, columnNameTxn),
                     configuration.getDataAppendPageSize(),
                     -1,
                     MemoryTag.MMAP_TABLE_WRITER,
@@ -3856,7 +3869,7 @@ public class TableWriter implements Closeable {
     private void processCommandQueue(boolean acceptStructureChange) {
         long cursor;
         while ((cursor = commandSubSeq.next()) > -1) {
-            TableWriterTask cmd = messageBus.getTableWriterCommandQueue().get(cursor);
+            TableWriterTask cmd = commandQueue.get(cursor);
             processCommandQueue(cmd, commandSubSeq, cursor, acceptStructureChange);
         }
     }

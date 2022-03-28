@@ -42,6 +42,8 @@ import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.tasks.VectorAggregateTask;
 
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+
 public class GroupByRecordCursorFactory implements RecordCursorFactory {
 
     private final static Log LOG = LogFactory.getLog(GroupByRecordCursorFactory.class);
@@ -168,7 +170,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
 
         final MessageBus bus = executionContext.getMessageBus();
 
-        final PageFrameCursor cursor = base.getPageFrameCursor(executionContext);
+        final PageFrameCursor cursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
         final int vafCount = vafList.size();
 
         // clear state of aggregate functions

@@ -78,14 +78,16 @@ public class ServerMain {
         }
 
         final CharSequenceObjHashMap<String> optHash = hashArgs(args);
-
-        final Log log = LogFactory.getLog("server-main");
         // expected flags:
         // -d <root dir> = sets root directory
         // -f = forces copy of site to root directory even if site exists
         // -n = disables handling of HUP signal
 
         final String rootDirectory = optHash.get("-d");
+
+        LogFactory.configureFromSystemProperties(LogFactory.INSTANCE, null, rootDirectory);
+        final Log log = LogFactory.getLog("server-main");
+
         extractSite(buildInformation, rootDirectory, log);
         final Properties properties = new Properties();
         final String configurationFileName = "/server.conf";
@@ -382,7 +384,8 @@ public class ServerMain {
         }
     }
 
-    private static void extractSite(BuildInformation buildInformation, String dir, Log log) throws IOException {
+    //made package level for testing only
+    static void extractSite(BuildInformation buildInformation, String dir, Log log) throws IOException {
         final String publicZip = "/io/questdb/site/public.zip";
         final String publicDir = dir + "/public";
         final byte[] buffer = new byte[1024 * 1024];
@@ -456,6 +459,7 @@ public class ServerMain {
         copyConfResource(dir, false, buffer, "conf/date.formats", log);
         copyConfResource(dir, true, buffer, "conf/mime.types", log);
         copyConfResource(dir, false, buffer, "conf/server.conf", log);
+        copyConfResource(dir, false, buffer, "conf/log.conf", log);
     }
 
     private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {

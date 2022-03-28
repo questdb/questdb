@@ -27,8 +27,8 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
@@ -39,6 +39,8 @@ import io.questdb.griffin.engine.analytic.AnalyticFunction;
 import io.questdb.griffin.engine.analytic.CachedAnalyticRecordCursorFactory;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
+import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
@@ -64,6 +66,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
 import static io.questdb.griffin.model.ExpressionNode.LITERAL;
@@ -748,7 +751,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 try {
                     int jitOptions;
                     final ObjList<Function> bindVarFunctions = new ObjList<>();
-                    try (PageFrameCursor cursor = factory.getPageFrameCursor(executionContext)) {
+                    try (PageFrameCursor cursor = factory.getPageFrameCursor(executionContext, ORDER_ANY)) {
                         final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
                         jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), cursor, bindVarFunctions);
                         jitOptions = jitIRSerializer.serialize(filter, forceScalar, enableJitDebug, enableJitNullChecks);
@@ -774,7 +777,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         if (factory.supportPageFrameCursor()) {
-            return new AsyncFilteredRecordCursorFactory(configuration, executionContext.getMessageBus(), factory, f);
+            Function limitLoFunction;
+            if (model.getLimitAdviceLo() != null && model.getLimitAdviceHi() == null) {
+                limitLoFunction = toLimitFunction(executionContext, model.getLimitAdviceLo(), LongConstant.ZERO);
+            } else {
+                limitLoFunction = null;
+            }
+            return new AsyncFilteredRecordCursorFactory(configuration, executionContext.getMessageBus(), factory, f, limitLoFunction);
         }
         return new FilteredRecordCursorFactory(factory, f);
     }
@@ -986,7 +995,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 configuration,
                                 executionContext.getMessageBus(),
                                 master,
-                                functionParser.parseFunction(filter, master.getMetadata(), executionContext)
+                                functionParser.parseFunction(filter, master.getMetadata(), executionContext),
+                                null
                         );
                     } else {
                         master = new FilteredRecordCursorFactory(master, functionParser.parseFunction(filter, master.getMetadata(), executionContext));
@@ -1280,13 +1290,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    private RecordCursorFactory generateLimit(RecordCursorFactory factory, QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+    private RecordCursorFactory generateLimit(
+            RecordCursorFactory factory,
+            QueryModel model,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+
+        if (factory.followedLimitAdvice()) {
+            return factory;
+        }
+
         ExpressionNode limitLo = model.getLimitLo();
         ExpressionNode limitHi = model.getLimitHi();
 
         //we've to check model otherwise we could be skipping limit in outer query that's actually different from the one in inner query!
-        if ((limitLo == null && limitHi == null) ||
-                (factory.implementsLimit() && model.isLimitImplemented())) {
+        if ((limitLo == null && limitHi == null) || (factory.implementsLimit() && model.isLimitImplemented())) {
             return factory;
         }
 
@@ -1322,9 +1340,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             final LowerCaseCharSequenceIntHashMap orderBy = model.getOrderHash();
             final ObjList<CharSequence> columnNames = orderBy.keys();
-            final int size = columnNames.size();
+            final int orderByColumnCount = columnNames.size();
 
-            if (size > 0) {
+            if (orderByColumnCount > 0) {
 
                 final RecordMetadata metadata = recordCursorFactory.getMetadata();
                 final int timestampIndex = metadata.getTimestampIndex();
@@ -1334,7 +1352,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 // column index sign indicates direction
                 // therefore 0 index is not allowed
-                for (int i = 0; i < size; i++) {
+                for (int i = 0; i < orderByColumnCount; i++) {
                     final CharSequence column = columnNames.getQuick(i);
                     int index = metadata.getColumnIndexQuiet(column);
 
@@ -1374,7 +1392,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     CharSequence column = columnNames.getQuick(0);
                     int index = metadata.getColumnIndexQuiet(column);
                     if (index == timestampIndex) {
-                        if (size == 1) {
+                        if (orderByColumnCount == 1) {
                             if (orderBy.get(column) == QueryModel.ORDER_DIRECTION_ASCENDING) {
                                 return recordCursorFactory;
                             } else if (orderBy.get(column) == ORDER_DIRECTION_DESCENDING &&
@@ -3128,12 +3146,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     @Nullable
     private Function getHiFunction(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        return toFunction(executionContext, model.getLimitHi(), null);
+        return toLimitFunction(executionContext, model.getLimitHi(), null);
     }
 
     @NotNull
     private Function getLoFunction(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        return toFunction(executionContext, model.getLimitLo(), LongConstant.ZERO);
+        return toLimitFunction(executionContext, model.getLimitLo(), LongConstant.ZERO);
     }
 
     private int getTimestampIndex(QueryModel model, RecordCursorFactory factory) throws SqlException {
@@ -3290,9 +3308,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         this.fullFatJoins = fullFatJoins;
     }
 
-    private Function toFunction(SqlExecutionContext executionContext,
-                                ExpressionNode limit,
-                                ConstantFunction defaultValue) throws SqlException {
+    private Function toLimitFunction(
+            SqlExecutionContext executionContext,
+            ExpressionNode limit,
+            ConstantFunction defaultValue
+    ) throws SqlException {
         if (limit == null) {
             return defaultValue;
         }
@@ -3300,6 +3320,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final Function func = functionParser.parseFunction(limit, EmptyRecordMetadata.INSTANCE, executionContext);
         final int type = func.getType();
         if (limitTypes.excludes(type)) {
+            if (type == ColumnType.UNDEFINED) {
+                if (func instanceof IndexedParameterLinkFunction) {
+                    executionContext.getBindVariableService().setLong(((IndexedParameterLinkFunction) func).getVariableIndex(), defaultValue.getLong(null));
+                    return func;
+                }
+
+                if (func instanceof NamedParameterLinkFunction) {
+                    executionContext.getBindVariableService().setLong(((NamedParameterLinkFunction) func).getVariableName(), defaultValue.getLong(null));
+                    return func;
+                }
+            }
             throw SqlException.$(limit.position, "invalid type: ").put(ColumnType.nameOf(type));
         }
         return func;

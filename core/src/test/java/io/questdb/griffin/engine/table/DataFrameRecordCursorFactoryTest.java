@@ -37,6 +37,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+
 public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
 
     @Test
@@ -215,7 +217,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 Assert.assertTrue(factory.supportPageFrameCursor());
 
                 int frameCount = 0;
-                try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext)) {
+                try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
                     PageFrame frame;
                     while ((frame = cursor.next()) != null) {
                         Assert.assertEquals(0, frame.getPartitionIndex());

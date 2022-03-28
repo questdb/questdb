@@ -22,11 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cairo;
 
-import java.io.Closeable;
-
-public interface CleanClosable extends Closeable {
-    @Override
-    void close();
+@FunctionalInterface
+public interface WriteToQueue<T> {
+    void writeTo(T queueItem);
 }

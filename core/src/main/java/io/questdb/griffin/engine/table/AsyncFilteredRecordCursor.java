@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.SqlException;
@@ -53,6 +53,9 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     private int frameIndex;
     private int frameLimit;
     private PageFrameSequence<?> frameSequence;
+    // Artificial limit on remaining rows to be returned from this cursor.
+    // It is typically copied from 'limit' clause on SQL statement
+    private long rowsRemaining;
 
     public AsyncFilteredRecordCursor(Function filter, boolean hasDescendingOrder) {
         this.filter = filter;
@@ -92,7 +95,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         if (frameRowIndex < frameRowCount) {
             record.setRowIndex(rows.get(rowIndex()));
             frameRowIndex++;
-            return true;
+            return checkLimit();
         }
 
         // Release previous queue item.
@@ -106,7 +109,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
             if (frameRowCount > 0) {
                 record.setRowIndex(rows.get(rowIndex()));
                 frameRowIndex++;
-                return true;
+                return checkLimit();
             }
         }
         return false;
@@ -150,16 +153,18 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         return -1;
     }
 
+    private boolean checkLimit() {
+        if (--rowsRemaining < 0) {
+            frameSequence.setValid(false);
+            return false;
+        }
+        return true;
+    }
+
     private void collectCursor() {
         if (cursor > -1) {
             unsafeCollectCursor();
         }
-    }
-
-    private void unsafeCollectCursor() {
-        reduceQueue.get(cursor).collected();
-        collectSubSeq.done(cursor);
-        cursor = -1;
     }
 
     private void fetchNextFrame() {
@@ -200,17 +205,24 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         } while (this.frameIndex < frameLimit);
     }
 
-    void of(SCSequence collectSubSeq, PageFrameSequence<?> frameSequence) throws SqlException {
+    void of(SCSequence collectSubSeq, PageFrameSequence<?> frameSequence, long rowsRemaining) throws SqlException {
         this.collectSubSeq = collectSubSeq;
         this.frameSequence = frameSequence;
         this.reduceQueue = frameSequence.getPageFrameReduceQueue();
         this.frameIndex = -1;
         this.frameLimit = frameSequence.getFrameCount() - 1;
+        this.rowsRemaining = rowsRemaining;
         record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
         // when frameCount is 0 our collect sequence is not subscribed
         // we should not be attempting to fetch queue using it
         if (frameLimit > -1) {
             fetchNextFrame();
         }
+    }
+
+    private void unsafeCollectCursor() {
+        reduceQueue.get(cursor).collected();
+        collectSubSeq.done(cursor);
+        cursor = -1;
     }
 }

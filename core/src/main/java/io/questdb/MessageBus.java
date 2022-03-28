@@ -37,7 +37,6 @@ public interface MessageBus extends Closeable {
     @Override
     default void close() {
         Misc.free(getO3PartitionQueue());
-        Misc.free(getTableWriterCommandQueue());
         Misc.free(getTableWriterEventQueue());
         for (int i = 0, n = getPageFrameReduceShardCount(); i < n; i++) {
             Misc.free(getPageFrameReduceQueue(i));
@@ -45,12 +44,6 @@ public interface MessageBus extends Closeable {
     }
 
     CairoConfiguration getConfiguration();
-
-    MPSequence getPageFrameDispatchPubSeq();
-
-    RingQueue<PageFrameDispatchTask> getPageFrameDispatchQueue();
-
-    MCSequence getPageFrameDispatchSubSeq();
 
     Sequence getIndexerPubSequence();
 
@@ -96,6 +89,12 @@ public interface MessageBus extends Closeable {
 
     FanOut getPageFrameCollectFanOut(int shard);
 
+    MPSequence getPageFrameDispatchPubSeq();
+
+    RingQueue<PageFrameDispatchTask> getPageFrameDispatchQueue();
+
+    MCSequence getPageFrameDispatchSubSeq();
+
     MPSequence getPageFrameReducePubSeq(int shard);
 
     RingQueue<PageFrameReduceTask> getPageFrameReduceQueue(int shard);
@@ -103,12 +102,6 @@ public interface MessageBus extends Closeable {
     int getPageFrameReduceShardCount();
 
     MCSequence getPageFrameReduceSubSeq(int shard);
-
-    FanOut getTableWriterCommandFanOut();
-
-    MPSequence getTableWriterCommandPubSeq();
-
-    RingQueue<TableWriterTask> getTableWriterCommandQueue();
 
     FanOut getTableWriterEventFanOut();
 

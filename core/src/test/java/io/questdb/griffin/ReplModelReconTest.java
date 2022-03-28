@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -518,7 +519,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                 );
 
                 w1.tick();
-                engine.tick();
 
                 final TableSyncModel model = client.consumeSyncModel();
 
@@ -560,8 +560,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                                 0
                         )
                 );
-
-                engine.tick();
 
                 final TableSyncModel model = client.consumeSyncModel();
                 Assert.assertNotNull(model);
@@ -1397,8 +1395,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                 slaveIP,
                 sequence
         );
-
-        engine.tick();
+        w2.tick();
 
         sink.clear();
         TableSyncModel model = client.consumeSyncModel();
@@ -1412,15 +1409,11 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     }
 
     private static class SimpleLocalClient implements Closeable {
-        private final Sequence cmdPubSeq;
-        private final RingQueue<TableWriterTask> cmdQueue;
         private final RingQueue<TableWriterTask> evtQueue;
         private final Sequence evtSubSeq;
         private final FanOut evtFanOut;
 
         public SimpleLocalClient(CairoEngine engine) {
-            this.cmdPubSeq = engine.getMessageBus().getTableWriterCommandPubSeq();
-            this.cmdQueue = engine.getMessageBus().getTableWriterCommandQueue();
             this.evtQueue = engine.getMessageBus().getTableWriterEventQueue();
 
             // consume event from bus and make sure it is what we expect
@@ -1451,27 +1444,26 @@ public class ReplModelReconTest extends AbstractGriffinTest {
         }
 
         public boolean publishSyncCmd(String tableName, long tableId, TableWriter slave, long slaveIP, long sequence) {
-            long cursor = cmdPubSeq.next();
-            if (cursor > -1) {
-                TableWriterTask task = cmdQueue.get(cursor);
-                task.fromSlaveSyncRequest(
-                        // we need to know master table ID from master's writer because
-                        // we are simulating replication from table X to table Y on the same database
-                        // In real world slave will have the same ID as master
-                        tableId,
-                        tableName,
-                        slave.getRawTxnMemory(),
-                        slave.getRawTxnMemorySize(),
-                        slave.getRawMetaMemory(),
-                        slave.getRawMetaMemorySize(),
-                        slaveIP,
-                        sequence
-                );
+            WriteToQueue<TableWriterTask> writeFunc = (TableWriterTask task) -> task.fromSlaveSyncRequest(
+                    // we need to know master table ID from master's writer because
+                    // we are simulating replication from table X to table Y on the same database
+                    // In real world slave will have the same ID as master
+                    tableId,
+                    tableName,
+                    slave.getRawTxnMemory(),
+                    slave.getRawTxnMemorySize(),
+                    slave.getRawMetaMemory(),
+                    slave.getRawMetaMemorySize(),
+                    slaveIP,
+                    sequence
+            );
 
-                cmdPubSeq.done(cursor);
-                return true;
+            try (TableWriter writer = engine.getWriterOrPublishCommand(AllowAllCairoSecurityContext.INSTANCE, tableName, "repl model test", writeFunc)) {
+                if (writer != null) {
+                    writer.processCommandAsync(writeFunc);
+                }
             }
-            return false;
+            return true;
         }
     }
 }
