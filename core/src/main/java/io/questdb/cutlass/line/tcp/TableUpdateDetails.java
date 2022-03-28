@@ -59,6 +59,7 @@ public class TableUpdateDetails implements Closeable {
     private long lastMeasurementMillis = Long.MAX_VALUE;
     private long nextCommitTime;
     private int networkIOOwnerCount = 0;
+    private volatile boolean writerInError;
 
     TableUpdateDetails(
             LineTcpReceiverConfiguration configuration,
@@ -94,6 +95,14 @@ public class TableUpdateDetails implements Closeable {
                 .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
                 .$(']').$();
 
+    }
+
+    public boolean isWriterInError() {
+        return writerInError;
+    }
+
+    public void setWriterInError() {
+        writerInError = true;
     }
 
     @Override
@@ -303,6 +312,10 @@ public class TableUpdateDetails implements Closeable {
         public void close() {
             Misc.freeObjList(symbolCacheByColumnIndex);
             Misc.free(path);
+        }
+
+        public boolean isWriterInError() {
+            return writerInError;
         }
 
         private SymbolCache addSymbolCache(int colIndex) {

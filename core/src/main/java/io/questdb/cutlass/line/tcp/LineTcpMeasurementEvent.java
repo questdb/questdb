@@ -242,6 +242,9 @@ class LineTcpMeasurementEvent implements Closeable {
     ) {
         writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_INCOMPLETE_EVENT;
         final TableUpdateDetails.ThreadLocalDetails localDetails = tableUpdateDetails.getThreadLocalDetails(workerId);
+        if (localDetails.isWriterInError()) {
+            throw CairoException.instance(0).put("writer is in error, aborting ILP pipeline");
+        }
         localDetails.resetProcessedColumnsTracking();
         this.tableUpdateDetails = tableUpdateDetails;
         long timestamp = parser.getTimestamp();
