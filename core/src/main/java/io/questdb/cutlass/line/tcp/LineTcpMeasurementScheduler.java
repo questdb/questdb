@@ -198,16 +198,16 @@ class LineTcpMeasurementScheduler implements Closeable {
         return false;
     }
 
-    public boolean processWriterReleaseEvent(LineTcpMeasurementEvent event, int workerId) {
+    public void processWriterReleaseEvent(LineTcpMeasurementEvent event, int workerId) {
         tableUpdateDetailsLock.readLock().lock();
         try {
             final TableUpdateDetails tab = event.getTableUpdateDetails();
             if (tab.getWriterThreadId() != workerId) {
-                return true;
+                return;
             }
-            if (tableUpdateDetailsUtf16.keyIndex(tab.getTableNameUtf16()) < 0) {
+            if (!event.getTableUpdateDetails().isWriterInError() && tableUpdateDetailsUtf16.keyIndex(tab.getTableNameUtf16()) < 0) {
                 // Table must have been re-assigned to an IO thread
-                return true;
+                return;
             }
             LOG.info()
                     .$("releasing writer, its been idle since ").$ts(tab.getLastMeasurementMillis() * 1_000)
@@ -218,7 +218,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         } finally {
             tableUpdateDetailsLock.readLock().unlock();
         }
-        return true;
     }
 
     private static long getEventSlotSize(int maxMeasurementSize) {

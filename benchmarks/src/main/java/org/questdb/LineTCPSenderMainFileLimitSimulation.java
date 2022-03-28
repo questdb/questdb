@@ -146,7 +146,7 @@ public class LineTCPSenderMainFileLimitSimulation {
 
     private static void fillDates(Rnd rnd, LineTcpSender sender) throws NumericException {
         long period = Timestamps.MINUTE_MICROS * 1000L * 10;
-        long ts = IntervalUtils.parseFloorPartialDate("2021-12-12") * 1000L;
+        long ts = IntervalUtils.parseFloorPartialDate("2022-02-25") * 1000L;
         long endTs = IntervalUtils.parseFloorPartialDate("2022-03-26T20") * 1000L;
 
         while (ts < endTs) {

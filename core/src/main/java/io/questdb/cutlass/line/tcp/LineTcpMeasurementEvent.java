@@ -82,7 +82,7 @@ class LineTcpMeasurementEvent implements Closeable {
         tableUpdateDetails.releaseWriter(commitOnWriterClose);
     }
 
-    void append() {
+    void append() throws CommitFailedException {
         TableWriter.Row row = null;
         try {
             TableWriter writer = tableUpdateDetails.getWriter();
