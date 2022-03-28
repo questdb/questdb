@@ -26,23 +26,72 @@ package io.questdb.griffin;
 
 import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
+import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.jit.JitUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class AsyncOffloadTest extends AbstractGriffinTest {
-    @Test
-    public void testParallelStress() throws Exception {
 
+    @BeforeClass
+    public static void setUpStatic() {
         jitMode = SqlJitMode.JIT_MODE_DISABLED;
+        AbstractGriffinTest.setUpStatic();
+    }
+
+    @Test
+    public void testParallelStressMultipleThreadsMultipleWorkersJitDisabled() throws Exception {
+        testParallelStress(4, 4, SqlJitMode.JIT_MODE_DISABLED);
+    }
+
+    @Test
+    public void testParallelStressMultipleThreadsMultipleWorkersJitEnabled() throws Exception {
+        // Disable the test on ARM64.
+        Assume.assumeTrue(JitUtil.isJitSupported());
+
+        testParallelStress(4, 4, SqlJitMode.JIT_MODE_ENABLED);
+    }
+
+    @Test
+    public void testParallelStressSingleThreadMultipleWorkersJitDisabled() throws Exception {
+        testParallelStress(4, 1, SqlJitMode.JIT_MODE_DISABLED);
+    }
+
+    @Test
+    public void testParallelStressSingleThreadMultipleWorkersJitEnabled() throws Exception {
+        // Disable the test on ARM64.
+        Assume.assumeTrue(JitUtil.isJitSupported());
+
+        testParallelStress(4, 1, SqlJitMode.JIT_MODE_ENABLED);
+    }
+
+    @Test
+    public void testParallelStressMultipleThreadsSingleWorkerJitDisabled() throws Exception {
+        testParallelStress(1, 4, SqlJitMode.JIT_MODE_DISABLED);
+    }
+
+    @Test
+    public void testParallelStressMultipleThreadsSingleWorkerJitEnabled() throws Exception {
+        // Disable the test on ARM64.
+        Assume.assumeTrue(JitUtil.isJitSupported());
+
+        testParallelStress(1, 4, SqlJitMode.JIT_MODE_ENABLED);
+    }
+
+    private void testParallelStress(int workerCount, int threadCount, int jitMode) throws Exception {
+        AbstractCairoTest.jitMode = jitMode;
 
         String expected = "v\n" +
                 "3352215237270276085\n" +
@@ -97,9 +146,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                 "4270881260749377500\n" +
                 "4290477379978201771\n";
 
-        int workerCount = 4;
-
-        int[] affinity = new int[workerCount];
+        final int[] affinity = new int[workerCount];
         for (int i = 0; i < workerCount; i++) {
             affinity[i] = -1;
         }
@@ -136,21 +183,20 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                             sqlExecutionContext
                     );
 
-                    int c = 4;
-                    RecordCursorFactory[] factories = new RecordCursorFactory[c];
+                    RecordCursorFactory[] factories = new RecordCursorFactory[threadCount];
 
-                    for (int i = 0; i < c; i++) {
+                    for (int i = 0; i < threadCount; i++) {
                         factories[i] = compiler.compile("x where v > 3326086085493629941L and v < 4326086085493629941L order by v", sqlExecutionContext).getRecordCursorFactory();
+                        Assert.assertEquals(jitMode != SqlJitMode.JIT_MODE_DISABLED, factories[i].usesCompiledFilter());
                     }
 
                     final AtomicInteger errors = new AtomicInteger();
-                    final CyclicBarrier barrier = new CyclicBarrier(c);
-                    final SOCountDownLatch haltLatch = new SOCountDownLatch(c);
+                    final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                    final SOCountDownLatch haltLatch = new SOCountDownLatch(threadCount);
 
-                    for (int i = 0; i < c; i++) {
+                    for (int i = 0; i < threadCount; i++) {
                         int th = i;
                         new Thread(() -> {
-
                             TestUtils.await(barrier);
                             try {
                                 RecordCursorFactory factory = factories[th];
@@ -163,7 +209,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                                             new StringSink() // sink is transient and used internally by printer
                                     );
                                 }
-                            } catch (SqlException e) {
+                            } catch (Throwable e) {
                                 e.printStackTrace();
                                 errors.incrementAndGet();
                             } finally {
@@ -173,7 +219,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                     }
 
                     haltLatch.await();
-
+                    Assert.assertEquals(0, errors.get());
                 },
                 configuration
         );

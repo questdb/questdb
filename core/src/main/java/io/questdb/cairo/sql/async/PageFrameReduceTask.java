@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql.async;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.PageAddressCache;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
@@ -33,19 +34,24 @@ import io.questdb.std.Misc;
 import java.io.Closeable;
 
 public class PageFrameReduceTask implements Closeable {
+
     private final DirectLongList rows;
+    // Used to pass the list of column page frame addresses to a JIT-compiled filter.
+    private final DirectLongList columns;
     private final long pageFrameQueueCapacity;
     private int frameIndex = Integer.MAX_VALUE;
     private PageFrameSequence<?> frameSequence;
 
     public PageFrameReduceTask(CairoConfiguration configuration, int pageFrameQueueCapacity) {
         this.rows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD);
+        this.columns = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
         this.pageFrameQueueCapacity = pageFrameQueueCapacity;
     }
 
     @Override
     public void close() {
         Misc.free(rows);
+        Misc.free(columns);
     }
 
     public void collected() {
@@ -55,7 +61,8 @@ public class PageFrameReduceTask implements Closeable {
         // is 32 items. If our particular producer resizes queue items to 10x of the initial size
         // we let these sizes stick until produce starts to wind down.
         if (frameIndex >= frameCount - pageFrameQueueCapacity) {
-            getRows().resetCapacity();
+            rows.resetCapacity();
+            columns.resetCapacity();
         }
 
         // we assume that frame indexes are published in ascending order
@@ -84,6 +91,14 @@ public class PageFrameReduceTask implements Closeable {
 
     public DirectLongList getRows() {
         return rows;
+    }
+
+    public DirectLongList getColumns() {
+        return columns;
+    }
+
+    public PageAddressCache getPageAddressCache() {
+        return frameSequence.getPageAddressCache();
     }
 
     public void of(PageFrameSequence<?> frameSequence, int frameIndex) {

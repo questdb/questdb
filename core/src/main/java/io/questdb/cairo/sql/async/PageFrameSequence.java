@@ -47,7 +47,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private static final int OWNER_NONE = 0;
     private static final int OWNER_WORK_STEALING = 1;
     private static final int OWNER_ASYNC = 2;
-    private final static Log LOG = LogFactory.getLog(PageFrameSequence.class);
+    private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
     private static final AtomicLong ID_SEQ = new AtomicLong();
     public final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final AtomicBoolean valid = new AtomicBoolean(true);
@@ -137,6 +137,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         // factory is closed without using cursor
         if (collectSubSeq != null) {
             messageBus.getPageFrameCollectFanOut(shard).remove(collectSubSeq);
+            LOG.info().$("removed [seq=").$(collectSubSeq).I$();
             collectSubSeq.clear();
         }
         this.dispatchStartIndex.set(0);
@@ -311,6 +312,9 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                 PageFrameDispatchJob.handleTask(pageFrameSequence, rec, messageBus, true, circuitBreaker);
                 dispatchSubSeq.done(cursor);
             } else {
+                if (dispatchStartIndex.get() < frameCount) {
+                    PageFrameDispatchJob.handleTask(this, rec, messageBus, true, circuitBreaker);
+                }
                 break;
             }
         }
@@ -367,6 +371,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                 .$("added [shard=").$(shard)
                 .$(", id=").$(id)
                 .$(", seqCurrent=").$(collectSubSeq.current())
+                .$(", seq=").$(collectSubSeq)
                 .I$();
 
         long dispatchCursor;

@@ -37,8 +37,11 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.Rows;
 
 class AsyncFilteredRecordCursor implements RecordCursor {
-    private final static Log LOG = LogFactory.getLog(AsyncFilteredRecordCursor.class);
+
+    private static final Log LOG = LogFactory.getLog(AsyncFilteredRecordCursor.class);
+
     private final Function filter;
+    private final boolean hasDescendingOrder;
     private final PageAddressCacheRecord record;
     private PageAddressCacheRecord recordB;
     private SCSequence collectSubSeq;
@@ -54,8 +57,9 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     // It is typically copied from 'limit' clause on SQL statement
     private long rowsRemaining;
 
-    public AsyncFilteredRecordCursor(Function filter) {
+    public AsyncFilteredRecordCursor(Function filter, boolean hasDescendingOrder) {
         this.filter = filter;
+        this.hasDescendingOrder = hasDescendingOrder;
         this.record = new PageAddressCacheRecord();
     }
 
@@ -89,7 +93,8 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     public boolean hasNext() {
         // we have rows in the current frame we still need to dispatch
         if (frameRowIndex < frameRowCount) {
-            record.setRowIndex(rows.get(frameRowIndex++));
+            record.setRowIndex(rows.get(rowIndex()));
+            frameRowIndex++;
             return checkLimit();
         }
 
@@ -102,11 +107,16 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         if (frameIndex < frameLimit) {
             fetchNextFrame();
             if (frameRowCount > 0) {
-                record.setRowIndex(rows.get(frameRowIndex++));
+                record.setRowIndex(rows.get(rowIndex()));
+                frameRowIndex++;
                 return checkLimit();
             }
         }
         return false;
+    }
+
+    private long rowIndex() {
+        return hasDescendingOrder ? (frameRowCount - frameRowIndex - 1) : frameRowIndex;
     }
 
     @Override

@@ -33,15 +33,14 @@ import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.CustomisableRunnable;
+import io.questdb.jit.JitUtil;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Misc;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
 
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
 
@@ -126,7 +125,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    // todo: this test hang once on "run all tests", no idea why, could not reproduce again
     public void testPositiveLimit() throws Exception {
         withPool((engine, compiler, sqlExecutionContext) -> {
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(20000000)) timestamp(t) partition by hour", sqlExecutionContext);
@@ -231,13 +229,15 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         });
     }
 
-    @Test
-    public void testSimple() throws Exception {
+    public void testSimple(int jitMode, Class<?> expectedFactoryClass) throws Exception {
         withPool((engine, compiler, sqlExecutionContext) -> {
+
+            sqlExecutionContext.setJitMode(jitMode);
+
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(20000000)) timestamp(t) partition by hour", sqlExecutionContext);
             try (RecordCursorFactory f = compiler.compile("x where a > 0.34", sqlExecutionContext).getRecordCursorFactory()) {
 
-                Assert.assertEquals("io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory", f.getClass().getName());
+                Assert.assertEquals(expectedFactoryClass.getName(), f.getClass().getName());
                 SCSequence subSeq = new SCSequence();
                 PageFrameSequence<?> frameSequence = f.execute(sqlExecutionContext, subSeq, ORDER_ANY);
 
@@ -259,8 +259,22 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                 }
                 frameSequence.await();
                 Misc.free(frameSequence.getSymbolTableSource());
+                frameSequence.clear();
             }
         });
+    }
+
+    @Test
+    @Ignore
+    public void testSimpleJit() throws Exception {
+        // Disable the test on ARM64.
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        testSimple(SqlJitMode.JIT_MODE_ENABLED, io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory.class);
+    }
+
+    @Test
+    public void testSimpleNonJit() throws Exception {
+        testSimple(SqlJitMode.JIT_MODE_DISABLED, io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory.class);
     }
 
     public void withPool(CustomisableRunnable runnable) throws Exception {

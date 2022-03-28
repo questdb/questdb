@@ -449,6 +449,26 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testOrderByAsc() throws Exception {
+        testOrderBy("order by ts asc");
+    }
+
+    @Test
+    public void testOrderByDesc() throws Exception {
+        testOrderBy("order by ts desc");
+    }
+
+    private void testOrderBy(String orderByClause) throws Exception {
+        final String query = "select * from x where price > 0 " + orderByClause;
+        final String ddl = "create table x as " +
+                "(select rnd_symbol('ABB','HBC','DXR') sym, \n" +
+                " rnd_double() price, \n" +
+                " timestamp_sequence(172800000000, 360000000) ts \n" +
+                "from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp (ts)";
+        assertQueryNotNull(query, ddl);
+    }
+
+    @Test
     public void testCount() throws Exception {
         final String query = "select count() from x where price > 0 and sym = 'HBC'";
         final String ddl = "create table x as " +
