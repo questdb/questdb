@@ -22,11 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cliutil;
 
-import java.io.Closeable;
+import io.questdb.ServerConfigurationException;
+import io.questdb.cutlass.json.JsonException;
+import io.questdb.log.LogFactory;
 
-@FunctionalInterface
-public interface AutoClosableObjectFactory<T extends Closeable> {
-    T newInstance(WeakAutoClosableObjectPool<T> parent);
+import java.io.IOException;
+
+import static io.questdb.cliutil.CmdUtils.runColumnRebuild;
+import static io.questdb.cliutil.RebuildColumnCommandArgs.parseCommandArgs;
+
+public class RecoverVarIndex {
+    public static void main(String[] args) throws IOException, JsonException, ServerConfigurationException {
+        LogFactory.configureSync();
+        RebuildColumnCommandArgs params = parseCommandArgs(args, RecoverVarIndex.class.getName());
+        if (params == null) {
+            // Invalid params, usage already printed
+            return;
+        }
+        runColumnRebuild(params, new io.questdb.cairo.RecoverVarIndex());
+    }
 }

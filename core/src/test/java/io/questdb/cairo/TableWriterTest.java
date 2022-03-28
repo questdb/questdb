@@ -32,6 +32,9 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.griffin.AlterStatement;
+import io.questdb.griffin.AlterStatementBuilder;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -48,6 +51,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class TableWriterTest extends AbstractCairoTest {
@@ -55,6 +60,104 @@ public class TableWriterTest extends AbstractCairoTest {
     public static final String PRODUCT = "product";
     private static final FilesFacade FF = FilesFacadeImpl.INSTANCE;
     private static final Log LOG = LogFactory.getLog(TableWriterTest.class);
+
+    @Test
+    public void testAddColumnConcurrentWithDataUpdates() throws Throwable {
+        ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
+        assertMemoryLeak(() -> {
+            CyclicBarrier start = new CyclicBarrier(2);
+            AtomicInteger done = new AtomicInteger();
+            AtomicInteger columnsAdded = new AtomicInteger();
+            AtomicInteger insertCount = new AtomicInteger();
+            int totalColAddCount = 1000;
+            writerCommandQueueCapacity = Numbers.ceilPow2(2 * totalColAddCount);
+            int tableId = 11;
+
+            String tableName = "testAddColumnConcurrentWithDataUpdates";
+            try (Path path = new Path()) {
+                try (
+                        MemoryMARW mem = Vm.getCMARWInstance();
+                        TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                ) {
+                    model.timestamp();
+                    TableUtils.createTable(
+                            configuration,
+                            mem,
+                            path,
+                            model,
+                            tableId
+                    );
+                }
+            }
+
+            // Write data in a loop getting writer in and out of pool
+            Thread writeDataThread = new Thread(() -> {
+                try {
+                    start.await();
+                    int i = 0;
+                    while (columnsAdded.get() < totalColAddCount && exceptions.size() == 0) {
+                        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
+                            TableWriter.Row row = writer.newRow((i++) * Timestamps.HOUR_MICROS);
+                            row.append();
+                            writer.commit();
+                            insertCount.incrementAndGet();
+                        } catch (EntryUnavailableException ex) {
+                            // continue
+                        } catch (Throwable e) {
+                            exceptions.add(e);
+                            LOG.error().$(e).$();
+                        } finally {
+                            done.incrementAndGet();
+                        }
+                    }
+                } catch (Exception ex) {
+                    Assert.fail();
+                }
+            });
+
+            Thread addColumnsThread = new Thread(() -> {
+                try {
+                    start.await();
+                    AlterStatementBuilder alterStatementBuilder = new AlterStatementBuilder();
+                    for (int i = 0; i < totalColAddCount; i++) {
+                        alterStatementBuilder.clear();
+                        String columnName = "col" + i;
+                        alterStatementBuilder
+                                .ofAddColumn(0, tableName, tableId)
+                                .ofAddColumn(columnName, ColumnType.INT, 0, false, false, 0);
+                        AlterStatement alterStatement = alterStatementBuilder.build();
+                        try (TableWriter writer = engine.getWriterOrPublishCommand(AllowAllCairoSecurityContext.INSTANCE, tableName, "test", alterStatement)) {
+                            if (writer != null) {
+                                writer.processCommandAsync(alterStatement);
+                            }
+                        }
+                        columnsAdded.incrementAndGet();
+                    }
+                } catch (Throwable e) {
+                    exceptions.add(e);
+                    LOG.error().$(e).$();
+                }
+            });
+            writeDataThread.start();
+            addColumnsThread.start();
+
+            writeDataThread.join();
+            addColumnsThread.join();
+
+            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                Assert.assertEquals(totalColAddCount + 1, rdr.getColumnCount());
+            }
+
+            if (exceptions.size() != 0) {
+                for (Throwable ex : exceptions) {
+                    ex.printStackTrace();
+                }
+                Assert.fail();
+            }
+            Assert.assertTrue(insertCount.get() > 0);
+            LOG.infoW().$("total reload count ").$(insertCount.get()).$();
+        });
+    }
 
     @Test
     public void tesFrequentCommit() throws Exception {

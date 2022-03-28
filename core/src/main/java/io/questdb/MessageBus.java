@@ -35,7 +35,6 @@ public interface MessageBus extends Closeable {
     @Override
     default void close() {
         Misc.free(getO3PartitionQueue());
-        Misc.free(getTableWriterCommandQueue());
         Misc.free(getTableWriterEventQueue());
     }
 
@@ -82,12 +81,6 @@ public interface MessageBus extends Closeable {
     RingQueue<O3PurgeDiscoveryTask> getO3PurgeDiscoveryQueue();
 
     MCSequence getO3PurgeDiscoverySubSeq();
-
-    MPSequence getTableWriterCommandPubSeq();
-
-    RingQueue<TableWriterTask> getTableWriterCommandQueue();
-
-    FanOut getTableWriterCommandFanOut();
 
     MPSequence getTableWriterEventPubSeq();
 

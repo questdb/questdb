@@ -35,6 +35,7 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.*;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.nio.file.Paths;
 import java.util.Comparator;
 import java.util.Properties;
 
@@ -47,10 +48,18 @@ public class LogFactory implements Closeable {
 
     private static final int DEFAULT_QUEUE_DEPTH = 1024;
     private static final int DEFAULT_MSG_SIZE = 4 * 1024;
-    private static final String DEFAULT_CONFIG = "/log-stdout.conf";
+
+    //name of default logging configuration file (in jar and in $root/conf/ dir )
+    public static final String DEFAULT_CONFIG_NAME = "log.conf";
+    private static final String DEFAULT_CONFIG = "/io/questdb/site/conf/" + DEFAULT_CONFIG_NAME;
+
+    //placeholder that can be used in log.conf to point to $root/log/ dir 
+    public static final String LOG_DIR_VAR = "${log.dir}";
+
     private static final String EMPTY_STR = "";
     private static final CharSequenceHashSet reserved = new CharSequenceHashSet();
     private static final LengthDescendingComparator LDC = new LengthDescendingComparator();
+
     private final CharSequenceObjHashMap<ScopeConfiguration> scopeConfigMap = new CharSequenceObjHashMap<>();
     private final ObjList<ScopeConfiguration> scopeConfigs = new ObjList<>();
     private final ObjHashSet<LogWriter> jobs = new ObjHashSet<>();
@@ -61,6 +70,7 @@ public class LogFactory implements Closeable {
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
     private int recordLength = DEFAULT_MSG_SIZE;
     static boolean envEnabled = true;
+    static boolean overwriteWithSyncLogging = false;
 
     public LogFactory() {
         this(MicrosecondClockImpl.INSTANCE);
@@ -70,7 +80,11 @@ public class LogFactory implements Closeable {
         this.clock = clock;
     }
 
-    public static void configureFromProperties(LogFactory factory, Properties properties, WorkerPool workerPool) {
+    public static void configureAsync() {
+        overwriteWithSyncLogging = false;
+    }
+
+    public static void configureFromProperties(LogFactory factory, Properties properties, WorkerPool workerPool, String logDir) {
 
         factory.workerPool = workerPool;
         String writers = getProperty(properties, "writers");
@@ -101,7 +115,7 @@ public class LogFactory implements Closeable {
         }
 
         for (String w : writers.split(",")) {
-            LogWriterConfig conf = createWriter(properties, w.trim());
+            LogWriterConfig conf = createWriter(properties, w.trim(), logDir);
             if (conf != null) {
                 factory.add(conf);
             }
@@ -115,32 +129,68 @@ public class LogFactory implements Closeable {
     }
 
     public static void configureFromSystemProperties(LogFactory factory, WorkerPool workerPool) {
+        configureFromSystemProperties(factory, workerPool, null);
+    }
+
+    public static void configureFromSystemProperties(LogFactory factory, WorkerPool workerPool, String rootDir) {
         String conf = System.getProperty(CONFIG_SYSTEM_PROPERTY);
         if (conf == null) {
             conf = DEFAULT_CONFIG;
         }
-        try (InputStream is = LogFactory.class.getResourceAsStream(conf)) {
-            if (is != null) {
-                Properties properties = new Properties();
-                properties.load(is);
-                configureFromProperties(factory, properties, workerPool);
-            } else {
-                File f = new File(conf);
-                if (f.canRead()) {
-                    try (FileInputStream fis = new FileInputStream(f)) {
-                        Properties properties = new Properties();
-                        properties.load(fis);
-                        configureFromProperties(factory, properties, workerPool);
+
+        boolean initialized = false;
+        String logDir = rootDir != null ? Paths.get(rootDir, "log").toString() : "log";
+        File logDirFile = new File(logDir);
+
+        if (!logDirFile.exists() && logDirFile.mkdir()) {
+            System.err.printf("Created log directory: %s%n", logDir);
+        }
+
+        if (rootDir != null && DEFAULT_CONFIG.equals(conf)) {
+            String logPath = Paths.get(rootDir, "conf", DEFAULT_CONFIG_NAME).toString();
+            File f = new File(logPath);
+            if (f.isFile() && f.canRead()) {
+                System.err.printf("Reading log configuration from %s%n", logPath);
+                try (FileInputStream fis = new FileInputStream(logPath)) {
+                    Properties properties = new Properties();
+                    properties.load(fis);
+                    configureFromProperties(factory, properties, workerPool, logDir);
+                    System.err.printf("Log configuration loaded from: %s%n", logPath);
+                    initialized = true;
+                } catch (IOException e) {
+                    throw new LogError("Cannot read " + logPath, e);
+                }
+            }
+        }
+
+        if (!initialized) {
+            //in this order of initialization specifying -Dout might end up using internal jar resources ...   
+            try (InputStream is = LogFactory.class.getResourceAsStream(conf)) {
+                if (is != null) {
+                    Properties properties = new Properties();
+                    properties.load(is);
+                    configureFromProperties(factory, properties, workerPool, logDir);
+                    System.err.println("Log configuration loaded from default internal file.");
+                } else {
+                    File f = new File(conf);
+                    if (f.canRead()) {
+                        try (FileInputStream fis = new FileInputStream(f)) {
+                            Properties properties = new Properties();
+                            properties.load(fis);
+                            configureFromProperties(factory, properties, workerPool, logDir);
+                            System.err.printf("Log configuration loaded from: %s%n", conf);
+                        }
+                    } else {
+                        factory.configureDefaultWriter();
+                        System.err.println("Log configuration loaded loaded using factory defaults.");
                     }
+                }
+            } catch (IOException e) {
+                if (!DEFAULT_CONFIG.equals(conf)) {
+                    throw new LogError("Cannot read " + conf, e);
                 } else {
                     factory.configureDefaultWriter();
                 }
-            }
-        } catch (IOException e) {
-            if (!DEFAULT_CONFIG.equals(conf)) {
-                throw new LogError("Cannot read " + conf, e);
-            } else {
-                factory.configureDefaultWriter();
             }
         }
         factory.startThread();
@@ -148,6 +198,10 @@ public class LogFactory implements Closeable {
 
     public static void configureFromSystemProperties(WorkerPool workerPool) {
         configureFromSystemProperties(INSTANCE, workerPool);
+    }
+
+    public static void configureSync() {
+        overwriteWithSyncLogging = true;
     }
 
     @SuppressWarnings("rawtypes")
@@ -244,7 +298,24 @@ public class LogFactory implements Closeable {
         final Holder err = scopeConfiguration.getHolder(Numbers.msb(LogLevel.ERROR));
         final Holder cri = scopeConfiguration.getHolder(Numbers.msb(LogLevel.CRITICAL));
         final Holder adv = scopeConfiguration.getHolder(Numbers.msb(LogLevel.ADVISORY));
-        return new Logger(
+        if (!overwriteWithSyncLogging) {
+            return new Logger(
+                    clock,
+                    compressScope(key, sink),
+                    dbg == null ? null : dbg.ring,
+                    dbg == null ? null : dbg.lSeq,
+                    inf == null ? null : inf.ring,
+                    inf == null ? null : inf.lSeq,
+                    err == null ? null : err.ring,
+                    err == null ? null : err.lSeq,
+                    cri == null ? null : cri.ring,
+                    cri == null ? null : cri.lSeq,
+                    adv == null ? null : adv.ring,
+                    adv == null ? null : adv.lSeq
+            );
+        }
+
+        return new SyncLogger(
                 clock,
                 compressScope(key, sink),
                 dbg == null ? null : dbg.ring,
@@ -331,8 +402,8 @@ public class LogFactory implements Closeable {
     }
 
     @SuppressWarnings("rawtypes")
-    private static LogWriterConfig createWriter(final Properties properties, String w) {
-        final String writer = "w." + w + '.';
+    private static LogWriterConfig createWriter(final Properties properties, String writerName, String logDir) {
+        final String writer = "w." + writerName + '.';
         final String clazz = getProperty(properties, writer + "class");
         final String levelStr = getProperty(properties, writer + "level");
         final String scope = getProperty(properties, writer + "scope");
@@ -401,7 +472,13 @@ public class LogFactory implements Closeable {
                         try {
                             Field f = cl.getDeclaredField(p);
                             if (f.getType() == String.class) {
-                                Unsafe.getUnsafe().putObject(w1, Unsafe.getUnsafe().objectFieldOffset(f), getProperty(properties, n));
+
+                                String value = getProperty(properties, n);
+                                if (logDir != null && value.contains(LOG_DIR_VAR)) {
+                                    value = value.replace(LOG_DIR_VAR, logDir);
+                                }
+
+                                Unsafe.getUnsafe().putObject(w1, Unsafe.getUnsafe().objectFieldOffset(f), value);
                             }
                         } catch (Exception e) {
                             throw new LogError("Unknown property: " + n, e);
