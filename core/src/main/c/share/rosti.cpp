@@ -31,30 +31,29 @@ rosti_t *alloc_rosti(const int32_t *column_types, const int32_t column_count, co
     value_offsets[0] = 0;
     for (int32_t i = 0; i < column_count; i++) {
         switch (column_types[i]) {
-            case 0: // BOOL
-            case 1: // BYTE
+            case 1: // BOOL
+            case 2: // BYTE
                 slot_key_size += 1;
                 break;
-            case 2: // SHORT
-            case 3: // CHAR
+            case 3: // SHORT
+            case 4: // CHAR
                 slot_key_size += 2;
                 break;
-            case 4: // INT
-            case 8: // FLOAT
-            case 11: // SYMBOL - store as INT
+            case 5: // INT
+            case 9: // FLOAT
+            case 12: // SYMBOL - store as INT
                 slot_key_size += 4;
                 break;
-            case 5: // LONG (64 bit)
-            case 6: // DATE
-            case 7: // TIMESTAMP
-            case 9: // DOUBLE
-            case 10: // STRING - store reference only
+            case 6: // LONG (64 bit)
+            case 7: // DATE
+            case 8: // TIMESTAMP
+            case 10: // DOUBLE
+            case 11: // STRING - store reference only
                 slot_key_size += 8;
                 break;
-            case 12: // LONG256
+            case 13: // LONG256
                 slot_key_size += 64;
                 break;
-
         }
         value_offsets[i + 1] = slot_key_size;
     }
