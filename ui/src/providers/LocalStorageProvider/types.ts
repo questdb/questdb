@@ -33,4 +33,5 @@ export type LocalConfig = {
   queryText: string
   editorSplitterBasis: number
   resultsSplitterBasis: number
+  exampleQueriesVisited: boolean
 }
