@@ -40,7 +40,7 @@ public class UpdateTest extends AbstractGriffinTest {
 
     @Before
     public void setUpUpdates() {
-        updateExecution = new UpdateExecution(configuration);
+        updateExecution = new UpdateExecution(configuration, engine.getMessageBus());
     }
 
     @After

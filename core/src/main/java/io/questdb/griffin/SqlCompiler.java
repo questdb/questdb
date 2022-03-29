@@ -227,7 +227,7 @@ public class SqlCompiler implements Closeable {
                 postOrderTreeTraversalAlgo
         );
         textLoader = new TextLoader(engine);
-        updateExecution = new UpdateExecution(engine.getConfiguration());
+        updateExecution = new UpdateExecution(engine.getConfiguration(), engine.getMessageBus());
     }
 
     // Creates data type converter.

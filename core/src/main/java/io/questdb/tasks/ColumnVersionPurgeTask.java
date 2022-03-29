@@ -24,41 +24,78 @@
 
 package io.questdb.tasks;
 
-public class ColumnVersionPurgeTask {
+import io.questdb.std.LongList;
+import io.questdb.std.Mutable;
+
+public class ColumnVersionPurgeTask implements Mutable {
+    public static final int BLOCK_SIZE = 4;
+    public static final int OFFSET_COLUMN_VERSION = 0;
+    public static final int OFFSET_PARTITION_TIMESTAMP = 1;
+    public static final int OFFSET_PARTITION_NAME_TXN = 2;
+    private final LongList updatedColumnVersions = new LongList();
     private CharSequence columnName;
     private String tableName;
-    private long tableId;
-    private long columnVersion;
+    private int tableId;
+    private int partitionBy;
+    private long updatedTxn;
+    private int columnType;
+
+    public void appendColumnVersion(long columnVersion, long partitionTimestamp, long partitionNameTxn) {
+        updatedColumnVersions.add(columnVersion, partitionTimestamp, partitionNameTxn, 0L);
+    }
+
+    @Override
+    public void clear() {
+        updatedColumnVersions.clear();
+    }
+
+    public void copyFrom(ColumnVersionPurgeTask inTask) {
+        this.tableName = inTask.tableName;
+        this.columnName = inTask.columnName;
+        this.tableId = inTask.tableId;
+        this.partitionBy = inTask.partitionBy;
+        this.updatedTxn = inTask.updatedTxn;
+        this.columnType = inTask.columnType;
+        this.updatedColumnVersions.clear();
+        this.updatedColumnVersions.add(inTask.updatedColumnVersions);
+    }
 
     public CharSequence getColumnName() {
         return columnName;
     }
 
-    public void setColumnName(CharSequence columnName) {
-        this.columnName = columnName;
+    public int getColumnType() {
+        return columnType;
     }
 
-    public long getColumnVersion() {
-        return columnVersion;
+    public int getPartitionBy() {
+        return partitionBy;
     }
 
-    public void setColumnVersion(long columnVersion) {
-        this.columnVersion = columnVersion;
-    }
-
-    public long getTableId() {
+    public int getTableId() {
         return tableId;
-    }
-
-    public void setTableId(long tableId) {
-        this.tableId = tableId;
     }
 
     public String getTableName() {
         return tableName;
     }
 
-    public void setTableName(String tableName) {
+    public LongList getUpdatedColumnVersions() {
+        return updatedColumnVersions;
+    }
+
+    public long getUpdatedTxn() {
+        return updatedTxn;
+    }
+
+    public void of(String tableName, CharSequence columnName, int tableId, int columnType, int partitionBy, long lastTxn, LongList columnVersions) {
         this.tableName = tableName;
+        this.columnName = columnName;
+        this.tableId = tableId;
+        this.columnType = columnType;
+        this.partitionBy = partitionBy;
+        this.updatedTxn = lastTxn;
+        this.updatedColumnVersions.clear();
+        this.updatedColumnVersions.add(columnVersions);
     }
 }

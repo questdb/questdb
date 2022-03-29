@@ -38,9 +38,11 @@ public interface MessageBus extends Closeable {
         Misc.free(getTableWriterEventQueue());
     }
 
+    Sequence getColumnVersionPurgePubSeq();
+
     RingQueue<ColumnVersionPurgeTask> getColumnVersionPurgeQueue();
 
-    SCSequence getColumnVersionPurgeSubSeq();
+    Sequence getColumnVersionPurgeSubSeq();
 
     CairoConfiguration getConfiguration();
 

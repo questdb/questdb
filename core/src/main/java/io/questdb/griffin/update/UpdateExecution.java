@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.update;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -35,9 +36,11 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.Sequence;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.tasks.ColumnVersionPurgeTask;
 
 import java.io.Closeable;
 
@@ -55,11 +58,15 @@ public class UpdateExecution implements Closeable {
     private final long dataAppendPageSize;
     private final long fileOpenOpts;
     private final StringSink charSink = new StringSink();
+    private final LongList cleanupColumnVersions = new LongList();
+    private final LongList cleanupColumnVersionsAsync = new LongList();
     private Path path;
+    private final MessageBus messageBus;
 
-    public UpdateExecution(CairoConfiguration configuration) {
+    public UpdateExecution(CairoConfiguration configuration, MessageBus messageBus) {
         ff = configuration.getFilesFacade();
         path = new Path().of(configuration.getRoot());
+        this.messageBus = messageBus;
         rootLen = path.length();
         dataAppendPageSize = configuration.getDataAppendPageSize();
         fileOpenOpts = configuration.getWriterFileOpenOpts();
@@ -71,6 +78,7 @@ public class UpdateExecution implements Closeable {
     }
 
     public long executeUpdate(TableWriter tableWriter, UpdateStatement updateStatement, SqlExecutionContext executionContext) throws SqlException {
+        cleanupColumnVersions.clear();
         if (tableWriter.inTransaction()) {
             LOG.info().$("committing current transaction before UPDATE execution [table=").$(tableWriter.getTableName()).I$();
             tableWriter.commit();
@@ -177,8 +185,103 @@ public class UpdateExecution implements Closeable {
         if (currentPartitionIndex > -1) {
             tableWriter.commit();
             tableWriter.openLastPartition();
+            purgeOldColumnVersions(tableWriter, updateColumnIndexes, ff);
         }
         return rowsUpdated;
+    }
+
+    private void openPartitionColumns(TableWriter tableWriter, ObjList<? extends MemoryCM> memList, int partitionIndex, IntList updateColumnIndexes, boolean forWrite) {
+        long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
+        long partitionNameTxn = tableWriter.getPartitionNameTxn(partitionIndex);
+        RecordMetadata metadata = tableWriter.getMetadata();
+        try {
+            path.concat(tableWriter.getTableName());
+            TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, false);
+            TableUtils.txnPartitionConditionally(path, partitionNameTxn);
+            int pathTrimToLen = path.length();
+
+            for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
+                int columnIndex = updateColumnIndexes.get(i);
+                CharSequence name = metadata.getColumnName(columnIndex);
+                int columnType = metadata.getColumnType(columnIndex);
+
+                if (forWrite) {
+                    long existingVersion = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+                    tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex);
+                    cleanupColumnVersions.add(columnIndex, existingVersion, partitionTimestamp, partitionNameTxn);
+                }
+
+                long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+                if (isVariableLength(columnType)) {
+                    MemoryCMR colMemIndex = (MemoryCMR) memList.get(2 * i);
+                    colMemIndex.close();
+                    colMemIndex.of(
+                            ff,
+                            iFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
+                            dataAppendPageSize,
+                            -1,
+                            MemoryTag.MMAP_UPDATE,
+                            fileOpenOpts
+                    );
+                    MemoryCMR colMemVar = (MemoryCMR) memList.get(2 * i + 1);
+                    colMemVar.close();
+                    colMemVar.of(
+                            ff,
+                            dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
+                            dataAppendPageSize,
+                            -1,
+                            MemoryTag.MMAP_UPDATE,
+                            fileOpenOpts
+                    );
+                } else {
+                    MemoryCMR colMem = (MemoryCMR) memList.get(2 * i);
+                    colMem.close();
+                    colMem.of(
+                            ff,
+                            dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
+                            dataAppendPageSize,
+                            -1,
+                            MemoryTag.MMAP_UPDATE,
+                            fileOpenOpts
+                    );
+                }
+                if (forWrite) {
+                    if (isVariableLength(columnType)) {
+                        ((MemoryCMARW) memList.get(2 * i)).putLong(0);
+                    }
+                }
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
+    private void purgeColumnVersionAsync(
+            String tableName,
+            CharSequence columnName,
+            int tableId,
+            int columnType,
+            int partitionBy,
+            long updatedTxn,
+            LongList columnVersions
+    ) {
+        Sequence pubSeq = messageBus.getColumnVersionPurgePubSeq();
+        while (true) {
+            long cursor = pubSeq.next();
+            if (cursor > -1L) {
+                ColumnVersionPurgeTask task = messageBus.getColumnVersionPurgeQueue().get(cursor);
+                task.of(tableName, columnName, tableId, columnType, partitionBy, updatedTxn, columnVersions);
+                pubSeq.done(cursor);
+                return;
+            } else if (cursor == -1L) {
+                // Queue overflow
+                LOG.error().$("cannot schedule to purge updated column version async [table=").$(tableName)
+                        .$(", column=").$(columnName)
+                        .$(", lastTxn=").$(updatedTxn)
+                        .I$();
+                return;
+            }
+        }
     }
 
     private void copyColumnValues(
@@ -270,66 +373,91 @@ public class UpdateExecution implements Closeable {
         }
     }
 
-    private void openPartitionColumns(TableWriter tableWriter, ObjList<? extends MemoryCM> memList, int partitionIndex, IntList updateColumnIndexes, boolean forWrite) {
-        long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
-        RecordMetadata metadata = tableWriter.getMetadata();
-        try {
-            path.concat(tableWriter.getTableName());
-            TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, false);
-            int pathTrimToLen = path.length();
+    private void purgeOldColumnVersions(TableWriter tableWriter, IntList updateColumnIndexes, FilesFacade ff) {
+        boolean anyReadersBeforeCommittedTxn = tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn();
+        TableWriterMetadata writerMetadata = tableWriter.getMetadata();
 
-            for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
-                int columnIndex = updateColumnIndexes.get(i);
-                CharSequence name = metadata.getColumnName(columnIndex);
-                int columnType = metadata.getColumnType(columnIndex);
+        int pathTrimToLen = path.length();
+        path.concat(tableWriter.getTableName());
+        int pathTableLen = path.length();
+        long updatedTxn = tableWriter.getTxn();
 
-                if (forWrite) {
-                    tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex);
-                }
+        // Process updated column by column, one at the time
+        for (int updatedCol = 0, nn = updateColumnIndexes.size(); updatedCol < nn; updatedCol++) {
+            int processColumnIndex = updateColumnIndexes.getQuick(updatedCol);
+            CharSequence columnName = writerMetadata.getColumnName(processColumnIndex);
+            int columnType = writerMetadata.getColumnType(processColumnIndex);
+            cleanupColumnVersionsAsync.clear();
 
-                long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-                if (isVariableLength(columnType)) {
-                    MemoryCMR colMemIndex = (MemoryCMR) memList.get(2 * i);
-                    colMemIndex.close();
-                    colMemIndex.of(
-                            ff,
-                            iFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
-                            dataAppendPageSize,
-                            -1,
-                            MemoryTag.MMAP_UPDATE,
-                            fileOpenOpts
-                    );
-                    MemoryCMR colMemVar = (MemoryCMR) memList.get(2 * i + 1);
-                    colMemVar.close();
-                    colMemVar.of(
-                            ff,
-                            dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
-                            dataAppendPageSize,
-                            -1,
-                            MemoryTag.MMAP_UPDATE,
-                            fileOpenOpts
-                    );
-                } else {
-                    MemoryCMR colMem = (MemoryCMR) memList.get(2 * i);
-                    colMem.close();
-                    colMem.of(
-                            ff,
-                            dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
-                            dataAppendPageSize,
-                            -1,
-                            MemoryTag.MMAP_UPDATE,
-                            fileOpenOpts
-                    );
-                }
-                if (forWrite) {
-                    if (isVariableLength(columnType)) {
-                        ((MemoryCMARW) memList.get(2 * i)).putLong(0);
+            for (int i = 0, n = cleanupColumnVersions.size(); i < n; i += 4) {
+                int columnIndex = (int) cleanupColumnVersions.getQuick(i);
+
+                // Process updated column by column, one at the time
+                if (columnIndex == processColumnIndex) {
+                    long columnVersion = cleanupColumnVersions.getQuick(i + 1);
+                    long partitionTimestamp = cleanupColumnVersions.getQuick(i + 2);
+                    long partitionNameTxn = cleanupColumnVersions.getQuick(i + 3);
+
+                    boolean columnPurged = !anyReadersBeforeCommittedTxn;
+                    if (!anyReadersBeforeCommittedTxn) {
+                        path.trimTo(pathTableLen);
+                        TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, false);
+                        TableUtils.txnPartitionConditionally(path, partitionNameTxn);
+                        int pathPartitionLen = path.length();
+                        TableUtils.dFile(path, columnName, columnVersion);
+                        if (!ff.remove(path.$())) {
+                            columnPurged = false;
+                        }
+                        if (columnPurged && ColumnType.isVariableLength(columnType)) {
+                            path.trimTo(pathPartitionLen);
+                            TableUtils.iFile(path, columnName, columnVersion);
+                            TableUtils.iFile(path.$(), columnName, columnVersion);
+                            if (!ff.remove(path.$()) && ff.exists(path)) {
+                                columnPurged = false;
+                            }
+                        }
+                        if (columnPurged && writerMetadata.isColumnIndexed(columnIndex)) {
+                            path.trimTo(pathPartitionLen);
+                            BitmapIndexUtils.valueFileName(path, columnName, columnVersion);
+                            if (!ff.remove(path.$()) && ff.exists(path)) {
+                                columnPurged = false;
+                            }
+
+                            path.trimTo(pathPartitionLen);
+                            BitmapIndexUtils.keyFileName(path, columnName, columnVersion);
+                            if (!ff.remove(path.$()) && ff.exists(path)) {
+                                columnPurged = false;
+                            }
+                        }
+
+                        if (!columnPurged) {
+                            cleanupColumnVersionsAsync.add(columnVersion, partitionTimestamp, partitionNameTxn, 0L);
+                        }
                     }
                 }
             }
-        } finally {
-            path.trimTo(rootLen);
+
+            // if anything not purged, schedule async purge
+            if (cleanupColumnVersionsAsync.size() > 0) {
+                purgeColumnVersionAsync(
+                        tableWriter.getTableName(),
+                        columnName,
+                        writerMetadata.getId(),
+                        columnType, tableWriter.getPartitionBy(),
+                        updatedTxn,
+                        cleanupColumnVersionsAsync
+                );
+                LOG.info().$("updated column cleanup scheduled [table=").$(tableWriter.getTableName())
+                        .$(", column=").$(columnName)
+                        .$(", updateTxn=").$(updatedTxn).I$();
+            } else {
+                LOG.info().$("updated column version cleaned [table=").$(tableWriter.getTableName())
+                        .$(", column=").$(columnName)
+                        .$(", updateTxn=").$(updatedTxn).I$();
+            }
         }
+
+        path.trimTo(pathTrimToLen);
     }
 
     private void updateColumnValues(

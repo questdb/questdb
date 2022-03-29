@@ -26,16 +26,16 @@ package io.questdb.cairo;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.tasks.ColumnVersionPurgeTask;
 
 public class ColumnVersionPurgeExecution {
     private static final Log LOG = LogFactory.getLog(ColumnVersionPurgeJob.class);
 
-    public boolean tryCleanup(String tableName, CharSequence columnName, long tableId, long columnVersion) {
-        LOG.info().$("cleaning up column version [table=").$(tableName)
-                .$(", column=").$(columnName)
-                .$(", version=").$(columnVersion)
-                .$(", tableId").$(tableId)
-                .$();
+    public boolean tryCleanup(ColumnVersionPurgeTask task) {
+        LOG.info().$("cleaning up column version [table=").$(task.getTableName())
+                .$(", column=").$(task.getColumnName())
+                .$(", tableId").$(task.getTableId())
+                .I$();
         return false;
     }
 }

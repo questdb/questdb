@@ -768,6 +768,25 @@ public class TableWriter implements Closeable {
         return txWriter.getPartitionTimestamp(partitionIndex);
     }
 
+    public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
+        long lastCommittedTxn = txWriter.getTxn();
+        try {
+            if (txnScoreboard.acquireTxn(lastCommittedTxn)) {
+                txnScoreboard.releaseTxn(lastCommittedTxn);
+            }
+        } catch (CairoException ex) {
+            // Scoreboard can be over allocated, don't stall writing because of that.
+            // Schedule async purge and continue
+            LOG.error().$("cannot lock last txn in scoreboard, partition purge will be scheduled [table=")
+                    .$(tableName)
+                    .$(", txn=").$(lastCommittedTxn)
+                    .$(", error=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno()).I$();
+        }
+
+        return txnScoreboard.getMin() != lastCommittedTxn;
+    }
+
     public long getRawMetaMemory() {
         return metaMem.getPageAddress(0);
     }
@@ -1751,23 +1770,8 @@ public class TableWriter implements Closeable {
         throw new CairoError("Table '" + tableName + "' is distressed");
     }
 
-    private boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
-        long lastCommittedTxn = txWriter.getTxn();
-        try {
-            if (txnScoreboard.acquireTxn(lastCommittedTxn)) {
-                txnScoreboard.releaseTxn(lastCommittedTxn);
-            }
-        } catch (CairoException ex) {
-            // Scoreboard can be over allocated, don't stall writing because of that.
-            // Schedule async purge and continue
-            LOG.error().$("cannot lock last txn in scoreboard, partition purge will be scheduled [table=")
-                    .$(tableName)
-                    .$(", txn=").$(lastCommittedTxn)
-                    .$(", error=").$(ex.getFlyweightMessage())
-                    .$(", errno=").$(ex.getErrno()).I$();
-        }
-
-        return txnScoreboard.getMin() != lastCommittedTxn;
+    public long getPartitionNameTxn(int partitionIndex) {
+        return txWriter.getPartitionNameTxn(partitionIndex);
     }
 
     private void clearO3() {

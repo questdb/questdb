@@ -69,6 +69,7 @@ public class MessageBusImpl implements MessageBus {
     private final CairoConfiguration configuration;
     private final RingQueue<ColumnVersionPurgeTask> columnVersionPurgeQueue;
     private final SCSequence columnVersionPurgeSubSeq;
+    private final MPSequence columnVersionPurgePubSeq;
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -125,6 +126,13 @@ public class MessageBusImpl implements MessageBus {
 
         this.columnVersionPurgeQueue = new RingQueue<>(ColumnVersionPurgeTask::new, configuration.getColumnVersionPurgeQueueCapacity());
         this.columnVersionPurgeSubSeq = new SCSequence();
+        this.columnVersionPurgePubSeq = new MPSequence(this.columnVersionPurgeQueue.getCycle());
+        this.columnVersionPurgePubSeq.then(this.columnVersionPurgeSubSeq).then(this.columnVersionPurgePubSeq);
+    }
+
+    @Override
+    public Sequence getColumnVersionPurgePubSeq() {
+        return columnVersionPurgePubSeq;
     }
 
     @Override
