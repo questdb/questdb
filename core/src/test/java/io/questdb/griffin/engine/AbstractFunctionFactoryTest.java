@@ -511,6 +511,12 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             closeFunctions();
         }
 
+        public void andAssertLong256(Long256 expected) {
+            Assert.assertTrue(expected.equals(function1.getLong256A(record)));
+            Assert.assertTrue(expected.equals(function2.getLong256A(record)));
+            closeFunctions();
+        }
+
         public Record getRecord() {
             return record;
         }

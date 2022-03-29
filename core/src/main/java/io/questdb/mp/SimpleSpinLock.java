@@ -22,20 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.mp;
 
-/**
- * A 256 bit hash with string representation up to 64 hex digits following a prefix '0x'.
- * (e.g. 0xaba86bf575ba7fde98b6673bb7d85bf489fd71a619cddaecba5de0378e3d22ed)
- */
-public interface Long256 extends Long256Acceptor {
-    int BYTES = 32;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-    long getLong0();
+// Simple, non-reentrant and unfair lock implementation.
+// Don't try to use it for complex cases!
+public class SimpleSpinLock {
+    AtomicBoolean lock = new AtomicBoolean(false);
 
-    long getLong1();
+    public void lock() {
+        while (true) {
+            while (lock.get()) {
+                // do nothing
+            }
+            if (!lock.getAndSet(true)) {
+                return;
+            }
+        }
+    }
 
-    long getLong2();
-
-    long getLong3();
+    public void unlock() {
+        lock.set(false);
+    }
 }
