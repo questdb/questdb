@@ -28,8 +28,8 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.*;
@@ -324,14 +324,18 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     public void close() {
         clear();
-        this.fd = -1;
-        sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
-        Unsafe.free(sendBuffer, sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
-        Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
-        Misc.free(typesAndSelectCache);
-        Misc.free(path);
-        Misc.free(utf8Sink);
-        Misc.free(circuitBreaker);
+        // fd == -1 is only when context is closed
+        // when context is initialized fd == 0
+        if (this.fd != -1) {
+            this.fd = -1;
+            sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
+            Unsafe.free(sendBuffer, sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
+            Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
+            Misc.free(typesAndSelectCache);
+            Misc.free(path);
+            Misc.free(utf8Sink);
+            Misc.free(circuitBreaker);
+        }
     }
 
     @Override
