@@ -59,6 +59,7 @@ public class TableUpdateDetails implements Closeable {
     private long lastMeasurementMillis = Long.MAX_VALUE;
     private long nextCommitTime;
     private int networkIOOwnerCount = 0;
+    private volatile boolean writerInError;
 
     TableUpdateDetails(
             LineTcpReceiverConfiguration configuration,
@@ -96,6 +97,14 @@ public class TableUpdateDetails implements Closeable {
 
     }
 
+    public boolean isWriterInError() {
+        return writerInError;
+    }
+
+    public void setWriterInError() {
+        writerInError = true;
+    }
+
     @Override
     public void close() {
         synchronized (this) {
@@ -116,7 +125,9 @@ public class TableUpdateDetails implements Closeable {
             closeLocals();
             if (null != writer) {
                 try {
-                    writer.commit();
+                    if (!writerInError) {
+                        writer.commit();
+                    }
                 } catch (Throwable ex) {
                     LOG.error().$("cannot commit writer transaction, rolling back before releasing it [table=").$(tableNameUtf16).$(",ex=").$(ex).I$();
                 } finally {
@@ -176,7 +187,7 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
-    private void commit(boolean withLag) {
+    private void commit(boolean withLag) throws CommitFailedException {
         if (writer.getUncommittedRowCount() > 0) {
             try {
                 LOG.debug().$("time-based commit " + (withLag ? "with lag " : "") + "[rows=").$(writer.getUncommittedRowCount()).$(", table=").$(tableNameUtf16).I$();
@@ -186,17 +197,19 @@ public class TableUpdateDetails implements Closeable {
                     writer.commit();
                 }
             } catch (Throwable ex) {
+                setWriterInError();
                 LOG.error().$("could not commit [table=").$(tableNameUtf16).$(", e=").$(ex).I$();
                 try {
                     writer.rollback();
                 } catch (Throwable th) {
                     LOG.error().$("could not perform emergency rollback [table=").$(tableNameUtf16).$(", e=").$(th).I$();
                 }
+                throw CommitFailedException.instance(ex);
             }
         }
     }
 
-    long commitIfIntervalElapsed(long wallClockMillis) {
+    long commitIfIntervalElapsed(long wallClockMillis) throws CommitFailedException {
         if (wallClockMillis < nextCommitTime) {
             return nextCommitTime;
         }
@@ -208,7 +221,7 @@ public class TableUpdateDetails implements Closeable {
         return nextCommitTime;
     }
 
-    void commitIfMaxUncommittedRowsCountReached() {
+    void commitIfMaxUncommittedRowsCountReached() throws CommitFailedException {
         final long rowsSinceCommit = writer.getUncommittedRowCount();
         if (rowsSinceCommit < writer.getMetadata().getMaxUncommittedRows()) {
             if ((rowsSinceCommit & writerTickRowsCountMod) == 0) {
@@ -219,7 +232,19 @@ public class TableUpdateDetails implements Closeable {
         }
         LOG.debug().$("max-uncommitted-rows commit with lag [").$(tableNameUtf16).I$();
         nextCommitTime = millisecondClock.getTicks() + writer.getCommitInterval();
-        writer.commitWithLag();
+
+        try {
+            writer.commitWithLag();
+        } catch (Throwable th) {
+            LOG.error()
+                    .$("could not commit line protocol measurement [tableName=").$(writer.getTableName())
+                    .$(", message=").$(th.getMessage())
+                    .$(th)
+                    .I$();
+            writer.rollback();
+            throw CommitFailedException.instance(th);
+        }
+
         // Tick after commit.
         writer.tick(false);
     }
