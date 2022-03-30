@@ -24,17 +24,21 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.std.Chars;
-import io.questdb.std.IntObjHashMap;
-import io.questdb.std.ObjList;
+import io.questdb.mp.SCSequence;
+import io.questdb.std.*;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -43,6 +47,20 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class UpdateConcurrentTest extends AbstractGriffinTest {
     private final ThreadLocal<StringSink> readerSink = new ThreadLocal<>(StringSink::new);
+    private final ThreadLocal<SCSequence> eventSubSequence = new ThreadLocal<>(SCSequence::new);
+
+    @BeforeClass
+    public static void setUpStatic() {
+        writerCommandQueueCapacity = 128;
+        AbstractGriffinTest.setUpStatic();
+    }
+
+    @Override
+    @Before
+    public void setUp() {
+        writerCommandQueueCapacity = 128;
+        super.setUp();
+    }
 
     @Test
     public void testConcurrencySingleWriterSingleReaderSinglePartitioned() throws Exception {
@@ -52,6 +70,11 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
     @Test
     public void testConcurrencySingleWriterMultipleReaderSinglePartitioned() throws Exception {
         testConcurrency(1, 10, 40, PartitionMode.SINGLE);
+    }
+
+    @Test
+    public void testConcurrencyMultipleWriterMultipleReaderSinglePartitioned() throws Exception {
+        testConcurrency(4, 20, 8, PartitionMode.SINGLE);
     }
 
     @Test
@@ -65,6 +88,11 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testConcurrencyMultipleWriterMultipleReaderMultiPartitioned() throws Exception {
+        testConcurrency(4, 10, 8, PartitionMode.MULTIPLE);
+    }
+
+    @Test
     public void testConcurrencySingleWriterSingleReaderNonPartitioned() throws Exception {
         testConcurrency(1, 1, 50, PartitionMode.NONE);
     }
@@ -72,6 +100,11 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
     @Test
     public void testConcurrencySingleWriterMultipleReaderNonPartitioned() throws Exception {
         testConcurrency(1, 10, 40, PartitionMode.NONE);
+    }
+
+    @Test
+    public void testConcurrencyMultipleWriterMultipleReaderNonPartitioned() throws Exception {
+        testConcurrency(4, 10, 8, PartitionMode.NONE);
     }
 
     private void testConcurrency(int numOfWriters, int numOfReaders, int numOfUpdates, PartitionMode partitionMode) throws Exception {
@@ -88,13 +121,38 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                     " timestamp(ts)" +
                     (PartitionMode.isPartitioned(partitionMode) ? " partition by DAY" : ""), sqlExecutionContext);
 
+            Thread tick = new Thread(() -> {
+                while (current.get() < numOfWriters * numOfUpdates) {
+                    try(TableWriter tableWriter = engine.getWriter(
+                            sqlExecutionContext.getCairoSecurityContext(),
+                            "up",
+                            "test")) {
+                        tableWriter.tick();
+                    } catch (EntryUnavailableException e) {
+                        // ignore and re-try
+                    }
+                    Os.sleep(100);
+                }
+            });
+            threads.add(tick);
+            tick.start();
+
             for (int k = 0; k < numOfWriters; k++) {
                 Thread writer = new Thread(() -> {
                     try {
                         final SqlCompiler updateCompiler = new SqlCompiler(engine, null, snapshotAgent);
+                        final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                                .with(
+                                        AllowAllCairoSecurityContext.INSTANCE,
+                                        bindVariableService,
+                                        null,
+                                        -1,
+                                        null);
+
                         barrier.await();
                         for (int i = 0; i < numOfUpdates; i++) {
-                            executeUpdate("UPDATE up SET x = " + i, updateCompiler);
+                            QueryFuture queryFuture = executeUpdate("UPDATE up SET x = " + i, updateCompiler, sqlExecutionContext);
+                            queryFuture.await(10000000);
                             current.incrementAndGet();
                         }
                         updateCompiler.close();
@@ -192,10 +250,10 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
         }
     }
 
-    private void executeUpdate(String query, SqlCompiler updateCompiler) throws SqlException {
+    private QueryFuture executeUpdate(String query, SqlCompiler updateCompiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         CompiledQuery cc = updateCompiler.compile(query, sqlExecutionContext);
         Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
-        cc.execute(null);
+        return cc.execute(eventSubSequence.get());
     }
 
     private enum PartitionMode {

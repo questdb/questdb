@@ -34,7 +34,7 @@ import io.questdb.cutlass.text.TextLoader;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
-import io.questdb.griffin.update.UpdateStatement;
+import io.questdb.griffin.UpdateStatement;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
@@ -1314,6 +1314,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     break;
             }
             prepareCommandComplete(true);
+        } catch (TableStructureChangesException ex) {
+            LOG.error()
+                    .$("UPDATE is not expected to change table structure [tableName=").$(typesAndUpdate.getUpdate().getTableName())
+                    .$(", ex=").$(ex)
+                    .I$();
+            assert false : "This must never happen for UPDATE";
         } catch (Throwable e) {
             if (transactionState == IN_TRANSACTION) {
                 transactionState = ERROR_TRANSACTION;

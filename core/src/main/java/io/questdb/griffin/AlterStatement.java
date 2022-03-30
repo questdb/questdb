@@ -33,7 +33,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.tasks.TableWriterTask;
 
-public class AlterStatement implements Mutable, WriteToQueue<TableWriterTask> {
+public class AlterStatement extends AsyncWriterCommandBase implements Mutable {
 
     public final static short DO_NOTHING = 1;
     public final static short ADD_COLUMN = 3;
@@ -56,11 +56,7 @@ public class AlterStatement implements Mutable, WriteToQueue<TableWriterTask> {
     // to exception message using TableUtils.setSinkForPartition
     private final ExceptionSinkAdapter exceptionSinkAdapter = new ExceptionSinkAdapter();
     private short command;
-    private String tableName;
-    private int tableId;
-    private int tableNamePosition;
     private CharSequenceList charSequenceList;
-    private long commandCorrelationId;
 
     public AlterStatement() {
         this(new LongList(), new ObjList<>());
@@ -71,7 +67,8 @@ public class AlterStatement implements Mutable, WriteToQueue<TableWriterTask> {
         this.objCharList = new ObjCharSequenceList(charSequenceObjList);
     }
 
-    public void apply(TableWriter tableWriter, boolean acceptStructureChange) throws SqlException, TableStructureChangesException {
+    @Override
+    public long apply(TableWriter tableWriter, boolean acceptStructureChange) throws SqlException, TableStructureChangesException {
         try {
             switch (command) {
                 case ADD_COLUMN:
@@ -132,6 +129,7 @@ public class AlterStatement implements Mutable, WriteToQueue<TableWriterTask> {
                     .put("] ")
                     .put(e2.getFlyweightMessage());
         }
+        return 0;
     }
 
     @Override
@@ -140,11 +138,12 @@ public class AlterStatement implements Mutable, WriteToQueue<TableWriterTask> {
         objCharList.clear();
         directCharList.clear();
         charSequenceList = objCharList;
-        commandCorrelationId = -1;
+        setCommandCorrelationId(-1);
         longList.clear();
     }
 
-    public void deserialize(TableWriterTask event) {
+    @Override
+    public AlterStatement deserialize(TableWriterTask event) {
         clear();
 
         tableName = event.getTableName();
@@ -170,14 +169,7 @@ public class AlterStatement implements Mutable, WriteToQueue<TableWriterTask> {
         }
         directCharList.of(readPtr, hi);
         charSequenceList = directCharList;
-    }
-
-    public CharSequence getTableName() {
-        return tableName;
-    }
-
-    public int getTableNamePosition() {
-        return tableNamePosition;
+        return this;
     }
 
     public AlterStatement of(
@@ -186,15 +178,14 @@ public class AlterStatement implements Mutable, WriteToQueue<TableWriterTask> {
             int tableId,
             int tableNamePosition
     ) {
+        init(TableWriterTask.CMD_ALTER_TABLE, "ALTER TABLE", tableName, tableId, -1, tableNamePosition);
         this.command = command;
-        this.tableName = tableName;
-        this.tableId = tableId;
-        this.tableNamePosition = tableNamePosition;
         return this;
     }
 
+    @Override
     public void serialize(TableWriterTask event) {
-        event.of(TableWriterTask.CMD_ALTER_TABLE, tableId, tableName);
+        super.serialize(event);
         event.putShort(command);
         event.putInt(tableNamePosition);
         event.putInt(longList.size());
@@ -206,16 +197,6 @@ public class AlterStatement implements Mutable, WriteToQueue<TableWriterTask> {
         for (int i = 0, n = objCharList.size(); i < n; i++) {
             event.putStr(objCharList.getStrA(i));
         }
-    }
-
-    public void setCommandCorrelationId(long commandCorrelationId) {
-        this.commandCorrelationId = commandCorrelationId;
-    }
-
-    @Override
-    public void writeTo(TableWriterTask queueItem) {
-        serialize(queueItem);
-        queueItem.setInstance(commandCorrelationId);
     }
 
     private void applyAddColumn(TableWriter tableWriter) throws SqlException {

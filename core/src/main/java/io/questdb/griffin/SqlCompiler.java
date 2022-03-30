@@ -44,8 +44,6 @@ import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLev
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
-import io.questdb.griffin.update.UpdateExecution;
-import io.questdb.griffin.update.UpdateStatement;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
@@ -1724,6 +1722,7 @@ public class SqlCompiler implements Closeable {
                 }
             case ExecutionModel.UPDATE:
                 optimiser.optimiseUpdate((QueryModel) model, executionContext);
+                return model;
             default:
                 return model;
         }
@@ -2174,19 +2173,17 @@ public class SqlCompiler implements Closeable {
         // |-- QueryModel of select-virtual or select-choose of data selected for update
         final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
 
-        final String tableName = updateQueryModel.getUpdateTableName();
-        final int tableId = selectQueryModel.getTableId();
-        final long tableVersion = selectQueryModel.getTableVersion();
-
         return updateStatement.of(
-                tableName,
-                tableId,
-                tableVersion,
+                updateQueryModel.getUpdateTableName(),
+                selectQueryModel.getTableId(),
+                selectQueryModel.getTableVersion(),
+                lexer.getPosition(),
                 selectQueryModel,
                 updateQueryModel,
                 codeGenerator,
                 updateExecution,
-                executionContext
+                executionContext,
+                engine
         );
     }
 

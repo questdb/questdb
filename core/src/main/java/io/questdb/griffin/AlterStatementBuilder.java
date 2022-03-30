@@ -54,11 +54,7 @@ public class AlterStatementBuilder {
         return resultInstance.of(command, tableName, tableId, tableNamePosition);
     }
 
-    public AlterStatementBuilder ofAddColumn(
-            int tableNamePosition,
-            String tableName,
-            int tableId
-    ) {
+    public AlterStatementBuilder ofAddColumn(int tableNamePosition, String tableName, int tableId) {
         this.command = ADD_COLUMN;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
@@ -149,30 +145,29 @@ public class AlterStatementBuilder {
         return this;
     }
 
-        public void ofRenameColumn(CharSequence columnName, CharSequence newName) {
-            objCharList.add(columnName);
-            objCharList.add(newName);
-        }
+    public void ofRenameColumn(CharSequence columnName, CharSequence newName) {
+        objCharList.add(columnName);
+        objCharList.add(newName);
+    }
 
-        public void ofPartition(long timestamp) {
-            longList.add(timestamp);
-        }
+    public void ofPartition(long timestamp) {
+        longList.add(timestamp);
+    }
 
-        public void ofAddColumn(
-                CharSequence columnName,
-                int type,
-                int symbolCapacity,
-                boolean cache,
-                boolean indexed,
-                int indexValueBlockCapacity
-        ) {
-            assert columnName != null && columnName.length() > 0;
-            objCharList.add(columnName);
-            longList.add(type);
-            longList.add(symbolCapacity);
-            longList.add(cache ? 1 : -1);
-            longList.add(indexed ? 1 : -1);
-            longList.add(indexValueBlockCapacity);
-        }
-
+    public void ofAddColumn(
+            CharSequence columnName,
+            int type,
+            int symbolCapacity,
+            boolean cache,
+            boolean indexed,
+            int indexValueBlockCapacity
+    ) {
+        assert columnName != null && columnName.length() > 0;
+        objCharList.add(columnName);
+        longList.add(type);
+        longList.add(symbolCapacity);
+        longList.add(cache ? 1 : -1);
+        longList.add(indexed ? 1 : -1);
+        longList.add(indexValueBlockCapacity);
+    }
 }

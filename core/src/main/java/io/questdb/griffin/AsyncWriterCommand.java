@@ -22,25 +22,29 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.griffin;
 
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.griffin.UpdateStatement;
-import io.questdb.std.WeakAutoClosableObjectPool;
+import io.questdb.cairo.TableStructureChangesException;
+import io.questdb.cairo.TableWriter;
+import io.questdb.tasks.TableWriterTask;
 
-public class TypesAndUpdate extends AbstractTypeContainer<TypesAndUpdate> {
-    private UpdateStatement update;
+public interface AsyncWriterCommand {
+    int getTableNamePosition();
+    int getTableId();
+    long getTableVersion();
+    String getTableName();
+    String getCommandName();
+    void setCommandCorrelationId(long correlationId);
 
-    public TypesAndUpdate(WeakAutoClosableObjectPool<TypesAndUpdate> parentPool) {
-        super(parentPool);
+    void serialize(TableWriterTask task);
+    AsyncWriterCommand deserialize(TableWriterTask task);
+
+    long apply(TableWriter tableWriter, boolean acceptStructureChange) throws SqlException, TableStructureChangesException;
+
+    default long apply(TableWriter tableWriter) throws SqlException, TableStructureChangesException {
+        return apply(tableWriter, false);
     }
 
-    public UpdateStatement getUpdate() {
-        return update;
-    }
-
-    public void of(UpdateStatement update, BindVariableService bindVariableService) {
-        this.update = update;
-        copyTypesFrom(bindVariableService);
+    default void free() {
     }
 }

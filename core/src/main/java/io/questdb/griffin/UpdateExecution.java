@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.update;
+package io.questdb.griffin;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.*;
@@ -32,8 +32,6 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCM;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Sequence;
@@ -60,8 +58,8 @@ public class UpdateExecution implements Closeable {
     private final StringSink charSink = new StringSink();
     private final LongList cleanupColumnVersions = new LongList();
     private final LongList cleanupColumnVersionsAsync = new LongList();
-    private Path path;
     private final MessageBus messageBus;
+    private Path path;
 
     public UpdateExecution(CairoConfiguration configuration, MessageBus messageBus) {
         ff = configuration.getFilesFacade();

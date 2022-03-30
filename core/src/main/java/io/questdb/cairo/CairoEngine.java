@@ -34,6 +34,7 @@ import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.griffin.AsyncWriterCommand;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -42,7 +43,6 @@ import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
-import io.questdb.tasks.TableWriterTask;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -65,7 +65,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final MPSequence telemetryPubSeq;
     private final SCSequence telemetrySubSeq;
     private final long tableIdMemSize;
-    private final AtomicLong alterCommandCommandCorrelationId = new AtomicLong();
+    private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
     private long tableIdFd = -1;
     private long tableIdMem = 0;
 
@@ -230,7 +230,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public long getCommandCorrelationId() {
-        return alterCommandCommandCorrelationId.incrementAndGet();
+        return asyncCommandCorrelationId.incrementAndGet();
     }
 
     public void setPoolListener(PoolListener poolListener) {
@@ -370,9 +370,9 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public TableWriter getWriterOrPublishCommand(CairoSecurityContext securityContext, CharSequence tableName, String lockReason, WriteToQueue<TableWriterTask> writeAction) {
+    public TableWriter getWriterOrPublishCommand(CairoSecurityContext securityContext, CharSequence tableName, AsyncWriterCommand asyncWriterCommand) {
         securityContext.checkWritePermission();
-        return writerPool.getOrPublishCommand(tableName, lockReason, writeAction);
+        return writerPool.getWriterOrPublishCommand(tableName, asyncWriterCommand.getCommandName(), asyncWriterCommand);
     }
 
     @TestOnly

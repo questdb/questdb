@@ -24,6 +24,7 @@
 
 package io.questdb.tasks;
 
+import io.questdb.griffin.AsyncWriterCommand;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -34,10 +35,12 @@ import java.io.Closeable;
 public class TableWriterTask implements Closeable {
     public static final int CMD_SLAVE_SYNC = 1;
     public static final int CMD_ALTER_TABLE = 2;
+    public static final int CMD_UPDATE_TABLE = 3;
 
     public static final int TSK_BEGIN = 64;
     public static final int TSK_COMPLETE = 65;
 
+    private AsyncWriterCommand cmd;
     private int type;
     private long tableId;
     private String tableName;
@@ -101,6 +104,14 @@ public class TableWriterTask implements Closeable {
         this.type = type;
         this.appendPtr = data;
         this.ip = 0L;
+    }
+
+    public AsyncWriterCommand getAsyncWriterCommand() {
+        return cmd;
+    }
+
+    public void setAsyncWriterCommand(AsyncWriterCommand cmd) {
+        this.cmd = cmd;
     }
 
     public long getData() {

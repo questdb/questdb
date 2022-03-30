@@ -126,9 +126,9 @@ public class TableWriterTest extends AbstractCairoTest {
                                 .ofAddColumn(0, tableName, tableId)
                                 .ofAddColumn(columnName, ColumnType.INT, 0, false, false, 0);
                         AlterStatement alterStatement = alterStatementBuilder.build();
-                        try (TableWriter writer = engine.getWriterOrPublishCommand(AllowAllCairoSecurityContext.INSTANCE, tableName, "test", alterStatement)) {
+                        try (TableWriter writer = engine.getWriterOrPublishCommand(AllowAllCairoSecurityContext.INSTANCE, tableName, alterStatement)) {
                             if (writer != null) {
-                                writer.processCommandAsync(alterStatement);
+                                writer.publishAsyncWriterCommand(alterStatement);
                             }
                         }
                         columnsAdded.incrementAndGet();

@@ -268,6 +268,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     @Override
                     public void serialize(TableWriterTask event) {
                         event.of(TableWriterTask.CMD_ALTER_TABLE, tableId, tableName);
+                        event.setInstance(1);
                         event.putShort(command);
                         event.putInt(-1);
                         event.putInt(1000);

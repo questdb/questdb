@@ -1444,23 +1444,43 @@ public class ReplModelReconTest extends AbstractGriffinTest {
         }
 
         public boolean publishSyncCmd(String tableName, long tableId, TableWriter slave, long slaveIP, long sequence) {
-            WriteToQueue<TableWriterTask> writeFunc = (TableWriterTask task) -> task.fromSlaveSyncRequest(
-                    // we need to know master table ID from master's writer because
-                    // we are simulating replication from table X to table Y on the same database
-                    // In real world slave will have the same ID as master
-                    tableId,
-                    tableName,
-                    slave.getRawTxnMemory(),
-                    slave.getRawTxnMemorySize(),
-                    slave.getRawMetaMemory(),
-                    slave.getRawMetaMemorySize(),
-                    slaveIP,
-                    sequence
-            );
+            AsyncWriterCommand cmd = new AsyncWriterCommandBase() {
+                @Override
+                public long apply(TableWriter tableWriter, boolean acceptStructureChange) {
+                    throw new RuntimeException("Should not be called for SYNC command");
+                }
 
-            try (TableWriter writer = engine.getWriterOrPublishCommand(AllowAllCairoSecurityContext.INSTANCE, tableName, "repl model test", writeFunc)) {
+                @Override
+                public void serialize(TableWriterTask task) {
+                    task.fromSlaveSyncRequest(
+                            // we need to know master table ID from master's writer because
+                            // we are simulating replication from table X to table Y on the same database
+                            // In real world slave will have the same ID as master
+                            tableId,
+                            tableName,
+                            slave.getRawTxnMemory(),
+                            slave.getRawTxnMemorySize(),
+                            slave.getRawMetaMemory(),
+                            slave.getRawMetaMemorySize(),
+                            slaveIP,
+                            sequence
+                    );
+                }
+
+                @Override
+                public AsyncWriterCommand deserialize(TableWriterTask task) {
+                    return this;
+                }
+
+                @Override
+                public String getCommandName() {
+                    return "SYNC";
+                }
+            };
+
+            try (TableWriter writer = engine.getWriterOrPublishCommand(AllowAllCairoSecurityContext.INSTANCE, tableName, cmd)) {
                 if (writer != null) {
-                    writer.processCommandAsync(writeFunc);
+                    writer.publishAsyncWriterCommand(cmd);
                 }
             }
             return true;

@@ -22,52 +22,83 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.update;
+package io.questdb.griffin;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlCodeGenerator;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.tasks.TableWriterTask;
 
 import java.io.Closeable;
+import java.util.ServiceLoader;
 
-public class UpdateStatement implements Closeable {
-    private String tableName;
-    private int tableId;
-    private long tableVersion;
+public class UpdateStatement extends AsyncWriterCommandBase implements Closeable {
     private RecordCursorFactory updateToDataCursorFactory;
     private QueryModel selectQueryModel;
     private QueryModel updateQueryModel;
     private SqlCodeGenerator codeGenerator;
     private UpdateExecution updateExecution;
     private SqlExecutionContext executionContext;
+    private CairoEngine engine;
 
     public UpdateStatement of(
             String tableName,
             int tableId,
             long tableVersion,
+            int tableNamePosition,
             QueryModel selectQueryModel,
             QueryModel updateQueryModel,
             SqlCodeGenerator codeGenerator,
             UpdateExecution updateExecution,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            CairoEngine engine
     ) {
-        this.tableName = tableName;
-        this.tableId = tableId;
-        this.tableVersion = tableVersion;
+        init(TableWriterTask.CMD_UPDATE_TABLE, "UPDATE", tableName, tableId, tableVersion, tableNamePosition);
         this.selectQueryModel = selectQueryModel;
         this.updateQueryModel = updateQueryModel;
+
         this.codeGenerator = codeGenerator;
         this.updateExecution = updateExecution;
+
         this.executionContext = executionContext;
+        this.engine = engine;
         return this;
+    }
+
+    private void of(
+            String tableName,
+            int tableId,
+            long tableVersion,
+            int tableNamePosition,
+            QueryModel selectQueryModel,
+            QueryModel updateQueryModel,
+            SqlExecutionContext executionContext,
+            CairoEngine engine
+    ) {
+        CairoConfiguration configuration = engine.getConfiguration();
+        FunctionParser functionParser = new FunctionParser(
+                configuration,
+                new FunctionFactoryCache(configuration, ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader()))
+        );
+        SqlCodeGenerator codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser);
+        functionParser.setSqlCodeGenerator(codeGenerator);
+
+        UpdateExecution updateExecution = new UpdateExecution(configuration, engine.getMessageBus());
+        of(tableName, tableId, tableVersion, tableNamePosition, selectQueryModel, updateQueryModel, codeGenerator, updateExecution, executionContext, engine);
+    }
+
+    @Override
+    public void free() {
+        codeGenerator.close();
+        updateExecution.close();
+        close();
     }
 
     @Override
@@ -75,20 +106,22 @@ public class UpdateStatement implements Closeable {
         updateToDataCursorFactory = Misc.free(updateToDataCursorFactory);
     }
 
-    public int getTableId() {
-        return tableId;
-    }
-
-    public CharSequence getTableName() {
-        return tableName;
-    }
-
-    public long apply(TableWriter tableWriter) throws SqlException {
+    @Override
+    public long apply(TableWriter tableWriter, boolean acceptStructureChange) throws SqlException {
         return updateExecution.executeUpdate(tableWriter, this, executionContext);
     }
 
-    public long getTableVersion() {
-        return tableVersion;
+    @Override
+    public void serialize(TableWriterTask task) {
+        super.serialize(task);
+        final UpdateStatement clone = new UpdateStatement();
+        clone.of(tableName, getTableId(), getTableVersion(), tableNamePosition, selectQueryModel, updateQueryModel, executionContext, engine);
+        task.setAsyncWriterCommand(clone);
+    }
+
+    @Override
+    public AsyncWriterCommand deserialize(TableWriterTask task) {
+        return task.getAsyncWriterCommand();
     }
 
     public RecordCursorFactory prepareForUpdate() throws SqlException {

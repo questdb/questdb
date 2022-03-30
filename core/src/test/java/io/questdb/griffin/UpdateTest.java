@@ -24,18 +24,18 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableModel;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
-import io.questdb.griffin.update.UpdateExecution;
-import io.questdb.griffin.update.UpdateStatement;
+import io.questdb.mp.SCSequence;
 import io.questdb.std.Misc;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
+import java.util.concurrent.CyclicBarrier;
+
 public class UpdateTest extends AbstractGriffinTest {
+    private final SCSequence eventSubSequence = new SCSequence();
+
     private UpdateExecution updateExecution;
 
     @Before
@@ -681,10 +681,6 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY", sqlExecutionContext);
 
-            // Bump table version
-            compile("alter table up add column y long", sqlExecutionContext);
-            compile("alter table up drop column y", sqlExecutionContext);
-
             executeUpdate("UPDATE up SET x = 1");
 
             assertSql("up", "ts\tx\n" +
@@ -995,12 +991,55 @@ public class UpdateTest extends AbstractGriffinTest {
         });
     }
 
-    private void applyUpdate(UpdateStatement updateStatement) throws SqlException {
+    @Test
+    public void testUpdateAsyncMode() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " x" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts)", sqlExecutionContext);
+
+            CyclicBarrier barrier = new CyclicBarrier(2);
+
+            final Thread th = new Thread(() -> {
+                try {
+                    TableWriter tableWriter = engine.getWriter(
+                            sqlExecutionContext.getCairoSecurityContext(),
+                            "up",
+                            "test");
+                    barrier.await(); // table is locked
+                    barrier.await(); // update is on writer async cmd queue
+                    tableWriter.tick();
+                    tableWriter.close();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    Assert.fail();
+                }
+            });
+            th.start();
+
+            barrier.await(); // table is locked
+            QueryFuture queryFuture = executeUpdate("UPDATE up SET x = 123 WHERE x > 1 and x < 4");
+            barrier.await(); // update is on writer async cmd queue
+            queryFuture.await(10000000); // 10 seconds timeout
+            th.join();
+
+            assertSql("up", "ts\tx\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\n" +
+                    "1970-01-01T00:00:01.000000Z\t123\n" +
+                    "1970-01-01T00:00:02.000000Z\t123\n" +
+                    "1970-01-01T00:00:03.000000Z\t4\n" +
+                    "1970-01-01T00:00:04.000000Z\t5\n");
+        });
+    }
+
+    private void applyUpdate(UpdateStatement updateStatement) throws SqlException, TableStructureChangesException {
         try (TableWriter tableWriter = engine.getWriter(
                 sqlExecutionContext.getCairoSecurityContext(),
                 updateStatement.getTableName(),
                 "UPDATE")) {
-            updateExecution.executeUpdate(tableWriter, updateStatement, sqlExecutionContext);
+            updateStatement.apply(tableWriter);
         }
     }
 
@@ -1031,10 +1070,10 @@ public class UpdateTest extends AbstractGriffinTest {
                         "506\t\n");
     }
 
-    private void executeUpdate(String query) throws SqlException {
+    private QueryFuture executeUpdate(String query) throws SqlException {
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
-        cc.execute(null);
+        return cc.execute(eventSubSequence);
     }
 
     private void executeUpdateFails(String sql, int position, String reason) {

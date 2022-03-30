@@ -29,6 +29,7 @@ import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
+import io.questdb.griffin.AsyncWriterCommand;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
@@ -142,13 +143,13 @@ public class WriterPool extends AbstractPool {
      *
      * @param tableName   name of the table
      * @param lockReason  reason for the action
-     * @param writeAction lambda to write to TableWriterTask
+     * @param asyncWriterCommand command to write to TableWriterTask
      * @return null if command is published or TableWriter instance if writer is available
      */
-    public TableWriter getOrPublishCommand(CharSequence tableName, String lockReason, WriteToQueue<TableWriterTask> writeAction) {
+    public TableWriter getWriterOrPublishCommand(CharSequence tableName, String lockReason, AsyncWriterCommand asyncWriterCommand) {
         while (true) {
             try {
-                return getWriterEntry(tableName, lockReason, writeAction);
+                return getWriterEntry(tableName, lockReason, asyncWriterCommand);
             } catch (EntryUnavailableException ex) {
                 // means retry in this context
             }
@@ -274,7 +275,7 @@ public class WriterPool extends AbstractPool {
         }
     }
 
-    private void addCommandToWriterQueue(Entry e, WriteToQueue<TableWriterTask> writeAction) {
+    private void addCommandToWriterQueue(Entry e, AsyncWriterCommand asyncWriterCommand) {
         TableWriter writer;
         while ((writer = e.writer) == null && e.owner != UNALLOCATED) {
             Os.pause();
@@ -283,7 +284,7 @@ public class WriterPool extends AbstractPool {
             // Can be anything e.g. writer evicted from the pool, retry from very beginning
             throw EntryUnavailableException.instance("please retry");
         }
-        writer.processCommandAsync(writeAction);
+        writer.publishAsyncWriterCommand(asyncWriterCommand);
     }
 
     private void assertLockReason(CharSequence lockReason) {
@@ -418,7 +419,7 @@ public class WriterPool extends AbstractPool {
         }
     }
 
-    private TableWriter getWriterEntry(CharSequence tableName, CharSequence lockReason, WriteToQueue<TableWriterTask> writeAction) {
+    private TableWriter getWriterEntry(CharSequence tableName, CharSequence lockReason, AsyncWriterCommand asyncWriterCommand) {
         assert null != lockReason;
         checkClosed();
 
@@ -467,8 +468,8 @@ public class WriterPool extends AbstractPool {
                         throw e.ex;
                     }
                 }
-                if (writeAction != null) {
-                    addCommandToWriterQueue(e, writeAction);
+                if (asyncWriterCommand != null) {
+                    addCommandToWriterQueue(e, asyncWriterCommand);
                     return null;
                 }
                 LOG.info().$("busy [table=`").utf8(tableName).$("`, owner=").$(owner).$(", thread=").$(thread).I$();
