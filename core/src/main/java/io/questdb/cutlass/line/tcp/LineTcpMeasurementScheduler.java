@@ -333,6 +333,9 @@ class LineTcpMeasurementScheduler implements Closeable {
         long seq = getNextPublisherEventSequence(writerThreadId);
         if (seq > -1) {
             try {
+                if (tab.isWriterInError()) {
+                    throw CairoException.instance(0).put("writer is in error, aborting ILP pipeline");
+                }
                 queue[writerThreadId].get(seq).createMeasurementEvent(
                         tab,
                         parser,

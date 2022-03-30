@@ -321,10 +321,6 @@ public class TableUpdateDetails implements Closeable {
             txReader = Misc.free(txReader);
         }
 
-        public boolean isWriterInError() {
-            return writerInError;
-        }
-
         private SymbolCache addSymbolCache(int colWriterIndex) {
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16)) {
                 int symIndex = resolveSymbolIndexAndName(reader.getMetadata(), colWriterIndex);
