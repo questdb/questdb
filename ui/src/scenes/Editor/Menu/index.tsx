@@ -79,14 +79,14 @@ const DocsearchInput = styled(Input)`
 `
 
 const QueryPickerButton = styled(SecondaryButton)<{
-  $firstTimeVisitor: boolean
+  firstTimeVisitor: boolean
 }>`
   position: relative;
   margin: 0 1rem;
   flex: 0 0 auto;
 
-  ${({ $firstTimeVisitor }) =>
-    $firstTimeVisitor &&
+  ${({ firstTimeVisitor }) =>
+    firstTimeVisitor &&
     `&:after {
     border-radius: 50%;
     content: "";
@@ -261,7 +261,7 @@ const Menu = () => {
           active={popperActive}
           onToggle={handleToggle}
           trigger={
-            <QueryPickerButton $firstTimeVisitor={!exampleQueriesVisited}>
+            <QueryPickerButton firstTimeVisitor={!exampleQueriesVisited}>
               <Add size="18px" />
               <span>Example queries</span>
             </QueryPickerButton>
