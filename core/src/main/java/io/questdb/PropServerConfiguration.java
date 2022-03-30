@@ -377,6 +377,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean isStringAsTagSupported;
     private final int columnVersionPurgeQueueCapacity;
     private final long columnVersionPurgeMaxTimeoutMicros;
+    private final double columnVersionPurgeWaitExponent;
 
     public PropServerConfiguration(
             String root,
@@ -686,6 +687,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlCopyBufferSize = getIntSize(properties, env, "cairo.sql.copy.buffer.size", 2 * 1024 * 1024);
             this.columnVersionPurgeQueueCapacity = getQueueCapacity(properties, env,"cairo.sql.column.version.clean.queue.capacity", 1024);
             this.columnVersionPurgeMaxTimeoutMicros = getLong(properties, env, "cairo.sql.column.version.clean.timeout", 60_000_000L);
+            this.columnVersionPurgeWaitExponent = getDouble(properties, env, "cairo.sql.column.version.clean.timeout.exponent", 10.0);
 
             this.writerDataIndexKeyAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, "cairo.writer.data.index.key.append.page.size", 512 * 1024));
             this.writerDataIndexValueAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, "cairo.writer.data.index.value.append.page.size", 16 * 1024 * 1024));
@@ -1668,6 +1670,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getColumnVersionPurgeQueueCapacity() {
             return columnVersionPurgeQueueCapacity;
+        }
+
+        @Override
+        public double getColumnVersionPurgeWaitExponent() {
+            return columnVersionPurgeWaitExponent;
         }
 
         @Override

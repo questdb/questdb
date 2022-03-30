@@ -86,6 +86,7 @@ public class AbstractCairoTest {
     protected static boolean hideTelemetryTable = false;
     private static TelemetryConfiguration telemetryConfiguration;
     protected static int writerCommandQueueCapacity = 4;
+    protected static double columnVersionPurgeWaitExponent = -1;
 
     @BeforeClass
     public static void setUpStatic() {
@@ -229,6 +230,11 @@ public class AbstractCairoTest {
             public int getWriterCommandQueueCapacity() {
                 return writerCommandQueueCapacity;
             }
+
+            @Override
+            public double getColumnVersionPurgeWaitExponent() {
+                return columnVersionPurgeWaitExponent > 0 ? columnVersionPurgeWaitExponent : 2.0;
+            }
         };
         engine = new CairoEngine(configuration, metrics);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
@@ -271,6 +277,7 @@ public class AbstractCairoTest {
         snapshotRecoveryEnabled = null;
         hideTelemetryTable = false;
         writerCommandQueueCapacity = 4;
+        columnVersionPurgeWaitExponent = -1;
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {

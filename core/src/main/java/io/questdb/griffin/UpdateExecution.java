@@ -193,7 +193,8 @@ public class UpdateExecution implements Closeable {
         long partitionNameTxn = tableWriter.getPartitionNameTxn(partitionIndex);
         RecordMetadata metadata = tableWriter.getMetadata();
         try {
-            path.concat(tableWriter.getTableName());
+            String tableName = tableWriter.getTableName();
+            path.concat(tableName);
             TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, false);
             TableUtils.txnPartitionConditionally(path, partitionNameTxn);
             int pathTrimToLen = path.length();
@@ -207,6 +208,13 @@ public class UpdateExecution implements Closeable {
                     long existingVersion = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
                     tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex);
                     cleanupColumnVersions.add(columnIndex, existingVersion, partitionTimestamp, partitionNameTxn);
+                    LOG.debug().$("updating column [table=").$(tableName)
+                            .$(", column=").$(name)
+                            .$(", oldVersion=").$(existingVersion)
+                            .$(", newVersion=").$(tableWriter.getTxn())
+                            .$(", partition=").$ts(partitionTimestamp)
+                            .$(", partitionNameTxn=").$(partitionNameTxn)
+                            .I$();
                 }
 
                 long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
@@ -389,12 +397,12 @@ public class UpdateExecution implements Closeable {
 
             for (int i = 0, n = cleanupColumnVersions.size(); i < n; i += 4) {
                 int columnIndex = (int) cleanupColumnVersions.getQuick(i);
+                long columnVersion = cleanupColumnVersions.getQuick(i + 1);
+                long partitionTimestamp = cleanupColumnVersions.getQuick(i + 2);
+                long partitionNameTxn = cleanupColumnVersions.getQuick(i + 3);
 
                 // Process updated column by column, one at the time
                 if (columnIndex == processColumnIndex) {
-                    long columnVersion = cleanupColumnVersions.getQuick(i + 1);
-                    long partitionTimestamp = cleanupColumnVersions.getQuick(i + 2);
-                    long partitionNameTxn = cleanupColumnVersions.getQuick(i + 3);
 
                     boolean columnPurged = !anyReadersBeforeCommittedTxn;
                     if (!anyReadersBeforeCommittedTxn) {
@@ -427,10 +435,10 @@ public class UpdateExecution implements Closeable {
                                 columnPurged = false;
                             }
                         }
+                    }
 
-                        if (!columnPurged) {
-                            cleanupColumnVersionsAsync.add(columnVersion, partitionTimestamp, partitionNameTxn, 0L);
-                        }
+                    if (!columnPurged) {
+                        cleanupColumnVersionsAsync.add(columnVersion, partitionTimestamp, partitionNameTxn, 0L);
                     }
                 }
             }

@@ -49,7 +49,7 @@ import java.util.PriorityQueue;
 public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(ColumnVersionPurgeJob.class);
     private final String tableName;
-    private final ColumnVersionPurgeExecution cleanupExecution;
+    private ColumnVersionPurgeExecution cleanupExecution;
     private final RingQueue<ColumnVersionPurgeTask> inQueue;
     private final Sequence inSubSequence;
     private final MicrosecondClock clock;
@@ -61,9 +61,9 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
     private TableWriter writer;
     private SqlCompiler sqlCompiler;
 
-    public ColumnVersionPurgeJob(CairoEngine engine, @Nullable FunctionFactoryCache functionFactoryCache, ColumnVersionPurgeExecution cleanupExecution) throws SqlException {
+    public ColumnVersionPurgeJob(CairoEngine engine, @Nullable FunctionFactoryCache functionFactoryCache) throws SqlException {
         CairoConfiguration configuration = engine.getConfiguration();
-        this.cleanupExecution = cleanupExecution;
+        this.cleanupExecution = new ColumnVersionPurgeExecution(configuration);
         this.clock = configuration.getMicrosecondClock();
         this.inQueue = engine.getMessageBus().getColumnVersionPurgeQueue();
         this.inSubSequence = engine.getMessageBus().getColumnVersionPurgeSubSeq();
@@ -71,7 +71,7 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
         this.taskPool = new ObjectPool<>(ColumnVersionPurgeTaskRun::new, 128);
         this.houseKeepingRunQueue = new PriorityQueue<>(256, ColumnVersionPurgeJob::compareHouseKeepingTasks);
         this.maxWaitCapMs = configuration.getColumnVersionPurgeMaxTimeoutMicros();
-        this.exponentialWaitMultiplier = 20.0;
+        this.exponentialWaitMultiplier = configuration.getColumnVersionPurgeWaitExponent();
 
         this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
@@ -113,6 +113,7 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
         this.writer = Misc.free(this.writer);
         this.sqlCompiler = Misc.free(sqlCompiler);
         this.sqlExecutionContext = Misc.free(sqlExecutionContext);
+        this.cleanupExecution = Misc.free(cleanupExecution);
     }
 
     private static int compareHouseKeepingTasks(ColumnVersionPurgeTaskRun task1, ColumnVersionPurgeTaskRun task2) {
@@ -121,7 +122,7 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
 
     private void calculateNextTimestamp(ColumnVersionPurgeTaskRun task, long currentTime) {
         long totalWait = currentTime - task.lastRunTimestamp;
-        task.nextRunTimestamp = Math.min(maxWaitCapMs, Math.max(4L, (long) (totalWait * exponentialWaitMultiplier))) + task.lastRunTimestamp;
+        task.nextRunTimestamp = currentTime + Math.min(maxWaitCapMs, Math.max(4L, (long) (totalWait * exponentialWaitMultiplier)));
     }
 
     // Process incoming queue and put it on priority queue with next timestamp to rerun
@@ -162,6 +163,7 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
         while (houseKeepingRunQueue.size() > 0) {
             ColumnVersionPurgeTaskRun next = houseKeepingRunQueue.peek();
             if (next.nextRunTimestamp <= now) {
+                houseKeepingRunQueue.poll();
                 useful = true;
                 if (!tryClean(next)) {
                     // Re-queue
@@ -211,7 +213,8 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
 
     @Override
     protected boolean runSerially() {
-        return processInQueue() || houseKeep();
+        boolean useful = processInQueue();
+        return houseKeep() || useful;
     }
 
     static class ColumnVersionPurgeTaskRun extends ColumnVersionPurgeTask implements Mutable {
