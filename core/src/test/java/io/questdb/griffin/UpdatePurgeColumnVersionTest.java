@@ -26,7 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.griffin.update.UpdateExecution;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
@@ -34,8 +33,6 @@ import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnVersionPurgeTask;
 import org.jetbrains.annotations.NotNull;
 import org.junit.*;
-
-import java.io.IOException;
 
 public class UpdatePurgeColumnVersionTest extends AbstractGriffinTest {
     private UpdateExecution updateExecution;
@@ -379,10 +376,6 @@ public class UpdatePurgeColumnVersionTest extends AbstractGriffinTest {
 
         path.of(configuration.getRoot()).concat(up_part).concat(partition).concat("str.i").put(colSuffix).$();
         Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
-    }
-
-    private ColumnVersionPurgeExecution createColumnVersionCleanExecution() {
-        return new ColumnVersionPurgeExecution(configuration);
     }
 
     private ColumnVersionPurgeJob createColumnVersionPurgeJob() throws SqlException {
