@@ -127,7 +127,7 @@ public class TxnTest extends AbstractCairoTest {
             AtomicInteger reloadCount = new AtomicInteger();
             int iterations = 1000;
             ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
-            Rnd rnd = TestUtils.generateRandom(LOG);
+            Rnd rnd = TestUtils.generateRandom();
 
             String tableName = "testTxReadWriteConcurrent";
             FilesFacade ff = FilesFacadeImpl.INSTANCE;
@@ -164,7 +164,7 @@ public class TxnTest extends AbstractCairoTest {
                     partitionCountCheck,
                     truncateIteration
             );
-            Rnd readerRnd = TestUtils.generateRandom(LOG);
+            Rnd readerRnd = TestUtils.generateRandom();
 
             Thread[] readers = new Thread[readerThreads];
             for (int th = 0; th < readerThreads; th++) {
@@ -234,7 +234,7 @@ public class TxnTest extends AbstractCairoTest {
             AtomicInteger reloadCount = new AtomicInteger();
             int iterations = 1000;
             ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
-            Rnd rnd = TestUtils.generateRandom(LOG);
+            Rnd rnd = TestUtils.generateRandom();
 
             String tableName = "testTxReadWriteConcurrent";
             FilesFacade ff = FilesFacadeImpl.INSTANCE;
@@ -271,7 +271,7 @@ public class TxnTest extends AbstractCairoTest {
                     Integer.MAX_VALUE
             );
 
-            Rnd readerRnd = TestUtils.generateRandom(LOG);
+            Rnd readerRnd = TestUtils.generateRandom();
 
             Thread[] readers = new Thread[readerThreads];
             for (int th = 0; th < readerThreads; th++) {
