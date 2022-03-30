@@ -22,20 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cliutil;
 
-/**
- * A 256 bit hash with string representation up to 64 hex digits following a prefix '0x'.
- * (e.g. 0xaba86bf575ba7fde98b6673bb7d85bf489fd71a619cddaecba5de0378e3d22ed)
- */
-public interface Long256 extends Long256Acceptor {
-    int BYTES = 32;
+import io.questdb.ServerConfigurationException;
+import io.questdb.cutlass.json.JsonException;
+import io.questdb.log.LogFactory;
 
-    long getLong0();
+import java.io.IOException;
 
-    long getLong1();
+import static io.questdb.cliutil.CmdUtils.runColumnRebuild;
+import static io.questdb.cliutil.RebuildColumnCommandArgs.parseCommandArgs;
 
-    long getLong2();
-
-    long getLong3();
+public class RecoverVarIndex {
+    public static void main(String[] args) throws IOException, JsonException, ServerConfigurationException {
+        LogFactory.configureSync();
+        RebuildColumnCommandArgs params = parseCommandArgs(args, RecoverVarIndex.class.getName());
+        if (params == null) {
+            // Invalid params, usage already printed
+            return;
+        }
+        runColumnRebuild(params, new io.questdb.cairo.RecoverVarIndex());
+    }
 }
