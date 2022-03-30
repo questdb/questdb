@@ -41,6 +41,7 @@ import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -81,6 +82,71 @@ public class O3Test extends AbstractO3Test {
             System.err.println(tstData);
             System.err.flush();
         }
+    }
+
+    @Test
+    // test case is contributed by Zhongwei Yao
+    public void testAddColumnO3Fuzz() throws Exception {
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+        final String tableName = "ABC";
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                .col("productId", ColumnType.INT)
+                .col("productName", ColumnType.STRING)
+                .col("category", ColumnType.SYMBOL)
+                .col("price", ColumnType.DOUBLE)
+                .timestamp()
+                .col("supplier", ColumnType.SYMBOL)
+        ) {
+            CairoTestUtils.create(model);
+
+            short[] columnTypes = new short[]{ColumnType.INT, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.DOUBLE};
+            IntList newColTypes = new IntList();
+            CyclicBarrier barrier = new CyclicBarrier(1);
+
+            try (TableWriter writer = new TableWriter(configuration, model.getName(), Metrics.disabled())) {
+                Thread writerT = new Thread(() -> {
+                    try {
+                        int i = 0;
+                        ObjList<CharSequence> newCols = new ObjList<>();
+                        // number of iterations here (70) is critical to reproduce O3 crash
+                        // also row counts (1000) at every iteration, do not wind these down please
+                        // to high values make for a long-running unit test
+                        while (i < 70) {
+                            ++i;
+                            final long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+
+                            Rnd rnd = new Rnd();
+                            appendNProducts(ts, rnd, writer);
+
+                            CharSequence newCol = "price" + i;
+                            short colType = columnTypes[i % columnTypes.length];
+                            writer.addColumn(newCol, colType);
+                            newCols.add(newCol);
+                            newColTypes.add(colType);
+
+                            appendNWithNewColumn(rnd, writer, newCols, newColTypes);
+
+                            writer.commit();
+                            LOG.info().$("writer:").$(i).$("put once with ColumnType:").$(colType).$();
+                            barrier.await();
+                        }
+                        barrier.await();
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    } finally {
+                        LOG.info().$("write is done").$();
+                    }
+                });
+
+                writerT.start();
+                writerT.join();
+            }
+        }
+    }
+
+    @Test
+    public void testAppendIntoColdWriterContended() throws Exception {
+        executeWithPool(0, O3Test::testAppendIntoColdWriter0);
     }
 
     @Test
@@ -125,11 +191,6 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testColumnTopLastAppendBlankContended() throws Exception {
         executeWithPool(0, O3Test::testColumnTopLastAppendBlankColumn0);
-    }
-
-    @Test
-    public void testAppendIntoColdWriterContended() throws Exception {
-        executeWithPool(0, O3Test::testAppendIntoColdWriter0);
     }
 
     @Test
@@ -293,6 +354,11 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
+    public void testColumnTopMidOOODataParallel() throws Exception {
+        executeWithPool(4, O3Test::testColumnTopMidOOOData0);
+    }
+
+    @Test
     public void testColumnTopMidOOODataUtf8Contended() throws Exception {
         executeWithPool(0, O3Test::testColumnTopMidOOODataUtf80);
     }
@@ -300,11 +366,6 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testColumnTopMidOOODataUtf8Parallel() throws Exception {
         executeWithPool(4, O3Test::testColumnTopMidOOODataUtf80);
-    }
-
-    @Test
-    public void testColumnTopMidOOODataParallel() throws Exception {
-        executeWithPool(4, O3Test::testColumnTopMidOOOData0);
     }
 
     @Test
@@ -340,183 +401,6 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testColumnTopNewPartitionMiddleOfTableParallel() throws Exception {
         executeWithPool(4, O3Test::testColumnTopNewPartitionMiddleOfTable0);
-    }
-
-    @Test
-    // test case is contributed by Zhongwei Yao
-    public void testAddColumnO3Fuzz() throws Exception {
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
-        final String tableName = "ABC";
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
-                .col("productId", ColumnType.INT)
-                .col("productName", ColumnType.STRING)
-                .col("category", ColumnType.SYMBOL)
-                .col("price", ColumnType.DOUBLE)
-                .timestamp()
-                .col("supplier", ColumnType.SYMBOL)
-        ) {
-            CairoTestUtils.create(model);
-
-            short[] columnTypes = new short[]{ColumnType.INT, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.DOUBLE};
-            IntList newColTypes = new IntList();
-            CyclicBarrier barrier = new CyclicBarrier(1);
-
-            try (TableWriter writer = new TableWriter(configuration, model.getName(), Metrics.disabled())) {
-                Thread writerT = new Thread(() -> {
-                    try {
-                        int i = 0;
-                        ObjList<CharSequence> newCols = new ObjList<>();
-                        // number of iterations here (70) is critical to reproduce O3 crash
-                        // also row counts (1000) at every iteration, do not wind these down please
-                        // to high values make for a long-running unit test
-                        while (i < 70) {
-                            ++i;
-                            final long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
-
-                            Rnd rnd = new Rnd();
-                            appendNProducts(ts, rnd, writer);
-
-                            CharSequence newCol = "price" + i;
-                            short colType = columnTypes[i % columnTypes.length];
-                            writer.addColumn(newCol, colType);
-                            newCols.add(newCol);
-                            newColTypes.add(colType);
-
-                            appendNWithNewColumn(rnd, writer, newCols, newColTypes);
-
-                            writer.commit();
-                            LOG.info().$("writer:").$(i).$("put once with ColumnType:").$(colType).$();
-                            barrier.await();
-                        }
-                        barrier.await();
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    } finally {
-                        LOG.info().$("write is done").$();
-                    }
-                });
-
-                writerT.start();
-                writerT.join();
-            }
-        }
-    }
-
-    private void appendNProducts(long ts, Rnd rnd, TableWriter writer) {
-        int productId = writer.getColumnIndex("productId");
-        int productName = writer.getColumnIndex("productName");
-        int supplier = writer.getColumnIndex("supplier");
-        int category = writer.getColumnIndex("category");
-        int price = writer.getColumnIndex("price");
-        boolean isSym = ColumnType.isSymbol(writer.getMetadata().getColumnType(productName));
-
-        for (int i = 0; i < 1000; i++) {
-            TableWriter.Row r = writer.newRow(ts += 60000L * 1000L);
-            r.putInt(productId, rnd.nextPositiveInt());
-            if (!isSym) {
-                r.putStr(productName, rnd.nextString(4));
-            } else {
-                r.putSym(productName, rnd.nextString(4));
-            }
-            r.putSym(supplier, rnd.nextString(4));
-            r.putSym(category, rnd.nextString(11));
-            r.putDouble(price, rnd.nextDouble());
-            r.append();
-        }
-    }
-
-    private void appendNWithNewColumn(
-            Rnd rnd,
-            TableWriter writer,
-            ObjList<CharSequence> newCols,
-            IntList colTypes
-    ) {
-        int productId = writer.getColumnIndex("productId");
-        int productName = writer.getColumnIndex("productName");
-        int supplier = writer.getColumnIndex("supplier");
-        int category = writer.getColumnIndex("category");
-        int price = writer.getColumnIndex("price");
-
-        IntHashSet set = new IntHashSet();
-        set.add(productId);
-        set.add(productName);
-        set.add(supplier);
-        set.add(category);
-        set.add(price);
-
-        IntList indexes = new IntList();
-        for (int j = 0, m = newCols.size(); j < m; j++) {
-            int columnIndex = writer.getColumnIndex(newCols.getQuick(j));
-            indexes.add(columnIndex);
-            Assert.assertFalse(set.contains(columnIndex));
-            set.add(columnIndex);
-        }
-
-        for (int i = 0; i < 1000; i++) {
-            TableWriter.Row r = writer.newRow();
-            r.putInt(productId, rnd.nextPositiveInt());
-            r.putStr(productName, rnd.nextString(10));
-            r.putSym(supplier, rnd.nextString(4));
-            r.putSym(category, rnd.nextString(11));
-            r.putDouble(price, rnd.nextDouble());
-
-            for (int j = 0; j < indexes.size(); ++j) {
-                switch (colTypes.get(j)) {
-                    case ColumnType.BOOLEAN:
-                        r.putBool(indexes.get(j), rnd.nextBoolean());
-                        break;
-                    case ColumnType.BYTE:
-                    case ColumnType.GEOBYTE:
-                        r.putByte(indexes.get(j), rnd.nextByte());
-                        break;
-                    case ColumnType.SHORT:
-                    case ColumnType.GEOSHORT:
-                        r.putShort(indexes.get(j), rnd.nextShort());
-                        break;
-                    case ColumnType.CHAR:
-                        r.putChar(indexes.get(j), rnd.nextChar());
-                        break;
-                    case ColumnType.INT:
-                    case ColumnType.GEOINT:
-                        r.putInt(indexes.get(j), rnd.nextInt());
-                        break;
-                    case ColumnType.LONG:
-                        r.putLong(indexes.get(j), rnd.nextLong());
-                        break;
-                    case ColumnType.DATE:
-                        r.putDate(indexes.get(j), rnd.nextLong());
-                        break;
-                    case ColumnType.TIMESTAMP:
-                        r.putTimestamp(indexes.get(j), rnd.nextLong());
-                        break;
-                    case ColumnType.FLOAT:
-                        r.putFloat(indexes.get(j), rnd.nextFloat());
-                        break;
-                    case ColumnType.DOUBLE:
-                        r.putDouble(indexes.get(j), rnd.nextDouble());
-                        break;
-                    case ColumnType.STRING:
-                        r.putStr(indexes.get(j), rnd.nextString(10));
-                        break;
-                    case ColumnType.SYMBOL:
-                        r.putSym(indexes.get(j), rnd.nextString(5));
-                        break;
-                    case ColumnType.LONG256:
-                        r.putLong256(indexes.get(j), rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
-                        break;
-                    case ColumnType.GEOLONG:
-                        r.putGeoHash(indexes.get(j), rnd.nextLong());
-                        break;
-                    case ColumnType.BINARY:
-                        r.putBin(indexes.get(j), (new TestRecord.ArrayBinarySequence()).of(rnd.nextBytes(25)));
-                        break;
-                    case ColumnType.VAR_ARG:
-                        r.putStr(indexes.get(j), rnd.nextString(20));
-                        break;
-                }
-            }
-            r.append();
-        }
     }
 
     @Test
@@ -976,16 +860,6 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    public void testWriterOpensCorrectTxnPartitionOnRestart() throws Exception {
-        executeWithPool(0, O3Test::testWriterOpensCorrectTxnPartitionOnRestart0);
-    }
-
-    @Test
-    public void testWriterOpensUnmappedPage() throws Exception {
-        executeWithPool(0, O3Test::testWriterOpensUnmappedPage);
-    }
-
-    @Test
     public void testVarColumnPageBoundariesAppend() throws Exception {
         dataAppendPageSize = (int) Files.PAGE_SIZE;
         executeWithPool(0,
@@ -998,6 +872,24 @@ public class O3Test extends AbstractO3Test {
                     for (int i = lo; i < hi; i++) {
                         LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
                         testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, "12:00:01.000000Z");
+                        compiler.compile("drop table x", sqlExecutionContext);
+                    }
+                });
+    }
+
+    @Test
+    public void testVarColumnPageBoundariesInsertInTheMiddle() throws Exception {
+        dataAppendPageSize = (int) Files.PAGE_SIZE;
+        executeWithPool(0,
+                (CairoEngine engine,
+                 SqlCompiler compiler,
+                 SqlExecutionContext sqlExecutionContext) -> {
+                    int longsPerPage = dataAppendPageSize / 8;
+                    int hi = (longsPerPage + 8) * 2;
+                    int lo = (longsPerPage - 8) * 2;
+                    for (int i = lo; i < hi; i++) {
+                        LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
+                        testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, "11:00:00.002500Z");
                         compiler.compile("drop table x", sqlExecutionContext);
                     }
                 });
@@ -1022,86 +914,13 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    public void testVarColumnPageBoundariesInsertInTheMiddle() throws Exception {
-        dataAppendPageSize = (int) Files.PAGE_SIZE;
-        executeWithPool(0,
-                (CairoEngine engine,
-                 SqlCompiler compiler,
-                 SqlExecutionContext sqlExecutionContext) -> {
-                    int longsPerPage = dataAppendPageSize / 8;
-                    int hi = (longsPerPage + 8) * 2;
-                    int lo = (longsPerPage - 8) * 2;
-                    for (int i = lo; i < hi; i++) {
-                        LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
-                        testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, "11:00:00.002500Z");
-                        compiler.compile("drop table x", sqlExecutionContext);
-                    }
-                });
+    public void testWriterOpensCorrectTxnPartitionOnRestart() throws Exception {
+        executeWithPool(0, O3Test::testWriterOpensCorrectTxnPartitionOnRestart0);
     }
 
-    private void testVarColumnPageBoundaryIterationWithColumnTop(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, int i, String o3Timestamp) throws SqlException {
-        // Day 1 '1970-01-01'
-        int initialCount = i / 2;
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " 'aa' as str," +
-                        " timestamp_sequence('1970-01-01T11:00:00',1000L) ts," +
-                        " x " +
-                        " from long_sequence(" + initialCount +  ")" +
-                        ") timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-        // Day 2 '1970-01-02'
-        compiler.compile(
-                "insert into x " +
-                        "select" +
-                        " 'bb' as str," +
-                        " timestamp_sequence('1970-01-02T11:00:00',1000L) ts," +
-                        " x " +
-                        " from long_sequence(" + initialCount + ")",
-                sqlExecutionContext
-        );
-
-        compiler.compile("alter table x add column str2 string", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column y long", sqlExecutionContext).execute(null).await();
-
-        if (i % 2 == 0) {
-            engine.releaseAllWriters();
-        }
-
-        // O3 insert Day 1
-        final String ts1 = "1970-01-01T" + o3Timestamp;
-        final String ts2 = "1970-01-02T" + o3Timestamp;
-        compiler.compile(
-                "insert into x " +
-                        " select" +
-                        " 'cc' as str," +
-                        " timestamp_sequence('" + ts1 + "',0L) ts," +
-                        " 11111 as x," +
-                        " 'dd' as str2," +
-                        " 22222 as y" +
-                        " from long_sequence(1)" +
-                        "union all " +
-                        " select" +
-                        " 'cc' as str," +
-                        " timestamp_sequence('" + ts2 + "',0L) ts," +
-                        " 11111 as x," +
-                        " 'dd' as str2," +
-                        " 22222 as y" +
-                        " from long_sequence(1)",
-                sqlExecutionContext
-        );
-
-        if (i % 2 == 0) {
-            engine.releaseAllWriters();
-        }
-
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'cc'", sink,
-                "str\tts\tx\tstr2\ty\n" +
-                        "cc\t" + ts1 + "\t11111\tdd\t22222\n" +
-                        "cc\t" + ts2 + "\t11111\tdd\t22222\n");
+    @Test
+    public void testWriterOpensUnmappedPage() throws Exception {
+        executeWithPool(0, O3Test::testWriterOpensUnmappedPage);
     }
 
     private static void testWriterOpensCorrectTxnPartitionOnRestart0(
@@ -6291,7 +6110,7 @@ public class O3Test extends AbstractO3Test {
             row.append();
 
             // another O3 row, this time it is appended to last partition
-            row =  w.newRow(549900000000L);
+            row = w.newRow(549900000000L);
             row.putInt(0, 10);
             row.putLong(1, 3500000L);
             // skip over the timestamp
@@ -7457,5 +7276,187 @@ public class O3Test extends AbstractO3Test {
                 o3.truncate();
             }
         }
+    }
+
+    private void appendNProducts(long ts, Rnd rnd, TableWriter writer) {
+        int productId = writer.getColumnIndex("productId");
+        int productName = writer.getColumnIndex("productName");
+        int supplier = writer.getColumnIndex("supplier");
+        int category = writer.getColumnIndex("category");
+        int price = writer.getColumnIndex("price");
+        boolean isSym = ColumnType.isSymbol(writer.getMetadata().getColumnType(productName));
+
+        for (int i = 0; i < 1000; i++) {
+            TableWriter.Row r = writer.newRow(ts += 60000L * 1000L);
+            r.putInt(productId, rnd.nextPositiveInt());
+            if (!isSym) {
+                r.putStr(productName, rnd.nextString(4));
+            } else {
+                r.putSym(productName, rnd.nextString(4));
+            }
+            r.putSym(supplier, rnd.nextString(4));
+            r.putSym(category, rnd.nextString(11));
+            r.putDouble(price, rnd.nextDouble());
+            r.append();
+        }
+    }
+
+    private void appendNWithNewColumn(
+            Rnd rnd,
+            TableWriter writer,
+            ObjList<CharSequence> newCols,
+            IntList colTypes
+    ) {
+        int productId = writer.getColumnIndex("productId");
+        int productName = writer.getColumnIndex("productName");
+        int supplier = writer.getColumnIndex("supplier");
+        int category = writer.getColumnIndex("category");
+        int price = writer.getColumnIndex("price");
+
+        IntHashSet set = new IntHashSet();
+        set.add(productId);
+        set.add(productName);
+        set.add(supplier);
+        set.add(category);
+        set.add(price);
+
+        IntList indexes = new IntList();
+        for (int j = 0, m = newCols.size(); j < m; j++) {
+            int columnIndex = writer.getColumnIndex(newCols.getQuick(j));
+            indexes.add(columnIndex);
+            Assert.assertFalse(set.contains(columnIndex));
+            set.add(columnIndex);
+        }
+
+        for (int i = 0; i < 1000; i++) {
+            TableWriter.Row r = writer.newRow();
+            r.putInt(productId, rnd.nextPositiveInt());
+            r.putStr(productName, rnd.nextString(10));
+            r.putSym(supplier, rnd.nextString(4));
+            r.putSym(category, rnd.nextString(11));
+            r.putDouble(price, rnd.nextDouble());
+
+            for (int j = 0; j < indexes.size(); ++j) {
+                switch (colTypes.get(j)) {
+                    case ColumnType.BOOLEAN:
+                        r.putBool(indexes.get(j), rnd.nextBoolean());
+                        break;
+                    case ColumnType.BYTE:
+                    case ColumnType.GEOBYTE:
+                        r.putByte(indexes.get(j), rnd.nextByte());
+                        break;
+                    case ColumnType.SHORT:
+                    case ColumnType.GEOSHORT:
+                        r.putShort(indexes.get(j), rnd.nextShort());
+                        break;
+                    case ColumnType.CHAR:
+                        r.putChar(indexes.get(j), rnd.nextChar());
+                        break;
+                    case ColumnType.INT:
+                    case ColumnType.GEOINT:
+                        r.putInt(indexes.get(j), rnd.nextInt());
+                        break;
+                    case ColumnType.LONG:
+                        r.putLong(indexes.get(j), rnd.nextLong());
+                        break;
+                    case ColumnType.DATE:
+                        r.putDate(indexes.get(j), rnd.nextLong());
+                        break;
+                    case ColumnType.TIMESTAMP:
+                        r.putTimestamp(indexes.get(j), rnd.nextLong());
+                        break;
+                    case ColumnType.FLOAT:
+                        r.putFloat(indexes.get(j), rnd.nextFloat());
+                        break;
+                    case ColumnType.DOUBLE:
+                        r.putDouble(indexes.get(j), rnd.nextDouble());
+                        break;
+                    case ColumnType.STRING:
+                        r.putStr(indexes.get(j), rnd.nextString(10));
+                        break;
+                    case ColumnType.SYMBOL:
+                        r.putSym(indexes.get(j), rnd.nextString(5));
+                        break;
+                    case ColumnType.LONG256:
+                        r.putLong256(indexes.get(j), rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
+                        break;
+                    case ColumnType.GEOLONG:
+                        r.putGeoHash(indexes.get(j), rnd.nextLong());
+                        break;
+                    case ColumnType.BINARY:
+                        r.putBin(indexes.get(j), (new TestRecord.ArrayBinarySequence()).of(rnd.nextBytes(25)));
+                        break;
+                    case ColumnType.VAR_ARG:
+                        r.putStr(indexes.get(j), rnd.nextString(20));
+                        break;
+                }
+            }
+            r.append();
+        }
+    }
+
+    private void testVarColumnPageBoundaryIterationWithColumnTop(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, int i, String o3Timestamp) throws SqlException {
+        // Day 1 '1970-01-01'
+        int initialCount = i / 2;
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " 'aa' as str," +
+                        " timestamp_sequence('1970-01-01T11:00:00',1000L) ts," +
+                        " x " +
+                        " from long_sequence(" + initialCount + ")" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        // Day 2 '1970-01-02'
+        compiler.compile(
+                "insert into x " +
+                        "select" +
+                        " 'bb' as str," +
+                        " timestamp_sequence('1970-01-02T11:00:00',1000L) ts," +
+                        " x " +
+                        " from long_sequence(" + initialCount + ")",
+                sqlExecutionContext
+        );
+
+        compiler.compile("alter table x add column str2 string", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column y long", sqlExecutionContext).execute(null).await();
+
+        if (i % 2 == 0) {
+            engine.releaseAllWriters();
+        }
+
+        // O3 insert Day 1
+        final String ts1 = "1970-01-01T" + o3Timestamp;
+        final String ts2 = "1970-01-02T" + o3Timestamp;
+        compiler.compile(
+                "insert into x " +
+                        " select" +
+                        " 'cc' as str," +
+                        " timestamp_sequence('" + ts1 + "',0L) ts," +
+                        " 11111 as x," +
+                        " 'dd' as str2," +
+                        " 22222 as y" +
+                        " from long_sequence(1)" +
+                        "union all " +
+                        " select" +
+                        " 'cc' as str," +
+                        " timestamp_sequence('" + ts2 + "',0L) ts," +
+                        " 11111 as x," +
+                        " 'dd' as str2," +
+                        " 22222 as y" +
+                        " from long_sequence(1)",
+                sqlExecutionContext
+        );
+
+        if (i % 2 == 0) {
+            engine.releaseAllWriters();
+        }
+
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'cc'", sink,
+                "str\tts\tx\tstr2\ty\n" +
+                        "cc\t" + ts1 + "\t11111\tdd\t22222\n" +
+                        "cc\t" + ts2 + "\t11111\tdd\t22222\n");
     }
 }
