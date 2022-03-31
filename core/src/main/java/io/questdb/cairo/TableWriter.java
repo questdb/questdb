@@ -3867,8 +3867,9 @@ public class TableWriter implements Closeable {
         final long tableId = cmd.getTableId();
 
         CharSequence error = null;
+        long affectedRowsCount = 0;
         try {
-            publishTableWriterEvent(cmdType, tableId, correlationId, null, TSK_BEGIN);
+            publishTableWriterEvent(cmdType, tableId, correlationId, null, 0L, TSK_BEGIN);
             LOG.info()
                     .$("received async cmd [type=").$(cmdType)
                     .$(", tableName=").$(tableName)
@@ -3876,7 +3877,7 @@ public class TableWriter implements Closeable {
                     .$(", correlationId=").$(correlationId)
                     .I$();
             asyncWriterCommand = asyncWriterCommand.deserialize(cmd);
-            asyncWriterCommand.apply(this, acceptStructureChange);
+            affectedRowsCount = asyncWriterCommand.apply(this, acceptStructureChange);
             asyncWriterCommand.free();
         } catch (TableStructureChangesException ex) {
             LOG.info()
@@ -3897,7 +3898,7 @@ public class TableWriter implements Closeable {
         } finally {
             sequence.done(cursor);
         }
-        publishTableWriterEvent(cmdType, tableId, correlationId, error, TSK_COMPLETE);
+        publishTableWriterEvent(cmdType, tableId, correlationId, error, affectedRowsCount, TSK_COMPLETE);
     }
 
     private void processCommandQueue(boolean acceptStructureChange) {
@@ -4445,7 +4446,7 @@ public class TableWriter implements Closeable {
         clearTodoLog();
     }
 
-    private void publishTableWriterEvent(int cmdType, long tableId, long correlationId, CharSequence error, int eventType) {
+    private void publishTableWriterEvent(int cmdType, long tableId, long correlationId, CharSequence error, long affectedRowsCount, int eventType) {
         final long pubCursor = messageBus.getTableWriterEventPubSeq().next();
         if (pubCursor > -1) {
             try {
@@ -4455,6 +4456,7 @@ public class TableWriter implements Closeable {
                     event.putStr(error);
                 } else {
                     event.putInt(-1);
+                    event.putLong(affectedRowsCount);
                 }
                 event.setInstance(correlationId);
             } finally {

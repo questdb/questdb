@@ -45,6 +45,7 @@ class QueryFutureImpl implements QueryFuture {
     private AsyncWriterCommand asyncWriterCommand;
     private SCSequence eventSubSeq;
     private int status;
+    private long affectedRowsCount;
     private long cmdCorrelationId;
     private QueryFutureUpdateListener queryFutureUpdateListener;
 
@@ -75,6 +76,11 @@ class QueryFutureImpl implements QueryFuture {
     @Override
     public int getStatus() {
         return status;
+    }
+
+    @Override
+    public long getAffectedRowsCount() {
+        return affectedRowsCount;
     }
 
     @Override
@@ -169,8 +175,9 @@ class QueryFutureImpl implements QueryFuture {
                     LOG.info().$("writer command response received [instance=").$(cmdCorrelationId).I$();
                     int strLen = Unsafe.getUnsafe().getInt(event.getData());
                     if (strLen > -1) {
-                        throw SqlException.$(queryTableNamePosition, event.getData() + 4L, event.getData() + 4L + 2L * strLen);
+                        throw SqlException.$(queryTableNamePosition, event.getData() + Integer.BYTES, event.getData() + Integer.BYTES + 2L * strLen);
                     }
+                    affectedRowsCount = Unsafe.getUnsafe().getInt(event.getData() + Integer.BYTES);
                     queryFutureUpdateListener.reportProgress(cmdCorrelationId, QUERY_COMPLETE);
                     return QUERY_COMPLETE;
                 } else {

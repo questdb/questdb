@@ -1242,15 +1242,15 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void executeInsert() throws SqlException {
-        final TableWriter w;
+        final TableWriter writer;
         try {
             switch (transactionState) {
                 case IN_TRANSACTION:
                     final InsertMethod m = typesAndInsert.getInsert().createMethod(sqlExecutionContext, this);
                     try {
                         rowCount = m.execute();
-                        w = m.popWriter();
-                        pendingWriters.put(w.getTableName(), w);
+                        writer = m.popWriter();
+                        pendingWriters.put(writer.getTableName(), writer);
                     } catch (Throwable e) {
                         Misc.free(m);
                         throw e;
@@ -1277,55 +1277,58 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void executeUpdate() throws SqlException {
-        final TableWriter w;
+        final TableWriter writer;
         try {
             switch (transactionState) {
                 case IN_TRANSACTION:
-                    try (UpdateStatement updateStatement = typesAndUpdate.getUpdate()) {
-                        w = getWriter(
-                                sqlExecutionContext.getCairoSecurityContext(),
-                                updateStatement.getTableName(),
-                                "Update table execute"
-                        );
-                        // update contains an implicit commit to make sure all rows inserted up to
-                        // the update will be updated, this breaks the idea of transactions
-                        // we should investigate if there is a way to instruct table reader to include
-                        // uncommitted rows in the query which prepares the set of rows for update
-                        // if table reader can do that we could remove the implicit commit from update executor
-                        rowCount = updateStatement.apply(w);
+                    // update contains implicit commits which breaks the idea of transactions
+                    if ((writer = executeUpdate0()) != null) {
+                        pendingWriters.put(writer.getTableName(), writer);
                     }
-                    pendingWriters.put(w.getTableName(), w);
                     break;
                 case ERROR_TRANSACTION:
                     // when transaction is in error state, skip execution
                     break;
                 default:
                     // in any other case we will commit
-                    try (UpdateStatement updateStatement2 = typesAndUpdate.getUpdate()) {
-                        w = engine.getWriter(
-                                sqlExecutionContext.getCairoSecurityContext(),
-                                updateStatement2.getTableName(),
-                                "Update table execute"
-                        );
-                        rowCount = updateStatement2.apply(w);
+                    if ((writer = executeUpdate0()) != null) {
+                        writer.commit();
+                        Misc.free(writer);
                     }
-                    w.commit();
-                    Misc.free(w);
                     break;
             }
             prepareCommandComplete(true);
-        } catch (TableStructureChangesException ex) {
-            LOG.error()
-                    .$("UPDATE is not expected to change table structure [tableName=").$(typesAndUpdate.getUpdate().getTableName())
-                    .$(", ex=").$(ex)
-                    .I$();
-            assert false : "This must never happen for UPDATE";
         } catch (Throwable e) {
             if (transactionState == IN_TRANSACTION) {
                 transactionState = ERROR_TRANSACTION;
             }
             throw e;
         }
+    }
+
+    private TableWriter executeUpdate0() throws SqlException {
+        CompiledQuery cqUpdate = typesAndUpdate.getCompiledQuery();
+        UpdateStatement updateStatement = cqUpdate.getUpdateStatement();
+
+        TableWriter writer = null;
+        try {
+            writer = getWriter(
+                    sqlExecutionContext.getCairoSecurityContext(),
+                    updateStatement.getTableName(),
+                    "Update table execute"
+            );
+            rowCount = updateStatement.apply(writer);
+        } catch (EntryUnavailableException busyException) {
+            try (QueryFuture queryFuture = cqUpdate.executeAsync(updateStatement, tempSequence, false)) {
+                queryFuture.await();
+                rowCount = queryFuture.getAffectedRowsCount();
+            }
+        } catch (TableStructureChangesException e) {
+            assert false : "This must never happen for UPDATE, tableName=" + updateStatement.getTableName();
+        } finally {
+            updateStatement.close();
+        }
+        return writer;
     }
 
     private void executeTag() {
@@ -1891,7 +1894,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         switch (cq.getType()) {
             case CompiledQuery.CREATE_TABLE_AS_SELECT:
                 queryTag = TAG_SELECT;
-                rowCount = cq.getInsertCount();
+                rowCount = cq.getAffectedRowsCount();
                 break;
             case CompiledQuery.SELECT:
                 typesAndSelect = typesAndSelectPool.pop();
@@ -1912,7 +1915,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             case CompiledQuery.UPDATE:
                 queryTag = TAG_UPDATE;
                 typesAndUpdate = typesAndUpdatePool.pop();
-                typesAndUpdate.of(cq.getUpdateStatement(), bindVariableService);
+                typesAndUpdate.of(cq, bindVariableService);
                 if (bindVariableService.getIndexedVariableCount() > 0) {
                     LOG.debug().$("cache update [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
                     // we can add update to cache right away because it is local to the connection
@@ -1921,7 +1924,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 break;
             case CompiledQuery.INSERT_AS_SELECT:
                 queryTag = TAG_INSERT;
-                rowCount = cq.getInsertCount();
+                rowCount = cq.getAffectedRowsCount();
                 break;
             case CompiledQuery.COPY_LOCAL:
                 // uncached

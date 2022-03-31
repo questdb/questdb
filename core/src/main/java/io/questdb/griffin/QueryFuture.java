@@ -59,28 +59,15 @@ public interface QueryFuture extends Closeable {
     int getStatus();
 
     /***
+     * Returns the number of rows affected by the command run asynchronously
+     * @return
+     *  - number of rows changed
+     */
+    long getAffectedRowsCount();
+
+    /***
      * In case of async execution close must be called to remove sequence
      */
     @Override
     void close();
-
-    QueryFuture DONE = new QueryFuture() {
-        @Override
-        public void await() {
-        }
-
-        @Override
-        public int await(long timeout) {
-            return QUERY_COMPLETE;
-        }
-
-        @Override
-        public int getStatus() {
-            return QUERY_COMPLETE;
-        }
-
-        @Override
-        public void close() {
-        }
-    };
 }

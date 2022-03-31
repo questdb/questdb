@@ -2777,11 +2777,13 @@ nodejs code:
 
                 final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
                         "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
+                        "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
                         "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
                 insert1.execute();
 
                 final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5");
-                update1.execute();
+                int numOfRowsUpdated1 = update1.executeUpdate();
+                assertEquals(2, numOfRowsUpdated1);
 
                 final PreparedStatement insert2 = connection.prepareStatement("insert into x values " +
                         "(8, 4.0, '2020-06-01T00:00:22'::timestamp)," +
@@ -2789,10 +2791,12 @@ nodejs code:
                 insert2.execute();
 
                 final PreparedStatement update2 = connection.prepareStatement("update x set a=7 where b>5.0");
-                update2.execute();
+                int numOfRowsUpdated2 = update2.executeUpdate();
+                assertEquals(1, numOfRowsUpdated2);
 
                 final String expected = "a[BIGINT],b[DOUBLE],ts[TIMESTAMP]\n" +
                         "1,2.0,2020-06-01 00:00:02.0\n" +
+                        "9,2.6,2020-06-01 00:00:06.0\n" +
                         "9,3.0,2020-06-01 00:00:12.0\n" +
                         "8,4.0,2020-06-01 00:00:22.0\n" +
                         "7,6.0,2020-06-01 00:00:32.0\n";

@@ -25,22 +25,22 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.griffin.UpdateStatement;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.std.WeakAutoClosableObjectPool;
 
 public class TypesAndUpdate extends AbstractTypeContainer<TypesAndUpdate> {
-    private UpdateStatement update;
+    private CompiledQuery cqUpdate;
 
     public TypesAndUpdate(WeakAutoClosableObjectPool<TypesAndUpdate> parentPool) {
         super(parentPool);
     }
 
-    public UpdateStatement getUpdate() {
-        return update;
+    public CompiledQuery getCompiledQuery() {
+        return cqUpdate;
     }
 
-    public void of(UpdateStatement update, BindVariableService bindVariableService) {
-        this.update = update;
+    public void of(CompiledQuery cqUpdate, BindVariableService bindVariableService) {
+        this.cqUpdate = cqUpdate;
         copyTypesFrom(bindVariableService);
     }
 }

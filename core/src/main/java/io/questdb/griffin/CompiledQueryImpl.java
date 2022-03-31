@@ -44,8 +44,9 @@ public class CompiledQueryImpl implements CompiledQuery {
     private AlterStatement alterStatement;
     private short type;
     private SqlExecutionContext sqlExecutionContext;
-    //count of rows affected by this statement ; currently works only for insert as select/create table as insert
-    private long insertCount;
+    //count of rows affected by this statement
+    // currently works for update/insert as select/create table as insert
+    private long affectedRowsCount;
 
     public CompiledQueryImpl(CairoEngine engine) {
         this.engine = engine;
@@ -98,13 +99,13 @@ public class CompiledQueryImpl implements CompiledQuery {
             case ALTER:
                 return executeAlter(eventSubSeq);
             default:
-                return QueryFuture.DONE;
+                return DONE;
         }
     }
 
     @Override
-    public long getInsertCount() {
-        return this.insertCount;
+    public long getAffectedRowsCount() {
+        return affectedRowsCount;
     }
 
     public CompiledQuery of(short type) {
@@ -130,7 +131,7 @@ public class CompiledQueryImpl implements CompiledQuery {
         try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
             insertMethod.execute();
             insertMethod.commit();
-            return QueryFuture.DONE;
+            return DONE;
         }
     }
 
@@ -142,16 +143,16 @@ public class CompiledQueryImpl implements CompiledQuery {
                         "Update table execute"
                 )
         ) {
-            updateStatement.apply(writer);
-            return QueryFuture.DONE;
+            affectedRowsCount = updateStatement.apply(writer);
+            return DONE;
         } catch (EntryUnavailableException busyException) {
             if (eventSubSeq == null) {
                 throw busyException;
             }
             return executeAsync(updateStatement, eventSubSeq, false);
         } catch (TableStructureChangesException e) {
-            assert false : "This must never happen for UPDATE";
-            return QueryFuture.DONE;
+            assert false : "This must never happen for UPDATE, tableName=" + updateStatement.getTableName();
+            return DONE;
         } finally {
             updateStatement.close();
         }
@@ -165,26 +166,26 @@ public class CompiledQueryImpl implements CompiledQuery {
                         "Alter table execute"
                 )
         ) {
-            alterStatement.apply(writer, true);
-            return QueryFuture.DONE;
+            affectedRowsCount = alterStatement.apply(writer, true);
+            return DONE;
         } catch (EntryUnavailableException busyException) {
             if (eventSubSeq == null) {
                 throw busyException;
             }
             return executeAsync(alterStatement, eventSubSeq, true);
         } catch (TableStructureChangesException e) {
-            assert false : "This must never happen when parameter acceptStructureChange=true";
-            return QueryFuture.DONE;
+            assert false : "This must never happen when parameter acceptStructureChange=true, tableName=" + alterStatement.getTableName();
+            return DONE;
         }
     }
 
-    private QueryFuture executeAsync(AsyncWriterCommand asyncWriterCommand, SCSequence eventSubSeq, boolean acceptStructureChange) throws SqlException {
+    public QueryFuture executeAsync(AsyncWriterCommand asyncWriterCommand, SCSequence eventSubSeq, boolean acceptStructureChange) throws SqlException {
         try {
             queryFuture.of(asyncWriterCommand, sqlExecutionContext, eventSubSeq, acceptStructureChange);
             return queryFuture;
         } catch (TableStructureChangesException e) {
             assert false : "This must never happen, command is either UPDATE or parameter acceptStructureChange=true";
-            return QueryFuture.DONE;
+            return DONE;
         }
     }
 
@@ -195,7 +196,7 @@ public class CompiledQueryImpl implements CompiledQuery {
     private CompiledQuery of(short type, RecordCursorFactory factory) {
         this.type = type;
         this.recordCursorFactory = factory;
-        this.insertCount = -1;
+        this.affectedRowsCount = -1;
         return this;
     }
 
@@ -222,9 +223,9 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(CREATE_TABLE);
     }
 
-    CompiledQuery ofCreateTableAsSelect(long insertCount) {
+    CompiledQuery ofCreateTableAsSelect(long affectedRowsCount) {
         of(CREATE_TABLE_AS_SELECT);
-        this.insertCount = insertCount;
+        this.affectedRowsCount = affectedRowsCount;
         return this;
     }
 
@@ -237,9 +238,9 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(INSERT);
     }
 
-    CompiledQuery ofInsertAsSelect(long insertCount) {
+    CompiledQuery ofInsertAsSelect(long affectedRowsCount) {
         of(INSERT_AS_SELECT);
-        this.insertCount = insertCount;
+        this.affectedRowsCount = affectedRowsCount;
         return this;
     }
 
@@ -282,4 +283,29 @@ public class CompiledQueryImpl implements CompiledQuery {
     CompiledQuery ofSnapshotComplete() {
         return of(SNAPSHOT_DB_COMPLETE);
     }
+
+    private final QueryFuture DONE = new QueryFuture() {
+        @Override
+        public void await() {
+        }
+
+        @Override
+        public int await(long timeout) {
+            return QUERY_COMPLETE;
+        }
+
+        @Override
+        public int getStatus() {
+            return QUERY_COMPLETE;
+        }
+
+        @Override
+        public long getAffectedRowsCount() {
+            return affectedRowsCount;
+        }
+
+        @Override
+        public void close() {
+        }
+    };
 }
