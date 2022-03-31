@@ -378,6 +378,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int columnVersionPurgeQueueCapacity;
     private final long columnVersionPurgeMaxTimeoutMicros;
     private final double columnVersionPurgeWaitExponent;
+    private final String systemTableNamePrefix;
 
     public PropServerConfiguration(
             String root,
@@ -688,6 +689,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.columnVersionPurgeQueueCapacity = getQueueCapacity(properties, env,"cairo.sql.column.version.clean.queue.capacity", 1024);
             this.columnVersionPurgeMaxTimeoutMicros = getLong(properties, env, "cairo.sql.column.version.clean.timeout", 60_000_000L);
             this.columnVersionPurgeWaitExponent = getDouble(properties, env, "cairo.sql.column.version.clean.timeout.exponent", 10.0);
+            this.systemTableNamePrefix = getString(properties, env, "cairo.system.name.prefix", "sys.");
 
             this.writerDataIndexKeyAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, "cairo.writer.data.index.key.append.page.size", 512 * 1024));
             this.writerDataIndexValueAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, "cairo.writer.data.index.value.append.page.size", 16 * 1024 * 1024));
@@ -1709,7 +1711,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public CharSequence getSystemTableNamePrefix() {
-            return null;
+            return systemTableNamePrefix;
         }
 
         @Override

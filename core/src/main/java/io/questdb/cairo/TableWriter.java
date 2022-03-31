@@ -818,6 +818,10 @@ public class TableWriter implements Closeable {
         return tableName;
     }
 
+    public long getTransientRowCount() {
+        return txWriter.getTransientRowCount();
+    }
+
     public long getTxn() {
         return txWriter.getTxn();
     }

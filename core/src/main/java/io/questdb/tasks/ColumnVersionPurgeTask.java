@@ -44,6 +44,10 @@ public class ColumnVersionPurgeTask implements Mutable {
         updatedColumnVersions.add(columnVersion, partitionTimestamp, partitionNameTxn, 0L);
     }
 
+    public void appendColumnVersion(long columnVersion, long partitionTimestamp, long partitionNameTxn, long updateRowId) {
+        updatedColumnVersions.add(columnVersion, partitionTimestamp, partitionNameTxn, updateRowId);
+    }
+
     @Override
     public void clear() {
         updatedColumnVersions.clear();
@@ -88,13 +92,17 @@ public class ColumnVersionPurgeTask implements Mutable {
         return updatedTxn;
     }
 
-    public void of(String tableName, CharSequence columnName, int tableId, int columnType, int partitionBy, long lastTxn, LongList columnVersions) {
+    public void of(String tableName, CharSequence columnName, int tableId, int columnType, int partitionBy, long lastTxn) {
         this.tableName = tableName;
         this.columnName = columnName;
         this.tableId = tableId;
         this.columnType = columnType;
         this.partitionBy = partitionBy;
         this.updatedTxn = lastTxn;
+    }
+
+    public void of(String tableName, CharSequence columnName, int tableId, int columnType, int partitionBy, long lastTxn, LongList columnVersions) {
+        of(tableName, columnName, tableId, columnType, partitionBy, lastTxn);
         this.updatedColumnVersions.clear();
         this.updatedColumnVersions.add(columnVersions);
     }

@@ -191,6 +191,10 @@ public class ServerMain {
             }
         }
 
+        final ColumnVersionPurgeJob columnVersionPurgeJob = new ColumnVersionPurgeJob(cairoEngine, functionFactoryCache);
+        instancesToClean.add(columnVersionPurgeJob);
+        workerPool.assign(columnVersionPurgeJob);
+
         workerPool.assignCleaner(Path.CLEANER);
         O3Utils.setupWorkerPool(workerPool, cairoEngine.getMessageBus());
 
