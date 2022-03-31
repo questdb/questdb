@@ -28,6 +28,7 @@ import org.hamcrest.MatcherAssert;
 
 import static org.hamcrest.CoreMatchers.*;
 
+import org.junit.Assert;
 import org.junit.Test;
 
 public class FunctionParserErrorTest extends AbstractGriffinTest {
@@ -40,17 +41,12 @@ public class FunctionParserErrorTest extends AbstractGriffinTest {
                             "(select cast(x as timestamp) ts, cast('0x05cb69971d94a00000192178ef80f0' as long256) as id, x from long_sequence(10) ) " +
                             "where ts between '2022-03-20' AND id <> '0x05ab6d9fabdabb00066a5db735d17a' AND id <> '0x05aba84839b9c7000006765675e630' AND id <> '0x05abc58d80ba1f000001ed05351873'",
                     null, null, true, false, true);
+            Assert.fail();
         } catch (SqlException e) {
             MatcherAssert.assertThat(e.getMessage(), containsString("unexpected argument for function: between"));
         }
 
         runTestQuery();
-    }
-
-    private void runTestQuery() throws Exception {
-        assertQuery("x\n1\n",
-                "select x from long_sequence(1) where x < 10 and x > 0",
-                null, null, true, false, false);
     }
 
     @Test
@@ -59,6 +55,7 @@ public class FunctionParserErrorTest extends AbstractGriffinTest {
             assertQuery("",
                     "select abs(log(1,2), 4) + 10+'asdf' from long_sequence(1);",
                     null, null, true, false, true);
+            Assert.fail();
         } catch (SqlException e) {
             MatcherAssert.assertThat(e.getMessage(), containsString("unexpected argument for function: log"));
         }
@@ -72,10 +69,17 @@ public class FunctionParserErrorTest extends AbstractGriffinTest {
             assertQuery("",
                     "select abs(1,2,3,4) from long_sequence(1)",
                     null, null, true, false, true);
+            Assert.fail();
         } catch (SqlException e) {
             MatcherAssert.assertThat(e.getMessage(), containsString("unexpected argument for function: abs"));
         }
 
         runTestQuery();
+    }
+
+    private void runTestQuery() throws Exception {
+        assertQuery("x\n1\n",
+                "select x from long_sequence(1) where x < 10 and x > 0",
+                null, null, true, false, false);
     }
 }
