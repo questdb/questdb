@@ -45,6 +45,7 @@ const defaultConfig: LocalConfig = {
   queryText: "",
   editorSplitterBasis: 350,
   resultsSplitterBasis: 350,
+  exampleQueriesVisited: false,
 }
 
 type ContextProps = {
@@ -57,6 +58,7 @@ type ContextProps = {
   editorSplitterBasis: number
   resultsSplitterBasis: number
   updateSettings: (key: StoreKey, value: SettingsType) => void
+  exampleQueriesVisited: boolean
 }
 
 const defaultValues: ContextProps = {
@@ -69,6 +71,7 @@ const defaultValues: ContextProps = {
   editorSplitterBasis: 350,
   resultsSplitterBasis: 350,
   updateSettings: (key: StoreKey, value: SettingsType) => undefined,
+  exampleQueriesVisited: false,
 }
 
 export const LocalStorageContext = createContext<ContextProps>(defaultValues)
@@ -113,6 +116,10 @@ export const LocalStorageProvider = ({
     ),
   )
 
+  const [exampleQueriesVisited, setExampleQueriesVisited] = useState<boolean>(
+    getValue(StoreKey.EXAMPLE_QUERIES_VISITED) === "true",
+  )
+
   const updateSettings = (key: StoreKey, value: SettingsType) => {
     setValue(key, value.toString())
     refreshSettings(key)
@@ -129,6 +136,9 @@ export const LocalStorageProvider = ({
         break
       case StoreKey.EDITOR_LINE:
         setEditorLine(parseInteger(value, defaultConfig.editorLine))
+        break
+      case StoreKey.EXAMPLE_QUERIES_VISITED:
+        setExampleQueriesVisited(value === "true")
         break
       case StoreKey.NOTIFICATION_ENABLED:
         setIsNotificationEnabled(
@@ -168,6 +178,7 @@ export const LocalStorageProvider = ({
         editorSplitterBasis,
         resultsSplitterBasis,
         updateSettings,
+        exampleQueriesVisited,
       }}
     >
       {children}
