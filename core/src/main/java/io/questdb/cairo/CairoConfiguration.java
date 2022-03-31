@@ -70,6 +70,8 @@ public interface CairoConfiguration {
 
     int getColumnVersionPurgeQueueCapacity();
 
+    double getColumnVersionPurgeWaitExponent();
+
     /**
      * Default commit lag in microseconds for new tables. This value
      * can be overridden with 'create table' statement.

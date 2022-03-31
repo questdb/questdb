@@ -127,6 +127,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public double getColumnVersionPurgeWaitExponent() {
+        return 2.0;
+    }
+
+    @Override
     public long getCommitLag() {
         return 0;
     }
