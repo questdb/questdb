@@ -3393,6 +3393,57 @@ nodejs code:
         });
     }
 
+    @Test//NOTE: this test needs updating once limit issue is fixed!
+    public void testUnexpectedAssertionErrorDisconnectsClient() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final PGWireServer ignored = createPGServer(1);
+                 final Connection connection = getConnection(false, false)) {
+
+                connection.setAutoCommit(false);
+
+                Statement stmt = connection.createStatement();
+                stmt.execute("create table ltest as (select cast(x as timestamp) ts from long_sequence(10))");
+                connection.commit();
+
+                try (PreparedStatement pstmt = connection.prepareStatement("select ts from ltest limit -9223372036854775807L-1, -1");
+                     ResultSet ignore = pstmt.executeQuery()) {
+                    Assert.fail("exception should be thrown");
+                } catch (PSQLException e) {
+                    Assert.assertEquals("An I/O error occurred while sending to the backend.", e.getMessage());
+                }
+
+            }
+        });
+    }
+
+    @Test
+    //checks that function parser error doesn't persist and affect later queries issued through the same connection
+    public void testParseErrorDoesntCorruptConnection() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final PGWireServer ignored = createPGServer(2);
+                 final Connection connection = getConnection(false, false)) {
+
+                try (PreparedStatement ps1 = connection.prepareStatement("select * from " +
+                        "(select cast(x as timestamp) ts, cast('0x05cb69971d94a00000192178ef80f0' as long256) as id, x from long_sequence(10) ) " +
+                        "where ts between '2022-03-20' " +
+                        "AND id <> '0x05ab6d9fabdabb00066a5db735d17a' " +
+                        "AND id <> '0x05aba84839b9c7000006765675e630' " +
+                        "AND id <> '0x05abc58d80ba1f000001ed05351873'")) {
+                    ps1.executeQuery();
+                    Assert.fail("PSQLException should be thrown");
+                } catch (PSQLException e) {
+                    assertContains(e.getMessage(), "ERROR: unexpected argument for function: between");
+                }
+
+                try (PreparedStatement s = connection.prepareStatement("select 2 a,2 b from long_sequence(1) where x > 0 and x < 10")) {
+                    StringSink sink = new StringSink();
+                    ResultSet result = s.executeQuery();
+                    assertResultSet("a[INTEGER],b[INTEGER]\n2,2\n", sink, result);
+                }
+            }
+        });
+    }
+
     @Test
     public void testMultiplePreparedStatements() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
