@@ -49,9 +49,7 @@ import org.junit.rules.TemporaryFolder;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Properties;
+import java.util.*;
 
 public class PropServerConfigurationTest {
 
@@ -503,6 +501,17 @@ public class PropServerConfigurationTest {
         configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
         Assert.assertEquals(PartitionBy.YEAR, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
         Assert.assertEquals(PartitionBy.YEAR, configuration.getLineUdpReceiverConfiguration().getDefaultPartitionBy());
+    }
+    @Test(expected = ServerConfigurationException.class)
+    public void testsIncorrectPropertyKeyError() throws IOException, JsonException, ServerConfigurationException {
+
+        InputStream inputStream = PropServerConfigurationTest.class.getResourceAsStream("/server.conf");
+        Properties properties = new Properties();
+        properties.load(inputStream);
+        properties.setProperty("this.will.throw", "Test");
+        properties.setProperty("this.will.also", "throw");
+
+        PropServerConfiguration configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
     }
 
     @Test
