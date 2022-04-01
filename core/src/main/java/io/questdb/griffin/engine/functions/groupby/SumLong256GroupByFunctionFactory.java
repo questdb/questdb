@@ -22,11 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.griffin.engine.functions.groupby;
 
-import java.io.Closeable;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public interface CleanClosable extends Closeable {
+public class SumLong256GroupByFunctionFactory implements FunctionFactory {
     @Override
-    void close();
+    public String getSignature() {
+        return "sum(H)";
+    }
+
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new SumLong256GroupByFunction(args.getQuick(0));
+    }
 }

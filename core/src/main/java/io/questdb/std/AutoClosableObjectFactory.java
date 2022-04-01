@@ -24,7 +24,9 @@
 
 package io.questdb.std;
 
+import java.io.Closeable;
+
 @FunctionalInterface
-public interface AutoClosableObjectFactory<T extends CleanClosable> {
+public interface AutoClosableObjectFactory<T extends Closeable> {
     T newInstance(WeakAutoClosableObjectPool<T> parent);
 }
