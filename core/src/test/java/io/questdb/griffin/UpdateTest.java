@@ -972,6 +972,158 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUnsupportedWhereClause() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
+                    " x" +
+                    " from long_sequence(5)), index(symCol)" +
+                    " timestamp(ts)", sqlExecutionContext);
+
+            assertSql(
+                    "up",
+                    "symCol\tts\tx\n" +
+                            "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
+                            "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
+                            "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
+                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
+                            "\t1970-01-01T00:00:04.000000Z\t5\n"
+            );
+
+            executeUpdateFails("UPDATE up SET symCol = 'VTJ' WHERE symCol != 'WCP'",
+                    7, "Only simple UPDATE statements without joins are supported");
+        });
+    }
+
+    @Test
+    public void testSymbols_UpdateWithExistingValue() throws Exception {
+        testSymbol_UpdateWithExistingValue(false);
+    }
+
+    @Test
+    public void testSymbolsIndexed_UpdateWithExistingValue() throws Exception {
+        testSymbol_UpdateWithExistingValue(true);
+    }
+
+    private void testSymbol_UpdateWithExistingValue(boolean indexed) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
+                    " x" +
+                    " from long_sequence(5))" + (indexed ? ", index(symCol)" : "") +
+                    " timestamp(ts)", sqlExecutionContext);
+
+            executeUpdate("update up set symCol = 'VTJ' where symCol = 'WCP'");
+            assertSql(
+                    "up",
+                    "symCol\tts\tx\n" +
+                            "VTJ\t1970-01-01T00:00:00.000000Z\t1\n" +
+                            "VTJ\t1970-01-01T00:00:01.000000Z\t2\n" +
+                            "VTJ\t1970-01-01T00:00:02.000000Z\t3\n" +
+                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
+                            "\t1970-01-01T00:00:04.000000Z\t5\n"
+            );
+
+            assertSql(
+                    "up where symCol = 'VTJ'",
+                    "symCol\tts\tx\n" +
+                            "VTJ\t1970-01-01T00:00:00.000000Z\t1\n" +
+                            "VTJ\t1970-01-01T00:00:01.000000Z\t2\n" +
+                            "VTJ\t1970-01-01T00:00:02.000000Z\t3\n" +
+                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n"
+            );
+            assertSql(
+                    "up where symCol = 'WCP'",
+                    "symCol\tts\tx\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSymbols_UpdateWithNewValue() throws Exception {
+        testSymbols_UpdateWithNewValue(false);
+    }
+
+    @Test
+    public void testSymbolsIndexed_UpdateWithNewValue() throws Exception {
+        testSymbols_UpdateWithNewValue(true);
+    }
+
+    private void testSymbols_UpdateWithNewValue(boolean indexed) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
+                    " x" +
+                    " from long_sequence(5))" + (indexed ? ", index(symCol)" : "") +
+                    " timestamp(ts)", sqlExecutionContext);
+
+            executeUpdate("update up set symCol = 'ABC' where symCol = 'WCP'");
+            assertSql(
+                    "up",
+                    "symCol\tts\tx\n" +
+                            "ABC\t1970-01-01T00:00:00.000000Z\t1\n" +
+                            "ABC\t1970-01-01T00:00:01.000000Z\t2\n" +
+                            "ABC\t1970-01-01T00:00:02.000000Z\t3\n" +
+                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
+                            "\t1970-01-01T00:00:04.000000Z\t5\n"
+            );
+
+            assertSql(
+                    "up where symCol = 'ABC'",
+                    "symCol\tts\tx\n" +
+                            "ABC\t1970-01-01T00:00:00.000000Z\t1\n" +
+                            "ABC\t1970-01-01T00:00:01.000000Z\t2\n" +
+                            "ABC\t1970-01-01T00:00:02.000000Z\t3\n"
+            );
+            assertSql(
+                    "up where symCol = 'WCP'",
+                    "symCol\tts\tx\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSymbols_UpdateNull() throws Exception {
+        testSymbols_UpdateNull(false);
+    }
+
+    @Test
+    public void testSymbolsIndexed_UpdateNull() throws Exception {
+        testSymbols_UpdateNull(true);
+    }
+
+    private void testSymbols_UpdateNull(boolean indexed) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
+                    " x" +
+                    " from long_sequence(5))" + (indexed ? ", index(symCol)" : "") +
+                    " timestamp(ts)", sqlExecutionContext);
+
+            executeUpdate("update up set symCol = 'ABC' where symCol is null");
+            assertSql(
+                    "up",
+                    "symCol\tts\tx\n" +
+                            "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
+                            "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
+                            "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
+                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
+                            "ABC\t1970-01-01T00:00:04.000000Z\t5\n"
+            );
+
+            assertSql(
+                    "up where symCol = 'ABC'",
+                    "symCol\tts\tx\n" +
+                            "ABC\t1970-01-01T00:00:04.000000Z\t5\n"
+            );
+            assertSql(
+                    "up where symCol is null",
+                    "symCol\tts\tx\n"
+            );
+        });
+    }
+
+    @Test
     public void testUpdateNonPartitionedTable() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +

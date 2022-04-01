@@ -24,9 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.model.ExpressionNode;
@@ -142,10 +140,12 @@ public class UpdateStatement extends AsyncWriterCommandBase implements Closeable
             int tableColumnType = tableColumnTypes.get(tableColumnIndex);
 
             if (virtualColumnType != tableColumnType) {
-                // get column position
-                ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
-                int position = setRhs.position;
-                throw SqlException.inconvertibleTypes(position, virtualColumnType, "", tableColumnType, updateColumnName);
+                if (!ColumnType.isSymbol(tableColumnType) || virtualColumnType != ColumnType.STRING) {
+                    // get column position
+                    ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
+                    int position = setRhs.position;
+                    throw SqlException.inconvertibleTypes(position, virtualColumnType, "", tableColumnType, updateColumnName);
+                }
             }
         }
         return updateToDataCursorFactory;

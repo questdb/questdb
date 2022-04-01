@@ -43,6 +43,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     int rootLen;
     String columnTypeErrorMsg = "Wrong column type";
     private long lockFd;
+    private boolean lockRequired;
     private TableReaderMetadata metadata;
 
     @Override
@@ -58,9 +59,14 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     }
 
     public RebuildColumnBase of(CharSequence tablePath, CairoConfiguration configuration) {
+        return of(tablePath, configuration, true);
+    }
+
+    public RebuildColumnBase of(CharSequence tablePath, CairoConfiguration configuration, boolean lockRequired) {
         this.path.concat(tablePath);
         this.rootLen = tablePath.length();
         this.configuration = configuration;
+        this.lockRequired = lockRequired;
         return this;
     }
 
@@ -85,7 +91,9 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         }
         metadata.of(path.$(), ColumnType.VERSION);
         try {
-            lock(ff);
+            if (lockRequired) {
+                lock(ff);
+            }
 
             // Resolve column id if the column name specified
             int rebuildColumnIndex = ALL;
@@ -103,7 +111,6 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             try (TxReader txReader = new TxReader(ff).ofRO(path, partitionBy)) {
                 txReader.unsafeLoadAll();
                 path.trimTo(rootLen);
-
 
                 path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
                 try (ColumnVersionReader columnVersionReader = new ColumnVersionReader().ofRO(ff, path)) {
@@ -157,8 +164,10 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         } finally {
             metadata.close();
             path.trimTo(rootLen);
-            lockName(path);
-            releaseLock(ff);
+            if (lockRequired) {
+                lockName(path);
+                releaseLock(ff);
+            }
         }
     }
 

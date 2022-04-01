@@ -59,12 +59,16 @@ public class UpdateExecution implements Closeable {
     private final LongList cleanupColumnVersions = new LongList();
     private final LongList cleanupColumnVersionsAsync = new LongList();
     private final MessageBus messageBus;
+    private final CairoConfiguration configuration;
+    private final RebuildIndex rebuildIndex;
     private Path path;
 
     public UpdateExecution(CairoConfiguration configuration, MessageBus messageBus) {
+        this.messageBus = messageBus;
+        this.configuration = configuration;
+        rebuildIndex = new RebuildIndex();
         ff = configuration.getFilesFacade();
         path = new Path().of(configuration.getRoot());
-        this.messageBus = messageBus;
         rootLen = path.length();
         dataAppendPageSize = configuration.getDataAppendPageSize();
         fileOpenOpts = configuration.getWriterFileOpenOpts();
@@ -73,12 +77,15 @@ public class UpdateExecution implements Closeable {
     @Override
     public void close() {
         path = Misc.free(path);
+        rebuildIndex.close();
     }
 
     public long executeUpdate(TableWriter tableWriter, UpdateStatement updateStatement, SqlExecutionContext executionContext) throws SqlException {
         cleanupColumnVersions.clear();
+
+        final String tableName = tableWriter.getTableName();
         if (tableWriter.inTransaction()) {
-            LOG.info().$("committing current transaction before UPDATE execution [table=").$(tableWriter.getTableName()).I$();
+            LOG.info().$("committing current transaction before UPDATE execution [table=").$(tableName).I$();
             tableWriter.commit();
         }
 
@@ -86,7 +93,7 @@ public class UpdateExecution implements Closeable {
 
         // Check that table structure hasn't changed between planning and executing the UPDATE
         if (writerMetadata.getId() != updateStatement.getTableId() || tableWriter.getStructureVersion() != updateStatement.getTableVersion()) {
-            throw ReaderOutOfDateException.of(tableWriter.getTableName());
+            throw ReaderOutOfDateException.of(tableName);
         }
 
         // Prepare for update, select the rows to be updated
@@ -112,7 +119,7 @@ public class UpdateExecution implements Closeable {
         long currentPartitionIndex = -1L;
         long rowsUpdated = 0;
 
-        // Row by row updates
+        // Row by row updates for now
         // This should happen parallel per file (partition and column)
         try (RecordCursor recordCursor = updateStatementDataCursorFactory.getCursor(executionContext)) {
             Record masterRecord = recordCursor.getRecord();
@@ -150,6 +157,7 @@ public class UpdateExecution implements Closeable {
 
                 long partitionRowId = Rows.toLocalRowID(rowId);
                 updateColumnValues(
+                        tableWriter,
                         writerMetadata,
                         updateColumnIndexes,
                         updateColumnCount,
@@ -185,7 +193,24 @@ public class UpdateExecution implements Closeable {
             tableWriter.openLastPartition();
             purgeOldColumnVersions(tableWriter, updateColumnIndexes, ff);
         }
+
+        rebuildIndexes(tableName, writerMetadata);
+
         return rowsUpdated;
+    }
+
+    private void rebuildIndexes(String tableName, TableWriterMetadata writerMetadata) {
+        int pathTrimToLen = path.length();
+        rebuildIndex.of(path.concat(tableName), configuration, false);
+        for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
+            int columnIndex = updateColumnIndexes.get(i);
+            if (writerMetadata.isColumnIndexed(columnIndex)) {
+                CharSequence colName = writerMetadata.getColumnName(columnIndex);
+                rebuildIndex.rebuildColumn(colName);
+            }
+        }
+        rebuildIndex.clear();
+        path.trimTo(pathTrimToLen);
     }
 
     private void openPartitionColumns(TableWriter tableWriter, ObjList<? extends MemoryCM> memList, int partitionIndex, IntList updateColumnIndexes, boolean forWrite) {
@@ -193,7 +218,7 @@ public class UpdateExecution implements Closeable {
         long partitionNameTxn = tableWriter.getPartitionNameTxn(partitionIndex);
         RecordMetadata metadata = tableWriter.getMetadata();
         try {
-            String tableName = tableWriter.getTableName();
+            final String tableName = tableWriter.getTableName();
             path.concat(tableName);
             TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, false);
             TableUtils.txnPartitionConditionally(path, partitionNameTxn);
@@ -300,14 +325,14 @@ public class UpdateExecution implements Closeable {
             long partitionSize
     ) {
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            MemoryCMR basePrimaryColumnFile = baseMemory.get(2 * columnIndex);
+            MemoryCMR baseFixedColumnFile = baseMemory.get(2 * columnIndex);
             MemoryCMARW updatedFixedColumnFile = updateMemory.get(2 * columnIndex);
             MemoryCMR baseVariableColumnFile = baseMemory.get(2 * columnIndex + 1);
             MemoryCMARW updatedVariableColumnFile = updateMemory.get(2 * columnIndex + 1);
 
             int columnType = metadata.getColumnType(updateColumnIndexes.get(columnIndex));
             int typeSize = getFixedColumnSize(columnType);
-            copyRecords(startPartitionRowId, partitionSize, basePrimaryColumnFile, updatedFixedColumnFile, baseVariableColumnFile, updatedVariableColumnFile, columnType, typeSize);
+            copyRecords(startPartitionRowId, partitionSize, baseFixedColumnFile, updatedFixedColumnFile, baseVariableColumnFile, updatedVariableColumnFile, columnType, typeSize);
         }
     }
 
@@ -329,21 +354,21 @@ public class UpdateExecution implements Closeable {
             int columnType,
             int typeSize) {
 
-        long addr = baseFixedColumnFile.addressOf(fromRowId * typeSize);
+        long address = baseFixedColumnFile.addressOf(fromRowId * typeSize);
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.STRING:
             case ColumnType.BINARY:
                 long varStartOffset = baseFixedColumnFile.getLong(fromRowId * Long.BYTES);
                 long varEndOffset = baseFixedColumnFile.getLong((toRowId) * Long.BYTES);
-                long varAddr = baseVariableColumnFile.addressOf(varStartOffset);
+                long varAddress = baseVariableColumnFile.addressOf(varStartOffset);
                 long copyToOffset = updatedVariableColumnFile.getAppendOffset();
-                updatedVariableColumnFile.putBlockOfBytes(varAddr, varEndOffset - varStartOffset);
+                updatedVariableColumnFile.putBlockOfBytes(varAddress, varEndOffset - varStartOffset);
                 updatedFixedColumnFile.extend((toRowId + 1) * typeSize);
-                Vect.shiftCopyFixedSizeColumnData(varStartOffset - copyToOffset, addr + Long.BYTES, 0, toRowId - fromRowId - 1, updatedFixedColumnFile.getAppendAddress());
+                Vect.shiftCopyFixedSizeColumnData(varStartOffset - copyToOffset, address + Long.BYTES, 0, toRowId - fromRowId - 1, updatedFixedColumnFile.getAppendAddress());
                 updatedFixedColumnFile.jumpTo((toRowId + 1) * typeSize);
                 break;
             default:
-                updatedFixedColumnFile.putBlockOfBytes(addr, (toRowId - fromRowId) * typeSize);
+                updatedFixedColumnFile.putBlockOfBytes(address, (toRowId - fromRowId) * typeSize);
                 break;
         }
     }
@@ -467,6 +492,7 @@ public class UpdateExecution implements Closeable {
     }
 
     private void updateColumnValues(
+            TableWriter tableWriter,
             RecordMetadata metadata,
             IntList updateColumnIndexes,
             int columnCount,
@@ -477,7 +503,7 @@ public class UpdateExecution implements Closeable {
             Record masterRecord
     ) throws SqlException {
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            MemoryCMR basePrimaryColumnFile = baseMemory.get(2 * columnIndex);
+            MemoryCMR baseFixedColumnFile = baseMemory.get(2 * columnIndex);
             MemoryCMARW updatedFixedColumnFile = updateMemory.get(2 * columnIndex);
             MemoryCMR baseVariableColumnFile = baseMemory.get(2 * columnIndex + 1);
             MemoryCMARW updatedVariableColumnFile = updateMemory.get(2 * columnIndex + 1);
@@ -485,7 +511,7 @@ public class UpdateExecution implements Closeable {
             int columnType = metadata.getColumnType(updateColumnIndexes.get(columnIndex));
             int typeSize = getFixedColumnSize(columnType);
             if (partitionRowId > startPartitionRowId) {
-                copyRecords(startPartitionRowId, partitionRowId, basePrimaryColumnFile, updatedFixedColumnFile, baseVariableColumnFile, updatedVariableColumnFile, columnType, typeSize);
+                copyRecords(startPartitionRowId, partitionRowId, baseFixedColumnFile, updatedFixedColumnFile, baseVariableColumnFile, updatedVariableColumnFile, columnType, typeSize);
             }
             switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.INT:
@@ -528,11 +554,16 @@ public class UpdateExecution implements Closeable {
                 case ColumnType.GEOLONG:
                     updatedFixedColumnFile.putLong(masterRecord.getGeoLong(columnIndex));
                     break;
+                case ColumnType.SYMBOL:
+                    CharSequence symValue = masterRecord.getSym(columnIndex);
+                    int symbolIndex = tableWriter.getSymbolIndex(updateColumnIndexes.get(columnIndex), symValue);
+                    updatedFixedColumnFile.putInt(symbolIndex);
+                    break;
                 case ColumnType.STRING:
                     charSink.clear();
                     masterRecord.getStr(columnIndex, charSink);
-                    long offset = updatedVariableColumnFile.putStr(charSink);
-                    updatedFixedColumnFile.putLong(offset);
+                    long strOffset = updatedVariableColumnFile.putStr(charSink);
+                    updatedFixedColumnFile.putLong(strOffset);
                     break;
                 case ColumnType.BINARY:
                     BinarySequence binValue = masterRecord.getBin(columnIndex);

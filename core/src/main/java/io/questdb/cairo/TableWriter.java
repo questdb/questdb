@@ -2318,7 +2318,7 @@ public class TableWriter implements Closeable {
         return columns.getQuick(getSecondaryColumnIndex(column));
     }
 
-    MapWriter getSymbolMapWriter(int columnIndex) {
+    private MapWriter getSymbolMapWriter(int columnIndex) {
         return symbolMapWriters.getQuick(columnIndex);
     }
 
