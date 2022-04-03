@@ -34,7 +34,10 @@ import io.questdb.cairo.vm.MemoryFMCRImpl;
 import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
-import io.questdb.griffin.*;
+import io.questdb.griffin.AlterStatement;
+import io.questdb.griffin.AsyncWriterCommand;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.UpdateStatement;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -2243,7 +2246,7 @@ public class TableWriter implements Closeable {
         return indexers.getQuick(columnIndex).getWriter();
     }
 
-    long getColumnTop(long partitionTimestamp, int columnIndex, long defaultValue) {
+    public long getColumnTop(long partitionTimestamp, int columnIndex, long defaultValue) {
         // Check if there is explicit record for this partitionTimestamp / columnIndex combination
         int recordIndex = columnVersionWriter.getRecordIndex(partitionTimestamp, columnIndex);
         if (recordIndex > -1L) {
@@ -4983,7 +4986,11 @@ public class TableWriter implements Closeable {
     }
 
     public void upsertColumnVersion(long partitionTimestamp, int columnIndex) {
-        columnVersionWriter.upsert(partitionTimestamp, columnIndex, txWriter.txn, getColumnTop(columnIndex));
+        upsertColumnVersion(partitionTimestamp, columnIndex, getColumnTop(columnIndex));
+    }
+
+    public void upsertColumnVersion(long partitionTimestamp, int columnIndex, long columnTop) {
+        columnVersionWriter.upsert(partitionTimestamp, columnIndex, txWriter.txn, columnTop);
         txWriter.updatePartitionColumnVersion(partitionTimestamp);
     }
 

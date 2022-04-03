@@ -29,7 +29,10 @@ import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Misc;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
 
@@ -1183,6 +1186,215 @@ public class UpdateTest extends AbstractGriffinTest {
                     "1970-01-01T00:00:02.000000Z\t123\n" +
                     "1970-01-01T00:00:03.000000Z\t4\n" +
                     "1970-01-01T00:00:04.000000Z\t5\n");
+        });
+    }
+
+    @Test
+    public void testUpdateMultiPartitionEmptyColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 25000000000) ts," +
+                    " cast(x as int) x" +
+                    " from long_sequence(10))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+            compile("alter table up add column y long", sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET y = 42 where x = 2 or x = 4 or x = 6 or x = 8 or x = 13");
+
+            assertSql("up", "ts\tx\ty\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\tNaN\n" +
+                    "1970-01-01T06:56:40.000000Z\t2\t42\n" +
+                    "1970-01-01T13:53:20.000000Z\t3\tNaN\n" +
+                    "1970-01-01T20:50:00.000000Z\t4\t42\n" +
+                    "1970-01-02T03:46:40.000000Z\t5\tNaN\n" +
+                    "1970-01-02T10:43:20.000000Z\t6\t42\n" +
+                    "1970-01-02T17:40:00.000000Z\t7\tNaN\n" +
+                    "1970-01-03T00:36:40.000000Z\t8\t42\n" +
+                    "1970-01-03T07:33:20.000000Z\t9\tNaN\n" +
+                    "1970-01-03T14:30:00.000000Z\t10\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testUpdateMultiPartitionsWithColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 25000000000) ts," +
+                    " cast(x as int) x" +
+                    " from long_sequence(10))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            // Bump table version
+            compile("alter table up add column y long", sqlExecutionContext);
+            compile("insert into up select * from " +
+                    " (select timestamp_sequence(250000000000, 25000000000) ts," +
+                    " cast(x as int) + 10 as x," +
+                    " cast(x as long) * 10 as y" +
+                    " from long_sequence(10))", sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET y = 42 where x = 2 or x = 4 or x = 9 or x = 6 or x = 13 or x = 20");
+
+            assertSql("up", "ts\tx\ty\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\tNaN\n" +
+                    "1970-01-01T06:56:40.000000Z\t2\t42\n" +
+                    "1970-01-01T13:53:20.000000Z\t3\tNaN\n" +
+                    "1970-01-01T20:50:00.000000Z\t4\t42\n" +
+                    "1970-01-02T03:46:40.000000Z\t5\tNaN\n" +
+                    "1970-01-02T10:43:20.000000Z\t6\t42\n" +
+                    "1970-01-02T17:40:00.000000Z\t7\tNaN\n" +
+                    "1970-01-03T00:36:40.000000Z\t8\tNaN\n" +
+                    "1970-01-03T07:33:20.000000Z\t9\t42\n" +
+                    "1970-01-03T14:30:00.000000Z\t10\tNaN\n" +
+                    "1970-01-03T21:26:40.000000Z\t11\t10\n" +
+                    "1970-01-04T04:23:20.000000Z\t12\t20\n" +
+                    "1970-01-04T11:20:00.000000Z\t13\t42\n" +
+                    "1970-01-04T18:16:40.000000Z\t14\t40\n" +
+                    "1970-01-05T01:13:20.000000Z\t15\t50\n" +
+                    "1970-01-05T08:10:00.000000Z\t16\t60\n" +
+                    "1970-01-05T15:06:40.000000Z\t17\t70\n" +
+                    "1970-01-05T22:03:20.000000Z\t18\t80\n" +
+                    "1970-01-06T05:00:00.000000Z\t19\t90\n" +
+                    "1970-01-06T11:56:40.000000Z\t20\t42\n");
+        });
+    }
+
+    @Test
+    public void testUpdateSinglePartitionColumnTopAndAroundDense() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " cast(x - 1 as int) x" +
+                    " from long_sequence(10))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            // Bump table version
+            compile("alter table up add column y long", sqlExecutionContext);
+            compile("insert into up select * from " +
+                    " (select timestamp_sequence(100000000, 1000000) ts," +
+                    " cast(x - 1 as int) + 10 as x," +
+                    " cast(x * 10 as long) as y" +
+                    " from long_sequence(5))", sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET y = 42 where x = 9 or x = 10 or x = 11");
+
+            assertSql("up", "ts\tx\ty\n" +
+                    "1970-01-01T00:00:00.000000Z\t0\tNaN\n" +
+                    "1970-01-01T00:00:01.000000Z\t1\tNaN\n" +
+                    "1970-01-01T00:00:02.000000Z\t2\tNaN\n" +
+                    "1970-01-01T00:00:03.000000Z\t3\tNaN\n" +
+                    "1970-01-01T00:00:04.000000Z\t4\tNaN\n" +
+                    "1970-01-01T00:00:05.000000Z\t5\tNaN\n" +
+                    "1970-01-01T00:00:06.000000Z\t6\tNaN\n" +
+                    "1970-01-01T00:00:07.000000Z\t7\tNaN\n" +
+                    "1970-01-01T00:00:08.000000Z\t8\tNaN\n" +
+                    "1970-01-01T00:00:09.000000Z\t9\t42\n" +
+                    "1970-01-01T00:01:40.000000Z\t10\t42\n" +
+                    "1970-01-01T00:01:41.000000Z\t11\t42\n" +
+                    "1970-01-01T00:01:42.000000Z\t12\t30\n" +
+                    "1970-01-01T00:01:43.000000Z\t13\t40\n" +
+                    "1970-01-01T00:01:44.000000Z\t14\t50\n");
+        });
+    }
+
+    @Test
+    public void testUpdateSinglePartitionColumnTopAndAroundSparse() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " cast(x - 1 as int) x" +
+                    " from long_sequence(10))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            // Bump table version
+            compile("alter table up add column y long", sqlExecutionContext);
+            compile("insert into up select * from " +
+                    " (select timestamp_sequence(100000000, 1000000) ts," +
+                    " cast(x - 1 as int) + 10 as x," +
+                    " cast(x * 10 as long) as y" +
+                    " from long_sequence(5))", sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET y = 42 where x = 5 or x = 7 or x = 10 or x = 13 or x = 14");
+
+            assertSql("up", "ts\tx\ty\n" +
+                    "1970-01-01T00:00:00.000000Z\t0\tNaN\n" +
+                    "1970-01-01T00:00:01.000000Z\t1\tNaN\n" +
+                    "1970-01-01T00:00:02.000000Z\t2\tNaN\n" +
+                    "1970-01-01T00:00:03.000000Z\t3\tNaN\n" +
+                    "1970-01-01T00:00:04.000000Z\t4\tNaN\n" +
+                    "1970-01-01T00:00:05.000000Z\t5\t42\n" +
+                    "1970-01-01T00:00:06.000000Z\t6\tNaN\n" +
+                    "1970-01-01T00:00:07.000000Z\t7\t42\n" +
+                    "1970-01-01T00:00:08.000000Z\t8\tNaN\n" +
+                    "1970-01-01T00:00:09.000000Z\t9\tNaN\n" +
+                    "1970-01-01T00:01:40.000000Z\t10\t42\n" +
+                    "1970-01-01T00:01:41.000000Z\t11\t20\n" +
+                    "1970-01-01T00:01:42.000000Z\t12\t30\n" +
+                    "1970-01-01T00:01:43.000000Z\t13\t42\n" +
+                    "1970-01-01T00:01:44.000000Z\t14\t42\n");
+        });
+    }
+
+    @Test
+    public void testUpdateSinglePartitionEmptyColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 100000000) ts," +
+                    " cast(x as int) x" +
+                    " from long_sequence(10))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+            compile("alter table up add column y long", sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET y = 42 where x = 2 or x = 4 or x = 6 or x = 8 or x = 13");
+
+            assertSql("up", "ts\tx\ty\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\tNaN\n" +
+                    "1970-01-01T00:01:40.000000Z\t2\t42\n" +
+                    "1970-01-01T00:03:20.000000Z\t3\tNaN\n" +
+                    "1970-01-01T00:05:00.000000Z\t4\t42\n" +
+                    "1970-01-01T00:06:40.000000Z\t5\tNaN\n" +
+                    "1970-01-01T00:08:20.000000Z\t6\t42\n" +
+                    "1970-01-01T00:10:00.000000Z\t7\tNaN\n" +
+                    "1970-01-01T00:11:40.000000Z\t8\t42\n" +
+                    "1970-01-01T00:13:20.000000Z\t9\tNaN\n" +
+                    "1970-01-01T00:15:00.000000Z\t10\tNaN\n");
+        });
+    }
+
+    @Test
+    public void testUpdateSinglePartitionGapAroundColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " cast(x - 1 as int) x" +
+                    " from long_sequence(10))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            // Bump table version
+            compile("alter table up add column y long", sqlExecutionContext);
+            compile("insert into up select * from " +
+                    " (select timestamp_sequence(100000000, 1000000) ts," +
+                    " cast(x - 1 as int) + 10 as x," +
+                    " cast(x * 10 as long) as y" +
+                    " from long_sequence(5))", sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET y = 42 where x = 6 or x = 8 or x = 12 or x = 14");
+
+            assertSql("up", "ts\tx\ty\n" +
+                    "1970-01-01T00:00:00.000000Z\t0\tNaN\n" +
+                    "1970-01-01T00:00:01.000000Z\t1\tNaN\n" +
+                    "1970-01-01T00:00:02.000000Z\t2\tNaN\n" +
+                    "1970-01-01T00:00:03.000000Z\t3\tNaN\n" +
+                    "1970-01-01T00:00:04.000000Z\t4\tNaN\n" +
+                    "1970-01-01T00:00:05.000000Z\t5\tNaN\n" +
+                    "1970-01-01T00:00:06.000000Z\t6\t42\n" +
+                    "1970-01-01T00:00:07.000000Z\t7\tNaN\n" +
+                    "1970-01-01T00:00:08.000000Z\t8\t42\n" +
+                    "1970-01-01T00:00:09.000000Z\t9\tNaN\n" +
+                    "1970-01-01T00:01:40.000000Z\t10\t10\n" +
+                    "1970-01-01T00:01:41.000000Z\t11\t20\n" +
+                    "1970-01-01T00:01:42.000000Z\t12\t42\n" +
+                    "1970-01-01T00:01:43.000000Z\t13\t40\n" +
+                    "1970-01-01T00:01:44.000000Z\t14\t42\n");
         });
     }
 

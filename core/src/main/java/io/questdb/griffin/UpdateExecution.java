@@ -51,6 +51,7 @@ public class UpdateExecution implements Closeable {
     private final FilesFacade ff;
     private final int rootLen;
     private final IntList updateColumnIndexes = new IntList();
+    private final LongList updateColumnTops = new LongList();
     private final ObjList<MemoryCMR> baseMemory = new ObjList<>();
     private final ObjList<MemoryCMARW> updateMemory = new ObjList<>();
     private final long dataAppendPageSize;
@@ -111,12 +112,16 @@ public class UpdateExecution implements Closeable {
             updateColumnIndexes.add(tableColumnIndex);
         }
 
+        // Linearized matrix of adjusted column tops for all partitions and updated columns
+        // | ts0, c0, c1, ... , cN | ... | tsM, c0, c1, ... , cN |
+        updateColumnTops.setAll(tableWriter.getPartitionCount() * (updateColumnCount + 1), -1L);
+
         // Create update memory list of all columns to be updated
         initUpdateMemory(writerMetadata, updateColumnCount);
 
         // Start execution frame by frame
         // Partition to update
-        long currentPartitionIndex = -1L;
+        int currentPartitionIndex = -1;
         long rowsUpdated = 0;
 
         // Row by row updates for now
@@ -125,6 +130,7 @@ public class UpdateExecution implements Closeable {
             Record masterRecord = recordCursor.getRecord();
 
             long startPartitionRowId = 0;
+            long firstUpdatedPartitionRowId = -1L;
             long lastRowId = -1;
             while (recordCursor.hasNext()) {
                 long rowId = masterRecord.getUpdateRowId();
@@ -136,29 +142,30 @@ public class UpdateExecution implements Closeable {
                 lastRowId = rowId;
 
                 int partitionIndex = Rows.toPartitionIndex(rowId);
+                long partitionRowId = Rows.toLocalRowID(rowId);
                 if (partitionIndex != currentPartitionIndex) {
                     if (currentPartitionIndex > -1) {
-                        long partitionSize = tableWriter.getPartitionSize((int) currentPartitionIndex);
                         copyColumnValues(
-                                writerMetadata,
+                                tableWriter,
+                                currentPartitionIndex,
                                 updateColumnIndexes,
                                 updateColumnCount,
                                 baseMemory,
                                 updateMemory,
                                 startPartitionRowId,
-                                partitionSize);
+                                firstUpdatedPartitionRowId);
                     }
 
                     openPartitionColumnsForRead(tableWriter, baseMemory, partitionIndex, updateColumnIndexes);
                     openPartitionColumnsForWrite(tableWriter, updateMemory, partitionIndex, updateColumnIndexes);
                     currentPartitionIndex = partitionIndex;
                     startPartitionRowId = 0;
+                    firstUpdatedPartitionRowId = partitionRowId;
                 }
 
-                long partitionRowId = Rows.toLocalRowID(rowId);
                 updateColumnValues(
                         tableWriter,
-                        writerMetadata,
+                        partitionIndex,
                         updateColumnIndexes,
                         updateColumnCount,
                         baseMemory,
@@ -172,15 +179,15 @@ public class UpdateExecution implements Closeable {
             }
 
             if (currentPartitionIndex > -1) {
-                long partitionSize = tableWriter.getPartitionSize((int) currentPartitionIndex);
                 copyColumnValues(
-                        writerMetadata,
+                        tableWriter,
+                        currentPartitionIndex,
                         updateColumnIndexes,
                         updateColumnCount,
                         baseMemory,
                         updateMemory,
                         startPartitionRowId,
-                        partitionSize);
+                        firstUpdatedPartitionRowId);
             }
         } finally {
             Misc.freeObjList(baseMemory);
@@ -189,6 +196,7 @@ public class UpdateExecution implements Closeable {
             updateMemory.clear();
         }
         if (currentPartitionIndex > -1) {
+            updateColumnTops(tableWriter, updateColumnTops, updateColumnIndexes);
             tableWriter.commit();
             tableWriter.openLastPartition();
             purgeOldColumnVersions(tableWriter, updateColumnIndexes, ff);
@@ -211,80 +219,6 @@ public class UpdateExecution implements Closeable {
         }
         rebuildIndex.clear();
         path.trimTo(pathTrimToLen);
-    }
-
-    private void openPartitionColumns(TableWriter tableWriter, ObjList<? extends MemoryCM> memList, int partitionIndex, IntList updateColumnIndexes, boolean forWrite) {
-        long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
-        long partitionNameTxn = tableWriter.getPartitionNameTxn(partitionIndex);
-        RecordMetadata metadata = tableWriter.getMetadata();
-        try {
-            final String tableName = tableWriter.getTableName();
-            path.concat(tableName);
-            TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, false);
-            TableUtils.txnPartitionConditionally(path, partitionNameTxn);
-            int pathTrimToLen = path.length();
-
-            for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
-                int columnIndex = updateColumnIndexes.get(i);
-                CharSequence name = metadata.getColumnName(columnIndex);
-                int columnType = metadata.getColumnType(columnIndex);
-
-                if (forWrite) {
-                    long existingVersion = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-                    tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex);
-                    cleanupColumnVersions.add(columnIndex, existingVersion, partitionTimestamp, partitionNameTxn);
-                    LOG.debug().$("updating column [table=").$(tableName)
-                            .$(", column=").$(name)
-                            .$(", oldVersion=").$(existingVersion)
-                            .$(", newVersion=").$(tableWriter.getTxn())
-                            .$(", partition=").$ts(partitionTimestamp)
-                            .$(", partitionNameTxn=").$(partitionNameTxn)
-                            .I$();
-                }
-
-                long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-                if (isVariableLength(columnType)) {
-                    MemoryCMR colMemIndex = (MemoryCMR) memList.get(2 * i);
-                    colMemIndex.close();
-                    colMemIndex.of(
-                            ff,
-                            iFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
-                            dataAppendPageSize,
-                            -1,
-                            MemoryTag.MMAP_UPDATE,
-                            fileOpenOpts
-                    );
-                    MemoryCMR colMemVar = (MemoryCMR) memList.get(2 * i + 1);
-                    colMemVar.close();
-                    colMemVar.of(
-                            ff,
-                            dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
-                            dataAppendPageSize,
-                            -1,
-                            MemoryTag.MMAP_UPDATE,
-                            fileOpenOpts
-                    );
-                } else {
-                    MemoryCMR colMem = (MemoryCMR) memList.get(2 * i);
-                    colMem.close();
-                    colMem.of(
-                            ff,
-                            dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
-                            dataAppendPageSize,
-                            -1,
-                            MemoryTag.MMAP_UPDATE,
-                            fileOpenOpts
-                    );
-                }
-                if (forWrite) {
-                    if (isVariableLength(columnType)) {
-                        ((MemoryCMARW) memList.get(2 * i)).putLong(0);
-                    }
-                }
-            }
-        } finally {
-            path.trimTo(rootLen);
-        }
     }
 
     private void purgeColumnVersionAsync(
@@ -316,23 +250,50 @@ public class UpdateExecution implements Closeable {
     }
 
     private void copyColumnValues(
-            TableWriterMetadata metadata,
+            TableWriter tableWriter,
+            int partitionIndex,
             IntList updateColumnIndexes,
             int columnCount,
             ObjList<MemoryCMR> baseMemory,
             ObjList<MemoryCMARW> updateMemory,
             long startPartitionRowId,
-            long partitionSize
+            long firstUpdatedPartitionRowId
     ) {
+        final TableWriterMetadata metadata = tableWriter.getMetadata();
+        final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
+        final long partitionSize = tableWriter.getPartitionSize(partitionIndex);
+
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             MemoryCMR baseFixedColumnFile = baseMemory.get(2 * columnIndex);
             MemoryCMARW updatedFixedColumnFile = updateMemory.get(2 * columnIndex);
             MemoryCMR baseVariableColumnFile = baseMemory.get(2 * columnIndex + 1);
             MemoryCMARW updatedVariableColumnFile = updateMemory.get(2 * columnIndex + 1);
 
-            int columnType = metadata.getColumnType(updateColumnIndexes.get(columnIndex));
+            final int updateColumnIndex = updateColumnIndexes.get(columnIndex);
+            final long columnTop = tableWriter.getColumnTop(partitionTimestamp, updateColumnIndex, -1);
+
+            int columnType = metadata.getColumnType(updateColumnIndex);
             int typeSize = getFixedColumnSize(columnType);
-            copyRecords(startPartitionRowId, partitionSize, baseFixedColumnFile, updatedFixedColumnFile, baseVariableColumnFile, updatedVariableColumnFile, columnType, typeSize);
+
+            fillUpdatesGap(
+                    startPartitionRowId,
+                    partitionSize,
+                    baseFixedColumnFile,
+                    updatedFixedColumnFile,
+                    baseVariableColumnFile,
+                    updatedVariableColumnFile,
+                    columnTop,
+                    columnType,
+                    typeSize
+            );
+
+            int partitionPos = partitionIndex * (columnCount + 1);
+            updateColumnTops.set(partitionPos, partitionTimestamp);
+            if (columnTop > -1L) {
+                updateColumnTops.set(partitionPos + columnIndex + 1, Math.min(columnTop, firstUpdatedPartitionRowId));
+            } else {
+                updateColumnTops.set(partitionPos + columnIndex + 1, firstUpdatedPartitionRowId);
+            }
         }
     }
 
@@ -491,9 +452,198 @@ public class UpdateExecution implements Closeable {
         path.trimTo(pathTrimToLen);
     }
 
+    private void fillUpdatesGap(long beginRowId, long endRowId, MemoryCMR basePrimaryColumnFile, MemoryCMARW updatedFixedColumnFile, MemoryCMR baseVariableColumnFile, MemoryCMARW updatedVariableColumnFile, long columnTop, int columnType, int typeSize) {
+
+        if (columnTop == -1) {
+            if (beginRowId > 0) {
+                fillUpdatesGapWithNull(
+                        beginRowId,
+                        endRowId,
+                        updatedFixedColumnFile,
+                        updatedVariableColumnFile,
+                        columnType,
+                        typeSize
+                );
+            }
+        }
+
+        if (columnTop == 0) {
+            copyRecords(
+                    beginRowId,
+                    endRowId,
+                    basePrimaryColumnFile,
+                    updatedFixedColumnFile,
+                    baseVariableColumnFile,
+                    updatedVariableColumnFile,
+                    columnType,
+                    typeSize
+            );
+        }
+
+        if (columnTop > 0) {
+            if (beginRowId >= columnTop) {
+                copyRecords(
+                        beginRowId - columnTop,
+                        endRowId - columnTop,
+                        basePrimaryColumnFile,
+                        updatedFixedColumnFile,
+                        baseVariableColumnFile,
+                        updatedVariableColumnFile,
+                        columnType,
+                        typeSize
+                );
+            } else {
+                if (endRowId <= columnTop) {
+                    if (beginRowId > 0) {
+                        fillUpdatesGapWithNull(
+                                beginRowId,
+                                endRowId,
+                                updatedFixedColumnFile,
+                                updatedVariableColumnFile,
+                                columnType,
+                                typeSize
+                        );
+                    }
+                } else {
+                    fillUpdatesGapWithNull(
+                            beginRowId,
+                            columnTop,
+                            updatedFixedColumnFile,
+                            updatedVariableColumnFile,
+                            columnType,
+                            typeSize
+                    );
+                    copyRecords(
+                            0,
+                            endRowId - columnTop,
+                            basePrimaryColumnFile,
+                            updatedFixedColumnFile,
+                            baseVariableColumnFile,
+                            updatedVariableColumnFile,
+                            columnType,
+                            typeSize
+                    );
+                }
+            }
+        }
+    }
+
+    private void fillUpdatesGapWithNull(
+            long fromRowId,
+            long toRowId,
+            MemoryCMARW updatedFixedColumnFile,
+            MemoryCMARW updatedVariableColumnFile,
+            int columnType,
+            int typeSize) {
+
+        final short columnTag = ColumnType.tagOf(columnType);
+        switch (columnTag) {
+            case ColumnType.STRING:
+            case ColumnType.BINARY:
+                break;
+            default:
+                final long len = toRowId - fromRowId;
+                final long address = updatedFixedColumnFile.appendAddressFor(len * typeSize);
+                TableUtils.setNull(columnType, address, len);
+        }
+    }
+
+    private void openPartitionColumns(TableWriter tableWriter, ObjList<? extends MemoryCM> memList, int partitionIndex, IntList updateColumnIndexes, boolean forWrite) {
+        long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
+        long partitionNameTxn = tableWriter.getPartitionNameTxn(partitionIndex);
+        RecordMetadata metadata = tableWriter.getMetadata();
+        try {
+            path.concat(tableWriter.getTableName());
+            TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, false);
+            TableUtils.txnPartitionConditionally(path, partitionNameTxn);
+            int pathTrimToLen = path.length();
+            for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
+                int columnIndex = updateColumnIndexes.get(i);
+                CharSequence name = metadata.getColumnName(columnIndex);
+                int columnType = metadata.getColumnType(columnIndex);
+
+                final long columnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1L);
+
+                if (forWrite) {
+                    long existingVersion = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+                    tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex, columnTop);
+                    cleanupColumnVersions.add(columnIndex, existingVersion, partitionTimestamp, partitionNameTxn);
+                }
+
+                long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+                if (isVariableLength(columnType)) {
+                    MemoryCMR colMemIndex = (MemoryCMR) memList.get(2 * i);
+                    colMemIndex.close();
+                    assert !colMemIndex.isOpen();
+                    MemoryCMR colMemVar = (MemoryCMR) memList.get(2 * i + 1);
+                    colMemVar.close();
+                    assert !colMemVar.isOpen();
+
+                    if (forWrite || columnTop != -1) {
+                        colMemIndex.of(
+                                ff,
+                                iFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
+                                dataAppendPageSize,
+                                -1,
+                                MemoryTag.MMAP_UPDATE,
+                                fileOpenOpts
+                        );
+                        colMemVar.of(
+                                ff,
+                                dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
+                                dataAppendPageSize,
+                                -1,
+                                MemoryTag.MMAP_UPDATE,
+                                fileOpenOpts
+                        );
+                    }
+                } else {
+                    MemoryCMR colMem = (MemoryCMR) memList.get(2 * i);
+                    colMem.close();
+                    assert !colMem.isOpen();
+
+                    if (forWrite || columnTop != -1) {
+                        colMem.of(
+                                ff,
+                                dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
+                                dataAppendPageSize,
+                                -1,
+                                MemoryTag.MMAP_UPDATE,
+                                fileOpenOpts
+                        );
+                    }
+                }
+                if (forWrite) {
+                    if (isVariableLength(columnType)) {
+                        ((MemoryCMARW) memList.get(2 * i)).putLong(0);
+                    }
+                }
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
+    private void updateColumnTops(final TableWriter tableWriter, final LongList columnTops, final IntList updateColumnIndexes) {
+        final int columnCount = updateColumnIndexes.size();
+        int increment = columnCount + 1;
+        for (int partition = 0, n = columnTops.size(); partition < n; partition += increment) {
+            long partitionTimestamp = columnTops.get(partition);
+            if (partitionTimestamp > -1) {
+                for (int column = 0; column < columnCount; column++) {
+                    long columnTop = columnTops.get(partition + column + 1);
+                    if (columnTop > -1L) {
+                        // Upsert even when columnTop value is 0.
+                        tableWriter.upsertColumnVersion(partitionTimestamp, updateColumnIndexes.get(column), columnTop);
+                    }
+                }
+            }
+        }
+    }
+
     private void updateColumnValues(
             TableWriter tableWriter,
-            RecordMetadata metadata,
+            int partitionIndex,
             IntList updateColumnIndexes,
             int columnCount,
             ObjList<MemoryCMR> baseMemory,
@@ -502,16 +652,32 @@ public class UpdateExecution implements Closeable {
             long partitionRowId,
             Record masterRecord
     ) throws SqlException {
+        final TableWriterMetadata metadata = tableWriter.getMetadata();
+        final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             MemoryCMR baseFixedColumnFile = baseMemory.get(2 * columnIndex);
             MemoryCMARW updatedFixedColumnFile = updateMemory.get(2 * columnIndex);
             MemoryCMR baseVariableColumnFile = baseMemory.get(2 * columnIndex + 1);
             MemoryCMARW updatedVariableColumnFile = updateMemory.get(2 * columnIndex + 1);
 
-            int columnType = metadata.getColumnType(updateColumnIndexes.get(columnIndex));
+            final int updateColumnIndex = updateColumnIndexes.get(columnIndex);
+            final long columnTop = tableWriter.getColumnTop(partitionTimestamp, updateColumnIndex, -1);
+
+            int columnType = metadata.getColumnType(updateColumnIndex);
             int typeSize = getFixedColumnSize(columnType);
+
             if (partitionRowId > startPartitionRowId) {
-                copyRecords(startPartitionRowId, partitionRowId, baseFixedColumnFile, updatedFixedColumnFile, baseVariableColumnFile, updatedVariableColumnFile, columnType, typeSize);
+                fillUpdatesGap(
+                        startPartitionRowId,
+                        partitionRowId,
+                        baseFixedColumnFile,
+                        updatedFixedColumnFile,
+                        baseVariableColumnFile,
+                        updatedVariableColumnFile,
+                        columnTop,
+                        columnType,
+                        typeSize
+                );
             }
             switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.INT:
@@ -577,4 +743,5 @@ public class UpdateExecution implements Closeable {
             }
         }
     }
+
 }

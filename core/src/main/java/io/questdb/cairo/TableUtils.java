@@ -1016,4 +1016,43 @@ public final class TableUtils {
         void close(long prevSize);
     }
 
+    public static void setNull(int columnType, long addr, long count) {
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BOOLEAN:
+            case ColumnType.BYTE:
+            case ColumnType.GEOBYTE:
+                Vect.memset(addr, count, 0);
+                break;
+            case ColumnType.CHAR:
+            case ColumnType.SHORT:
+            case ColumnType.GEOSHORT:
+                Vect.setMemoryShort(addr, (short) 0, count);
+                break;
+            case ColumnType.INT:
+            case ColumnType.GEOINT:
+                Vect.setMemoryInt(addr, Numbers.INT_NaN, count);
+                break;
+            case ColumnType.FLOAT:
+                Vect.setMemoryFloat(addr, Float.NaN, count);
+                break;
+            case ColumnType.SYMBOL:
+                Vect.setMemoryInt(addr, -1, count);
+                break;
+            case ColumnType.LONG:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+            case ColumnType.GEOLONG:
+                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count);
+                break;
+            case ColumnType.DOUBLE:
+                Vect.setMemoryDouble(addr, Double.NaN, count);
+                break;
+            case ColumnType.LONG256:
+                // Long256 is null when all 4 longs are NaNs
+                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 4);
+                break;
+            default:
+                break;
+        }
+    }
 }
