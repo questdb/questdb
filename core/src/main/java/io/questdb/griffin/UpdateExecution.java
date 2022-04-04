@@ -275,17 +275,19 @@ public class UpdateExecution implements Closeable {
             int columnType = metadata.getColumnType(updateColumnIndex);
             int typeSize = getFixedColumnSize(columnType);
 
-            fillUpdatesGap(
-                    startPartitionRowId,
-                    partitionSize,
-                    baseFixedColumnFile,
-                    updatedFixedColumnFile,
-                    baseVariableColumnFile,
-                    updatedVariableColumnFile,
-                    columnTop,
-                    columnType,
-                    typeSize
-            );
+            if (partitionSize > startPartitionRowId) {
+                fillUpdatesGap(
+                        startPartitionRowId,
+                        partitionSize,
+                        baseFixedColumnFile,
+                        updatedFixedColumnFile,
+                        baseVariableColumnFile,
+                        updatedVariableColumnFile,
+                        columnTop,
+                        columnType,
+                        typeSize
+                );
+            }
 
             int partitionPos = partitionIndex * (columnCount + 1);
             updateColumnTops.set(partitionPos, partitionTimestamp);
@@ -539,12 +541,18 @@ public class UpdateExecution implements Closeable {
         final short columnTag = ColumnType.tagOf(columnType);
         switch (columnTag) {
             case ColumnType.STRING:
+                for (long id = fromRowId; id < toRowId; id++) {
+                    updatedFixedColumnFile.putLong(updatedVariableColumnFile.putNullStr());
+                }
+                break;
             case ColumnType.BINARY:
+                for (long id = fromRowId; id < toRowId; id++) {
+                    updatedFixedColumnFile.putLong(updatedVariableColumnFile.putNullBin());
+                }
                 break;
             default:
                 final long len = toRowId - fromRowId;
-                final long address = updatedFixedColumnFile.appendAddressFor(len * typeSize);
-                TableUtils.setNull(columnType, address, len);
+                TableUtils.setNull(columnType, updatedFixedColumnFile.appendAddressFor(len * typeSize), len);
         }
     }
 

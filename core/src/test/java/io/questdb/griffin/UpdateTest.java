@@ -354,6 +354,49 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUpdateBinaryColumnWithColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 6 * 60 * 60 * 1000000L) ts," +
+                    " rnd_bin(10, 20, 0) as bin1," +
+                    " x as lng2" +
+                    " from long_sequence(10)" +
+                    " )" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            compile("alter table up add column bin2 binary", sqlExecutionContext);
+            compile("insert into up select * from " +
+                    " (select timestamp_sequence(6*100000000000L, 6 * 60 * 60 * 1000000L) ts," +
+                    " rnd_bin(10, 20, 0) as bin1," +
+                    " x + 10 as lng2," +
+                    " rnd_bin(10, 20, 0) as bin2" +
+                    " from long_sequence(5))", sqlExecutionContext);
+            executeUpdate("UPDATE up SET bin1 = cast(null as binary), bin2 = cast(null as binary) WHERE lng2 in (6,8,10,12,14)");
+
+            assertSql("up", "ts\tbin1\tlng2\tbin2\n" +
+                    "1970-01-01T00:00:00.000000Z\t00000000 41 1d 15 55 8a 17 fa d8 cc 14 ce f1 59 88 c4 91\n" +
+                    "00000010 3b 72 db f3\t1\t\n" +
+                    "1970-01-01T06:00:00.000000Z\t00000000 c7 88 de a0 79 3c 77 15 68 61 26 af 19 c4 95 94\n" +
+                    "00000010 36 53\t2\t\n" +
+                    "1970-01-01T12:00:00.000000Z\t00000000 59 7e 3b 08 a1 1e 38 8d 1b 9e f4 c8 39 09 fe\t3\t\n" +
+                    "1970-01-01T18:00:00.000000Z\t00000000 30 78 36 6a 32 de e4 7c d2 35 07 42 fc 31 79\t4\t\n" +
+                    "1970-01-02T00:00:00.000000Z\t00000000 81 2b 93 4d 1a 8e 78 b5 b9 11 53 d0\t5\t\n" +
+                    "1970-01-02T06:00:00.000000Z\t\t6\t\n" +
+                    "1970-01-02T12:00:00.000000Z\t00000000 ac 37 c8 cd 82 89 2b 4d 5f f6 46\t7\t\n" +
+                    "1970-01-02T18:00:00.000000Z\t\t8\t\n" +
+                    "1970-01-03T00:00:00.000000Z\t00000000 d2 85 7f a5 b8 7b 4a 9d 46 7c 8d dd 93 e6 d0\t9\t\n" +
+                    "1970-01-03T06:00:00.000000Z\t\t10\t\n" +
+                    "1970-01-07T22:40:00.000000Z\t00000000 a8 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a e7\n" +
+                    "00000010 0c 89\t11\t00000000 63 b7 c2 9f 29 8e 29 5e 69 c6 eb ea c3 c9 73 93\n" +
+                    "00000010 46 fe\n" +
+                    "1970-01-08T04:40:00.000000Z\t\t12\t\n" +
+                    "1970-01-08T10:40:00.000000Z\t00000000 e0 b0 e9 98 f7 67 62 28 60 b0 ec 0b 92\t13\t00000000 24 bc 2e 60 6a 1c 0b 20 a2 86 89 37 11 2c\n" +
+                    "1970-01-08T16:40:00.000000Z\t\t14\t\n" +
+                    "1970-01-08T22:40:00.000000Z\t00000000 e4 35 e4 3a dc 5c 65 ff 27 67 77\t15\t00000000 52 d0 29 26 c5 aa da 18 ce 5f b2\n");
+        });
+    }
+
+    @Test
     public void testUpdateBinaryColumn() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +
@@ -380,6 +423,46 @@ public class UpdateTest extends AbstractGriffinTest {
                     "00000010 b1 3e e3 f1\t8\n" +
                     "1970-01-03T00:00:00.000000Z\t\t9\n" +
                     "1970-01-03T06:00:00.000000Z\t00000000 9c 1d 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3\t10\n");
+        });
+    }
+
+    @Test
+    public void testUpdateStringColumnWithColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 6 * 60 * 60 * 1000000L) ts," +
+                    " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
+                    " x as lng2" +
+                    " from long_sequence(10)" +
+                    " )" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            compile("alter table up add column str2 string", sqlExecutionContext);
+            compile("insert into up select * from " +
+                    " (select timestamp_sequence(6*100000000000L, 6 * 60 * 60 * 1000000L) ts," +
+                    " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
+                    " x + 10 as lng2," +
+                    " rnd_str('15', null, '190232', 'rdgb', '', '1') as str2" +
+                    " from long_sequence(5))", sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET str1 = 'questdb1', str2 = 'questdb2' WHERE lng2 in (6, 8, 10, 12, 14)");
+
+            assertSql("up", "ts\tstr1\tlng2\tstr2\n" +
+                    "1970-01-01T00:00:00.000000Z\t15\t1\t\n" +
+                    "1970-01-01T06:00:00.000000Z\t15\t2\t\n" +
+                    "1970-01-01T12:00:00.000000Z\t\t3\t\n" +
+                    "1970-01-01T18:00:00.000000Z\t1\t4\t\n" +
+                    "1970-01-02T00:00:00.000000Z\t1\t5\t\n" +
+                    "1970-01-02T06:00:00.000000Z\tquestdb1\t6\tquestdb2\n" +
+                    "1970-01-02T12:00:00.000000Z\t190232\t7\t\n" +
+                    "1970-01-02T18:00:00.000000Z\tquestdb1\t8\tquestdb2\n" +
+                    "1970-01-03T00:00:00.000000Z\t15\t9\t\n" +
+                    "1970-01-03T06:00:00.000000Z\tquestdb1\t10\tquestdb2\n" +
+                    "1970-01-07T22:40:00.000000Z\t\t11\t190232\n" +
+                    "1970-01-08T04:40:00.000000Z\tquestdb1\t12\tquestdb2\n" +
+                    "1970-01-08T10:40:00.000000Z\t\t13\t15\n" +
+                    "1970-01-08T16:40:00.000000Z\tquestdb1\t14\tquestdb2\n" +
+                    "1970-01-08T22:40:00.000000Z\trdgb\t15\t\n");
         });
     }
 
