@@ -76,19 +76,18 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
         this.clock = configuration.getMicrosecondClock();
         this.inQueue = engine.getMessageBus().getColumnVersionPurgeQueue();
         this.inSubSequence = engine.getMessageBus().getColumnVersionPurgeSubSeq();
-        this.tableName = configuration.getSystemTableNamePrefix() + "_column_versions_purge_log";
+        this.tableName = configuration.getSystemTableNamePrefix() + "column_versions_purge_log";
         this.taskPool = new ObjectPool<>(ColumnVersionPurgeTaskRun::new, 128);
         this.houseKeepingRunQueue = new PriorityQueue<>(256, ColumnVersionPurgeJob::compareHouseKeepingTasks);
         this.maxWaitCapMicro = configuration.getColumnVersionPurgeMaxTimeoutMicros();
         this.startWaitMicro = configuration.getColumnVersionPurgeStartWaitTimeoutMicros();
         this.exponentialWaitMultiplier = configuration.getColumnVersionPurgeWaitExponent();
         this.lookbackCleanupDays = configuration.getColumnVersionCleanupLookbackDays();
-
         this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
         this.sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
         this.sqlCompiler.compile(
-                "CREATE TABLE IF NOT EXISTS \"" + getLogTableName() + "\" (" +
+                "CREATE TABLE IF NOT EXISTS \"" + tableName + "\" (" +
                         "ts timestamp, " + // 0
                         "table_name symbol, " + // 1
                         "column_name symbol, " + // 2
@@ -114,7 +113,7 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
         try {
             writer.commit();
         } catch (Throwable th) {
-            LOG.error().$("error saving to column version house keeping log, cannot commit [table=").$(getLogTableName()).$(", error=").$(th).I$();
+            LOG.error().$("error saving to column version house keeping log, cannot commit [table=").$(tableName).$(", error=").$(th).I$();
             writer.rollback();
             writer = Misc.free(writer);
             throw th;
@@ -194,7 +193,7 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
     private void putTasksFromTableToQueue() {
         try {
             CompiledQuery reloadQuery = this.sqlCompiler.compile(
-                    "SELECT * FROM \"" + getLogTableName() + "\" WHERE ts > dateadd('d', -" + lookbackCleanupDays + ", now()) and completed = null",
+                    "SELECT * FROM \"" + tableName + "\" WHERE ts > dateadd('d', -" + lookbackCleanupDays + ", now()) and completed = null",
                     sqlExecutionContext
             );
 
@@ -299,7 +298,7 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
                     updatedColumnVersions.setQuick(i + 3, Rows.toRowID(writer.getPartitionCount() - 1, writer.getTransientRowCount() - 1));
                 }
             } catch (Throwable th) {
-                LOG.error().$("error saving to column version house keeping log, cannot append [table=").$(getLogTableName()).$(", error=").$(th).I$();
+                LOG.error().$("error saving to column version house keeping log, cannot append [table=").$(tableName).$(", error=").$(th).I$();
                 writer.rollback();
                 throw th;
             }
