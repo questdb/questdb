@@ -82,6 +82,20 @@ public class TimestampsBruteForceTest {
                 .with(MICRO_OF_DAY, 0);
     });
 
+    private static final TemporalAdjuster TRUNCATE_TO_CENTURY = (temporal -> {
+        int year = temporal.get(YEAR);
+        int yearRemainder = year % 100;
+        if (yearRemainder == 0) {
+            // 1900, 2000,...
+            year = year - 99;
+        } else {
+            year -= yearRemainder - 1;
+        }
+        return temporal.with(YEAR, year)
+                .with(DAY_OF_YEAR, 1)
+                .with(MICRO_OF_DAY, 0);
+    });
+
 
     @Test
     public void testFlooring() {
@@ -104,8 +118,9 @@ public class TimestampsBruteForceTest {
             assertEpochMicrosEquals(current.with(firstDayOfYear()).truncatedTo(DAYS), Timestamps.floorYYYY(epochMicros));
 
             // truncateTo() is implemented up to DAYS, we have to use custom TemporalAdjuster for longer units
-            assertEpochMicrosEquals(current.with(TRUNCATE_TO_DECADE), Timestamps.floorDecade(epochMicros));
             assertEpochMicrosEquals(current.with(TRUNCATE_TO_QUARTER), Timestamps.floorQuarter(epochMicros));
+            assertEpochMicrosEquals(current.with(TRUNCATE_TO_DECADE), Timestamps.floorDecade(epochMicros));
+            assertEpochMicrosEquals(current.with(TRUNCATE_TO_CENTURY), Timestamps.floorCentury(epochMicros));
 
             current = current.plus(random.nextInt(1, 10_000), ChronoUnit.MILLIS);
             l++;
