@@ -1945,6 +1945,13 @@ class SqlOptimiser {
                 if (tempList.getQuick(columnIndex) == 1) {
                     throw SqlException.$(position, "Duplicate column ").put(queryColumn.getName()).put(" in SET clause");
                 }
+
+                // When column name case does not match table column name in left side of SET
+                // for example if table "tbl" column name is "Col" but update uses
+                // UPDATE tbl SET coL = 1
+                // we need to replace to match metadata name exactly
+                CharSequence exactColName = metadata.getColumnName(columnIndex);
+                queryColumn.of(exactColName, queryColumn.getAst());
                 tempList.set(columnIndex, 1);
 
                 ExpressionNode rhs = queryColumn.getAst();
