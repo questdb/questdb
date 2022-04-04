@@ -45,13 +45,14 @@ public class TimestampsBruteForceTest {
     private static final TemporalAdjuster TRUNCATE_TO_DECADE = (temporal -> {
         // intentionally naive and different from the production impl
         String yearString = String.valueOf(temporal.get(YEAR));
-        return temporal.with(YEAR, replaceLastCharWithZero(yearString))
+        int shiftedYear = Integer.parseInt(replaceLastCharWithZero(yearString));
+        return temporal.with(YEAR, shiftedYear)
                 .with(DAY_OF_YEAR, 1)
                 .with(MICRO_OF_DAY, 0);
     });
 
-    private static int replaceLastCharWithZero(String yearString) {
-        return Integer.parseInt(yearString.substring(0, yearString.length() - 1) + "0");
+    private static String replaceLastCharWithZero(String yearString) {
+        return yearString.substring(0, yearString.length() - 1) + "0";
     }
 
     private static final TemporalAdjuster TRUNCATE_TO_QUARTER = (temporal -> {
