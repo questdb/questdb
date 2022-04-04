@@ -4985,6 +4985,10 @@ public class TableWriter implements Closeable {
         }
     }
 
+    ColumnVersionWriter getColumnVersionWriter() {
+        return columnVersionWriter;
+    }
+
     public void upsertColumnVersion(long partitionTimestamp, int columnIndex) {
         upsertColumnVersion(partitionTimestamp, columnIndex, getColumnTop(columnIndex));
     }

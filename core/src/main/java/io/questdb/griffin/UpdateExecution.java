@@ -197,24 +197,23 @@ public class UpdateExecution implements Closeable {
         }
         if (currentPartitionIndex > -1) {
             updateColumnTops(tableWriter, updateColumnTops, updateColumnIndexes);
+            rebuildIndexes(tableName, writerMetadata, tableWriter);
             tableWriter.commit();
             tableWriter.openLastPartition();
             purgeOldColumnVersions(tableWriter, updateColumnIndexes, ff);
         }
 
-        rebuildIndexes(tableName, writerMetadata);
-
         return rowsUpdated;
     }
 
-    private void rebuildIndexes(String tableName, TableWriterMetadata writerMetadata) {
+    private void rebuildIndexes(String tableName, TableWriterMetadata writerMetadata, TableWriter tableWriter) {
         int pathTrimToLen = path.length();
-        rebuildIndex.of(path.concat(tableName), configuration, false);
+        rebuildIndex.of(path.concat(tableName), configuration);
         for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
             int columnIndex = updateColumnIndexes.get(i);
             if (writerMetadata.isColumnIndexed(columnIndex)) {
                 CharSequence colName = writerMetadata.getColumnName(columnIndex);
-                rebuildIndex.rebuildColumn(colName);
+                rebuildIndex.rebuildColumn(colName, tableWriter);
             }
         }
         rebuildIndex.clear();
@@ -362,7 +361,6 @@ public class UpdateExecution implements Closeable {
                     updateMemory.add(Vm.getCMARWInstance());
                     updateMemory.add(Vm.getCMARWInstance());
                     break;
-
             }
         }
     }
@@ -389,9 +387,8 @@ public class UpdateExecution implements Closeable {
                 long partitionTimestamp = cleanupColumnVersions.getQuick(i + 2);
                 long partitionNameTxn = cleanupColumnVersions.getQuick(i + 3);
 
-                // Process updated column by column, one at the time
+                // Process updated column by column, one at a time
                 if (columnIndex == processColumnIndex) {
-
                     boolean columnPurged = !anyReadersBeforeCommittedTxn;
                     if (!anyReadersBeforeCommittedTxn) {
                         path.trimTo(pathTableLen);
@@ -751,5 +748,4 @@ public class UpdateExecution implements Closeable {
             }
         }
     }
-
 }
