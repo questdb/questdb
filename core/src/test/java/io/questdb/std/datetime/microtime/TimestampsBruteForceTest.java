@@ -33,6 +33,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.*;
 import java.util.Locale;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 
 import static java.time.DayOfWeek.MONDAY;
 import static java.time.temporal.ChronoField.*;
@@ -92,6 +93,7 @@ public class TimestampsBruteForceTest {
         ThreadLocalRandom random = ThreadLocalRandom.current();
         while (current.isBefore(deadline)) {
             long epochMicros = toEpochMicros(current);
+            assertEpochMicrosEquals(current.truncatedTo(MILLIS), Timestamps.floorMS(epochMicros));
             assertEpochMicrosEquals(current.truncatedTo(SECONDS), Timestamps.floorSS(epochMicros));
             assertEpochMicrosEquals(current.truncatedTo(MINUTES), Timestamps.floorMI(epochMicros));
             assertEpochMicrosEquals(current.truncatedTo(HOURS), Timestamps.floorHH(epochMicros));
@@ -112,16 +114,17 @@ public class TimestampsBruteForceTest {
     }
 
     private static long toEpochMicros(ZonedDateTime zonedDateTime) {
-        return zonedDateTime.toInstant().toEpochMilli() * 1000;
+        return TimeUnit.SECONDS.toMicros(zonedDateTime.toEpochSecond())
+                + TimeUnit.NANOSECONDS.toMicros(zonedDateTime.getNano());
     }
 
     private static void assertEpochMicrosEquals(ZonedDateTime expected, long epochMicros) {
-        long expectedMillis = expected.toInstant().toEpochMilli();
-        long expectedMicros = expectedMillis * 1000;
+        long expectedMicros = toEpochMicros(expected);
         if (expectedMicros != epochMicros) {
             DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss.SSS")
                     .withLocale(Locale.US)
                     .withZone(ZoneId.of("UTC"));
+            long expectedMillis = expected.toInstant().toEpochMilli();
             fail("Epoch micros " + epochMicros + " (="
                     + dateTimeFormatter.format(Instant.ofEpochMilli(epochMicros / 1000))
                     + ") is not the same instant as the expected " + expectedMicros + " (="
