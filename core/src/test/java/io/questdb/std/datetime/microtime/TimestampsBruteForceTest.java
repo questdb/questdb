@@ -139,11 +139,10 @@ public class TimestampsBruteForceTest {
             DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss.SSS")
                     .withLocale(Locale.US)
                     .withZone(ZoneId.of("UTC"));
-            long expectedMillis = expected.toInstant().toEpochMilli();
             fail("Epoch micros " + epochMicros + " (="
                     + dateTimeFormatter.format(Instant.ofEpochMilli(epochMicros / 1000))
                     + ") is not the same instant as the expected " + expectedMicros + " (="
-                    + dateTimeFormatter.format(Instant.ofEpochMilli(expectedMillis)) + ")");
+                    + dateTimeFormatter.format(expected.toInstant()) + ")");
         }
     }
 }
