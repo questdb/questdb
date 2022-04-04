@@ -70,6 +70,8 @@ public interface CairoConfiguration {
 
     int getColumnVersionPurgeQueueCapacity();
 
+    int getColumnVersionCleanupLookbackDays();
+
     double getColumnVersionPurgeWaitExponent();
 
     /**
@@ -85,6 +87,8 @@ public interface CairoConfiguration {
     CharSequence getConfRoot(); // same as root/../conf
 
     long getColumnVersionPurgeMaxTimeoutMicros();
+
+    long getColumnVersionPurgeStartWaitTimeoutMicros();
 
     CharSequence getSnapshotRoot(); // same as root/../snapshot
 

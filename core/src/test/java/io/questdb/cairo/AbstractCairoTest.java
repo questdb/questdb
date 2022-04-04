@@ -87,6 +87,7 @@ public class AbstractCairoTest {
     private static TelemetryConfiguration telemetryConfiguration;
     protected static int writerCommandQueueCapacity = 4;
     protected static double columnVersionPurgeWaitExponent = -1;
+    protected static long columnVersionPurgeStartWaitTimeoutMicros = -1;
 
     @BeforeClass
     public static void setUpStatic() {
@@ -234,6 +235,11 @@ public class AbstractCairoTest {
             @Override
             public double getColumnVersionPurgeWaitExponent() {
                 return columnVersionPurgeWaitExponent > 0 ? columnVersionPurgeWaitExponent : 2.0;
+            }
+
+            @Override
+            public long getColumnVersionPurgeStartWaitTimeoutMicros() {
+                return columnVersionPurgeStartWaitTimeoutMicros > 0 ? columnVersionPurgeStartWaitTimeoutMicros : 10;
             }
         };
         engine = new CairoEngine(configuration, metrics);

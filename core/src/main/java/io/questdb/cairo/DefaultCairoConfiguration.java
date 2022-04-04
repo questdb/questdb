@@ -127,6 +127,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getColumnVersionCleanupLookbackDays() {
+        return 7;
+    }
+
+    @Override
     public double getColumnVersionPurgeWaitExponent() {
         return 2.0;
     }
@@ -149,6 +154,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getColumnVersionPurgeMaxTimeoutMicros() {
         return 60_000_000;
+    }
+
+    @Override
+    public long getColumnVersionPurgeStartWaitTimeoutMicros() {
+        return 10_000;
     }
 
     @Override

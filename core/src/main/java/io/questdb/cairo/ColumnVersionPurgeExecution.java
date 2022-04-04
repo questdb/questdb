@@ -47,7 +47,7 @@ public class ColumnVersionPurgeExecution implements Closeable {
     private final int updateCompleteColumnWriterIndex;
     private long longBytes;
     private int pathTableLen;
-    private int cleanupLogOpenPartitionIndex = -1;
+    private long cleanupLogOpenPartitionTimestamp = Long.MAX_VALUE;
     private long cleanupLogOpenPartitionFd = -1L;
 
     public ColumnVersionPurgeExecution(CairoConfiguration configuration, TableWriter cleanUpLogWriter, String updateCompleteColumnName) {
@@ -72,9 +72,15 @@ public class ColumnVersionPurgeExecution implements Closeable {
     }
 
     public boolean tryCleanup(ColumnVersionPurgeTask task) {
-        boolean done = tryCleanup0(task);
-        setCompleteTimestamp(completedRecordIds, microClock.getTicks());
-        return done;
+        try {
+            boolean done = tryCleanup0(task);
+            setCompleteTimestamp(completedRecordIds, microClock.getTicks());
+            return done;
+        } catch (CairoException ex) {
+            // Can be some IO exception
+            LOG.error().$("failed to clean column versions. ").$((Throwable) ex).$();
+            return false;
+        }
     }
 
     private boolean checkScoreboardHasReadersBeforeUpdate(long columnVersion, ColumnVersionPurgeTask task) {
@@ -101,10 +107,10 @@ public class ColumnVersionPurgeExecution implements Closeable {
     }
 
     private long openCompleteColumToWrite(int partitionIndex) {
-        if (cleanupLogOpenPartitionIndex != partitionIndex) {
+        long partitionTimestamp = cleanUpLogWriter.getPartitionTimestamp(partitionIndex);
+        if (cleanupLogOpenPartitionTimestamp != partitionTimestamp) {
             path.trimTo(pathRootLen);
             path.concat(cleanUpLogWriter.getTableName());
-            long partitionTimestamp = cleanUpLogWriter.getPartitionTimestamp(partitionIndex);
             long partitionNameTxn = cleanUpLogWriter.getPartitionNameTxn(partitionIndex);
             int partitionBy = cleanUpLogWriter.getPartitionBy();
             TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
@@ -113,41 +119,61 @@ public class ColumnVersionPurgeExecution implements Closeable {
             TableUtils.dFile(path, updateCompleteColumnName, completeColumnNameTxn);
             closeCleanupLogCompleteFile();
             cleanupLogOpenPartitionFd = TableUtils.openRW(filesFacade, path.$(), LOG, cleanUpLogWriter.getConfiguration().getWriterFileOpenOpts());
-            cleanupLogOpenPartitionIndex = partitionIndex;
+            cleanupLogOpenPartitionTimestamp = partitionTimestamp;
         }
         return cleanupLogOpenPartitionFd;
     }
 
+    private int readTableId(Path path) {
+        final int INVALID_TABLE_ID = Integer.MIN_VALUE;
+        long fd = filesFacade.openRO(path.trimTo(pathTableLen).concat(TableUtils.META_FILE_NAME).$());
+        if (fd < 0) {
+            return INVALID_TABLE_ID;
+        }
+        try {
+            if (filesFacade.read(fd, longBytes, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) != Integer.BYTES) {
+                return INVALID_TABLE_ID;
+            }
+            return Unsafe.getUnsafe().getInt(longBytes);
+        } finally {
+            filesFacade.close(fd);
+        }
+    }
+
     private void setCompleteTimestamp(LongList completedRecordIds, long timeMicro) {
         // This is in-place update for known record ids of completed column in column version cleanup log table
-        long fd = -1;
-        long fileSize = -1;
-        Unsafe.getUnsafe().putLong(longBytes, timeMicro);
-        for (int rec = 0, n = completedRecordIds.size(); rec < n; rec++) {
-            long recordId = completedRecordIds.getQuick(rec);
-            int partitionIndex = Rows.toPartitionIndex(recordId);
-            if (rec == 0) {
-                // Assumption is that all records belong to same partition
-                // this is how the records are added to the table in ColumnVersionPurgeJob
-                // e.g. all records about the same column updated have identical timestamp
-                fd = openCompleteColumToWrite(partitionIndex);
-                fileSize = filesFacade.length(fd);
+        try {
+            long fd = -1;
+            long fileSize = -1;
+            Unsafe.getUnsafe().putLong(longBytes, timeMicro);
+            for (int rec = 0, n = completedRecordIds.size(); rec < n; rec++) {
+                long recordId = completedRecordIds.getQuick(rec);
+                int partitionIndex = Rows.toPartitionIndex(recordId);
+                if (rec == 0) {
+                    // Assumption is that all records belong to same partition
+                    // this is how the records are added to the table in ColumnVersionPurgeJob
+                    // e.g. all records about the same column updated have identical timestamp
+                    fd = openCompleteColumToWrite(partitionIndex);
+                    fileSize = filesFacade.length(fd);
+                }
+                long rowId = Rows.toLocalRowID(recordId);
+                long offset = rowId * Long.BYTES;
+                if (offset + Long.BYTES > fileSize) {
+                    LOG.error().$("update column version cleanup failed [writeOffset=").$(offset)
+                            .$(", fileSize=").$(fileSize)
+                            .$(", path=").$(path).I$();
+                    return;
+                }
+                if (filesFacade.write(fd, longBytes, Long.BYTES, rowId * Long.BYTES) != Long.BYTES) {
+                    LOG.error().$("update column version cleanup failed [errno=").$(filesFacade.errno())
+                            .$(", writeOffset=").$(offset)
+                            .$(", fileSize=").$(fileSize)
+                            .$(", path=").$(path).I$();
+                    return;
+                }
             }
-            long rowId = Rows.toLocalRowID(recordId);
-            long offset = rowId * Long.BYTES;
-            if (offset + Long.BYTES > fileSize) {
-                LOG.error().$("update column version cleanup failed [writeOffset=").$(offset)
-                        .$(", fileSize=").$(fileSize)
-                        .$(", path=").$(path).I$();
-                return;
-            }
-            if (filesFacade.write(fd, longBytes, Long.BYTES, rowId * Long.BYTES) != Long.BYTES) {
-                LOG.error().$("update column version cleanup failed [errno=").$(filesFacade.errno())
-                        .$(", writeOffset=").$(offset)
-                        .$(", fileSize=").$(fileSize)
-                        .$(", path=").$(path).I$();
-                return;
-            }
+        } catch (CairoException ex) {
+            LOG.error().$("failed to update column_versions_purge_log table with complete time. ").$((Throwable) ex).$();
         }
     }
 
@@ -171,7 +197,7 @@ public class ColumnVersionPurgeExecution implements Closeable {
         setTablePath(task.getTableName());
 
         LongList columnVersionList = task.getUpdatedColumnVersions();
-        boolean scoreboardInited = false;
+        boolean tableInitied = false;
         long minUnlockedTxnRangeStarts = Long.MAX_VALUE;
         boolean allDone = true;
         try {
@@ -202,23 +228,35 @@ public class ColumnVersionPurgeExecution implements Closeable {
                 }
 
                 // Check that there are no readers before updateTxn
-                if (!scoreboardInited) {
+                if (!tableInitied) {
                     txnScoreboard.ofRO(path.trimTo(pathTableLen));
-                    scoreboardInited = true;
+
+                    int tableId = readTableId(path);
+                    if (tableId != task.getTableId()) {
+                        LOG.info().$("column version will not be deleted, detected table dropped [path=").$(path.trimTo(pathTableLen)).I$();
+                        return true;
+                    }
+
                     // Re-set up path to .d file
                     setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
                     TableUtils.dFile(path, task.getColumnName(), columnVersion);
+
+                    tableInitied = true;
                 }
+
 
                 if (columnVersion < minUnlockedTxnRangeStarts) {
                     if (checkScoreboardHasReadersBeforeUpdate(columnVersion, task)) {
                         // Reader lock still exists
                         allDone = false;
+                        LOG.debug().$("column version locked in scoreboard, will not be deleted [path=").$(path).I$();
                         continue;
                     } else {
                         minUnlockedTxnRangeStarts = columnVersion;
                     }
                 }
+
+                LOG.info().$("column version to be deleted [path=").$(path).I$();
 
                 // No readers looking at the column version, files can be deleted
                 if (!filesFacade.remove(path.$()) && filesFacade.exists(path.$())) {

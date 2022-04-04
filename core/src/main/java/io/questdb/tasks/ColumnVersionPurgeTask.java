@@ -99,11 +99,11 @@ public class ColumnVersionPurgeTask implements Mutable {
         this.columnType = columnType;
         this.partitionBy = partitionBy;
         this.updatedTxn = lastTxn;
+        this.updatedColumnVersions.clear();
     }
 
     public void of(String tableName, CharSequence columnName, int tableId, int columnType, int partitionBy, long lastTxn, LongList columnVersions) {
         of(tableName, columnName, tableId, columnType, partitionBy, lastTxn);
-        this.updatedColumnVersions.clear();
         this.updatedColumnVersions.add(columnVersions);
     }
 }

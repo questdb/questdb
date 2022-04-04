@@ -379,6 +379,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long columnVersionPurgeMaxTimeoutMicros;
     private final double columnVersionPurgeWaitExponent;
     private final String systemTableNamePrefix;
+    private final int columnVersionCleanupLookbackDays;
+    private final long columnVersionPurgeStartWaitTimeoutMicros;
 
     public PropServerConfiguration(
             String root,
@@ -688,7 +690,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlCopyBufferSize = getIntSize(properties, env, "cairo.sql.copy.buffer.size", 2 * 1024 * 1024);
             this.columnVersionPurgeQueueCapacity = getQueueCapacity(properties, env,"cairo.sql.column.version.clean.queue.capacity", 1024);
             this.columnVersionPurgeMaxTimeoutMicros = getLong(properties, env, "cairo.sql.column.version.clean.timeout", 60_000_000L);
+            this.columnVersionPurgeStartWaitTimeoutMicros = getLong(properties, env, "cairo.sql.column.version.clean.start.timeout", 10_000);
             this.columnVersionPurgeWaitExponent = getDouble(properties, env, "cairo.sql.column.version.clean.timeout.exponent", 10.0);
+            this.columnVersionCleanupLookbackDays = getInt(properties, env, "cairo.sql.column.version.clean.look.back.days", 7);
             this.systemTableNamePrefix = getString(properties, env, "cairo.system.name.prefix", "sys.");
 
             this.writerDataIndexKeyAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, "cairo.writer.data.index.key.append.page.size", 512 * 1024));
@@ -1675,6 +1679,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getColumnVersionCleanupLookbackDays() {
+            return columnVersionCleanupLookbackDays;
+        }
+
+        @Override
         public double getColumnVersionPurgeWaitExponent() {
             return columnVersionPurgeWaitExponent;
         }
@@ -1697,6 +1706,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getColumnVersionPurgeMaxTimeoutMicros() {
             return columnVersionPurgeMaxTimeoutMicros;
+        }
+
+        @Override
+        public long getColumnVersionPurgeStartWaitTimeoutMicros() {
+            return columnVersionPurgeStartWaitTimeoutMicros;
         }
 
         @Override
