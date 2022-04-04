@@ -332,7 +332,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     @Override
-
     public void close() {
         clear();
         // fd == -1 is only when context is closed
