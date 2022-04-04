@@ -216,10 +216,78 @@ final public class Timestamps {
         return micros - micros % MINUTE_MICROS;
     }
 
+    /**
+     * Floor timestamp to Monday of the same week.
+     * TOOD: Example + add info about time
+     *
+     *
+     * @param micros timestamp to floor to microseconds since epoch
+     * @return timestamp floored to Monday of the same week as the input argument
+     */
+    public static long floorDOW(long micros) {
+        long l = previousOrSameDayOfWeek(micros, 1);
+        return floorDD(l);
+    }
+
     public static long floorMM(long micros) {
         int y;
         boolean l;
         return yearMicros(y = getYear(micros), l = isLeapYear(y)) + monthOfYearMicros(getMonthOfYear(micros, y, l), l);
+    }
+
+    /**
+     * TODO
+     *
+     * @param micros
+     * @return
+     */
+    public static long floorQuarter(long micros) {
+        int year = getYear(micros);
+        boolean leapYear = isLeapYear(year);
+        int monthOfYear = getMonthOfYear(micros, year, leapYear);
+        int q = (monthOfYear - 1) / 3;
+        int month = (3 * q) + 1;
+        return yearMicros(year, leapYear) + monthOfYearMicros(month, leapYear);
+    }
+
+    /**
+     *
+     * TODO
+     *
+     * @param micros
+     * @return
+     */
+    public static long floorDecade(long micros) {
+        int year = getYear(micros);
+        int decadeFirstYear = (year / 10) * 10;
+        boolean leapYear = isLeapYear(decadeFirstYear);
+        return yearMicros(decadeFirstYear, leapYear);
+    }
+
+    /**
+     * TODO
+     *
+     * @param micros
+     * @return
+     */
+    public static long floorCentury(long micros) {
+        int year = getYear(micros);
+        int centuryFirstYear = (((year + 99) / 100) * 100) - 99;
+        boolean leapYear = isLeapYear(centuryFirstYear);
+        return yearMicros(centuryFirstYear, leapYear);
+    }
+
+    /**
+     * TODO
+     *
+     * @param micros
+     * @return
+     */
+    public static long floorMillennium(long micros) {
+        int year = getYear(micros);
+        int millenniumFirstYear = (((year + 999) / 1000) * 1000) - 999;
+        boolean leapYear = isLeapYear(millenniumFirstYear);
+        return yearMicros(millenniumFirstYear, leapYear);
     }
 
     public static long floorSS(long micros) {

@@ -30,6 +30,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static org.junit.Assert.assertEquals;
+
 public class DateTruncFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
@@ -80,7 +82,7 @@ public class DateTruncFunctionFactoryTest extends AbstractGriffinTest {
             );
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals(18, e.getPosition());
+            assertEquals(18, e.getPosition());
             TestUtils.assertContains("invalid kind 'null'", e.getFlyweightMessage());
         }
     }
@@ -94,7 +96,7 @@ public class DateTruncFunctionFactoryTest extends AbstractGriffinTest {
             );
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals(18, e.getPosition());
+            assertEquals(18, e.getPosition());
             TestUtils.assertContains("invalid kind 'invalid'", e.getFlyweightMessage());
         }
     }

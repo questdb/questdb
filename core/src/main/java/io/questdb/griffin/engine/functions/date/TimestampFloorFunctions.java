@@ -145,8 +145,7 @@ final class TimestampFloorFunctions {
 
         @Override
         public long floor(long timestamp) {
-            long l = Timestamps.previousOrSameDayOfWeek(timestamp, 1);
-            return Timestamps.floorDD(l);
+            return Timestamps.floorDOW(timestamp);
         }
     }
 
@@ -157,12 +156,7 @@ final class TimestampFloorFunctions {
 
         @Override
         public long floor(long timestamp) {
-            int year = Timestamps.getYear(timestamp);
-            boolean leapYear = Timestamps.isLeapYear(year);
-            int monthOfYear = Timestamps.getMonthOfYear(timestamp, year, leapYear);
-            int q = (monthOfYear - 1) / 3;
-            int month = (3 * q) + 1;
-            return Timestamps.yearMicros(year, leapYear) + Timestamps.monthOfYearMicros(month, leapYear);
+            return Timestamps.floorQuarter(timestamp);
         }
     }
 
@@ -173,10 +167,7 @@ final class TimestampFloorFunctions {
 
         @Override
         public long floor(long timestamp) {
-            int year = Timestamps.getYear(timestamp);
-            int decadeFirstYear = (year / 10) * 10;
-            boolean leapYear = Timestamps.isLeapYear(decadeFirstYear);
-            return Timestamps.yearMicros(decadeFirstYear, leapYear);
+            return Timestamps.floorDecade(timestamp);
         }
     }
 
@@ -187,10 +178,7 @@ final class TimestampFloorFunctions {
 
         @Override
         public long floor(long timestamp) {
-            int year = Timestamps.getYear(timestamp);
-            int centuryFirstYear = (((year + 99) / 100) * 100) - 99;
-            boolean leapYear = Timestamps.isLeapYear(centuryFirstYear);
-            return Timestamps.yearMicros(centuryFirstYear, leapYear);
+            return Timestamps.floorCentury(timestamp);
         }
     }
 
@@ -201,10 +189,7 @@ final class TimestampFloorFunctions {
 
         @Override
         public long floor(long timestamp) {
-            int year = Timestamps.getYear(timestamp);
-            int millenniumFirstYear = (((year + 999) / 1000) * 1000) - 999;
-            boolean leapYear = Timestamps.isLeapYear(millenniumFirstYear);
-            return Timestamps.yearMicros(millenniumFirstYear, leapYear);
+            return Timestamps.floorMillennium(timestamp);
         }
     }
 }
