@@ -71,7 +71,8 @@ public class TableMetadataCursorFactory implements FunctionFactory {
                 new TableMetadataCursor(
                         configuration.getFilesFacade(),
                         configuration.getRoot(),
-                        configuration.getTelemetryConfiguration().hideTables())
+                        configuration.getTelemetryConfiguration().hideTables(),
+                        configuration.getSystemTableNamePrefix())
         ) {
             @Override
             public boolean isRuntimeConstant() {
@@ -84,11 +85,13 @@ public class TableMetadataCursorFactory implements FunctionFactory {
         private final FilesFacade ff;
         private final TableListRecordCursor cursor;
         private final boolean hideTelemetryTables;
+        private final CharSequence systablePefix;
         private Path path;
 
-        public TableMetadataCursor(FilesFacade ff, CharSequence dbRoot, boolean hideTelemetryTables) {
+        public TableMetadataCursor(FilesFacade ff, CharSequence dbRoot, boolean hideTelemetryTables, CharSequence systablePefix) {
             this.ff = ff;
             path = new Path().of(dbRoot).$();
+            this.systablePefix = systablePefix;
             cursor = new TableListRecordCursor();
             this.hideTelemetryTables = hideTelemetryTables;
         }
@@ -241,7 +244,7 @@ public class TableMetadataCursorFactory implements FunctionFactory {
 
                 public boolean open(CharSequence tableName) {
 
-                    if (hideTelemetryTables && (Chars.equals(tableName, TelemetryJob.tableName) || Chars.equals(tableName, TelemetryJob.configTableName))) {
+                    if (hideTelemetryTables && (Chars.equals(tableName, TelemetryJob.tableName) || Chars.equals(tableName, TelemetryJob.configTableName) || Chars.startsWith(tableName, systablePefix))) {
                         return false;
                     }
 
