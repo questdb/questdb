@@ -82,7 +82,7 @@ public class TimestampsBruteForceTest {
 
 
     @Test
-    public void testFloorSS_bruteforce() {
+    public void testFlooring() {
         ZoneId utc = ZoneId.of("UTC");
         ZonedDateTime current = ZonedDateTime.now(utc).withYear(1999);
         ZonedDateTime deadline = current.plusYears(10);
