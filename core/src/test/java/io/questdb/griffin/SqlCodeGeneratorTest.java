@@ -1843,6 +1843,48 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFilterTimestampsInWhereClauseWorks() throws Exception {
+        assertQuery(
+                "min\tmax\n" +
+                        "\t\n",
+                "SELECT min(ts), max(ts)\n" +
+                        "FROM tab\n" +
+                        "WHERE ts >= '2022-03-23T08:00:00.000000Z' AND ts < '2022-03-25T10:00:00.000000Z' AND ts > dateadd('d', -10, systimestamp())",
+                "CREATE TABLE tab AS (\n" +
+                        "    SELECT dateadd('d', CAST(-(10-x) AS INT) , '2022-03-31T10:00:00.000000Z') AS ts \n" +
+                        "    FROM long_sequence(10)\n" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                null,
+                null,
+                false,
+                false,
+                true
+                );
+    }
+
+    @Test
+    public void testFilterTimestampsInWhereClauseFails() throws Exception {
+        assertQuery(
+                "min\tmax\n" +
+                        "\t\n",
+                "SELECT min(ts), max(ts)\n" +
+                        " FROM tab\n" +
+                        " WHERE ts >= '2022-03-23T08:00:00.000000Z' AND ts < '2022-03-25T10:00:00.000000Z' AND ts > dateadd('d', -10, now())",
+                "CREATE TABLE tab AS (\n" +
+                        "    SELECT dateadd('d', CAST(-(10-x) AS INT) , '2022-03-31T10:00:00.000000Z') AS ts \n" +
+                        "    FROM long_sequence(10)\n" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                null,
+                null,
+                false,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testFilterWrongType() throws Exception {
         assertFailure("select * from x where b - a",
                 "create table x as " +
