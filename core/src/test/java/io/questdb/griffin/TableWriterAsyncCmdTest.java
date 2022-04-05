@@ -421,6 +421,27 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCommandQueueBufferOverflow() throws Exception {
+        long tmpWriterCommandQueueSlotSize = writerCommandQueueSlotSize;
+        writerCommandQueueSlotSize = 4;
+        assertMemoryLeak(() -> {
+            compile("create table product (timestamp timestamp)", sqlExecutionContext);
+
+            // Get the lock so command has to be serialized to writer command queue
+            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
+                CompiledQuery cc = compiler.compile("ALTER TABLE product add column colTest int", sqlExecutionContext);
+                try {
+                    cc.execute(commandReplySequence);
+                    Assert.fail();
+                } catch (CairoException exception) {
+                    TestUtils.assertContains(exception.getFlyweightMessage(), "async command/event queue buffer overflow");
+                }
+            }
+        });
+        writerCommandQueueSlotSize = tmpWriterCommandQueueSlotSize;
+    }
+
+    @Test
     public void testInvalidAlterDropPartitionStatementQueued() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);

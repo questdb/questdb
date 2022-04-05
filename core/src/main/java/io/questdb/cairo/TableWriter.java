@@ -321,7 +321,7 @@ public class TableWriter implements Closeable {
             this.slaveTxReader = new TxReader(ff);
             commandQueue = new RingQueue<>(
                     TableWriterTask::new,
-                    2048,
+                    configuration.getWriterCommandQueueSlotSize(),
                     configuration.getWriterCommandQueueCapacity(),
                     MemoryTag.NATIVE_REPL
             );

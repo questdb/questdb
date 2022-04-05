@@ -24,9 +24,9 @@
 
 package io.questdb.tasks;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.griffin.AsyncWriterCommand;
 import io.questdb.std.Chars;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
@@ -40,32 +40,33 @@ public class TableWriterTask implements Closeable {
     public static final int TSK_BEGIN = 64;
     public static final int TSK_COMPLETE = 65;
 
+    private final long data;
+    private final long dataSize;
     private AsyncWriterCommand cmd;
     private int type;
     private long tableId;
     private String tableName;
-    private long data;
-    private long dataSize;
     private long appendPtr;
     private long appendLim;
     private long instance;
     private long sequence;
     private long ip;
 
-    public TableWriterTask(long data, long size) {
+    public TableWriterTask(long data, long dataSize) {
         this.data = data;
-        this.dataSize = size;
-        this.appendPtr = data;
-        this.appendLim = data + dataSize;
+        this.dataSize = dataSize;
+        reset();
+    }
+
+    private void reset() {
+        appendPtr = data;
+        appendLim = data + dataSize;
     }
 
     @Override
     public void close() {
-        if (dataSize > 0) {
-            dataSize = 0;
-            appendPtr = 0;
-            appendLim = 0;
-        }
+        appendPtr = 0;
+        appendLim = 0;
     }
 
     public void fromSlaveSyncRequest(
@@ -78,15 +79,12 @@ public class TableWriterTask implements Closeable {
             long slaveIP,
             long sequence
     ) {
-        long tskSize = this.dataSize;
-        if (tskSize < txMemSize + metaMemSize + 16) {
-            resize(txMemSize + metaMemSize + 16);
-        }
-        long p = this.data;
-        Unsafe.getUnsafe().putLong(p, txMemSize);
-        Vect.memcpy(p + 8, txMem, txMemSize);
-        Unsafe.getUnsafe().putLong(p + txMemSize + 8, metaMemSize);
-        Vect.memcpy(p + txMemSize + 16, metaMem, metaMemSize);
+        reset();
+        checkCapacity(txMemSize + metaMemSize + 2 * Long.BYTES);
+        Unsafe.getUnsafe().putLong(data, txMemSize);
+        Vect.memcpy(data + Long.BYTES, txMem, txMemSize);
+        Unsafe.getUnsafe().putLong(data + txMemSize + Long.BYTES, metaMemSize);
+        Vect.memcpy(data + txMemSize + 2 * Long.BYTES, metaMem, metaMemSize);
         this.type = CMD_SLAVE_SYNC;
         this.tableId = tableId;
         this.tableName = tableName;
@@ -161,49 +159,38 @@ public class TableWriterTask implements Closeable {
     public void putStr(CharSequence value) {
         int len = value.length();
         final int byteLen = len * 2 + Integer.BYTES;
-        ensureCapacity(byteLen);
+        checkCapacity(byteLen);
         Unsafe.getUnsafe().putInt(appendPtr, len);
-        Chars.copyStrChars(value, 0, len, appendPtr + 4);
-        this.appendPtr += byteLen;
+        Chars.copyStrChars(value, 0, len, appendPtr + Integer.BYTES);
+        appendPtr += byteLen;
     }
 
     public void putByte(byte c) {
-        ensureCapacity(Byte.BYTES);
+        checkCapacity(Byte.BYTES);
         Unsafe.getUnsafe().putByte(appendPtr++, c);
     }
 
     public void putInt(int value) {
-        ensureCapacity(Integer.BYTES);
+        checkCapacity(Integer.BYTES);
         Unsafe.getUnsafe().putInt(appendPtr, value);
         appendPtr += Integer.BYTES;
     }
 
     public void putShort(short value) {
-        ensureCapacity(Short.BYTES);
+        checkCapacity(Short.BYTES);
         Unsafe.getUnsafe().putShort(appendPtr, value);
         appendPtr += Short.BYTES;
     }
 
     public void putLong(long value) {
-        ensureCapacity(Long.BYTES);
+        checkCapacity(Long.BYTES);
         Unsafe.getUnsafe().putLong(appendPtr, value);
         appendPtr += Long.BYTES;
     }
 
-    private void resize(long size) {
-        assert dataSize > 0;
-        if (size > dataSize) {
-            long appendOffset = appendPtr - data;
-            data = Unsafe.realloc(data, dataSize, size, MemoryTag.NATIVE_REPL);
-            dataSize = size;
-            appendPtr = data + appendOffset;
-            appendLim = data + dataSize;
-        }
-    }
-
-    private void ensureCapacity(int byteCount) {
+    private void checkCapacity(long byteCount) {
         if (appendPtr + byteCount > appendLim) {
-            resize(Math.max(dataSize * 2, (appendPtr - data) + byteCount));
+            throw CairoException.instance(0).put("async command/event queue buffer overflow");
         }
     }
 }

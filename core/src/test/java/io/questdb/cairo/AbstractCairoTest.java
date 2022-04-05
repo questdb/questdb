@@ -86,6 +86,7 @@ public class AbstractCairoTest {
     protected static boolean hideTelemetryTable = false;
     private static TelemetryConfiguration telemetryConfiguration;
     protected static int writerCommandQueueCapacity = 4;
+    protected static long writerCommandQueueSlotSize = 1024L;
     protected static double columnVersionPurgeWaitExponent = -1;
     protected static long columnVersionPurgeStartWaitTimeoutMicros = -1;
 
@@ -230,6 +231,11 @@ public class AbstractCairoTest {
             @Override
             public int getWriterCommandQueueCapacity() {
                 return writerCommandQueueCapacity;
+            }
+
+            @Override
+            public long getWriterCommandQueueSlotSize() {
+                return writerCommandQueueSlotSize;
             }
 
             @Override
