@@ -97,4 +97,11 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
         //noinspection StatementWithEmptyBody
         while (rowCount-- > 0 && hasNext()) ;
     }
+
+    /**
+     * Returns true if the cursor is using an index, false otherwise
+     */
+    default boolean isUsingIndex() {
+        return false;
+    }
 }

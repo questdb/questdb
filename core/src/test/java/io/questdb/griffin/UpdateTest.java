@@ -26,6 +26,8 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Misc;
 import io.questdb.test.tools.TestUtils;
@@ -1130,14 +1132,18 @@ public class UpdateTest extends AbstractGriffinTest {
                             "\t1970-01-01T00:00:04.000000Z\t5\n"
             );
 
-            assertSql(
-                    "up where symCol = 'VTJ'",
-                    "symCol\tts\tx\n" +
-                            "VTJ\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "VTJ\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "VTJ\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n"
-            );
+            try (RecordCursorFactory factory = compiler.compile("up where symCol = 'VTJ'", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertEquals(indexed, cursor.isUsingIndex());
+                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                }
+            }
+            TestUtils.assertEquals("symCol\tts\tx\n" +
+                                    "VTJ\t1970-01-01T00:00:00.000000Z\t1\n" +
+                                    "VTJ\t1970-01-01T00:00:01.000000Z\t2\n" +
+                                    "VTJ\t1970-01-01T00:00:02.000000Z\t3\n" +
+                                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n", sink);
+
             assertSql(
                     "up where symCol = 'WCP'",
                     "symCol\tts\tx\n"
@@ -1174,13 +1180,17 @@ public class UpdateTest extends AbstractGriffinTest {
                             "\t1970-01-01T00:00:04.000000Z\t5\n"
             );
 
-            assertSql(
-                    "up where symCol = 'ABC'",
-                    "symCol\tts\tx\n" +
-                            "ABC\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "ABC\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "ABC\t1970-01-01T00:00:02.000000Z\t3\n"
-            );
+            try (RecordCursorFactory factory = compiler.compile("up where symCol = 'ABC'", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertEquals(indexed, cursor.isUsingIndex());
+                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                }
+            }
+            TestUtils.assertEquals("symCol\tts\tx\n" +
+                    "ABC\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "ABC\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "ABC\t1970-01-01T00:00:02.000000Z\t3\n", sink);
+
             assertSql(
                     "up where symCol = 'WCP'",
                     "symCol\tts\tx\n"
