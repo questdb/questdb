@@ -198,6 +198,11 @@ public class UpdateTest extends AbstractGriffinTest {
             executeUpdate("UPDATE up SET xlong=xts WHERE ts='1970-01-01'");
             assertSql("up", expected);
 
+            executeUpdate("UPDATE up SET xdate=xlong");
+            assertSql("up", expected);
+            executeUpdate("UPDATE up SET xdate=xlong WHERE ts='1970-01-01'");
+            assertSql("up", expected);
+
             executeUpdate("UPDATE up SET xts=xdate");
             // above call modified data from micro to milli. Revert the data back
             executeUpdate("UPDATE up SET xts=xlong");
@@ -1248,13 +1253,15 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts)", sqlExecutionContext);
 
-            executeUpdate("UPDATE up SET x = 123 WHERE x > 1 and x < 4");
+            QueryFuture queryFuture = executeUpdate("UPDATE up SET x = 123 WHERE x > 1 and x < 5");
+            Assert.assertEquals(QueryFuture.QUERY_COMPLETE, queryFuture.getStatus());
+            Assert.assertEquals(3, queryFuture.getAffectedRowsCount());
 
             assertSql("up", "ts\tx\n" +
                     "1970-01-01T00:00:00.000000Z\t1\n" +
                     "1970-01-01T00:00:01.000000Z\t123\n" +
                     "1970-01-01T00:00:02.000000Z\t123\n" +
-                    "1970-01-01T00:00:03.000000Z\t4\n" +
+                    "1970-01-01T00:00:03.000000Z\t123\n" +
                     "1970-01-01T00:00:04.000000Z\t5\n");
         });
     }
@@ -1289,8 +1296,12 @@ public class UpdateTest extends AbstractGriffinTest {
 
             barrier.await(); // table is locked
             QueryFuture queryFuture = executeUpdate("UPDATE up SET x = 123 WHERE x > 1 and x < 4");
+            Assert.assertEquals(QueryFuture.QUERY_NO_RESPONSE, queryFuture.getStatus());
+            Assert.assertEquals(0, queryFuture.getAffectedRowsCount());
             barrier.await(); // update is on writer async cmd queue
             queryFuture.await(10000000); // 10 seconds timeout
+            Assert.assertEquals(QueryFuture.QUERY_COMPLETE, queryFuture.getStatus());
+            Assert.assertEquals(2, queryFuture.getAffectedRowsCount());
             th.join();
 
             assertSql("up", "ts\tx\n" +
