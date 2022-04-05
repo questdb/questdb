@@ -1203,13 +1203,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(latestByIndex));
 
             if (nKeyValues > 1) {
-                return new LatestByValuesFilteredRecordCursorFactory(
-                        configuration,
+                return new LatestByDeferredListValuesFilteredRecordCursorFactory(
                         metadata,
                         dataFrameCursorFactory,
                         latestByIndex,
                         intrinsicModel.keyValueFuncs,
-                        symbolMapReader,
                         filter,
                         columnIndexes
                 );
@@ -1255,12 +1253,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     prefixes
             );
         } else {
-            return new LatestByAllFilteredRecordCursorFactory(
+            return new LatestByDeferredListValuesFilteredRecordCursorFactory(
                     metadata,
-                    configuration,
                     dataFrameCursorFactory,
-                    RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
-                    keyTypes,
+                    latestByIndex,
                     filter,
                     columnIndexes
             );
@@ -3022,15 +3018,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             model.getLatestBy().clear();
 
             // listColumnFilterA = latest by column indexes
-            if (latestByColumnCount == 1 && myMeta.isColumnIndexed(listColumnFilterA.getColumnIndexFactored(0))) {
-                return new LatestByAllIndexedRecordCursorFactory(
-                        myMeta,
-                        configuration,
-                        new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()),
-                        listColumnFilterA.getColumnIndexFactored(0),
-                        columnIndexes,
-                        prefixes
-                );
+            if (latestByColumnCount == 1) {
+                int latestByColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
+                if (myMeta.isColumnIndexed(latestByColumnIndex)) {
+                    return new LatestByAllIndexedRecordCursorFactory(
+                            myMeta,
+                            configuration,
+                            new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()),
+                            listColumnFilterA.getColumnIndexFactored(0),
+                            columnIndexes,
+                            prefixes
+                    );
+                }
+
+                if (ColumnType.isSymbol(myMeta.getColumnType(latestByColumnIndex))
+                        && myMeta.isSymbolTableStatic(latestByColumnIndex)) {
+                    // we have "latest by" symbol column values, but no index
+                    return new LatestByDeferredListValuesFilteredRecordCursorFactory(
+                            myMeta,
+                            new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()),
+                            latestByColumnIndex,
+                            null,
+                            columnIndexes
+                    );
+                }
             }
 
             return new LatestByAllFilteredRecordCursorFactory(
