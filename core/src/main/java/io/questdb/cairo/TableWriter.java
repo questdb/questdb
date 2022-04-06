@@ -1129,7 +1129,6 @@ public class TableWriter implements Closeable {
                 final long theirSize;
                 if (keyIndex < 0) {
                     int slavePartitionIndex = replPartitionHash.valueAt(keyIndex);
-//                        long p = slaveTxData + getPartitionTableIndexOffset(symbolsCount, slavePartitionIndex);
                     // check if partition name ourDataTxn is the same
                     if (slaveTxReader.getPartitionNameTxn(slavePartitionIndex) == txWriter.getPartitionNameTxn(i)) {
                         // this is the same partition roughly
@@ -1395,7 +1394,8 @@ public class TableWriter implements Closeable {
         }
 
         txWriter.resetTimestamp();
-        txWriter.truncate();
+        columnVersionWriter.truncate();
+        txWriter.truncate(columnVersionWriter.getVersion());
         row = regularRow;
         try {
             clearTodoLog();
@@ -4407,7 +4407,7 @@ public class TableWriter implements Closeable {
         if (PartitionBy.isPartitioned(partitionBy)) {
             removePartitionDirectories();
         }
-        txWriter.truncate();
+        txWriter.truncate(columnVersionWriter.getVersion());
         clearTodoLog();
     }
 

@@ -391,7 +391,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         return openPartition0(partitionIndex);
     }
 
-    public void reconcileOpenPartitionsFrom(int partitionIndex) {
+    public void reconcileOpenPartitionsFrom(int partitionIndex, boolean forceTruncate) {
         int txPartitionCount = txFile.getPartitionCount();
         int txPartitionIndex = partitionIndex;
         boolean changed = false;
@@ -418,7 +418,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // Refresh partition
                 long newPartitionSize = txFile.getPartitionSize(txPartitionIndex);
                 final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
-                if (openPartitionNameTxn == txPartitionNameTxn) {
+                if (!forceTruncate && openPartitionNameTxn == txPartitionNameTxn) {
                     if (openPartitionSize != newPartitionSize) {
                         if (openPartitionSize > -1L) {
                             reloadPartition(partitionIndex, newPartitionSize, txPartitionNameTxn);
@@ -453,7 +453,9 @@ public class TableReader implements Closeable, SymbolTableSource {
             changed = true;
         }
 
-        if (changed) {
+        if (forceTruncate) {
+            reloadAllSymbols();
+        } else if (changed) {
             reloadSymbolMapCounts();
         }
     }
@@ -463,11 +465,12 @@ public class TableReader implements Closeable, SymbolTableSource {
             return false;
         }
         final long prevPartitionVersion = this.txFile.getPartitionTableVersion();
+        final long prevTruncateVersion = this.txFile.getTruncateVersion();
         try {
             reloadSlow(true);
             // partition reload will apply truncate if necessary
             // applyTruncate for non-partitioned tables only
-            reconcileOpenPartitions(prevPartitionVersion);
+            reconcileOpenPartitions(prevPartitionVersion, prevTruncateVersion);
             return true;
         } catch (Throwable e) {
             releaseTxn();
@@ -968,9 +971,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void reconcileOpenPartitions(long prevPartitionVersion) {
+    private void reconcileOpenPartitions(long prevPartitionVersion, long prevTruncateVersion) {
         // Reconcile partition full or partial will only update row count of last partition and append new partitions
-        if (this.txFile.getPartitionTableVersion() == prevPartitionVersion) {
+        boolean truncateHappened = this.txFile.getTruncateVersion() != prevTruncateVersion;
+        if (this.txFile.getPartitionTableVersion() == prevPartitionVersion && !truncateHappened) {
             int partitionIndex = Math.max(0, partitionCount - 1);
             final int txPartitionCount = txFile.getPartitionCount();
             if (partitionIndex < txPartitionCount) {
@@ -1004,7 +1008,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
             return;
         }
-        reconcileOpenPartitionsFrom(0);
+        reconcileOpenPartitionsFrom(0, truncateHappened);
     }
 
     private boolean releaseTxn() {
@@ -1222,6 +1226,21 @@ public class TableReader implements Closeable, SymbolTableSource {
                 continue;
             }
             symbolMapReaders.getQuick(i).updateSymbolCount(txFile.getSymbolValueCount(symbolMapIndex++));
+        }
+    }
+
+    private void reloadAllSymbols() {
+        int symbolMapIndex = 0;
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
+                SymbolMapReader symbolMapReader = symbolMapReaders.getQuick(columnIndex);
+                if (symbolMapReader instanceof SymbolMapReaderImpl) {
+                    final int writerColumnIndex = metadata.getWriterIndex(columnIndex);
+                    final long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerColumnIndex);
+                    int symbolCount = txFile.getSymbolValueCount(symbolMapIndex++);
+                    ((SymbolMapReaderImpl) symbolMapReader).of(configuration, path, metadata.getColumnName(columnIndex), columnNameTxn, symbolCount);
+                }
+            }
         }
     }
 
