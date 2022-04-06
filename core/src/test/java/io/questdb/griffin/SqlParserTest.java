@@ -41,6 +41,22 @@ import org.junit.Test;
 public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
+    public void testSampleByEndingWithSemicolon() throws SqlException {
+        assertQuery(
+                "select-group-by first(ts) first from (select [ts] from t1) sample by 15m align to calendar with offset '00:00'",
+                "SELECT first(ts) FROM t1 SAMPLE BY 15m ALIGN TO CALENDAR;",
+                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testSampleByEndingWithWhitespace() throws SqlException {
+        assertQuery(
+                "select-group-by first(ts) first from (select [ts] from t1) sample by 15m align to calendar with offset '00:00'",
+                "SELECT first(ts) FROM t1 SAMPLE BY 15m ALIGN TO CALENDAR",
+                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT));
+    }
+
+    @Test
     public void testPushWhereThroughUnionAll() throws SqlException {
         assertQuery(
                 "select-choose sm from (select-group-by [sum(x) sm] sum(x) sm from (select-choose [x] x from (select [x] from t1) union all select-choose [x] x from (select [x] from t2)) where sm = 1)",
