@@ -41,7 +41,7 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
     private final IntHashSet foundKeys;
     private final IntHashSet symbolKeys;
     private final LongList rowIds = new LongList();
-    int currentRow;
+    private int currentRow;
 
     public LatestByValueListRecordCursor(int columnIndex, @Nullable Function filter, IntHashSet symbolKeys, @NotNull IntList columnIndexes) {
         super(columnIndexes);
@@ -73,94 +73,92 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
 
     private void findAllNoFilter(int distinctCount) {
         DataFrame frame = dataFrameCursor.next();
-        do {
-            if (frame != null) {
-                long rowLo = frame.getRowLo();
-                long row = frame.getRowHi();
-                recordA.jumpTo(frame.getPartitionIndex(), 0);
+        int foundSize = 0;
+        while (frame != null) {
+            long rowLo = frame.getRowLo();
+            long row = frame.getRowHi();
+            recordA.jumpTo(frame.getPartitionIndex(), 0);
 
-                while (row-- > rowLo) {
-                    recordA.setRecordIndex(row);
-                    int key = recordA.getInt(columnIndex);
-                    if (foundKeys.add(key)) {
-                        rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));
-                        if (rowIds.size() == distinctCount) {
-                            return;
-                        }
+            while (row-- > rowLo) {
+                recordA.setRecordIndex(row);
+                int key = recordA.getInt(columnIndex);
+                if (foundKeys.add(key)) {
+                    rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));
+                    if (++foundSize == distinctCount) {
+                        return;
                     }
                 }
-                frame = dataFrameCursor.next();
             }
-        } while (frame != null);
+            frame = dataFrameCursor.next();
+        }
     }
 
     private void findAllWithFilter(Function filter, int distinctCount) {
         DataFrame frame = dataFrameCursor.next();
-        do {
-            if (frame != null) {
-                long rowLo = frame.getRowLo();
-                long row = frame.getRowHi();
-                recordA.jumpTo(frame.getPartitionIndex(), 0);
+        int foundSize = 0;
+        while (frame != null) {
+            long rowLo = frame.getRowLo();
+            long row = frame.getRowHi();
+            recordA.jumpTo(frame.getPartitionIndex(), 0);
 
-                while (row-- > rowLo) {
-                    recordA.setRecordIndex(row);
-                    int key = recordA.getInt(columnIndex);
-                    if ((filter == null || filter.getBool(recordA)) && foundKeys.add(key)) {
-                        rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));
-                        if (rowIds.size() == distinctCount) {
-                            return;
-                        }
+            while (row-- > rowLo) {
+                recordA.setRecordIndex(row);
+                int key = recordA.getInt(columnIndex);
+                if (filter.getBool(recordA) && foundKeys.add(key)) {
+                    rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));
+                    if (++foundSize == distinctCount) {
+                        return;
                     }
                 }
-                frame = dataFrameCursor.next();
             }
-        } while (frame != null);
+            frame = dataFrameCursor.next();
+        }
     }
 
-    private void findRestrictedNoFilter() {
+    private void findRestrictedNoFilter(IntHashSet symbolKeys) {
         DataFrame frame = dataFrameCursor.next();
-        do {
-            if (frame != null) {
-                long rowLo = frame.getRowLo();
-                long row = frame.getRowHi();
-                recordA.jumpTo(frame.getPartitionIndex(), 0);
+        int searchSize = symbolKeys.size();
+        int foundSize = 0;
+        while (frame != null) {
+            long rowLo = frame.getRowLo();
+            long row = frame.getRowHi();
+            recordA.jumpTo(frame.getPartitionIndex(), 0);
 
-                while (row-- > rowLo) {
-                    recordA.setRecordIndex(row);
-                    int key = recordA.getInt(columnIndex);
-                    if (symbolKeys.contains(key) && foundKeys.add(key)) {
-                        rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));
-                        if (rowIds.size() == symbolKeys.size()) {
-                            return;
-                        }
+            while (row-- > rowLo) {
+                recordA.setRecordIndex(row);
+                int key = recordA.getInt(columnIndex);
+                if (symbolKeys.contains(key) && foundKeys.add(key)) {
+                    rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));
+                    if (++foundSize == searchSize) {
+                        return;
                     }
                 }
-                frame = dataFrameCursor.next();
             }
-        } while (frame != null);
+            frame = dataFrameCursor.next();
+        }
     }
 
-    private void findRestrictedWithFilter(Function filter) {
+    private void findRestrictedWithFilter(Function filter, IntHashSet symbolKeys) {
         DataFrame frame = dataFrameCursor.next();
-        do {
-            if (frame != null) {
-                long rowLo = frame.getRowLo();
-                long row = frame.getRowHi();
-                recordA.jumpTo(frame.getPartitionIndex(), 0);
+        int searchSize = symbolKeys.size();
+        int foundSize = 0;
+        while (frame != null) {
+            long rowLo = frame.getRowLo();
+            long row = frame.getRowHi();
+            recordA.jumpTo(frame.getPartitionIndex(), 0);
 
-                while (row-- > rowLo) {
-                    recordA.setRecordIndex(row);
-                    int key = recordA.getInt(columnIndex);
-                    if ((filter == null || filter.getBool(recordA)) && symbolKeys.contains(key) && foundKeys.add(key)) {
-                        rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));
-                        if (rowIds.size() == symbolKeys.size()) {
-                            return;
-                        }
+            while (row-- > rowLo) {
+                recordA.setRecordIndex(row);
+                int key = recordA.getInt(columnIndex);
+                if (filter.getBool(recordA) && symbolKeys.contains(key) && foundKeys.add(key)) {
+                    rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));
+                    if (++foundSize == searchSize) {
+                        return;
                     }
                 }
-                frame = dataFrameCursor.next();
             }
-        } while (frame != null);
+            frame = dataFrameCursor.next();
+        }
     }
 
     @Override
@@ -172,15 +170,19 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
         foundKeys.clear();
         rowIds.clear();
 
+        // Find all record IDs and save in rowIds in descending order
+        // return then row by row in ascending timestamp order
+        // since most of the time factory is supposed to return in ASC timestamp order
+        // It can be optimised later on to not buffer row IDs and return in desc order.
         if (symbolKeys != null) {
             if (symbolKeys.size() > 0) {
                 // Find only restricted set of symbol keys
                 if (filter != null) {
                     filter.init(this, executionContext);
                     filter.toTop();
-                    findRestrictedWithFilter(filter);
+                    findRestrictedWithFilter(filter, symbolKeys);
                 } else {
-                    findRestrictedNoFilter();
+                    findRestrictedNoFilter(symbolKeys);
                 }
             }
         } else {
