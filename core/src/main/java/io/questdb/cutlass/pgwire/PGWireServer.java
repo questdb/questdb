@@ -85,6 +85,9 @@ public class PGWireServer implements Closeable {
                         context.getDispatcher().disconnect(context, operation == IOOperation.READ ? DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV : DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
                     } catch (BadProtocolException e) {
                         context.getDispatcher().disconnect(context, DISCONNECT_REASON_PROTOCOL_VIOLATION);
+                    } catch (Throwable e) {//must remain last in catch list!
+                        LOG.error().$(e).$();
+                        context.getDispatcher().disconnect(context, DISCONNECT_REASON_SERVER_ERROR);
                     }
                 };
 
