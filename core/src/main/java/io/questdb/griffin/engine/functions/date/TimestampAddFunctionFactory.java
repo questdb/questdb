@@ -108,11 +108,6 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
             }
             return func.add(l, r);
         }
-
-        @Override
-        public boolean isRuntimeConstant() {
-            return false;
-        }
     }
 
     private static class AddLongIntVarConstFunction extends TimestampFunction implements UnaryFunction {
@@ -138,11 +133,6 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
                 return Numbers.LONG_NaN;
             }
             return func.add(l, interval);
-        }
-
-        @Override
-        public boolean isRuntimeConstant() {
-            return false;
         }
     }
 

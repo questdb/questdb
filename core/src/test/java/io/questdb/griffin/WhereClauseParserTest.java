@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.model.*;
+import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -1795,6 +1796,48 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         } catch (SqlException e) {
             Assert.assertEquals(13, e.getPosition());
         }
+    }
+
+    @Test
+    public void testStaticInterval0() throws Exception {
+        String whereExpression = "timestamp >= '2022-03-23T08:00:00.000000Z' AND timestamp < '2022-03-25T10:00:00.000000Z' AND timestamp > dateadd('d', -10, now())";
+        currentMicros = 1649186452792000L; // '2022-04-05T19:20:52.792Z'
+        Assert.assertEquals(
+                "[]",
+                modelOf(whereExpression)
+                        .buildIntervalModel()
+                        .calculateIntervals(sqlExecutionContext)
+                        .toString()
+        );
+    }
+
+    @Test
+    public void testStaticInterval1() throws Exception {
+        String whereExpression = "timestamp >= '2022-03-23T08:00:00.000000Z' AND timestamp < '2022-03-25T10:00:00.000000Z' AND timestamp > '2022-03-26T19:20:52.792Z'";
+        Assert.assertEquals(
+                "[]",
+                modelOf(whereExpression)
+                        .buildIntervalModel()
+                        .calculateIntervals(sqlExecutionContext)
+                        .toString()
+        );
+    }
+
+    @Test
+    public void testSeeminglyLookingDynamicInterval() throws Exception {
+        // not equivalent to: timestamp >= '2022-03-23T08:00:00.000000Z' AND timestamp < '2022-03-25T10:00:00.000000Z' AND timestamp > '2022-03-26T19:20:52.792Z'
+        // because 'systimestamp' is neither constant/runtime-constant, so the latter AND is not intrinsic and thus is out of the intervals model
+        String whereExpression = "timestamp >= '2022-03-23T08:00:00.000000Z' AND timestamp < '2022-03-25T10:00:00.000000Z' AND timestamp > dateadd('d', -10, systimestamp())";
+        currentMicros = 1649186452792000L; // '2022-04-05T19:20:52.792Z'
+        LongList intervals = modelOf(whereExpression).buildIntervalModel().calculateIntervals(sqlExecutionContext);
+        Assert.assertEquals("[1648022400000000,1648202399999999]", intervals.toString());
+    }
+
+    @Test
+    public void testDynamicIntervalRuntimeConstant0() throws Exception {
+        String whereExpression = "timestamp >= '2022-03-23T08:00:00.000000Z' AND timestamp < '2022-03-25T10:00:00.000000Z' AND timestamp > dateadd('d', -10, '2022-04-05T19:20:52.792Z')";
+        LongList intervals = modelOf(whereExpression).buildIntervalModel().calculateIntervals(sqlExecutionContext);
+        Assert.assertEquals("[]", intervals.toString());
     }
 
     private void assertFilter(IntrinsicModel m, CharSequence expected) throws SqlException {

@@ -24,16 +24,14 @@
 
 package io.questdb.griffin.model;
 
-public final class IntervalOperation {
-    public static final short NONE = 0;
+public final class PeriodType {
+    public static final char NONE = (char) 0;
 
-    public static final short INTERSECT = 1;
-    public static final short INTERSECT_BETWEEN = 3;
-    public static final short INTERSECT_INTERVALS = 4;
+    public static final char YEAR = 'y';
+    public static final char MONTH = 'M';
+    public static final char HOUR = 'h';
+    public static final char MINUTE = 'm';
+    public static final char SECOND = 's';
+    public static final char DAY = 'd';
 
-    public static final short NEGATED_BORDERLINE = 4;
-
-    public static final short SUBTRACT = 5;
-    public static final short SUBTRACT_BETWEEN = 6;
-    public static final short SUBSTRACT_INTERVALS = 7;
 }

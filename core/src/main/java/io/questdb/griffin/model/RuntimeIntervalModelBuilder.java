@@ -170,7 +170,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void subtractRuntimeInterval(Function intervalStrFunction) {
         if (isEmptySet()) return;
-        IntervalUtils.addHiLoInterval(0L, 0L, IntervalOperation.SUBTRACT_INTERVALS, staticIntervals);
+        IntervalUtils.addHiLoInterval(0L, 0L, IntervalOperation.SUBSTRACT_INTERVALS, staticIntervals);
         dynamicRangeList.add(intervalStrFunction);
         intervalApplied = true;
     }
