@@ -67,8 +67,7 @@ public class LatestByTest extends AbstractGriffinTest {
             ff = new FilesFacadeImpl() {
                 @Override
                 public long openRO(LPSZ name) {
-                    // Query should not scan the first partition
-                    // all the latest values are in the second, third partition
+                    // Query should not scan any partition, searched symbol values don't exist in symbol table
                     if (Chars.contains(name, "1970-01-01") || Chars.contains(name, "1970-01-02")) {
                         return -1;
                     }
