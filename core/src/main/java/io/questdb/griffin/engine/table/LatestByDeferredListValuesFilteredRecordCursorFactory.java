@@ -34,11 +34,15 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+/**
+ * Iterates table backwards and finds latest values by single symbol column.
+ * When the LATEST BY is applied to symbol column QuestDB knows all distinct symbol values
+ * and in many cases can stop before scanning all the data when it finds all the expected values
+ */
 public class LatestByDeferredListValuesFilteredRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
     private final ObjList<Function> symbolFunctions;
     private final Function filter;
     private final LatestByValueListRecordCursor cursor;
-    private final IntHashSet symbolKeys;
     private final int frameSymbolIndex;
 
     public LatestByDeferredListValuesFilteredRecordCursorFactory(
@@ -46,16 +50,15 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
-            ObjList<Function> symbolFunctions,
+            @Nullable ObjList<Function> symbolFunctions,
             @Nullable Function filter,
             @NotNull IntList columnIndexes
     ) {
         super(metadata, dataFrameCursorFactory);
         this.symbolFunctions = symbolFunctions;
         this.filter = filter;
-        this.symbolKeys = symbolFunctions != null ? new IntHashSet() : null;
         this.frameSymbolIndex = columnIndexes.getQuick(columnIndex);
-        this.cursor = new LatestByValueListRecordCursor(columnIndex, filter, symbolKeys, columnIndexes, configuration.getDefaultSymbolCapacity());
+        this.cursor = new LatestByValueListRecordCursor(columnIndex, filter, columnIndexes, configuration.getDefaultSymbolCapacity(), symbolFunctions != null);
     }
 
     public LatestByDeferredListValuesFilteredRecordCursorFactory(
@@ -94,8 +97,13 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
     }
 
     private void lookupDeferredSymbol(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        // If symbol values are restricted by a list in the qyert by syntax
+        // sym in ('val1', 'val2', 'val3')
+        // or similar we need to resolve string values into int symbol keys to search the table faster.
+        // Resolve values to int keys and save them in cursor.getSymbolKeys() set.
         if (symbolFunctions != null) {
             // Re-evaluate symbol key resolution if not all known already
+            IntHashSet symbolKeys = cursor.getSymbolKeys();
             if (symbolKeys.size() < symbolFunctions.size()) {
                 symbolKeys.clear();
                 StaticSymbolTable symbolMapReader = dataFrameCursor.getSymbolTable(frameSymbolIndex);

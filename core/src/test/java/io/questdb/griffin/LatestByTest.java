@@ -24,10 +24,14 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.StringSink;
 import org.junit.Test;
 
 public class LatestByTest extends AbstractGriffinTest {
@@ -87,6 +91,50 @@ public class LatestByTest extends AbstractGriffinTest {
                     "t where s in ('a', 'b') latest on ts partition by s",
                     "ts",
                     true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testLatestBySymbolManyDistinctValues() throws Exception {
+        assertMemoryLeak(() -> {
+            ff = new FilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    // Query should not scan the first partition
+                    // all the latest values are in other partitions
+                    if (Chars.contains(name, "1970-01-01")) {
+                        return -1;
+                    }
+                    return Files.openRO(name);
+                }
+            };
+
+            compile("create table t as (" +
+                    "select " +
+                    "x, " +
+                    "rnd_symbol(10000, 1, 15, 1000) s, " +
+                    "timestamp_sequence(0, 1000*1000L) ts " +
+                    "from long_sequence(1000000)" +
+                    ") timestamp(ts) Partition by DAY");
+
+            assertQuery("min\tmax\n" +
+                            "1970-01-11T15:33:16.000000Z\t1970-01-12T13:46:39.000000Z\n",
+                    "select min(ts), max(ts) from (select ts, x, s from t latest on ts partition by s)",
+                    null,
+                    false,
+                    true);
+
+            assertQuery("min\tmax\n" +
+                            "1970-01-11T20:55:39.000000Z\t1970-01-12T13:46:34.000000Z\n",
+                    "select min(ts), max(ts) from (" +
+                            "select ts, x, s " +
+                            "from t " +
+                            "where s in (" + selectDistinctSym("t", 500, "s") + ") " +
+                            "latest on ts partition by s" +
+                            ")",
+                    null,
+                    false,
                     true);
         });
     }
@@ -248,38 +296,6 @@ public class LatestByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestBySymbolUnfilteredManyDistinctValues() throws Exception {
-        assertMemoryLeak(() -> {
-            ff = new FilesFacadeImpl() {
-                @Override
-                public long openRO(LPSZ name) {
-                    // Query should not scan the first partition
-                    // all the latest values are in other partitions
-                    if (Chars.contains(name, "1970-01-01")) {
-                        return -1;
-                    }
-                    return Files.openRO(name);
-                }
-            };
-
-            compile("create table t as (" +
-                    "select " +
-                    "x, " +
-                    "rnd_symbol(10000, 1, 15, 1000) s, " +
-                    "timestamp_sequence(0, 1000*1000L) ts " +
-                    "from long_sequence(1000000)" +
-                    ") timestamp(ts) Partition by DAY");
-
-            assertQuery("min\tmax\n" +
-                            "1970-01-11T15:33:16.000000Z\t1970-01-12T13:46:39.000000Z\n",
-                    "select min(ts), max(ts) from (select ts, x, s from t latest on ts partition by s)",
-                    null,
-                    false,
-                    true);
-        });
-    }
-
-    @Test
     public void testLatestWithNullInSymbolFilterDoesNotDoFullScan() throws Exception {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
@@ -344,5 +360,22 @@ public class LatestByTest extends AbstractGriffinTest {
                     true,
                     true);
         });
+    }
+
+    private String selectDistinctSym(String table, int count, String columnName) throws SqlException {
+        StringSink sink = new StringSink();
+        try (RecordCursorFactory factory = compiler.compile("select distinct " + columnName + " from " + table + " limit " + count, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                final Record record = cursor.getRecord();
+                int i = 0;
+                while (cursor.hasNext()) {
+                    if (i++ > 0) {
+                        sink.put(',');
+                    }
+                    sink.put('\'').put(record.getSym(0)).put('\'');
+                }
+            }
+        }
+        return sink.toString();
     }
 }

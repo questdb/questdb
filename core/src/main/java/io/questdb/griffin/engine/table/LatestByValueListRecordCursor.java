@@ -41,15 +41,19 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
     private final Function filter;
     private IntHashSet foundKeys;
     private IntHashSet symbolKeys;
+    private final boolean restrictedByValues;
     private DirectLongList rowIds;
     private int currentRow;
 
-    public LatestByValueListRecordCursor(int columnIndex, @Nullable Function filter, IntHashSet symbolKeys, @NotNull IntList columnIndexes, int shrinkToCapacity) {
+    public LatestByValueListRecordCursor(int columnIndex, @Nullable Function filter, @NotNull IntList columnIndexes, int shrinkToCapacity, boolean restrictedByValues) {
         super(columnIndexes);
         this.shrinkToCapacity = shrinkToCapacity;
         this.columnIndex = columnIndex;
         this.filter = filter;
-        this.symbolKeys = symbolKeys;
+        this.restrictedByValues = restrictedByValues;
+        if (restrictedByValues) {
+            this.symbolKeys = new IntHashSet(shrinkToCapacity);
+        }
         this.foundKeys = new IntHashSet(shrinkToCapacity);
         this.rowIds = new DirectLongList(shrinkToCapacity, MemoryTag.NATIVE_LONG_LIST);
     }
@@ -61,9 +65,9 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
             rowIds = Misc.free(rowIds);
             rowIds = new DirectLongList(shrinkToCapacity, MemoryTag.NATIVE_LONG_LIST);
             foundKeys = new IntHashSet(shrinkToCapacity);
-            if (symbolKeys != null) {
-                symbolKeys = new IntHashSet(shrinkToCapacity);
-            }
+            // symbolKeys is unlikely to take too much memory
+            // because every value is associated with a value from `in (...)` WHERE filter and
+            // the list of parsed functions is of bigger size than symbolKeys hash set.
         }
     }
 
@@ -80,7 +84,7 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
         // return then row by row in ascending timestamp order
         // since most of the time factory is supposed to return in ASC timestamp order
         // It can be optimised later on to not buffer row IDs and return in desc order.
-        if (symbolKeys != null) {
+        if (restrictedByValues) {
             if (symbolKeys.size() > 0) {
                 // Find only restricted set of symbol keys
                 rowIds.extend(symbolKeys.size());
@@ -112,6 +116,10 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
             }
         }
         toTop();
+    }
+
+    IntHashSet getSymbolKeys() {
+        return symbolKeys;
     }
 
     public void destroy() {
