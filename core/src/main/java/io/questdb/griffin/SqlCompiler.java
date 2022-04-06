@@ -1010,10 +1010,6 @@ public class SqlCompiler implements Closeable {
 
         return lexer.getPosition();
     }
-
-    private boolean isSemicolon(CharSequence token) {
-        return Chars.equals(token, ';');
-    }    
     
     public void filterPartitions(
             Function function,

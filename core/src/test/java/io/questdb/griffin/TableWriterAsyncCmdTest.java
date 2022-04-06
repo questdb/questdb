@@ -423,7 +423,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     @Test
     public void testCommandQueueBufferOverflow() throws Exception {
         long tmpWriterCommandQueueSlotSize = writerCommandQueueSlotSize;
-        writerCommandQueueSlotSize = 4;
+        writerCommandQueueSlotSize = 4L;
         assertMemoryLeak(() -> {
             compile("create table product (timestamp timestamp)", sqlExecutionContext);
 

@@ -1088,7 +1088,7 @@ public final class SqlParser {
                 if (isCalendarKeyword(tok)) {
                     tok = optTok(lexer);
 
-                    if (tok != null) {
+                    if (tok != null && !isSemicolon(tok)) {
                         if (isTimeKeyword(tok)) {
                             expectZone(lexer);
                             model.setSampleByTimezoneName(expectExpr(lexer));
