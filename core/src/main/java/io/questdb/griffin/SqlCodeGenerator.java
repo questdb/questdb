@@ -1204,6 +1204,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (nKeyValues > 1) {
                 return new LatestByDeferredListValuesFilteredRecordCursorFactory(
+                        configuration,
                         metadata,
                         dataFrameCursorFactory,
                         latestByIndex,
@@ -1254,6 +1255,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             );
         } else {
             return new LatestByDeferredListValuesFilteredRecordCursorFactory(
+                    configuration,
                     metadata,
                     dataFrameCursorFactory,
                     latestByIndex,
@@ -3035,6 +3037,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         && myMeta.isSymbolTableStatic(latestByColumnIndex)) {
                     // we have "latest by" symbol column values, but no index
                     return new LatestByDeferredListValuesFilteredRecordCursorFactory(
+                            configuration,
                             myMeta,
                             new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()),
                             latestByColumnIndex,

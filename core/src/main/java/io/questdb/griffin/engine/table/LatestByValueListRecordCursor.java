@@ -36,39 +36,103 @@ import org.jetbrains.annotations.Nullable;
 
 class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
 
+    private final int shrinkToCapacity;
     private final int columnIndex;
     private final Function filter;
-    private final IntHashSet foundKeys;
-    private final IntHashSet symbolKeys;
-    private final LongList rowIds = new LongList();
+    private IntHashSet foundKeys;
+    private IntHashSet symbolKeys;
+    private DirectLongList rowIds;
     private int currentRow;
 
-    public LatestByValueListRecordCursor(int columnIndex, @Nullable Function filter, IntHashSet symbolKeys, @NotNull IntList columnIndexes) {
+    public LatestByValueListRecordCursor(int columnIndex, @Nullable Function filter, IntHashSet symbolKeys, @NotNull IntList columnIndexes, int shrinkToCapacity) {
         super(columnIndexes);
+        this.shrinkToCapacity = shrinkToCapacity;
         this.columnIndex = columnIndex;
         this.filter = filter;
         this.symbolKeys = symbolKeys;
-        this.foundKeys = new IntHashSet();
+        this.foundKeys = new IntHashSet(shrinkToCapacity);
+        this.rowIds = new DirectLongList(shrinkToCapacity, MemoryTag.NATIVE_LONG_LIST);
     }
 
     @Override
-    public boolean hasNext() {
-        if (currentRow-- > 0) {
-            long rowId = rowIds.getQuick(currentRow);
-            recordAt(recordA, rowId);
-            return true;
+    public void close() {
+        super.close();
+        if (rowIds.size() > shrinkToCapacity) {
+            rowIds = Misc.free(rowIds);
+            rowIds = new DirectLongList(shrinkToCapacity, MemoryTag.NATIVE_LONG_LIST);
+            foundKeys = new IntHashSet(shrinkToCapacity);
+            if (symbolKeys != null) {
+                symbolKeys = new IntHashSet(shrinkToCapacity);
+            }
         }
-        return false;
     }
 
     @Override
-    public void toTop() {
-        currentRow = rowIds.size();
+    void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        this.dataFrameCursor = dataFrameCursor;
+        this.recordA.of(dataFrameCursor.getTableReader());
+        this.recordB.of(dataFrameCursor.getTableReader());
+        dataFrameCursor.toTop();
+        foundKeys.clear();
+        rowIds.clear();
+
+        // Find all record IDs and save in rowIds in descending order
+        // return then row by row in ascending timestamp order
+        // since most of the time factory is supposed to return in ASC timestamp order
+        // It can be optimised later on to not buffer row IDs and return in desc order.
+        if (symbolKeys != null) {
+            if (symbolKeys.size() > 0) {
+                // Find only restricted set of symbol keys
+                rowIds.extend(symbolKeys.size());
+                if (filter != null) {
+                    filter.init(this, executionContext);
+                    filter.toTop();
+                    findRestrictedWithFilter(filter, symbolKeys);
+                } else {
+                    findRestrictedNoFilter(symbolKeys);
+                }
+            }
+        } else {
+            // Find latest by all distinct symbol values
+            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
+            int distinctSymbols = symbolTable.getSymbolCount();
+            if (symbolTable.containsNullValue()) {
+                distinctSymbols++;
+            }
+
+            rowIds.extend(distinctSymbols);
+            if (distinctSymbols > 0) {
+                if (filter != null) {
+                    filter.init(this, executionContext);
+                    filter.toTop();
+                    findAllWithFilter(filter, distinctSymbols);
+                } else {
+                    findAllNoFilter(distinctSymbols);
+                }
+            }
+        }
+        toTop();
+    }
+
+    public void destroy() {
+        // After close() the instance is designed to be re-usable.
+        // Destroy makes it non-reusable
+        rowIds = Misc.free(rowIds);
     }
 
     @Override
     public long size() {
         return rowIds.size();
+    }
+
+    @Override
+    public boolean hasNext() {
+        if (currentRow-- > 0) {
+            long rowId = rowIds.get(currentRow);
+            recordAt(recordA, rowId);
+            return true;
+        }
+        return false;
     }
 
     private void findAllNoFilter(int distinctCount) {
@@ -162,47 +226,7 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
-    void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        this.dataFrameCursor = dataFrameCursor;
-        this.recordA.of(dataFrameCursor.getTableReader());
-        this.recordB.of(dataFrameCursor.getTableReader());
-        dataFrameCursor.toTop();
-        foundKeys.clear();
-        rowIds.clear();
-
-        // Find all record IDs and save in rowIds in descending order
-        // return then row by row in ascending timestamp order
-        // since most of the time factory is supposed to return in ASC timestamp order
-        // It can be optimised later on to not buffer row IDs and return in desc order.
-        if (symbolKeys != null) {
-            if (symbolKeys.size() > 0) {
-                // Find only restricted set of symbol keys
-                if (filter != null) {
-                    filter.init(this, executionContext);
-                    filter.toTop();
-                    findRestrictedWithFilter(filter, symbolKeys);
-                } else {
-                    findRestrictedNoFilter(symbolKeys);
-                }
-            }
-        } else {
-            // Find latest by all distinct symbol values
-            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
-            int distinctSymbols = symbolTable.getSymbolCount();
-            if (symbolTable.containsNullValue()) {
-                distinctSymbols++;
-            }
-
-            if (distinctSymbols > 0) {
-                if (filter != null) {
-                    filter.init(this, executionContext);
-                    filter.toTop();
-                    findAllWithFilter(filter, distinctSymbols);
-                } else {
-                    findAllNoFilter(distinctSymbols);
-                }
-            }
-        }
-        toTop();
+    public void toTop() {
+        currentRow = (int) rowIds.size();
     }
 }

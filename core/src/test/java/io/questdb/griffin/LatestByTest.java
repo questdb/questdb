@@ -248,6 +248,71 @@ public class LatestByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestBySymbolUnfilteredManyDistinctValues() throws Exception {
+        assertMemoryLeak(() -> {
+            ff = new FilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    // Query should not scan the first partition
+                    // all the latest values are in other partitions
+                    if (Chars.contains(name, "1970-01-01")) {
+                        return -1;
+                    }
+                    return Files.openRO(name);
+                }
+            };
+
+            compile("create table t as (" +
+                    "select " +
+                    "x, " +
+                    "rnd_symbol(10000, 1, 15, 1000) s, " +
+                    "timestamp_sequence(0, 1000*1000L) ts " +
+                    "from long_sequence(1000000)" +
+                    ") timestamp(ts) Partition by DAY");
+
+            assertQuery("min\tmax\n" +
+                            "1970-01-11T15:33:16.000000Z\t1970-01-12T13:46:39.000000Z\n",
+                    "select min(ts), max(ts) from (select ts, x, s from t latest on ts partition by s)",
+                    null,
+                    false,
+                    true);
+        });
+    }
+
+    @Test
+    public void testLatestWithNullInSymbolFilterDoesNotDoFullScan() throws Exception {
+        assertMemoryLeak(() -> {
+            ff = new FilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    // Query should not scan the first partition
+                    // all the latest values are in the second, third partition
+                    if (Chars.contains(name, "1970-01-01")) {
+                        return -1;
+                    }
+                    return Files.openRO(name);
+                }
+            };
+
+            compile("create table t as (" +
+                    "select " +
+                    "x, " +
+                    "rnd_symbol('a', 'b', null) s, " +
+                    "timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                    "from long_sequence(49)" +
+                    ") timestamp(ts) Partition by DAY");
+
+            assertQuery("x\ts\tts\n" +
+                            "48\ta\t1970-01-02T23:00:00.000000Z\n" +
+                            "49\t\t1970-01-03T00:00:00.000000Z\n",
+                    "t where s in ('a', null) latest on ts partition by s",
+                    "ts",
+                    true,
+                    true);
+        });
+    }
+
+    @Test
     public void testLatestWithoutSymbolFilterDoesNotDoFullScan() throws Exception {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {

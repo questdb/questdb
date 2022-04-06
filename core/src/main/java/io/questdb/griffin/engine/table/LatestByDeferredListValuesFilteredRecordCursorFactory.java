@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -41,6 +42,7 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
     private final int frameSymbolIndex;
 
     public LatestByDeferredListValuesFilteredRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
@@ -53,11 +55,18 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
         this.filter = filter;
         this.symbolKeys = symbolFunctions != null ? new IntHashSet() : null;
         this.frameSymbolIndex = columnIndexes.getQuick(columnIndex);
-        this.cursor = new LatestByValueListRecordCursor(columnIndex, filter, symbolKeys, columnIndexes);
+        this.cursor = new LatestByValueListRecordCursor(columnIndex, filter, symbolKeys, columnIndexes, configuration.getDefaultSymbolCapacity());
     }
 
-    public LatestByDeferredListValuesFilteredRecordCursorFactory(RecordMetadata metadata, DataFrameCursorFactory dataFrameCursorFactory, int latestByIndex, Function filter, IntList columnIndexes) {
-        this(metadata, dataFrameCursorFactory, latestByIndex, null, filter, columnIndexes);
+    public LatestByDeferredListValuesFilteredRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
+            RecordMetadata metadata,
+            DataFrameCursorFactory dataFrameCursorFactory,
+            int latestByIndex,
+            Function filter,
+            IntList columnIndexes
+    ) {
+        this(configuration, metadata, dataFrameCursorFactory, latestByIndex, null, filter, columnIndexes);
     }
 
     @Override
@@ -66,6 +75,7 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
         if (filter != null) {
             filter.close();
         }
+        this.cursor.destroy();
     }
 
     @Override
