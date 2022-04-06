@@ -237,6 +237,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerDataIndexValueAppendPageSize;
     private final long writerAsyncCommandBusyWaitTimeout;
     private final int writerAsyncCommandQueueCapacity;
+    private final long writerAsyncCommandQueueSlotSize;
     private final int writerTickRowsCountMod;
     private final long writerAsyncCommandMaxWaitTimeout;
     private final int o3PartitionPurgeListCapacity;
@@ -876,6 +877,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.writerAsyncCommandMaxWaitTimeout = getLong(properties, env, "cairo.writer.alter.max.wait.timeout.micro", 30_000_000L);
             this.writerTickRowsCountMod = Numbers.ceilPow2(getInt(properties, env, "cairo.writer.tick.rows.count", 1024)) - 1;
             this.writerAsyncCommandQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.writer.command.queue.capacity", 32));
+            this.writerAsyncCommandQueueSlotSize = Numbers.ceilPow2(getLongSize(properties, env, "cairo.writer.command.queue.slot.size", 2048));
 
             this.buildInformation = buildInformation;
             this.binaryEncodingMaxLength = getInt(properties, env, "binarydata.encoding.maxlength", 32768);
@@ -2190,6 +2192,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWriterCommandQueueCapacity() {
             return writerAsyncCommandQueueCapacity;
+        }
+
+        @Override
+        public long getWriterCommandQueueSlotSize() {
+            return writerAsyncCommandQueueSlotSize;
         }
 
         @Override
