@@ -871,7 +871,14 @@ public class UpdateTest extends AbstractGriffinTest {
                     " cast(x as int) x" +
                     " from long_sequence(5))", sqlExecutionContext);
 
-            executeUpdateFails("UPDATE up SET ts = 1", 7, "UPDATE query can only be executed on tables with designated timestamp");
+            executeUpdate("UPDATE up SET x = 12");
+
+            assertSql("up", "ts\tx\n" +
+                    "1970-01-01T00:00:00.000000Z\t12\n" +
+                    "1970-01-01T00:00:01.000000Z\t12\n" +
+                    "1970-01-01T00:00:02.000000Z\t12\n" +
+                    "1970-01-01T00:00:03.000000Z\t12\n" +
+                    "1970-01-01T00:00:04.000000Z\t12\n");
         });
     }
 

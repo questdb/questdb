@@ -1919,10 +1919,6 @@ class SqlOptimiser {
         ) {
             TableReaderMetadata metadata = r.getMetadata();
             int timestampIndex = metadata.getTimestampIndex();
-            if (timestampIndex < 0) {
-                // could we support this?
-                throw SqlException.$(updateQueryModel.getModelPosition(), "UPDATE query can only be executed on tables with designated timestamp");
-            }
 
             tempList.clear(metadata.getColumnCount());
             tempList.setPos(metadata.getColumnCount());

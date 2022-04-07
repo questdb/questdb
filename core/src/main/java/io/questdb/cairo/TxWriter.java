@@ -363,8 +363,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     private int calculateWriteSize() {
-        // If by any action data is reset, clear attachedPartitions
-        if (maxTimestamp == Long.MIN_VALUE) {
+        // If by any action data is reset and table is partitioned, clear attachedPartitions
+        if (maxTimestamp == Long.MIN_VALUE && PartitionBy.isPartitioned(partitionBy)) {
             attachedPartitions.clear();
         }
         return calculateTxRecordSize(symbolColumnCount * 8, attachedPartitions.size() * 8);
@@ -482,8 +482,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     private void saveAttachedPartitionsToTx(int symbolColumnCount) {
-        // change partition count only when we have something to save to the
-        // partition table
+        // change partition count only when we have something to save to the partition table
         if (maxTimestamp != Long.MIN_VALUE) {
             final int size = attachedPartitions.size();
             final long partitionTableOffset = getPartitionTableSizeOffset(symbolColumnCount);
@@ -532,7 +531,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    void updatePartitionSizeByIndexAndTxn(int index, long partitionSize) {
+    void updatePartitionSizeAndTxnByIndex(int index, long partitionSize) {
         recordStructureVersion++;
         attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
         attachedPartitions.set(index + PARTITION_NAME_TX_OFFSET, txn);

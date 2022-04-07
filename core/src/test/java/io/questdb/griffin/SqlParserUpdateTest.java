@@ -56,19 +56,6 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testUpdateNonPartitionedTableFails() throws Exception {
-        assertSyntaxError(
-                "update tblx set x = 1",
-                7,
-                "UPDATE query can only be executed on tables with designated timestamp",
-                modelOf("tblx")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("x", ColumnType.INT)
-                        .col("s", ColumnType.SYMBOL)
-        );
-    }
-
-    @Test
     public void testUpdateNoSetFails() throws Exception {
         assertSyntaxError(
                 "update tblx x = 1",
@@ -79,19 +66,6 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
                         .col("x", ColumnType.INT)
                         .col("s", ColumnType.SYMBOL)
                         .timestamp("tt")
-        );
-    }
-
-    @Test
-    public void testUpdateNoTimestampFails() throws Exception {
-        assertSyntaxError(
-                "update tblx set x = 1",
-                7,
-                "PDATE query can only be executed on tables with designated timestamp",
-                partitionedModelOf("tblx")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("x", ColumnType.INT)
-                        .col("s", ColumnType.SYMBOL)
         );
     }
 

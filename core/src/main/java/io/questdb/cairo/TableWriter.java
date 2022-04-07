@@ -3315,7 +3315,7 @@ public class TableWriter implements Closeable {
                     .$("merged partition [table=`").utf8(tableName)
                     .$("`, ts=").$ts(partitionTimestamp)
                     .$(", txn=").$(txWriter.txn).$(']').$();
-            txWriter.updatePartitionSizeByIndexAndTxn(partitionIndex, partitionSize);
+            txWriter.updatePartitionSizeAndTxnByIndex(partitionIndex, partitionSize);
             o3PartitionRemoveCandidates.add(partitionTimestamp, srcDataTxn);
             txWriter.bumpPartitionTableVersion();
         } else {
