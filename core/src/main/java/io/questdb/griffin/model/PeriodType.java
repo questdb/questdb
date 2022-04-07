@@ -33,5 +33,4 @@ public final class PeriodType {
     public static final char MINUTE = 'm';
     public static final char SECOND = 's';
     public static final char DAY = 'd';
-
 }

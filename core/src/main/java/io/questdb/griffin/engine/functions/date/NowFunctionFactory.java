@@ -26,9 +26,11 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -46,7 +48,26 @@ public class NowFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        sqlExecutionContext.initNow(); // idempotent call
-        return new TimestampConstant(sqlExecutionContext.getNow());
+        return new Func();
+    }
+
+    private static class Func extends TimestampFunction implements Function {
+        private SqlExecutionContext context;
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return context.getNow();
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            executionContext.initNow();
+            context = executionContext;
+        }
+
+        @Override
+        public boolean isRuntimeConstant() {
+            return true;
+        }
     }
 }

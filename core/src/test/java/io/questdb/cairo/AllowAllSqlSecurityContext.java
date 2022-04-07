@@ -118,10 +118,6 @@ public final class AllowAllSqlSecurityContext {
         }
 
         @Override
-        public void clearNow() {
-        }
-
-        @Override
         public long getNow() {
             return 0;
         }

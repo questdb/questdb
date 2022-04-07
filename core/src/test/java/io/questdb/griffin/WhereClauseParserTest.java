@@ -248,12 +248,12 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testBadOperators() {
-        testBadOperator(">","too few arguments for '>' [found=1,expected=2]");
-        testBadOperator(">=","too few arguments for '>=' [found=1,expected=2]");
-        testBadOperator("<","too few arguments for '<' [found=1,expected=2]");
-        testBadOperator("<=","too few arguments for '<=' [found=1,expected=2]");
-        testBadOperator("=","too few arguments for '=' [found=1,expected=2]");
-        testBadOperator("!=","too few arguments for '!=' [found=1,expected=2]");
+        testBadOperator(">", "too few arguments for '>' [found=1,expected=2]");
+        testBadOperator(">=", "too few arguments for '>=' [found=1,expected=2]");
+        testBadOperator("<", "too few arguments for '<' [found=1,expected=2]");
+        testBadOperator("<=", "too few arguments for '<=' [found=1,expected=2]");
+        testBadOperator("=", "too few arguments for '=' [found=1,expected=2]");
+        testBadOperator("!=", "too few arguments for '!=' [found=1,expected=2]");
     }
 
     @Test
@@ -1799,28 +1799,67 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testStaticInterval0() throws Exception {
-        String whereExpression = "timestamp >= '2022-03-23T08:00:00.000000Z' AND timestamp < '2022-03-25T10:00:00.000000Z' AND timestamp > dateadd('d', -10, now())";
-        sqlExecutionContext.clearNow();
-        currentMicros = 1649186452792000L; // '2022-04-05T19:20:52.792Z'
-        Assert.assertEquals(
-                "[]",
-                modelOf(whereExpression)
-                        .buildIntervalModel()
-                        .calculateIntervals(sqlExecutionContext)
-                        .toString()
+    public void testDynamicInterval0() throws Exception {
+        andShuffleExpressionsTest(
+                new String[]{
+                        "timestamp >= '2022-03-23T08:00:00.000000Z'",
+                        "timestamp < '2022-03-25T10:00:00.000000Z'",
+                        "timestamp > dateadd('d', -10, now())"
+                },
+                "[]"
         );
     }
 
     @Test
-    public void testStaticInterval1() throws Exception {
-        String whereExpression = "timestamp >= '2022-03-23T08:00:00.000000Z' AND timestamp < '2022-03-25T10:00:00.000000Z' AND timestamp > '2022-03-26T19:20:52.792Z'";
-        Assert.assertEquals(
-                "[]",
-                modelOf(whereExpression)
-                        .buildIntervalModel()
-                        .calculateIntervals(sqlExecutionContext)
-                        .toString()
+    public void testDynamicInterval1() throws Exception {
+        andShuffleExpressionsTest(
+                new String[]{
+                        "timestamp >= '2022-03-23T08:00:00.000000Z'",
+                        "timestamp < '2022-03-25T10:00:00.000000Z'",
+                        "timestamp > '2022-03-26T19:20:52.792Z'"
+                },
+                "[]"
+        );
+    }
+
+    @Test
+    public void testDynamicInterval2() throws Exception {
+        andShuffleExpressionsTest(
+                new String[]{
+                        "timestamp >= '2022-03-23T08:00:00.000000Z'",
+                        "timestamp < '2022-03-25T10:00:00.000000Z'",
+                        "timestamp > dateadd('d', -10, '2022-04-05T19:20:52.792Z')"
+                },
+                "[]"
+        );
+    }
+
+    @Test
+    public void testDynamicInterval3() throws Exception {
+        andShuffleExpressionsTest(
+                new String[]{
+                        "timestamp BETWEEN '2022-03-23T08:00:00.000000Z' AND '2022-03-25T10:00:00.000000Z'",
+                        "timestamp NOT IN ('2022-03-25')",
+                        "timestamp != now() - 15",
+                        "timestamp > '2021-01'",
+                        "timestamp < '2022-04'",
+                        "timestamp > '2022-05'"
+                },
+                "[]"
+        );
+    }
+
+    @Test
+    public void testDynamicInterval4() throws Exception {
+        andShuffleExpressionsTest(
+                new String[]{
+                        "timestamp BETWEEN '2022-03-23T08:00:00.000000Z' AND '2022-03-25T10:00:00.000000Z'",
+                        "timestamp NOT IN ('2022-03-25')",
+                        "timestamp != now() - 15",
+                        "timestamp > '2021-01'",
+                        "timestamp < '2022-04'"
+                },
+                "[1648022400000000,1648202400000000]"
         );
     }
 
@@ -1834,11 +1873,37 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         Assert.assertEquals("[1648022400000000,1648202399999999]", intervals.toString());
     }
 
-    @Test
-    public void testDynamicIntervalRuntimeConstant0() throws Exception {
-        String whereExpression = "timestamp >= '2022-03-23T08:00:00.000000Z' AND timestamp < '2022-03-25T10:00:00.000000Z' AND timestamp > dateadd('d', -10, '2022-04-05T19:20:52.792Z')";
-        LongList intervals = modelOf(whereExpression).buildIntervalModel().calculateIntervals(sqlExecutionContext);
-        Assert.assertEquals("[]", intervals.toString());
+    private void andShuffleExpressionsTest(String[] expressions, String expected) throws SqlException {
+        shuffleExpressionsTest(expressions, " AND ", expected, 0);
+    }
+
+    private void shuffleExpressionsTest(String[] expressions, String separator, String expected, int k) throws SqlException {
+        for (int i = k; i < expressions.length; i++) {
+            swap(expressions, i, k);
+            shuffleExpressionsTest(expressions, separator, expected, k + 1);
+            swap(expressions, k, i);
+        }
+        if (k == expressions.length - 1) {
+            sink.clear();
+            for (int j = 0; j < expressions.length; j++) {
+                sink.put(expressions[j]).put(separator);
+            }
+            sink.clear(sink.length() - separator.length());
+            String expression = sink.toString();
+            Assert.assertEquals(
+                    expected,
+                    modelOf(expression)
+                            .buildIntervalModel()
+                            .calculateIntervals(sqlExecutionContext)
+                            .toString()
+            );
+        }
+    }
+
+    private static final void swap(String[] arr, int i, int j) {
+        String tmp = arr[i];
+        arr[i] = arr[j];
+        arr[j] = tmp;
     }
 
     private void assertFilter(IntrinsicModel m, CharSequence expected) throws SqlException {
@@ -1929,7 +1994,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     private IntrinsicModel runWhereIntervalTest0(String where, String expected, SetBindVars bindVars) throws SqlException {
-        sqlExecutionContext.clearNow();
         IntrinsicModel m = modelOf(where);
         if (bindVars != null)
             bindVars.set(bindVariableService);

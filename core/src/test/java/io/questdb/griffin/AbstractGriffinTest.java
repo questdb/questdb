@@ -73,7 +73,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         bindVariableService.clear();
-        sqlExecutionContext.clearNow();
     }
 
     public static void assertReader(String expected, CharSequence tableName) {

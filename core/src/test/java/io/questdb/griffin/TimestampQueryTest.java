@@ -583,7 +583,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1\t2020-12-31T23:59:59.000000Z\n";
 
                 String query1 = "select now() as now1, now() as now2, symbol, timestamp FROM ob_mem_snapshot WHERE now() = now()";
-                printSqlResult(expected, query1, "timestamp", true, true);
+                printSqlResult(expected, query1, "timestamp", true, false);
 
                 expected = "symbol\tme_seq_num\ttimestamp\n" +
                         "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -991,8 +991,12 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             expected = "dts\tnts\n";
             assertTimestampTtQuery(expected, "select * from tt where nts in now()");
 
-            assertTimestampTtFailedQuery("Invalid date", "select * from tt where nts in (now() || 'invalid')");
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where  nts not in (now() || 'invalid')");
+            expected = "dts\tnts\n";
+            assertTimestampTtQuery(expected, "select * from tt where nts in (now() || 'invalid')");
+
+            expected = "min\tmax\n" +
+                    "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where  nts not in (now() || 'invalid')");
         });
     }
 
@@ -1409,7 +1413,6 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 + dates.stream().filter(arr -> filter.test((long) arr[0]))
                 .map(arr -> arr[1] + "\n")
                 .collect(Collectors.joining());
-        sqlExecutionContext.clearNow();
         printSqlResult(expected, query, "ts", null, null, true, true, true, false, queryPlan);
         return (int) expectedCount;
     }
