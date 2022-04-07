@@ -673,6 +673,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getWriterCommandQueueSlotSize() {
+        return 1024;
+    }
+
+    @Override
     public int getWriterTickRowsCountMod() {
         return 1024 - 1;
     }
