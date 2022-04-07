@@ -42,6 +42,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class SqlExecutionContextImpl implements SqlExecutionContext {
+    private static final long NOW_NO_VALUE = -1;
     private final IntStack timestampRequiredStack = new IntStack();
     private final int workerCount;
     private final CairoConfiguration cairoConfiguration;
@@ -56,7 +57,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private Rnd random;
     private long requestFd = -1;
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
-    private long now;
+    private long now = NOW_NO_VALUE;
     private int jitMode;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
@@ -165,7 +166,14 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public void initNow() {
-        now = cairoConfiguration.getMicrosecondClock().getTicks();
+        if (now == NOW_NO_VALUE) {
+            now = cairoConfiguration.getMicrosecondClock().getTicks();
+        }
+    }
+
+    @Override
+    public void clearNow() {
+        now = NOW_NO_VALUE;
     }
 
     @Override

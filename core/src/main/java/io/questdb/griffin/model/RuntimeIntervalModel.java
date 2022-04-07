@@ -122,7 +122,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
 
                 dynamicFunction.init(null, sqlContext);
 
-                if (operation != IntervalOperation.INTERSECT_INTERVALS && operation != IntervalOperation.SUBSTRACT_INTERVALS) {
+                if (operation != IntervalOperation.INTERSECT_INTERVALS && operation != IntervalOperation.SUBTRACT_INTERVALS) {
                     long dynamicValue = getTimestamp(dynamicFunction);
                     long dynamicValue2 = 0;
                     if (dynamicHiLo == IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC) {
@@ -196,7 +196,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                     case IntervalOperation.INTERSECT:
                     case IntervalOperation.INTERSECT_BETWEEN:
                     case IntervalOperation.INTERSECT_INTERVALS:
-                    case IntervalOperation.SUBSTRACT_INTERVALS:
+                    case IntervalOperation.SUBTRACT_INTERVALS:
                         IntervalUtils.intersectInplace(outIntervals, divider);
                         break;
                     case IntervalOperation.SUBTRACT:

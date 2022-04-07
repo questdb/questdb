@@ -83,6 +83,8 @@ public interface SqlExecutionContext extends Closeable {
 
     void initNow();
 
+    void clearNow();
+
     long getNow();
 
     int getJitMode();

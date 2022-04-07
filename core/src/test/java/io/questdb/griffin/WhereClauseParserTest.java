@@ -1801,6 +1801,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testStaticInterval0() throws Exception {
         String whereExpression = "timestamp >= '2022-03-23T08:00:00.000000Z' AND timestamp < '2022-03-25T10:00:00.000000Z' AND timestamp > dateadd('d', -10, now())";
+        sqlExecutionContext.clearNow();
         currentMicros = 1649186452792000L; // '2022-04-05T19:20:52.792Z'
         Assert.assertEquals(
                 "[]",
@@ -1928,6 +1929,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     private IntrinsicModel runWhereIntervalTest0(String where, String expected, SetBindVars bindVars) throws SqlException {
+        sqlExecutionContext.clearNow();
         IntrinsicModel m = modelOf(where);
         if (bindVars != null)
             bindVars.set(bindVariableService);

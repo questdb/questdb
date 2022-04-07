@@ -35,5 +35,5 @@ public final class IntervalOperation {
 
     public static final short SUBTRACT = 5;
     public static final short SUBTRACT_BETWEEN = 6;
-    public static final short SUBSTRACT_INTERVALS = 7;
+    public static final short SUBTRACT_INTERVALS = 7;
 }
