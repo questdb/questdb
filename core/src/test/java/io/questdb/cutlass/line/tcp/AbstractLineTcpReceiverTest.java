@@ -44,7 +44,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
 
-import java.lang.ThreadLocal;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 

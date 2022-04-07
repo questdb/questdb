@@ -35,8 +35,6 @@ import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.*;
 
-import java.lang.ThreadLocal;
-
 import static io.questdb.std.Long256FromCharSequenceDecoder.decode;
 
 public class EqLong256StrFunctionFactory implements FunctionFactory {

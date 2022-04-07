@@ -29,13 +29,12 @@ import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.ThreadLocal;
 
 public class SqlException extends Exception implements Sinkable, FlyweightMessageContainer {
 
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
 
-    private static final ThreadLocal<SqlException> tlException = new ThreadLocal<>(SqlException::new);
+    private static final ThreadLocal<SqlException> tlException = ThreadLocal.withInitial(SqlException::new);
     private final StringSink message = new StringSink();
     private int position;
 

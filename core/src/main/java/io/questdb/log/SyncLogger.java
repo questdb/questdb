@@ -27,7 +27,6 @@ package io.questdb.log;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.network.Net;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -36,7 +35,7 @@ import io.questdb.std.str.StringSink;
 import java.io.File;
 
 public class SyncLogger implements LogRecord, Log {
-    private final static ThreadLocal<StringSink> line = new ThreadLocal<>(StringSink::new);
+    private final static ThreadLocal<StringSink> line = ThreadLocal.withInitial(StringSink::new);
     private final CharSequence name;
     private final RingQueue<LogRecordSink> debugRing;
     private final Sequence debugSeq;

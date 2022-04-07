@@ -42,7 +42,6 @@ import io.questdb.network.IOContextFactory;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
 import io.questdb.network.IORequestProcessor;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import org.jetbrains.annotations.Nullable;
 
@@ -376,7 +375,7 @@ public class HttpServer implements Closeable {
         private boolean closed = false;
 
         public HttpContextFactory(HttpContextConfiguration configuration, Metrics metrics) {
-            this.contextPool = new ThreadLocal<>(() -> new WeakObjectPool<>(() ->
+            this.contextPool = ThreadLocal.withInitial(() -> new WeakObjectPool<>(() ->
                     new HttpConnectionContext(configuration, metrics), configuration.getConnectionPoolInitialCapacity()));
         }
 

@@ -37,7 +37,6 @@ import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.*;
 import io.questdb.std.Misc;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.WeakObjectPool;
 import org.jetbrains.annotations.Nullable;
 
@@ -177,7 +176,7 @@ public class PGWireServer implements Closeable {
         private boolean closed = false;
 
         public PGConnectionContextFactory(CairoEngine engine, PGWireConfiguration configuration, int workerCount) {
-            this.contextPool = new ThreadLocal<>(() -> new WeakObjectPool<>(() ->
+            this.contextPool = ThreadLocal.withInitial(() -> new WeakObjectPool<>(() ->
                     new PGConnectionContext(engine, configuration, getSqlExecutionContext(engine, workerCount)), configuration.getConnectionPoolInitialCapacity()));
         }
 

@@ -24,11 +24,9 @@
 
 package io.questdb.std.str;
 
-import io.questdb.std.ThreadLocal;
-
 public final class SingleCharCharSequence extends AbstractCharSequence {
 
-    private static final ThreadLocal<SingleCharCharSequence> TL_CHAR_SEQUENCE = new ThreadLocal<>(SingleCharCharSequence::new);
+    private static final ThreadLocal<SingleCharCharSequence> TL_CHAR_SEQUENCE = ThreadLocal.withInitial(SingleCharCharSequence::new);
     private char value;
 
     public static CharSequence get(char value) {

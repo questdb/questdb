@@ -24,10 +24,8 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.ThreadLocal;
-
 public class EntryUnavailableException extends CairoException {
-    private static final ThreadLocal<EntryUnavailableException> tlException = new ThreadLocal<>(EntryUnavailableException::new);
+    private static final ThreadLocal<EntryUnavailableException> tlException = ThreadLocal.withInitial(EntryUnavailableException::new);
 
     public static EntryUnavailableException instance(CharSequence reason) {
         EntryUnavailableException ex = tlException.get();

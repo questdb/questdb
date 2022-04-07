@@ -29,7 +29,6 @@ import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.AssociativeCache;
-import io.questdb.std.ThreadLocal;
 
 import java.io.Closeable;
 
@@ -47,7 +46,7 @@ public final class QueryCache implements Closeable {
         final boolean enableQueryCache = configuration.isQueryCacheEnabled();
         final int blockCount = enableQueryCache ? configuration.getQueryCacheBlockCount() : 1;
         final int rowCount = enableQueryCache ? configuration.getQueryCacheRowCount() : 1;
-        TL_QUERY_CACHE = new ThreadLocal<>(() -> new QueryCache(blockCount, rowCount));
+        TL_QUERY_CACHE = ThreadLocal.withInitial(() -> new QueryCache(blockCount, rowCount));
     }
 
     public static QueryCache getInstance() {

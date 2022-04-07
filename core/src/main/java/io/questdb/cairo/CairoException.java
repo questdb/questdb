@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Sinkable;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
@@ -34,7 +33,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
     public static final int METADATA_VALIDATION = -100;
 
-    private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
+    private static final ThreadLocal<CairoException> tlException = ThreadLocal.withInitial(CairoException::new);
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     protected final StringSink message = new StringSink();
     private int errno;

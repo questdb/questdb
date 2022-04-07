@@ -26,12 +26,11 @@ package io.questdb.cutlass.text;
 
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Sinkable;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class TextException extends Exception implements Sinkable, FlyweightMessageContainer {
-    private static final ThreadLocal<TextException> tlException = new ThreadLocal<>(TextException::new);
+    private static final ThreadLocal<TextException> tlException = ThreadLocal.withInitial(TextException::new);
     private final StringSink message = new StringSink();
 
     public static TextException $(CharSequence message) {

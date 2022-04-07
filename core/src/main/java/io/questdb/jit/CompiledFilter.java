@@ -26,13 +26,12 @@ package io.questdb.jit;
 
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.ThreadLocal;
 
 import java.io.Closeable;
 
 public class CompiledFilter implements Closeable {
 
-    private static final ThreadLocal<FiltersCompiler.JitError> tlJitError = new ThreadLocal<>(FiltersCompiler.JitError::new);
+    private static final ThreadLocal<FiltersCompiler.JitError> tlJitError = ThreadLocal.withInitial(FiltersCompiler.JitError::new);
 
     private long fnAddress;
 

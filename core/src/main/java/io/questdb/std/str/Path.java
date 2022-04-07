@@ -24,7 +24,6 @@
 
 package io.questdb.std.str;
 
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
@@ -40,8 +39,8 @@ import java.io.Closeable;
  * </p>
  */
 public class Path extends AbstractCharSink implements Closeable, LPSZ {
-    public static final ThreadLocal<Path> PATH = new ThreadLocal<>(Path::new);
-    public static final ThreadLocal<Path> PATH2 = new ThreadLocal<>(Path::new);
+    public static final ThreadLocal<Path> PATH = ThreadLocal.withInitial(Path::new);
+    public static final ThreadLocal<Path> PATH2 = ThreadLocal.withInitial(Path::new);
     public static final Closeable CLEANER = Path::clearThreadLocals;
     private static final int OVERHEAD = 4;
     private long ptr;

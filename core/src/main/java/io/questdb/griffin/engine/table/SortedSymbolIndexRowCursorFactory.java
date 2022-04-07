@@ -32,12 +32,11 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.ThreadLocal;
 
 import java.util.Comparator;
 
 public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
-    private final static ThreadLocal<SortHelper> TL_SORT_HELPER = new ThreadLocal<>(SortHelper::new);
+    private final static ThreadLocal<SortHelper> TL_SORT_HELPER = ThreadLocal.withInitial(SortHelper::new);
     private final int columnIndex;
     private final int indexDirection;
     private final IntList symbolKeys = new IntList();

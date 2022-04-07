@@ -34,7 +34,6 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.IOContextFactory;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
@@ -145,7 +144,7 @@ public class LineTcpReceiver implements Closeable {
                 factory = () -> new LineTcpAuthConnectionContext(configuration, authDb, scheduler, metrics);
             }
 
-            this.contextPool = new ThreadLocal<>(() -> new WeakObjectPool<>(factory, configuration.getConnectionPoolInitialCapacity()));
+            this.contextPool = ThreadLocal.withInitial(() -> new WeakObjectPool<>(factory, configuration.getConnectionPoolInitialCapacity()));
         }
 
         @Override

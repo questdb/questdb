@@ -28,7 +28,6 @@ import io.questdb.Metrics;
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
 
@@ -39,16 +38,16 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     private static final Log LOG = LogFactory.getLog(LineTcpAuthConnectionContext.class);
     private static final int CHALLENGE_LEN = 512;
     private static final int MIN_BUF_SIZE = CHALLENGE_LEN + 1;
-    private static final ThreadLocal<SecureRandom> tlSrand = new ThreadLocal<>(SecureRandom::new);
+    private static final ThreadLocal<SecureRandom> tlSrand = ThreadLocal.withInitial(SecureRandom::new);
     private final AuthDb authDb;
-    private static final ThreadLocal<Signature> tlSigDER = new ThreadLocal<>(() -> {
+    private static final ThreadLocal<Signature> tlSigDER = ThreadLocal.withInitial(() -> {
         try {
             return Signature.getInstance(AuthDb.SIGNATURE_TYPE_DER);
         } catch (NoSuchAlgorithmException ex) {
             throw new Error(ex);
         }
     });
-    private static final ThreadLocal<Signature> tlSigP1363 = new ThreadLocal<>(() -> {
+    private static final ThreadLocal<Signature> tlSigP1363 = ThreadLocal.withInitial(() -> {
         try {
             return Signature.getInstance(AuthDb.SIGNATURE_TYPE_P1363);
         } catch (NoSuchAlgorithmException ex) {

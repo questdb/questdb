@@ -32,7 +32,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.cast.*;
 import io.questdb.griffin.engine.functions.constants.Constants;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
@@ -40,8 +39,8 @@ public class CaseCommon {
     private static final ObjList<CaseFunctionConstructor> constructors = new ObjList<>();
     private static final LongIntHashMap typeEscalationMap = new LongIntHashMap();
     private static final LongObjHashMap<FunctionFactory> castFactories = new LongObjHashMap<>();
-    private static final ThreadLocal<ObjList<Function>> tlArgs = new ThreadLocal<>(ObjList::new);
-    private static final ThreadLocal<IntList> tlArgPositions = new ThreadLocal<>(IntList::new);
+    private static final ThreadLocal<ObjList<Function>> tlArgs = ThreadLocal.withInitial(ObjList::new);
+    private static final ThreadLocal<IntList> tlArgPositions = ThreadLocal.withInitial(IntList::new);
 
     static {
         // self for all

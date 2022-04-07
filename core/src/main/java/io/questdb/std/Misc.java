@@ -33,8 +33,7 @@ import java.io.IOException;
 public final class Misc {
     public static final String EOL = "\r\n";
     public static final int CACHE_LINE_SIZE = 64;
-    private final static ThreadLocal<StringSink> tlBuilder = new ThreadLocal<>(StringSink::new);
-
+    private final static ThreadLocal<StringSink> tlBuilder = ThreadLocal.withInitial(StringSink::new);
     private Misc() {
     }
 

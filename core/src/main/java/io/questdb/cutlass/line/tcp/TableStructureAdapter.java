@@ -28,7 +28,6 @@ import io.questdb.cairo.*;
 import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.ObjList;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.StringSink;
 
@@ -36,7 +35,7 @@ import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
 
 class TableStructureAdapter implements TableStructure {
     private static final String DEFAULT_TIMESTAMP_FIELD = "timestamp";
-    private final ThreadLocal<StringSink> tempSink = new ThreadLocal<>(StringSink::new);
+    private final ThreadLocal<StringSink> tempSink = ThreadLocal.withInitial(StringSink::new);
     private final LowerCaseCharSequenceHashSet entityNamesUtf16 = new LowerCaseCharSequenceHashSet();
     private final ObjList<LineTcpParser.ProtoEntity> entities = new ObjList<>();
     private final CairoConfiguration cairoConfiguration;

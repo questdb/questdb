@@ -26,12 +26,11 @@ package io.questdb.network;
 
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Sinkable;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class NetworkError extends Error implements Sinkable, FlyweightMessageContainer {
-    private static final ThreadLocal<NetworkError> tlException = new ThreadLocal<>(NetworkError::new);
+    private static final ThreadLocal<NetworkError> tlException = ThreadLocal.withInitial(NetworkError::new);
     private final StringSink message = new StringSink();
     private int errno;
 

@@ -26,12 +26,11 @@ package io.questdb.cutlass.http;
 
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Sinkable;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class HttpException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
-    private static final ThreadLocal<HttpException> tlException = new ThreadLocal<>(HttpException::new);
+    private static final ThreadLocal<HttpException> tlException = ThreadLocal.withInitial(HttpException::new);
     private final StringSink message = new StringSink();
 
     public static HttpException instance(CharSequence message) {

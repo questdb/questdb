@@ -26,12 +26,11 @@ package io.questdb.cutlass.json;
 
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Sinkable;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class JsonException extends Exception implements Sinkable, FlyweightMessageContainer {
-    private static final ThreadLocal<JsonException> tlException = new ThreadLocal<>(JsonException::new);
+    private static final ThreadLocal<JsonException> tlException = ThreadLocal.withInitial(JsonException::new);
     private final StringSink message = new StringSink();
     private int position;
 

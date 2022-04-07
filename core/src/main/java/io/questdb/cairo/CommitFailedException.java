@@ -24,10 +24,8 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.ThreadLocal;
-
 public class CommitFailedException extends Exception {
-    private static final ThreadLocal<CommitFailedException> tlException = new ThreadLocal<>(CommitFailedException::new);
+    private static final ThreadLocal<CommitFailedException> tlException = ThreadLocal.withInitial(CommitFailedException::new);
 
     public static CommitFailedException instance(Throwable reason) {
         CommitFailedException ex = tlException.get();

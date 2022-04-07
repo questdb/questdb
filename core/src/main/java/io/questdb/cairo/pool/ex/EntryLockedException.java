@@ -25,10 +25,9 @@
 package io.questdb.cairo.pool.ex;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.std.ThreadLocal;
 
 public class EntryLockedException extends CairoException {
-    private static final ThreadLocal<EntryLockedException> tlException = new ThreadLocal<>(EntryLockedException::new);
+    private static final ThreadLocal<EntryLockedException> tlException = ThreadLocal.withInitial(EntryLockedException::new);
 
     public static EntryLockedException instance(CharSequence reason) {
         EntryLockedException ex = tlException.get();

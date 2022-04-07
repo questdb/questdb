@@ -24,12 +24,10 @@
 
 package io.questdb.std.str;
 
-import io.questdb.std.ThreadLocal;
-
 public class FileNameExtractorCharSequence extends AbstractCharSequence {
 
     private final static ThreadLocal<FileNameExtractorCharSequence> SINGLETON =
-            new ThreadLocal<>(FileNameExtractorCharSequence::new);
+            ThreadLocal.withInitial(FileNameExtractorCharSequence::new);
 
     private static final char separator;
 

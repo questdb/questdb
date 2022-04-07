@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.mp.SimpleSpinLock;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
@@ -38,7 +37,7 @@ import java.util.concurrent.atomic.LongAdder;
 import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
 public class SumLong256VectorAggregateFunction extends Long256Function implements VectorAggregateFunction {
-    private static final ThreadLocal<Long256Impl> partialSums = new ThreadLocal<>(Long256Impl::new);
+    private static final ThreadLocal<Long256Impl> partialSums = ThreadLocal.withInitial(Long256Impl::new);
     private final SimpleSpinLock lock = new SimpleSpinLock();
     private final Long256Impl sumA = new Long256Impl();
     private final Long256Impl sumB = new Long256Impl();
