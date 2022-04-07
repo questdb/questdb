@@ -145,6 +145,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<CharSequence> updateTableColumnNames = new ObjList<>();
     private QueryModel updateTableModel;
     private String updateTableName;
+    private boolean whereClauseDisableFlag = false;
 
     private QueryModel() {
         joinModels.add(this);
@@ -720,7 +721,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     public ExpressionNode getWhereClause() {
-        return whereClause;
+        return whereClauseDisableFlag ? null : whereClause;
     }
 
     public void setUpdateTableName(String tableName) {
@@ -728,7 +729,26 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     public void setWhereClause(ExpressionNode whereClause) {
-        this.whereClause = whereClause;
+        if (whereClause == null) {
+            // this local hack allows you to restore the state of the filter expression
+            // and reuse the model without copying of it
+            this.whereClauseDisableFlag = true;
+        } else {
+            this.whereClauseDisableFlag = false;
+            this.whereClause = whereClause;
+        }
+    }
+
+    public void resetWhereClauseDisableFlag() {
+        this.whereClauseDisableFlag = false;
+    }
+
+    public void resetWhereClauseDisableFlagAllNested() {
+        QueryModel model = this;
+        while (model != null) {
+            model.resetWhereClauseDisableFlag();
+            model = model.nestedModel;
+        }
     }
 
     public boolean isDistinct() {
@@ -1072,7 +1092,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             }
         }
 
-        if (whereClause != null) {
+        if (getWhereClause() != null) {
             sink.put(" where ");
             whereClause.toSink(sink);
         }
