@@ -25,7 +25,10 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableModel;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
@@ -1908,6 +1911,74 @@ public class PGJobContextTest extends BasePGTest {
     @Test
     public void testGeoHashSelectStr() throws Exception {
         testGeoHashSelect(false, false);
+    }
+
+    @Test
+    public void testReadOnlyMode_disallowDrop() throws Exception {
+        final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
+            @Override
+            public boolean readOnlySecurityContext() {
+                return true;
+            }
+        };
+
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(conf);
+                    final Connection connection = getConnection(false, true);
+                    TableModel src = new TableModel(configuration, "src", PartitionBy.DAY)
+            ) {
+                createPopulateTable(
+                        src.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        1000,
+                        "2020-01-01",
+                        10);
+
+                PreparedStatement preparedStatement = connection.prepareStatement("drop table src");
+                preparedStatement.executeUpdate();
+                fail("DROP must fail in the read-only mode!");
+            } catch (PSQLException e) {
+                assertContains(e.getMessage(), "Write permission denied");
+            }
+        });
+    }
+
+    @Test
+    public void testReadOnlyMode_allowsSelect() throws Exception {
+        final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
+            @Override
+            public boolean readOnlySecurityContext() {
+                return true;
+            }
+        };
+
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(conf);
+                    final Connection connection = getConnection(false, true);
+                    TableModel src = new TableModel(configuration, "src", PartitionBy.DAY)
+            ) {
+                createPopulateTable(
+                        src.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        1000,
+                        "2020-01-01",
+                        10);
+
+                PreparedStatement preparedStatement = connection.prepareStatement("select * from src");
+                ResultSet rs = preparedStatement.executeQuery();
+                int count = 0;
+                while (rs.next()) {
+                    count++;
+                    assertEquals(count, rs.getInt(1));
+                    assertEquals(count, rs.getRow());
+                }
+                assertEquals(1000, count);
+            }
+        });
     }
 
     @Test
