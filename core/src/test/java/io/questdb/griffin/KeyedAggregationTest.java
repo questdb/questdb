@@ -52,11 +52,10 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
 
     @Test
     public void testHourFiltered() throws Exception {
-        assertQuery(
-                "hour\tcount\n" +
-                        "0\t36000\n" +
-                        "1\t36000\n" +
-                        "2\t28000\n",
+        assertQuery("hour\tcount\n" +
+                        "0\t17902\n" +
+                        "1\t17892\n" +
+                        "2\t14056\n",
                 "select hour(ts), count() from tab where val < 0.5",
                 "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_double() val from long_sequence(100000))",
                 null, true, true, true

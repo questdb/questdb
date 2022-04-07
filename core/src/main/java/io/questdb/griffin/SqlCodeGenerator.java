@@ -2233,6 +2233,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (factory == null) {
+                model.resetWhereClauseDisableFlagAllNested();
                 factory = generateSubQuery(model, executionContext);
                 pageFramingSupported = factory.supportPageFrameCursor();
             }
@@ -2328,6 +2329,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // release factory we created unnecessarily
                 Misc.free(factory);
                 // create factory on top level model
+                model.resetWhereClauseDisableFlagAllNested();
                 factory = generateSubQuery(model, executionContext);
                 // and reset metadata
                 metadata = factory.getMetadata();
