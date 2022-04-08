@@ -1548,7 +1548,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     responseAsciiSink.encodeUtf8(queryTag).put(' ').put(rowCount).put((char) 0);
                 }
             } else {
-                LOG.debug().$("now row count").$();
+                LOG.debug().$("no row count").$();
                 responseAsciiSink.encodeUtf8(queryTag).put((char) 0);
             }
             responseAsciiSink.putLen(addr);

@@ -2800,7 +2800,50 @@ nodejs code:
                         "9,3.0,2020-06-01 00:00:12.0\n" +
                         "8,4.0,2020-06-01 00:00:22.0\n" +
                         "7,6.0,2020-06-01 00:00:32.0\n";
-                try (ResultSet resultSet = connection.prepareStatement("select * from x").executeQuery()) {
+                try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expected, sink, resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateBatch() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(true, false)
+            ) {
+                final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts)");
+                statement.execute();
+
+                final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
+                        "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
+                        "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
+                        "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
+                insert1.execute();
+
+                final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5; update x set a=3 where b>2.7; update x set a=2 where b<2.2");
+                int numOfRowsUpdated1 = update1.executeUpdate();
+                assertEquals(2, numOfRowsUpdated1);
+
+                final PreparedStatement insert2 = connection.prepareStatement("insert into x values " +
+                        "(8, 4.0, '2020-06-01T00:00:22'::timestamp)," +
+                        "(10, 6.0, '2020-06-01T00:00:32'::timestamp)");
+                insert2.execute();
+
+                final PreparedStatement update2 = connection.prepareStatement("update x set a=7 where b>5.0; update x set a=6 where a=2");
+                int numOfRowsUpdated2 = update2.executeUpdate();
+                assertEquals(1, numOfRowsUpdated2);
+
+                final String expected = "a[BIGINT],b[DOUBLE],ts[TIMESTAMP]\n" +
+                        "6,2.0,2020-06-01 00:00:02.0\n" +
+                        "9,2.6,2020-06-01 00:00:06.0\n" +
+                        "3,3.0,2020-06-01 00:00:12.0\n" +
+                        "8,4.0,2020-06-01 00:00:22.0\n" +
+                        "7,6.0,2020-06-01 00:00:32.0\n";
+                try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
                     sink.clear();
                     assertResultSet(expected, sink, resultSet);
                 }
@@ -2876,7 +2919,7 @@ nodejs code:
                         "22,112,2022-03-17 00:00:00.0\n" +
                         "23,113,2022-03-17 00:00:00.0\n" +
                         "24,114,2022-03-17 00:00:00.0\n";
-                try (ResultSet resultSet = connection.prepareStatement("select * from x").executeQuery()) {
+                try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
                     sink.clear();
                     assertResultSet(expected, sink, resultSet);
                 }
