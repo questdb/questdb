@@ -1688,6 +1688,64 @@ public class UpdateTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testUpdateAddedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table testUpdateAddedColumn as" +
+                    " (select timestamp_sequence(0, 6*60*60*1000000L) ts," +
+                    " cast(x - 1 as int) x" +
+                    " from long_sequence(10))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            // Bump table version
+            compile("alter table testUpdateAddedColumn add column y long", sqlExecutionContext);
+            executeUpdate("UPDATE testUpdateAddedColumn SET y = x + 1 WHERE ts between '1970-01-01T12' and '1970-01-02T12'");
+
+            assertSql("testUpdateAddedColumn", "ts\tx\ty\n" +
+                    "1970-01-01T00:00:00.000000Z\t0\tNaN\n" +
+                    "1970-01-01T06:00:00.000000Z\t1\tNaN\n" +
+                    "1970-01-01T12:00:00.000000Z\t2\t3\n" +
+                    "1970-01-01T18:00:00.000000Z\t3\t4\n" +
+                    "1970-01-02T00:00:00.000000Z\t4\t5\n" +
+                    "1970-01-02T06:00:00.000000Z\t5\t6\n" +
+                    "1970-01-02T12:00:00.000000Z\t6\t7\n" +
+                    "1970-01-02T18:00:00.000000Z\t7\tNaN\n" +
+                    "1970-01-03T00:00:00.000000Z\t8\tNaN\n" +
+                    "1970-01-03T06:00:00.000000Z\t9\tNaN\n");
+
+            compile("alter table testUpdateAddedColumn drop column y");
+            compile("alter table testUpdateAddedColumn add column y int");
+            executeUpdate("UPDATE testUpdateAddedColumn SET y = COALESCE(y, x + 2) WHERE x%2 = 0");
+
+            assertSql("testUpdateAddedColumn", "ts\tx\ty\n" +
+                    "1970-01-01T00:00:00.000000Z\t0\t2\n" +
+                    "1970-01-01T06:00:00.000000Z\t1\tNaN\n" +
+                    "1970-01-01T12:00:00.000000Z\t2\t4\n" +
+                    "1970-01-01T18:00:00.000000Z\t3\tNaN\n" +
+                    "1970-01-02T00:00:00.000000Z\t4\t6\n" +
+                    "1970-01-02T06:00:00.000000Z\t5\tNaN\n" +
+                    "1970-01-02T12:00:00.000000Z\t6\t8\n" +
+                    "1970-01-02T18:00:00.000000Z\t7\tNaN\n" +
+                    "1970-01-03T00:00:00.000000Z\t8\t10\n" +
+                    "1970-01-03T06:00:00.000000Z\t9\tNaN\n");
+
+            compile("alter table testUpdateAddedColumn drop column x");
+            executeUpdate("UPDATE testUpdateAddedColumn SET y = COALESCE(y, 1)");
+
+            assertSql("testUpdateAddedColumn", "ts\ty\n" +
+                    "1970-01-01T00:00:00.000000Z\t2\n" +
+                    "1970-01-01T06:00:00.000000Z\t1\n" +
+                    "1970-01-01T12:00:00.000000Z\t4\n" +
+                    "1970-01-01T18:00:00.000000Z\t1\n" +
+                    "1970-01-02T00:00:00.000000Z\t6\n" +
+                    "1970-01-02T06:00:00.000000Z\t1\n" +
+                    "1970-01-02T12:00:00.000000Z\t8\n" +
+                    "1970-01-02T18:00:00.000000Z\t1\n" +
+                    "1970-01-03T00:00:00.000000Z\t10\n" +
+                    "1970-01-03T06:00:00.000000Z\t1\n");
+        });
+    }
+
     private void applyUpdate(UpdateStatement updateStatement) throws SqlException, TableStructureChangesException {
         try (TableWriter tableWriter = engine.getWriter(
                 sqlExecutionContext.getCairoSecurityContext(),

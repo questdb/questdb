@@ -572,7 +572,10 @@ public class UpdateExecution implements Closeable {
                 if (forWrite) {
                     long existingVersion = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
                     tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex, columnTop);
-                    cleanupColumnVersions.add(columnIndex, existingVersion, partitionTimestamp, partitionNameTxn);
+                    if (columnTop > -1) {
+                        // columnTop == -1 means column did not exist at the partition
+                        cleanupColumnVersions.add(columnIndex, existingVersion, partitionTimestamp, partitionNameTxn);
+                    }
                 }
 
                 long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
