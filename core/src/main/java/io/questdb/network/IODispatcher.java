@@ -47,6 +47,11 @@ public interface IODispatcher<C extends IOContext> extends Closeable, Job {
     int DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV = 15;
     int DISCONNECT_REASON_TEST = 16;
 
+    /**
+     * Unexpected server error caused connection disconnect (to avoid client working with potentially corrupt server state).
+     */
+    int DISCONNECT_REASON_SERVER_ERROR = 17;
+
     void disconnect(C context, int reason);
 
     int getConnectionCount();

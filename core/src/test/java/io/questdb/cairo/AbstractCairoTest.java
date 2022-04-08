@@ -24,8 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.DefaultTelemetryConfiguration;
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
+import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.DatabaseSnapshotAgent;
@@ -81,6 +83,10 @@ public class AbstractCairoTest {
     public static long writerAsyncCommandBusyWaitTimeout = -1;
     public static long writerAsyncCommandMaxTimeout = -1;
     public static long spinLockTimeoutUs = -1;
+    protected static boolean hideTelemetryTable = false;
+    private static TelemetryConfiguration telemetryConfiguration;
+    protected static int writerCommandQueueCapacity = 4;
+    protected static long writerCommandQueueSlotSize = 2048L;
 
     @BeforeClass
     public static void setUpStatic() {
@@ -94,6 +100,14 @@ public class AbstractCairoTest {
         } catch (IOException e) {
             throw new ExceptionInInitializerError();
         }
+
+        telemetryConfiguration = new DefaultTelemetryConfiguration() {
+            @Override
+            public boolean hideTables() {
+                return hideTelemetryTable;
+            }
+        };
+
         configuration = new DefaultCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
@@ -211,6 +225,21 @@ public class AbstractCairoTest {
             public boolean isSnapshotRecoveryEnabled() {
                 return snapshotRecoveryEnabled == null ? super.isSnapshotRecoveryEnabled() : snapshotRecoveryEnabled;
             }
+
+            @Override
+            public TelemetryConfiguration getTelemetryConfiguration() {
+                return telemetryConfiguration;
+            }
+
+            @Override
+            public int getWriterCommandQueueCapacity() {
+                return writerCommandQueueCapacity;
+            }
+
+            @Override
+            public long getWriterCommandQueueSlotSize() {
+                return writerCommandQueueSlotSize;
+            }
         };
         engine = new CairoEngine(configuration, metrics);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
@@ -251,6 +280,8 @@ public class AbstractCairoTest {
         spinLockTimeoutUs = -1;
         snapshotInstanceId = null;
         snapshotRecoveryEnabled = null;
+        hideTelemetryTable = false;
+        writerCommandQueueCapacity = 4;
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {

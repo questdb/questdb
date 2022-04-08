@@ -1162,7 +1162,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             // NOT Between runtime const evaluating to invalid string
             expected = "min\tmax\n" +
                     "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between to_str(now(), 'yyyy-MM-dd') || '-222' and now()");
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts not between cast((to_str(now(), 'yyyy-MM-dd') || '-222') as timestamp) and now()");
 
             // Between columns
             expected = "min\tmax\n" +
@@ -1187,7 +1187,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
             // between constants
             expected = "min\tmax\n" +
                     "2020-01-01T00:00:00.000000Z\t2020-01-02T00:00:00.000000Z\n";
-            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts = to_str(nts,'yyyy-MM-dd')");
+            assertTimestampTtQuery(expected, "select min(nts), max(nts) from tt where nts = cast( to_str(nts,'yyyy-MM-dd') as timestamp)");
         });
     }
 
@@ -1273,7 +1273,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 "a\tk\n" +
                         "1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\n" +
                         "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\n",
-                "select a, k from x where k < a",
+                "select a, k from x where k < cast(a as timestamp)",
                 "create table x as (select cast(concat('1970-01-01T00:00:00.0', (case when x > 3 then x else x - 1 end), '0000Z') as symbol) a, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)",
                 "k",
                 null,
@@ -1290,7 +1290,7 @@ public class TimestampQueryTest extends AbstractGriffinTest {
                 "a\tdk\tk\n" +
                         "1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\t1970-01-01T00:00:00.030000Z\n" +
                         "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.040000Z\n",
-                "select a, dk, k from x where dk < a",
+                "select a, dk, k from x where dk < cast(a as timestamp)",
                 "create table x as (select cast(concat('1970-01-01T00:00:00.0', (case when x > 3 then x else x - 1 end), '0000Z') as symbol) a, timestamp_sequence(0, 10000) dk, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)",
                 "k",
                 null,

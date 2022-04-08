@@ -1203,13 +1203,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(latestByIndex));
 
             if (nKeyValues > 1) {
-                return new LatestByValuesFilteredRecordCursorFactory(
+                return new LatestByDeferredListValuesFilteredRecordCursorFactory(
                         configuration,
                         metadata,
                         dataFrameCursorFactory,
                         latestByIndex,
                         intrinsicModel.keyValueFuncs,
-                        symbolMapReader,
                         filter,
                         columnIndexes
                 );
@@ -1255,12 +1254,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     prefixes
             );
         } else {
-            return new LatestByAllFilteredRecordCursorFactory(
-                    metadata,
+            return new LatestByDeferredListValuesFilteredRecordCursorFactory(
                     configuration,
+                    metadata,
                     dataFrameCursorFactory,
-                    RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
-                    keyTypes,
+                    latestByIndex,
                     filter,
                     columnIndexes
             );
@@ -3022,15 +3020,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             model.getLatestBy().clear();
 
             // listColumnFilterA = latest by column indexes
-            if (latestByColumnCount == 1 && myMeta.isColumnIndexed(listColumnFilterA.getColumnIndexFactored(0))) {
-                return new LatestByAllIndexedRecordCursorFactory(
-                        myMeta,
-                        configuration,
-                        new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()),
-                        listColumnFilterA.getColumnIndexFactored(0),
-                        columnIndexes,
-                        prefixes
-                );
+            if (latestByColumnCount == 1) {
+                int latestByColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
+                if (myMeta.isColumnIndexed(latestByColumnIndex)) {
+                    return new LatestByAllIndexedRecordCursorFactory(
+                            myMeta,
+                            configuration,
+                            new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()),
+                            listColumnFilterA.getColumnIndexFactored(0),
+                            columnIndexes,
+                            prefixes
+                    );
+                }
+
+                if (ColumnType.isSymbol(myMeta.getColumnType(latestByColumnIndex))
+                        && myMeta.isSymbolTableStatic(latestByColumnIndex)) {
+                    // we have "latest by" symbol column values, but no index
+                    return new LatestByDeferredListValuesFilteredRecordCursorFactory(
+                            configuration,
+                            myMeta,
+                            new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableId(), model.getTableVersion()),
+                            latestByColumnIndex,
+                            null,
+                            columnIndexes
+                    );
+                }
             }
 
             return new LatestByAllFilteredRecordCursorFactory(
@@ -3387,6 +3401,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         sumConstructors.put(ColumnType.DOUBLE, SumDoubleVectorAggregateFunction::new);
         sumConstructors.put(ColumnType.INT, SumIntVectorAggregateFunction::new);
         sumConstructors.put(ColumnType.LONG, SumLongVectorAggregateFunction::new);
+        sumConstructors.put(ColumnType.LONG256, SumLong256VectorAggregateFunction::new);
         sumConstructors.put(ColumnType.DATE, SumDateVectorAggregateFunction::new);
         sumConstructors.put(ColumnType.TIMESTAMP, SumTimestampVectorAggregateFunction::new);
 

@@ -25,6 +25,7 @@
 package io.questdb.cairo.map;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.Long256;
 
 public interface MapValue extends Record {
 
@@ -85,4 +86,8 @@ public interface MapValue extends Record {
     void putTimestamp(int index, long value);
 
     void setMapRecordHere();
+
+    void addLong256(int index, Long256 value);
+
+    void putLong256(int index, Long256 value);
 }

@@ -25,6 +25,7 @@
 package io.questdb.cairo.map;
 
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.std.Long256;
 
 public class CompactMapValue implements MapValue {
 
@@ -208,6 +209,16 @@ public class CompactMapValue implements MapValue {
     @Override
     public void setMapRecordHere() {
         record.of(currentValueOffset);
+    }
+
+    @Override
+    public void addLong256(int index, Long256 value) {
+
+    }
+
+    @Override
+    public void putLong256(int index, Long256 value) {
+
     }
 
     private long getValueColumnOffset(int columnIndex) {

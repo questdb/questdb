@@ -179,6 +179,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean telemetryEnabled;
     private final boolean telemetryDisableCompletely;
     private final int telemetryQueueCapacity;
+    private final boolean telemetryHideTables;
     private final LineTcpReceiverConfiguration lineTcpReceiverConfiguration = new PropLineTcpReceiverConfiguration();
     private final IODispatcherConfiguration lineTcpReceiverDispatcherConfiguration = new PropLineTcpReceiverIODispatcherConfiguration();
     private final boolean lineTcpEnabled;
@@ -236,6 +237,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerDataIndexValueAppendPageSize;
     private final long writerAsyncCommandBusyWaitTimeout;
     private final int writerAsyncCommandQueueCapacity;
+    private final long writerAsyncCommandQueueSlotSize;
     private final int writerTickRowsCountMod;
     private final long writerAsyncCommandMaxWaitTimeout;
     private final int o3PartitionPurgeListCapacity;
@@ -757,6 +759,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.telemetryEnabled = getBoolean(properties, env, "telemetry.enabled", true);
             this.telemetryDisableCompletely = getBoolean(properties, env, "telemetry.disable.completely", false);
             this.telemetryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "telemetry.queue.capacity", 512));
+            this.telemetryHideTables = getBoolean(properties, env, "telemetry.hide.tables", true);
             this.o3PartitionPurgeListCapacity = getInt(properties, env, "cairo.o3.partition.purge.list.initial.capacity", 1);
 
             parseBindTo(properties, env, "line.udp.bind.to", "0.0.0.0:9009", (a, p) -> {
@@ -874,6 +877,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.writerAsyncCommandMaxWaitTimeout = getLong(properties, env, "cairo.writer.alter.max.wait.timeout.micro", 30_000_000L);
             this.writerTickRowsCountMod = Numbers.ceilPow2(getInt(properties, env, "cairo.writer.tick.rows.count", 1024)) - 1;
             this.writerAsyncCommandQueueCapacity = Numbers.ceilPow2(getInt(properties, env, "cairo.writer.command.queue.capacity", 32));
+            this.writerAsyncCommandQueueSlotSize = Numbers.ceilPow2(getLongSize(properties, env, "cairo.writer.command.queue.slot.size", 2048));
 
             this.buildInformation = buildInformation;
             this.binaryEncodingMaxLength = getInt(properties, env, "binarydata.encoding.maxlength", 32768);
@@ -2191,6 +2195,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getWriterCommandQueueSlotSize() {
+            return writerAsyncCommandQueueSlotSize;
+        }
+
+        @Override
         public long getWriterFileOpenOpts() {
             return writerFileOpenOpts;
         }
@@ -2913,6 +2922,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getQueueCapacity() {
             return telemetryQueueCapacity;
+        }
+
+        @Override
+        public boolean hideTables() {
+            return telemetryHideTables;
         }
     }
 

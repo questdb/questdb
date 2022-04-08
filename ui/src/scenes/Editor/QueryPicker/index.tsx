@@ -28,21 +28,21 @@ import { DownArrowSquare } from "@styled-icons/boxicons-solid/DownArrowSquare"
 import { UpArrowSquare } from "@styled-icons/boxicons-solid/UpArrowSquare"
 
 import { Text, useKeyPress } from "components"
-import { QueryShape } from "types"
+import type { Query, QueryGroup } from "types"
 import { color } from "utils"
 
-import Row from "./Row"
+import QueryRow from "./Row"
 import { useEditor } from "../../../providers"
 
 type Props = {
   hidePicker: () => void
-  queries: QueryShape[]
+  queries: Array<Query | QueryGroup>
   ref: Ref<HTMLDivElement>
 }
 
 const Wrapper = styled.div`
   display: flex;
-  max-height: 600px;
+  max-height: 650px;
   width: 600px;
   max-width: 100vw;
   padding: 0.6rem 0;
@@ -51,6 +51,7 @@ const Wrapper = styled.div`
   box-shadow: ${color("black")} 0px 5px 8px;
   border: 1px solid ${color("black")};
   border-radius: 4px;
+  overflow: auto;
 `
 
 const Helper = styled(Text)`
@@ -65,16 +66,71 @@ const Esc = styled(Text)`
   border-radius: 2px;
 `
 
+type QueryListItem =
+  | { type: "query"; id: number; data: Query }
+  | { type: "descriptor"; id: number; data: QueryGroup }
+
+const prepareQueriesList = (queries: Props["queries"]) => {
+  const queue = [...queries]
+  const list: QueryListItem[] = []
+
+  let id = 0
+  while (queue.length) {
+    const current = queue.shift()
+
+    if (typeof (current as QueryGroup).queries === "undefined") {
+      list.push({
+        type: "query",
+        id,
+        data: current as Query,
+      })
+    } else {
+      const data = current as QueryGroup
+      list.push({
+        type: "descriptor",
+        id,
+        data,
+      })
+      queue.unshift(...data.queries)
+    }
+    id++
+  }
+
+  return list
+}
+
+const isQuery = ({ type }: QueryListItem) => type === "query"
+
+const Title = styled(Text)`
+  padding: 0.6rem 1.2rem 0.4rem;
+  margin-top: 0.6rem;
+  border-top: 1px solid ${({ theme }) => theme.color.draculaSelection};
+  background: ${({ theme }) => theme.color.blackAlpha40};
+`
+
+const Description = styled(Text)`
+  padding: 0 1.2rem 1rem;
+  color: ${({ theme }) => theme.color.draculaForeground};
+  opacity: 0.7;
+  background: ${({ theme }) => theme.color.blackAlpha40};
+`
+
 const QueryPicker = ({ hidePicker, queries, ref }: Props) => {
   const downPress = useKeyPress("ArrowDown")
   const upPress = useKeyPress("ArrowUp")
-  const enterPress = useKeyPress("Enter", { preventDefault: true })
-  const [cursor, setCursor] = useState(0)
-  const [hovered, setHovered] = useState<QueryShape | undefined>()
+  const enterPress = useKeyPress("Enter")
+  const [cursor, setCursor] = useState<number>(-1)
+  const [queryList, setQueryList] = useState<
+    ReturnType<typeof prepareQueriesList>
+  >([])
   const { appendQuery } = useEditor()
 
+  useEffect(() => {
+    setQueryList(prepareQueriesList(queries))
+  }, [queries])
+
   const addQuery = useCallback(
-    (query: QueryShape) => {
+    (query: Query) => {
       hidePicker()
       appendQuery(query.value)
     },
@@ -82,30 +138,37 @@ const QueryPicker = ({ hidePicker, queries, ref }: Props) => {
   )
 
   useEffect(() => {
-    if (queries.length && downPress) {
-      setCursor((prevState) =>
-        prevState < queries.length - 1 ? prevState + 1 : prevState,
+    if (queryList.length) {
+      if (downPress) {
+        const firstQueryIndex = queryList.find(isQuery)?.id ?? 0
+        const nextIndex =
+          queryList.slice(cursor + 1).find(isQuery)?.id ?? firstQueryIndex
+        setCursor(nextIndex)
+      }
+
+      if (upPress) {
+        const reversedList = [...queryList].reverse()
+        const lastQueryIndex =
+          reversedList.find(isQuery)?.id ?? queryList.length - 1
+
+        const prevIndex =
+          [...queryList].slice(0, cursor).reverse().find(isQuery)?.id ??
+          lastQueryIndex
+        setCursor(prevIndex)
+      }
+    }
+  }, [upPress, downPress, queryList])
+
+  useEffect(() => {
+    if (enterPress) {
+      const query = queryList.find(
+        ({ id, type }) => id === cursor && type === "query",
       )
-    }
-  }, [downPress, queries])
-
-  useEffect(() => {
-    if (queries.length && upPress) {
-      setCursor((prevState) => (prevState > 0 ? prevState - 1 : prevState))
-    }
-  }, [upPress, queries])
-
-  useEffect(() => {
-    if (enterPress && queries[cursor]) {
-      addQuery(queries[cursor])
+      if (query) {
+        addQuery(query.data as Query)
+      }
     }
   }, [cursor, enterPress, hidePicker, queries, addQuery])
-
-  useEffect(() => {
-    if (hovered) {
-      setCursor(queries.indexOf(hovered))
-    }
-  }, [hovered, queries])
 
   return (
     <Wrapper ref={ref}>
@@ -117,16 +180,32 @@ const QueryPicker = ({ hidePicker, queries, ref }: Props) => {
         </Esc>
       </Helper>
 
-      {queries.map((query, i) => (
-        <Row
-          active={i === cursor}
-          hidePicker={hidePicker}
-          key={query.value}
-          onAdd={addQuery}
-          onHover={setHovered}
-          query={query}
-        />
-      ))}
+      {queryList.map((entry) => {
+        if (entry.type === "query") {
+          const query = entry.data
+          return (
+            <QueryRow
+              active={entry.id === cursor}
+              hidePicker={hidePicker}
+              key={entry.id}
+              onClick={() => addQuery(query)}
+              onMouseEnter={() => setCursor(entry.id)}
+              onMouseLeave={() => setCursor(-1)}
+              query={query}
+            />
+          )
+        }
+
+        const { title, description } = entry.data
+        return (
+          <React.Fragment key={entry.id}>
+            <Title color="draculaForeground" size="md">
+              {title}
+            </Title>
+            <Description color="draculaForeground">{description}</Description>
+          </React.Fragment>
+        )
+      })}
     </Wrapper>
   )
 }

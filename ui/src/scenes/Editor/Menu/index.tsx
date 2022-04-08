@@ -33,10 +33,13 @@ import { Menu as _MenuIcon } from "@styled-icons/remix-fill/Menu"
 import { Play } from "@styled-icons/remix-line/Play"
 import { Stop } from "@styled-icons/remix-line/Stop"
 import { Database2 } from "@styled-icons/remix-line/Database2"
+import { HelpCircle } from "@styled-icons/boxicons-regular/HelpCircle"
+import { Slack } from "@styled-icons/boxicons-logos/Slack"
 
 import {
   ErrorButton,
   Input,
+  Link,
   PaneMenu,
   PopperHover,
   PopperToggle,
@@ -75,9 +78,25 @@ const DocsearchInput = styled(Input)`
   white-space: nowrap;
 `
 
-const QueryPickerButton = styled(SecondaryButton)`
+const QueryPickerButton = styled(SecondaryButton)<{
+  firstTimeVisitor: boolean
+}>`
+  position: relative;
   margin: 0 1rem;
   flex: 0 0 auto;
+
+  ${({ firstTimeVisitor }) =>
+    firstTimeVisitor &&
+    `&:after {
+    border-radius: 50%;
+    content: "";
+    background: #dc4949;
+    width: 8px;
+    height: 8px;
+    position: absolute;
+    top: -3px;
+    right: -3px;
+  }`}
 `
 
 const MenuIcon = styled(_MenuIcon)`
@@ -114,6 +133,36 @@ const SideMenuMenuButton = styled(TransparentButton)`
   }
 `
 
+const MenuButton = styled(SecondaryButton)`
+  margin-right: 1rem;
+`
+
+const MenuLink: React.FunctionComponent<{
+  href: string
+  icon: React.ReactNode
+  tooltipText: string
+}> = ({ href, icon, tooltipText }) => {
+  const Trigger = (
+    <MenuButton>
+      <Link
+        color="draculaForeground"
+        hoverColor="draculaForeground"
+        href={href}
+        rel="noreferrer"
+        target="_blank"
+      >
+        {icon}
+      </Link>
+    </MenuButton>
+  )
+
+  return (
+    <PopperHover delay={350} placement="bottom" trigger={Trigger}>
+      <Tooltip>{tooltipText}</Tooltip>
+    </PopperHover>
+  )
+}
+
 const Menu = () => {
   const dispatch = useDispatch()
   const [popperActive, setPopperActive] = useState<boolean>()
@@ -122,12 +171,19 @@ const Menu = () => {
   const running = useSelector(selectors.query.getRunning)
   const opened = useSelector(selectors.console.getSideMenuOpened)
   const { sm } = useScreenSize()
-  const { resultsSplitterBasis, updateSettings } = useLocalStorage()
+  const {
+    resultsSplitterBasis,
+    exampleQueriesVisited,
+    updateSettings,
+  } = useLocalStorage()
 
   const handleClick = useCallback(() => {
     dispatch(actions.query.toggleRunning())
   }, [dispatch])
   const handleToggle = useCallback((active) => {
+    if (!exampleQueriesVisited && active) {
+      updateSettings(StoreKey.EXAMPLE_QUERIES_VISITED, true)
+    }
     setPopperActive(active)
   }, [])
   const handleHidePicker = useCallback(() => {
@@ -197,6 +253,7 @@ const Menu = () => {
           <span>Run</span>
         </SuccessButton>
       )}
+
       <Separator />
 
       {savedQueries.length > 0 && (
@@ -204,7 +261,7 @@ const Menu = () => {
           active={popperActive}
           onToggle={handleToggle}
           trigger={
-            <QueryPickerButton onClick={handleClick}>
+            <QueryPickerButton firstTimeVisitor={!exampleQueriesVisited}>
               <Add size="18px" />
               <span>Example queries</span>
             </QueryPickerButton>
@@ -215,6 +272,18 @@ const Menu = () => {
       )}
 
       <Separator />
+
+      <MenuLink
+        href="https://slack.questdb.io/"
+        icon={<Slack size="18px" />}
+        tooltipText="Questions? Join our Slack"
+      />
+
+      <MenuLink
+        href="https://questdb.io/docs/reference/web-console/"
+        icon={<HelpCircle size="18px" />}
+        tooltipText="Go to Web Console help"
+      />
 
       <DocsearchInput
         id="docsearch-input"

@@ -35,8 +35,8 @@ class ExpressionParser {
     private static final IntHashSet nonLiteralBranches = new IntHashSet();
     private static final int BRANCH_NONE = 0;
     private static final int BRANCH_COMMA = 1;
-    private static final int BRANCH_LEFT_BRACE = 2;
-    private static final int BRANCH_RIGHT_BRACE = 3;
+    private static final int BRANCH_LEFT_PARENTHESIS = 2;
+    private static final int BRANCH_RIGHT_PARENTHESIS = 3;
     private static final int BRANCH_CONSTANT = 4;
     private static final int BRANCH_OPERATOR = 5;
     private static final int BRANCH_LITERAL = 6;
@@ -206,14 +206,14 @@ class ExpressionParser {
                             throw SqlException.$(position, "too many dots");
                         }
 
-                        if (prevBranch == BRANCH_RIGHT_BRACE) {
+                        if (prevBranch == BRANCH_RIGHT_PARENTHESIS) {
                             thisBranch = BRANCH_DOT_DEREFERENCE;
                         } else {
                             thisBranch = BRANCH_DOT;
                         }
                         break;
                     case ',':
-                        if (prevBranch == BRANCH_COMMA || prevBranch == BRANCH_LEFT_BRACE) {
+                        if (prevBranch == BRANCH_COMMA || prevBranch == BRANCH_LEFT_PARENTHESIS) {
                             throw missingArgs(position);
                         }
                         thisBranch = BRANCH_COMMA;
@@ -399,11 +399,11 @@ class ExpressionParser {
                         break;
 
                     case '(':
-                        if (prevBranch == BRANCH_RIGHT_BRACE) {
+                        if (prevBranch == BRANCH_RIGHT_PARENTHESIS) {
                             throw SqlException.$(position, "not a method call");
                         }
 
-                        thisBranch = BRANCH_LEFT_BRACE;
+                        thisBranch = BRANCH_LEFT_PARENTHESIS;
                         // If the token is a left parenthesis, then push it onto the stack.
                         paramCountStack.push(paramCount);
                         paramCount = 0;
@@ -435,8 +435,8 @@ class ExpressionParser {
                             break OUT;
                         }
 
-                        thisBranch = BRANCH_RIGHT_BRACE;
-                        int localParamCount = (prevBranch == BRANCH_LEFT_BRACE ? 0 : paramCount + 1);
+                        thisBranch = BRANCH_RIGHT_PARENTHESIS;
+                        int localParamCount = (prevBranch == BRANCH_LEFT_PARENTHESIS ? 0 : paramCount + 1);
                         final boolean thisWasCast;
 
                         if (castBraceCountStack.size() > 0 && castBraceCountStack.peek() == braceCount) {
@@ -757,6 +757,40 @@ class ExpressionParser {
                         }
                         processDefaultBranch = true;
                         break;
+                    case 'i':
+                    case 'I':
+                        if (SqlKeywords.isIsKeyword(tok)) {
+                            // replace:
+                            // <literal or constant> IS NULL     -> <literal or constant> = NULL
+                            // <literal or constant> IS NOT NULL -> <literal or constant> != NULL
+                            if (prevBranch == BRANCH_LITERAL || prevBranch == BRANCH_CONSTANT || prevBranch == BRANCH_RIGHT_PARENTHESIS) {
+                                final CharSequence isTok = GenericLexer.immutableOf(tok);
+                                tok = SqlUtil.fetchNext(lexer);
+                                if (tok == null) {
+                                    throw SqlException.$(position, "IS must be followed by [NOT] NULL");
+                                }
+                                if (SqlKeywords.isNotKeyword(tok)) {
+                                    final int notTokPosition = lexer.lastTokenPosition();
+                                    final CharSequence notTok = GenericLexer.immutableOf(tok);
+                                    tok = SqlUtil.fetchNext(lexer);
+                                    if (tok != null && SqlKeywords.isNullKeyword(tok)) {
+                                        lexer.backTo(notTokPosition + 3, notTok);
+                                        tok = "!=";
+                                    } else {
+                                        throw SqlException.$(position, "IS NOT must be followed by NULL");
+                                    }
+                                } else if (SqlKeywords.isNullKeyword(tok)) {
+                                    lexer.backTo(position + 2, isTok);
+                                    tok = "=";
+                                } else {
+                                    throw SqlException.$(position, "IS must be followed by NULL");
+                                }
+                            } else {
+                                throw SqlException.$(position, "IS [NOT] not allowed here");
+                            }
+                        }
+                        processDefaultBranch = true;
+                        break;
                     case '*':
                         // special case for tab.*
                         if (prevBranch == BRANCH_DOT) {
@@ -808,7 +842,7 @@ class ExpressionParser {
                         if (thisChar == '-' || thisChar == '~') {
                             switch (prevBranch) {
                                 case BRANCH_OPERATOR:
-                                case BRANCH_LEFT_BRACE:
+                                case BRANCH_LEFT_PARENTHESIS:
                                 case BRANCH_COMMA:
                                 case BRANCH_NONE:
                                 case BRANCH_CASE_CONTROL:
@@ -1024,7 +1058,7 @@ class ExpressionParser {
                                     tok = SqlUtil.fetchNext(lexer);
                                     // Next token is string literal, or we are in 'as' part of cast function
                                     boolean isInActiveCastAs = (castBraceCountStack.size() > 0 && (castBraceCountStack.size() == castAsCount));
-                                    if (tok != null && (isInActiveCastAs|| tok.charAt(0) == '\'')) {
+                                    if (tok != null && (isInActiveCastAs || tok.charAt(0) == '\'')) {
                                         lexer.backTo(zoneTokPosition, zoneTok);
                                         continue;
                                     }
@@ -1122,7 +1156,7 @@ class ExpressionParser {
     }
 
     static {
-        nonLiteralBranches.add(BRANCH_RIGHT_BRACE);
+        nonLiteralBranches.add(BRANCH_RIGHT_PARENTHESIS);
         nonLiteralBranches.add(BRANCH_CONSTANT);
         nonLiteralBranches.add(BRANCH_LITERAL);
         nonLiteralBranches.add(BRANCH_LAMBDA);

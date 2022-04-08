@@ -244,7 +244,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 traverseAlgo.traverse(node, this);
             } catch (SqlException e) {
                 // release parsed functions
-                Misc.free(functionStack.poll());
+                for (int i = functionStack.size(); i > 0; i--) {
+                    Misc.free(functionStack.poll());
+                }
                 positionStack.clear();
                 throw e;
             }
@@ -628,16 +630,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     overloadPossible |= argTypeTag == ColumnType.CHAR &&
                             sigArgTypeTag == ColumnType.STRING;
 
-                    // Implicit cast from STRING to TIMESTAMP
-                    overloadPossible |= argTypeTag == ColumnType.STRING &&
+                    // Implicit cast from STRING to TIMESTAMP 
+                    overloadPossible |= argTypeTag == ColumnType.STRING && arg.isConstant() &&
                             sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
 
                     // Implicit cast from STRING to GEOHASH
                     overloadPossible |= argTypeTag == ColumnType.STRING &&
                             sigArgTypeTag == ColumnType.GEOHASH && !factory.isGroupBy();
 
-                    // Implicit cast from SYMBOL to TIMESTAMP
-                    overloadPossible |= argTypeTag == ColumnType.SYMBOL &&
+                    // Implicit cast from SYMBOL to TIMESTAMP 
+                    overloadPossible |= argTypeTag == ColumnType.SYMBOL && arg.isConstant() &&
                             sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
 
                     overloadPossible |= arg.isUndefined();

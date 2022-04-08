@@ -789,11 +789,7 @@ public final class SqlParser {
             if (isUnionKeyword(tok)) {
                 tok = tok(lexer, "all or select");
                 if (isAllKeyword(tok)) {
-                    if (!model.isDistinct()) {
-                        prevModel.setSetOperationType(QueryModel.SET_OPERATION_UNION_ALL);
-                    } else {
-                        prevModel.setSetOperationType(QueryModel.SET_OPERATION_UNION);
-                    }
+                    prevModel.setSetOperationType(QueryModel.SET_OPERATION_UNION_ALL);
                 } else {
                     prevModel.setSetOperationType(QueryModel.SET_OPERATION_UNION);
                     lexer.unparse();
@@ -1092,7 +1088,7 @@ public final class SqlParser {
                 if (isCalendarKeyword(tok)) {
                     tok = optTok(lexer);
 
-                    if (tok != null) {
+                    if (tok != null && !isSemicolon(tok)) {
                         if (isTimeKeyword(tok)) {
                             expectZone(lexer);
                             model.setSampleByTimezoneName(expectExpr(lexer));

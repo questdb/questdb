@@ -24,15 +24,21 @@
 
 import { ModalId } from "consts"
 
-export type QueryShape = Readonly<{
+export type Query = {
   name?: string
   value: string
-}>
+}
+
+export type QueryGroup = {
+  title?: string
+  description?: string
+  queries: Query[]
+}
 
 export type ConsoleConfigShape = Readonly<{
   githubBanner: boolean
   readOnly?: boolean
-  savedQueries: QueryShape[]
+  savedQueries: Array<Query | QueryGroup>
 }>
 
 export type ConsoleStateShape = Readonly<{

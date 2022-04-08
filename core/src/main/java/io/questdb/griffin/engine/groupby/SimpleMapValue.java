@@ -25,13 +25,16 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.map.MapValue;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Long256Util;
 
 public class SimpleMapValue implements MapValue {
-
+    private final Long256Impl long256 = new Long256Impl();
     private final long[] values;
 
     public SimpleMapValue(int columnCount) {
-        this.values = new long[columnCount];
+        this.values = new long[4 * columnCount];
     }
 
     public void copy(SimpleMapValue other) {
@@ -46,72 +49,52 @@ public class SimpleMapValue implements MapValue {
 
     @Override
     public boolean getBool(int index) {
-        return values[index] == 0;
+        return values[4 * index] == 0;
     }
 
     @Override
     public byte getByte(int index) {
-        return (byte) values[index];
+        return (byte) values[4 * index];
     }
 
     @Override
     public long getDate(int index) {
-        return values[index];
+        return values[4 * index];
     }
 
     @Override
     public double getDouble(int index) {
-        return Double.longBitsToDouble(values[index]);
+        return Double.longBitsToDouble(values[4 * index]);
     }
 
     @Override
     public float getFloat(int index) {
-        return Float.intBitsToFloat((int) values[index]);
+        return Float.intBitsToFloat((int) values[4 * index]);
     }
 
     @Override
     public char getChar(int index) {
-        return (char) values[index];
+        return (char) values[4 * index];
     }
 
     @Override
     public int getInt(int index) {
-        return (int) values[index];
+        return (int) values[4 * index];
     }
 
     @Override
     public long getLong(int index) {
-        return values[index];
+        return values[4 * index];
     }
 
     @Override
     public short getShort(int index) {
-        return (short) values[index];
+        return (short) values[4 * index];
     }
 
     @Override
     public long getTimestamp(int index) {
-        return values[index];
-    }
-
-    @Override
-    public byte getGeoByte(int col) {
-        return (byte)values[col];
-    }
-
-    @Override
-    public short getGeoShort(int col) {
-        return (short) values[col];
-    }
-
-    @Override
-    public int getGeoInt(int col) {
-        return (int) values[col];
-    }
-
-    @Override
-    public long getGeoLong(int col) {
-        return values[col];
+        return values[4 * index];
     }
 
     @Override
@@ -121,88 +104,135 @@ public class SimpleMapValue implements MapValue {
 
     @Override
     public void putBool(int index, boolean value) {
-        values[index] = value ? 0 : 1;
+        values[4 * index] = value ? 0 : 1;
     }
 
     @Override
     public void putByte(int index, byte value) {
-        values[index] = value;
+        values[4 * index] = value;
     }
 
     @Override
     public void addByte(int index, byte value) {
-        values[index] += value;
+        values[4 * index] += value;
     }
 
     @Override
     public void putDate(int index, long value) {
-        values[index] = value;
+        values[4 * index] = value;
     }
 
     @Override
     public void putDouble(int index, double value) {
-        values[index] = Double.doubleToLongBits(value);
+        values[4 * index] = Double.doubleToLongBits(value);
     }
 
     @Override
     public void addDouble(int index, double value) {
-        final double d = Double.longBitsToDouble(values[index]);
-        values[index] = Double.doubleToLongBits(value + d);
+        final double d = Double.longBitsToDouble(values[4 * index]);
+        values[4 * index] = Double.doubleToLongBits(value + d);
     }
 
     @Override
     public void putFloat(int index, float value) {
-        values[index] = Float.floatToIntBits(value);
+        values[4 * index] = Float.floatToIntBits(value);
     }
 
     @Override
     public void addFloat(int index, float value) {
-        final float d = Float.intBitsToFloat((int) values[index]);
-        values[index] = Float.floatToIntBits(value + d);
+        final float d = Float.intBitsToFloat((int) values[4 * index]);
+        values[4 * index] = Float.floatToIntBits(value + d);
     }
 
     @Override
     public void putInt(int index, int value) {
-        values[index] = value;
+        values[4 * index] = value;
     }
 
     @Override
     public void addInt(int index, int value) {
-        values[index] += value;
+        values[4 * index] += value;
     }
 
     @Override
     public void putLong(int index, long value) {
-        values[index] = value;
+        values[4 * index] = value;
     }
 
     @Override
     public void addLong(int index, long value) {
-        values[index] += value;
+        values[4 * index] += value;
     }
 
     @Override
     public void putShort(int index, short value) {
-        values[index] = value;
+        values[4 * index] = value;
     }
 
     @Override
     public void addShort(int index, short value) {
-        values[index] += value;
+        values[4 * index] += value;
     }
 
     @Override
     public void putChar(int index, char value) {
-        values[index] = value;
+        values[4 * index] = value;
     }
 
     @Override
     public void putTimestamp(int index, long value) {
-        values[index] = value;
+        values[4 * index] = value;
+    }
+
+    @Override
+    public void addLong256(int index, Long256 value) {
+        Long256 acc = getLong256A(index);
+        Long256Util.add(acc, value);
+        final int idx = 4 * index;
+        values[idx] = acc.getLong0();
+        values[idx + 1] = acc.getLong1();
+        values[idx + 2] = acc.getLong2();
+        values[idx + 3] = acc.getLong3();
+    }
+
+    @Override
+    public void putLong256(int index, Long256 value) {
+        final int idx = 4 * index;
+        values[idx] = value.getLong0();
+        values[idx + 1] = value.getLong1();
+        values[idx + 2] = value.getLong2();
+        values[idx + 3] = value.getLong3();
+    }
+
+    @Override
+    public Long256 getLong256A(int index) {
+        final int idx = 4 * index;
+        long256.setAll(values[idx], values[idx + 1], values[idx + 2], values[idx + 3]);
+        return long256;
+    }
+
+    @Override
+    public byte getGeoByte(int col) {
+        return (byte) values[4 * col];
     }
 
     @Override
     public void setMapRecordHere() {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public short getGeoShort(int col) {
+        return (short) values[4 * col];
+    }
+
+    @Override
+    public int getGeoInt(int col) {
+        return (int) values[4 * col];
+    }
+
+    @Override
+    public long getGeoLong(int col) {
+        return values[4 * col];
     }
 }

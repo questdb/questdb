@@ -30,6 +30,8 @@ import {
   language as QuestDBLanguage,
   createQuestDBCompletionProvider,
   createSchemaCompletionProvider,
+  documentFormattingEditProvider,
+  documentRangeFormattingEditProvider,
 } from "./questdb-sql"
 import { color } from "../../../utils"
 
@@ -58,10 +60,10 @@ enum Command {
 
 const MonacoEditor = () => {
   const { editorRef, monacoRef, insertTextAtCursor } = useEditor()
-  const [editorReady, setEditorReady] = useState(false)
   const { loadPreferences, savePreferences } = usePreferences()
   const { quest } = useContext(QuestContext)
   const [request, setRequest] = useState<Request | undefined>()
+  const [editorReady, setEditorReady] = useState<boolean>(false)
   const [lastExecutedQuery, setLastExecutedQuery] = useState("")
   const dispatch = useDispatch()
   const running = useSelector(selectors.query.getRunning)
@@ -93,6 +95,16 @@ const MonacoEditor = () => {
       createQuestDBCompletionProvider(),
     )
 
+    monaco.languages.registerDocumentFormattingEditProvider(
+      QuestDBLanguageName,
+      documentFormattingEditProvider,
+    )
+
+    monaco.languages.registerDocumentRangeFormattingEditProvider(
+      QuestDBLanguageName,
+      documentRangeFormattingEditProvider,
+    )
+
     setSchemaCompletionHandle(
       monaco.languages.registerCompletionItemProvider(
         QuestDBLanguageName,
@@ -111,6 +123,7 @@ const MonacoEditor = () => {
 
     if (monacoRef) {
       monacoRef.current = monaco
+      setEditorReady(true)
     }
 
     if (editorRef) {
@@ -319,41 +332,36 @@ const MonacoEditor = () => {
   }, [running, savePreferences])
 
   useEffect(() => {
-    if (tables.length > 0) {
-      setEditorReady(true)
-
-      if (monacoRef?.current) {
-        schemaCompletionHandle?.dispose()
-        setSchemaCompletionHandle(
-          monacoRef.current.languages.registerCompletionItemProvider(
-            QuestDBLanguageName,
-            createSchemaCompletionProvider(tables),
-          ),
-        )
-      }
+    if (editorReady && monacoRef?.current) {
+      schemaCompletionHandle?.dispose()
+      setSchemaCompletionHandle(
+        monacoRef.current.languages.registerCompletionItemProvider(
+          QuestDBLanguageName,
+          createSchemaCompletionProvider(tables),
+        ),
+      )
     }
-  }, [tables, monacoRef])
+  }, [tables, monacoRef, editorReady])
 
   return (
     <Content>
-      {editorReady && (
-        <Editor
-          beforeMount={handleEditorBeforeMount}
-          defaultLanguage={QuestDBLanguageName}
-          onMount={handleEditorDidMount}
-          options={{
-            fixedOverflowWidgets: true,
-            fontSize: 14,
-            fontFamily: theme.fontMonospace,
-            renderLineHighlight: "gutter",
-            minimap: {
-              enabled: false,
-            },
-            scrollBeyondLastLine: false,
-          }}
-          theme="vs-dark"
-        />
-      )}
+      <Editor
+        beforeMount={handleEditorBeforeMount}
+        defaultLanguage={QuestDBLanguageName}
+        onMount={handleEditorDidMount}
+        options={{
+          fixedOverflowWidgets: true,
+          fontSize: 14,
+          fontFamily: theme.fontMonospace,
+          renderLineHighlight: "gutter",
+          minimap: {
+            enabled: false,
+          },
+          scrollBeyondLastLine: false,
+          tabSize: 2,
+        }}
+        theme="vs-dark"
+      />
       <Loader show={!!request || !tables} />
     </Content>
   )

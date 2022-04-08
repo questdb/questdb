@@ -24,6 +24,8 @@
 
 package io.questdb.griffin;
 
+import io.questdb.std.Chars;
+
 public class SqlKeywords {
     public static final String CONCAT_FUNC_NAME = "concat";
     public static final int CASE_KEYWORD_LENGTH = 4;
@@ -660,6 +662,16 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'e'
                 && (tok.charAt(i++) | 32) == 'c'
                 && (tok.charAt(i) | 32) == 't';
+    }
+
+    public static boolean isIsKeyword(CharSequence tok) {
+        if (tok.length() != 2) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i) | 32) == 's';
     }
 
     public static boolean isInto(CharSequence tok) {
@@ -1516,5 +1528,9 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'a'
                 && (tok.charAt(i++) | 32) == 's'
                 && (tok.charAt(i) | 32) == 'h';
+    }
+
+    public static boolean isSemicolon(CharSequence token) {
+        return Chars.equals(token, ';');
     }
 }
