@@ -145,6 +145,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<CharSequence> updateTableColumnNames = new ObjList<>();
     private QueryModel updateTableModel;
     private String updateTableName;
+    /**
+     * This flag is used to temporarily disable the whereClause field instead of removing it (by setting it to null).
+     * A disabled filter expression can be re-enabled by explicitly clearing the flag (by calling the resetWhereClauseDisableFlag* method).
+     */
     private boolean whereClauseDisableFlag = false;
 
     private QueryModel() {
