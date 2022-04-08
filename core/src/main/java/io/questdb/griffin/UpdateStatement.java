@@ -128,7 +128,9 @@ public class UpdateStatement extends AsyncWriterCommandBase implements Closeable
 
         updateToDataCursorFactory = codeGenerator.generate(selectQueryModel, executionContext);
         if (!updateToDataCursorFactory.supportsUpdateRowId(tableName)) {
-            throw SqlException.$(updateQueryModel.getModelPosition(), "Only simple UPDATE statements without joins are supported");
+            // in theory this should never happen because all valid UPDATE statements should result in
+            // a query plan with real row ids but better to check to prevent data corruption
+            throw SqlException.$(updateQueryModel.getModelPosition(), "Invalid execution plan for UPDATE statement");
         }
 
         // Check that updateDataFactoryMetadata match types of table to be updated exactly

@@ -92,16 +92,13 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY");
 
-            try {
-                executeUpdate("WITH jn AS (select down1.y + down2.y AS sm, down1.s, down2.y " +
-                        "                         FROM down1 JOIN down2 ON down1.s = down2.s" +
-                        ")" +
-                        "UPDATE up SET s = sm, y = jn.y" +
-                        " FROM jn " +
-                        " WHERE up.s = jn.s");
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "inconvertible types: LONG -> SYMBOL");
-            }
+            executeUpdateFails("WITH jn AS (select down1.y + down2.y AS sm, down1.s, down2.y " +
+                    "                         FROM down1 JOIN down2 ON down1.s = down2.s" +
+                    ")" +
+                    "UPDATE up SET s = sm, y = jn.y" +
+                    " FROM jn " +
+                    " WHERE jn.s = up.s",
+                    147, "inconvertible types: LONG -> SYMBOL");
         });
     }
 
@@ -1081,18 +1078,17 @@ public class UpdateTest extends AbstractGriffinTest {
                     " FROM down " +
                     " WHERE up.x < down.y;");
 
-            assertSql("up",
-                    "ts\tx\n" +
-                            "1970-01-01T00:00:00.000000Z\t151\n" +
-                            "1970-01-01T00:00:01.000000Z\t251\n" +
-                            "1970-01-01T00:00:02.000000Z\t300\n" +
-                            "1970-01-01T00:00:03.000000Z\t400\n" +
-                            "1970-01-01T00:00:04.000000Z\t500\n");
+            assertSql("up", "ts\tx\n" +
+                    "1970-01-01T00:00:00.000000Z\t151\n" +
+                    "1970-01-01T00:00:01.000000Z\t251\n" +
+                    "1970-01-01T00:00:02.000000Z\t300\n" +
+                    "1970-01-01T00:00:03.000000Z\t400\n" +
+                    "1970-01-01T00:00:04.000000Z\t500\n");
         });
     }
 
     @Test
-    public void testUnsupportedWhereClause() throws Exception {
+    public void testUpdateUnsupportedKeyword() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
@@ -1100,18 +1096,181 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5)), index(symCol)" +
                     " timestamp(ts)", sqlExecutionContext);
 
-            assertSql(
-                    "up",
-                    "symCol\tts\tx\n" +
-                            "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
-                            "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                            "\t1970-01-01T00:00:04.000000Z\t5\n"
-            );
+            assertSql("up", "symCol\tts\tx\n" +
+                    "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "\t1970-01-01T00:00:04.000000Z\t5\n");
 
-            executeUpdateFails("UPDATE up SET symCol = 'VTJ' WHERE symCol != 'WCP'",
-                    7, "Only simple UPDATE statements without joins are supported");
+            compiler.compile("create table t2 as" +
+                    " (select rnd_symbol(3,3,3,3) as symCol2, timestamp_sequence(0, 1000000) ts," +
+                    " x" +
+                    " from long_sequence(5)), index(symCol2)" +
+                    " timestamp(ts)", sqlExecutionContext);
+
+            assertSql("t2", "symCol2\tts\tx\n" +
+                    "XUX\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "IBB\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "IBB\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "GZS\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "\t1970-01-01T00:00:04.000000Z\t5\n");
+
+            executeUpdateFails("UPDATE up SET symCol = 'VTJ' JOIN t2 ON up.x = t2.x",
+                    29, "FROM, WHERE or EOF expected");
+        });
+    }
+
+    @Test
+    public void testUpdateWithJoinUnsupported() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
+                    " x" +
+                    " from long_sequence(5)), index(symCol)" +
+                    " timestamp(ts)", sqlExecutionContext);
+
+            assertSql("up", "symCol\tts\tx\n" +
+                    "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "\t1970-01-01T00:00:04.000000Z\t5\n");
+
+            compiler.compile("create table t2 as" +
+                    " (select rnd_symbol(3,3,3,3) as symCol2, timestamp_sequence(0, 1000000) ts," +
+                    " x" +
+                    " from long_sequence(5)), index(symCol2)" +
+                    " timestamp(ts)", sqlExecutionContext);
+
+            assertSql("t2", "symCol2\tts\tx\n" +
+                    "XUX\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "IBB\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "IBB\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "GZS\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "\t1970-01-01T00:00:04.000000Z\t5\n");
+
+            executeUpdateFails("UPDATE up SET symCol = 'VTJ' FROM t2 CROSS JOIN up ON up.x = t2.x",
+                    37, "JOIN is not supported on UPDATE statement");
+        });
+    }
+
+    @Test
+    public void testUpdateWithLatestOnUnsupported() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
+                    " x" +
+                    " from long_sequence(5)), index(symCol)" +
+                    " timestamp(ts)", sqlExecutionContext);
+
+            assertSql("up", "symCol\tts\tx\n" +
+                    "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "\t1970-01-01T00:00:04.000000Z\t5\n");
+
+            executeUpdateFails("UPDATE up SET symCol = 'ABC' LATEST ON ts PARTITION BY symCol",
+                    29, "FROM, WHERE or EOF expected");
+        });
+    }
+
+    @Test
+    public void testUpdateWithSubSelectUnsupported() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
+                    " x" +
+                    " from long_sequence(5)), index(symCol)" +
+                    " timestamp(ts)", sqlExecutionContext);
+
+            assertSql("up", "symCol\tts\tx\n" +
+                    "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "\t1970-01-01T00:00:04.000000Z\t5\n");
+
+            compiler.compile("create table t2 as" +
+                    " (select rnd_symbol(3,3,3,3) as symCol2, timestamp_sequence(0, 1000000) ts," +
+                    " x" +
+                    " from long_sequence(5)), index(symCol2)" +
+                    " timestamp(ts)", sqlExecutionContext);
+
+            assertSql("t2", "symCol2\tts\tx\n" +
+                    "XUX\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "IBB\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "IBB\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "GZS\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "\t1970-01-01T00:00:04.000000Z\t5\n");
+
+            executeUpdateFails("UPDATE up SET symCol = (select symCol2 from t2 where x = 4)",
+                    24, "query is not allowed here");
+        });
+    }
+
+    @Test
+    public void testUpdateWithSymbolJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
+                    " x" +
+                    " from long_sequence(5)), index(symCol)" +
+                    " timestamp(ts)", sqlExecutionContext);
+
+            assertSql("up", "symCol\tts\tx\n" +
+                    "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "\t1970-01-01T00:00:04.000000Z\t5\n");
+
+            compiler.compile("create table t2 as" +
+                    " (select rnd_symbol(3,3,3,3) as symCol2, timestamp_sequence(0, 1000000) ts," +
+                    " x" +
+                    " from long_sequence(5)), index(symCol2)" +
+                    " timestamp(ts)", sqlExecutionContext);
+
+            assertSql("t2", "symCol2\tts\tx\n" +
+                    "XUX\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "IBB\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "IBB\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "GZS\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "\t1970-01-01T00:00:04.000000Z\t5\n");
+
+            QueryFuture queryFuture = executeUpdate("UPDATE up SET symCol = 'VTJ' FROM t2 WHERE up.symCol = t2.symCol2");
+            Assert.assertEquals(QueryFuture.QUERY_COMPLETE, queryFuture.getStatus());
+            Assert.assertEquals(1, queryFuture.getAffectedRowsCount());
+
+            assertSql("up", "symCol\tts\tx\n" +
+                    "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "VTJ\t1970-01-01T00:00:04.000000Z\t5\n");
+        });
+    }
+
+    @Test
+    public void testUpdateSymbolWithNotEqualsInWhere() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
+                    " x" +
+                    " from long_sequence(5)), index(symCol)" +
+                    " timestamp(ts)", sqlExecutionContext);
+
+            QueryFuture queryFuture = executeUpdate("UPDATE up SET symCol = 'VTJ' WHERE symCol != 'WCP'");
+            Assert.assertEquals(QueryFuture.QUERY_COMPLETE, queryFuture.getStatus());
+            Assert.assertEquals(2, queryFuture.getAffectedRowsCount());
+
+            assertSql("up", "symCol\tts\tx\n" +
+                    "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "VTJ\t1970-01-01T00:00:04.000000Z\t5\n");
         });
     }
 
