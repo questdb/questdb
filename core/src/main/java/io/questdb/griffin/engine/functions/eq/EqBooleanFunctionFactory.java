@@ -61,6 +61,9 @@ public class EqBooleanFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
+            if(left.isNullConstant() || right.isNullConstant()) {
+                return negated || false;
+            }
             return negated != (left.getBool(rec) == right.getBool(rec));
         }
 

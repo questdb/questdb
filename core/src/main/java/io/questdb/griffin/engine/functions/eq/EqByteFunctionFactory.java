@@ -61,6 +61,9 @@ public class EqByteFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
+            if(left.isNullConstant() || right.isNullConstant()) {
+                return negated || false;
+            }
             return negated != (left.getByte(rec) == right.getByte(rec));
         }
 
