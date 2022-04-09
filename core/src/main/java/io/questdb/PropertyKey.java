@@ -23,9 +23,6 @@
  ******************************************************************************/
 
 package io.questdb;
-
-import io.questdb.std.datetime.microtime.Timestamps;
-
 import java.util.Arrays;
 import java.util.Map;
 import java.util.Optional;
