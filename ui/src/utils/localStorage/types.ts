@@ -27,6 +27,7 @@ export enum StoreKey {
   QUERY_TEXT = "query.text",
   EDITOR_LINE = "editor.line",
   EDITOR_COL = "editor.col",
+  EXAMPLE_QUERIES_VISITED = "editor.exampleQueriesVisited",
   NOTIFICATION_ENABLED = "notification.enabled",
   NOTIFICATION_DELAY = "notification.delay",
   EDITOR_SPLITTER_BASIS = "splitter.editor.basis",

@@ -22,16 +22,27 @@
  *
  ******************************************************************************/
 
-export type SettingsType = string | boolean | number
+package io.questdb.mp;
 
-export type LocalConfig = {
-  authPayload: string
-  editorCol: number
-  editorLine: number
-  notificationDelay: number
-  isNotificationEnabled: boolean
-  queryText: string
-  editorSplitterBasis: number
-  resultsSplitterBasis: number
-  exampleQueriesVisited: boolean
+import java.util.concurrent.atomic.AtomicBoolean;
+
+// Simple, non-reentrant and unfair lock implementation.
+// Don't try to use it for complex cases!
+public class SimpleSpinLock {
+    AtomicBoolean lock = new AtomicBoolean(false);
+
+    public void lock() {
+        while (true) {
+            while (lock.get()) {
+                // do nothing
+            }
+            if (!lock.getAndSet(true)) {
+                return;
+            }
+        }
+    }
+
+    public void unlock() {
+        lock.set(false);
+    }
 }

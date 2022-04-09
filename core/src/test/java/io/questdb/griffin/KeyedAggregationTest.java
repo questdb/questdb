@@ -90,6 +90,19 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testHourLong256() throws Exception {
+        assertQuery(
+                "hour\tcount\tsum\n" +
+                        "0\t36000\t0x464fffffffffffff7360\n" +
+                        "1\t36000\t0x464fffffffffffff7360\n" +
+                        "2\t28000\t0x36afffffffffffff92a0\n",
+                "select hour(ts), count(), sum(val) from tab order by 1",
+                "create table tab as (select timestamp_sequence(0, 100000) ts, cast(9223372036854775807 as long256) val from long_sequence(100000))",
+                null, true, true, true
+        );
+    }
+
+    @Test
     public void testHourLongMissingFunctions() throws Exception {
         assertQuery(
                 "hour\tksum\tnsum\n" +

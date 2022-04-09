@@ -22,16 +22,18 @@
  *
  ******************************************************************************/
 
-export type SettingsType = string | boolean | number
+package io.questdb.cairo;
 
-export type LocalConfig = {
-  authPayload: string
-  editorCol: number
-  editorLine: number
-  notificationDelay: number
-  isNotificationEnabled: boolean
-  queryText: string
-  editorSplitterBasis: number
-  resultsSplitterBasis: number
-  exampleQueriesVisited: boolean
+import io.questdb.std.ThreadLocal;
+
+public class CommitFailedException extends Exception {
+    private static final ThreadLocal<CommitFailedException> tlException = new ThreadLocal<>(CommitFailedException::new);
+
+    public static CommitFailedException instance(Throwable reason) {
+        CommitFailedException ex = tlException.get();
+        assert (ex = new CommitFailedException()) != null;
+        ex.initCause(reason);
+        return ex;
+    }
+
 }

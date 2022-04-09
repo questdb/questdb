@@ -321,7 +321,7 @@ const getTextFixes = ({
     {
       when: () => isFirstLine && lineAtCursor !== "",
       then: () => ({
-        prefix: 1,
+        prefix: nextLine === "" ? 1 : 2,
         suffix: 1,
         selectStartOffset: 1,
       }),

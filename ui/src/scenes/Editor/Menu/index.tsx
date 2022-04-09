@@ -78,9 +78,25 @@ const DocsearchInput = styled(Input)`
   white-space: nowrap;
 `
 
-const QueryPickerButton = styled(SecondaryButton)`
+const QueryPickerButton = styled(SecondaryButton)<{
+  firstTimeVisitor: boolean
+}>`
+  position: relative;
   margin: 0 1rem;
   flex: 0 0 auto;
+
+  ${({ firstTimeVisitor }) =>
+    firstTimeVisitor &&
+    `&:after {
+    border-radius: 50%;
+    content: "";
+    background: #dc4949;
+    width: 8px;
+    height: 8px;
+    position: absolute;
+    top: -3px;
+    right: -3px;
+  }`}
 `
 
 const MenuIcon = styled(_MenuIcon)`
@@ -155,12 +171,19 @@ const Menu = () => {
   const running = useSelector(selectors.query.getRunning)
   const opened = useSelector(selectors.console.getSideMenuOpened)
   const { sm } = useScreenSize()
-  const { resultsSplitterBasis, updateSettings } = useLocalStorage()
+  const {
+    resultsSplitterBasis,
+    exampleQueriesVisited,
+    updateSettings,
+  } = useLocalStorage()
 
   const handleClick = useCallback(() => {
     dispatch(actions.query.toggleRunning())
   }, [dispatch])
   const handleToggle = useCallback((active) => {
+    if (!exampleQueriesVisited && active) {
+      updateSettings(StoreKey.EXAMPLE_QUERIES_VISITED, true)
+    }
     setPopperActive(active)
   }, [])
   const handleHidePicker = useCallback(() => {
@@ -238,7 +261,7 @@ const Menu = () => {
           active={popperActive}
           onToggle={handleToggle}
           trigger={
-            <QueryPickerButton onClick={handleClick}>
+            <QueryPickerButton firstTimeVisitor={!exampleQueriesVisited}>
               <Add size="18px" />
               <span>Example queries</span>
             </QueryPickerButton>
