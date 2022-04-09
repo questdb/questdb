@@ -581,7 +581,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgNetConnectionQueueTimeout = getLong(properties, env, PropertyKey.PG_NET_CONNECTION_QUEUE_TIMEOUT, 5_000);
 
                 // obsolete
-                this.pgNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.pg_NET_RECV_BUF_SIZE, -1);
+                this.pgNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.PG_NET_RECV_BUF_SIZE, -1);
                 this.pgNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.PG_NET_CONNECTION_RCVBUF, this.pgNetConnectionRcvBuf);
 
                 // obsolete

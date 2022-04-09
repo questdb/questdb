@@ -287,7 +287,7 @@ public enum PropertyKey {
     PG_NET_IDLE_TIMEOUT("pg.net.idle.timeout"),
     PG_NET_CONNECTION_TIMEOUT("pg.net.connection.timeout"),
     PG_NET_CONNECTION_QUEUE_TIMEOUT("pg.net.connection.queue.timeout"),
-    pg_NET_RECV_BUF_SIZE("pg.net.recv.buf.size"),
+    PG_NET_RECV_BUF_SIZE("pg.net.recv.buf.size"),
     PG_NET_CONNECTION_RCVBUF("pg.net.connection.rcvbuf"),
     PG_NET_SEND_BUF_SIZE("pg.net.send.buf.size"),
     PG_PASSWORD("pg.password"),
