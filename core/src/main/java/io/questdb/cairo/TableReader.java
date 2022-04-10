@@ -224,9 +224,12 @@ public class TableReader implements Closeable, SymbolTableSource {
     public BitmapIndexReader getBitmapIndexReader(int partitionIndex, int columnBase, int columnIndex, int direction) {
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
         BitmapIndexReader reader = bitmapIndexes.getQuick(direction == BitmapIndexReader.DIR_BACKWARD ? index : index + 1);
+        if (reader != null) {
+            return reader;
+        }
         long partitionTimestamp = txFile.getPartitionTimestamp(partitionIndex);
         long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex));
-        return reader == null ? createBitmapIndexReaderAt(index, columnBase, columnIndex, columnNameTxn, direction, txFile.getPartitionNameTxn(partitionIndex)) : reader;
+        return createBitmapIndexReaderAt(index, columnBase, columnIndex, columnNameTxn, direction, txFile.getPartitionNameTxn(partitionIndex));
     }
 
     public MemoryR getColumn(int absoluteIndex) {

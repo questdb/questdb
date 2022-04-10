@@ -590,12 +590,6 @@ public class TableWriter implements Closeable {
             return PARTITION_ALREADY_ATTACHED;
         }
 
-        if (metadata.getSymbolMapCount() > 0) {
-            LOG.error().$("attaching partitions on table with symbols not yet supported [table=").$(tableName)
-                    .$(",partition=").$ts(timestamp).I$();
-            return TABLE_HAS_SYMBOLS;
-        }
-
         boolean rollbackRename = false;
         try {
             setPathForPartition(path, partitionBy, timestamp, false);
@@ -637,6 +631,7 @@ public class TableWriter implements Closeable {
                     txWriter.beginPartitionSizeUpdate();
                     txWriter.updatePartitionSizeByTimestamp(timestamp, partitionSize);
                     txWriter.finishPartitionSizeUpdate(nextMinTimestamp, nextMaxTimestamp);
+                    txWriter.truncateVersion++;
                     txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
                     if (appendPartitionAttached) {
                         freeColumns(true);
@@ -1027,6 +1022,7 @@ public class TableWriter implements Closeable {
             txWriter.removeAttachedPartitions(timestamp);
             txWriter.setMinTimestamp(nextMinTimestamp);
             txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
+            txWriter.truncateVersion++;
             txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
 
             // Call O3 methods to remove check TxnScoreboard and remove partition directly
@@ -1558,7 +1554,68 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private static void attachPartitionCheckFilesMatchMetadata(FilesFacade ff, Path path, RecordMetadata metadata, long partitionSize) throws CairoException {
+    private static void attachPartitionCheckFilesMatchVarLenColumn(FilesFacade ff, Path path, long partitionSize) {
+        int pathLen = path.length();
+        path.put(FILE_SUFFIX_D).$();
+        long dataLength = ff.length(path);
+
+        path.trimTo(pathLen);
+        path.put(FILE_SUFFIX_I).$();
+
+        if (dataLength >= 0 && ff.exists(path)) {
+            int typeSize = Long.BYTES;
+            long indexFd = openRO(ff, path, LOG);
+            try {
+                long fileSize = ff.length(indexFd);
+                long expectedFileSize = (partitionSize + 1) * typeSize;
+                if (fileSize < expectedFileSize) {
+                    throw CairoException.instance(0)
+                            .put("Column file row count does not match timestamp file row count. ")
+                            .put("Partition files inconsistent [file=")
+                            .put(path)
+                            .put(",expectedSize=")
+                            .put(expectedFileSize)
+                            .put(",actual=")
+                            .put(fileSize)
+                            .put(']');
+                }
+
+                long mappedAddr = mapRO(ff, indexFd, expectedFileSize, MemoryTag.MMAP_DEFAULT);
+                try {
+                    long prevDataAddress = dataLength - 4;
+                    for (long offset = partitionSize * typeSize; offset >= 0; offset -= typeSize) {
+                        long dataAddress = Unsafe.getUnsafe().getLong(mappedAddr + offset);
+                        if (dataAddress < 0 || dataAddress > dataLength) {
+                            throw CairoException.instance(0).put("Variable size column has invalid data address value [path=").put(path)
+                                    .put(", indexOffset=").put(offset)
+                                    .put(", dataAddress=").put(dataAddress)
+                                    .put(", dataFileSize=").put(dataLength)
+                                    .put(']');
+                        }
+
+                        // Check that addresses are monotonic
+                        if (dataAddress >= prevDataAddress) {
+                            throw CairoException.instance(0).put("Variable size column has invalid data address value [path=").put(path)
+                                    .put(", indexOffset=").put(offset)
+                                    .put(", dataAddress=").put(dataAddress)
+                                    .put(", prevDataAddress=").put(prevDataAddress)
+                                    .put(", dataFileSize=").put(dataLength)
+                                    .put(']');
+                        }
+                        prevDataAddress = dataAddress;
+                    }
+                    return;
+                } finally {
+                    ff.munmap(mappedAddr, expectedFileSize, MemoryTag.MMAP_DEFAULT);
+                }
+            } finally {
+                ff.close(indexFd);
+            }
+        }
+        throw CairoException.instance(0).put("Column file does not exist [path=").put(path).put(']');
+    }
+
+    private void attachPartitionCheckFilesMatchMetadata(FilesFacade ff, Path path, RecordMetadata metadata, long partitionSize) throws CairoException {
         // for each column, check that file exists in the partition folder
         int rootLen = path.length();
         for (int columnIndex = 0, size = metadata.getColumnCount(); columnIndex < size; columnIndex++) {
@@ -1580,7 +1637,6 @@ public class TableWriter implements Closeable {
                     case ColumnType.FLOAT:
                     case ColumnType.LONG256:
                         // Consider Symbols as fixed, check data file size
-                    case ColumnType.SYMBOL:
                     case ColumnType.GEOBYTE:
                     case ColumnType.GEOSHORT:
                     case ColumnType.GEOINT:
@@ -1591,6 +1647,9 @@ public class TableWriter implements Closeable {
                     case ColumnType.BINARY:
                         attachPartitionCheckFilesMatchVarLenColumn(ff, path, partitionSize);
                         break;
+                    case ColumnType.SYMBOL:
+                        attachPartitionCheckSymbolColumn(ff, path, partitionSize, columnIndex);
+                        break;
                 }
             } finally {
                 path.trimTo(rootLen);
@@ -1598,33 +1657,54 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private static void attachPartitionCheckFilesMatchVarLenColumn(FilesFacade ff, Path path, long partitionSize) {
-        int pathLen = path.length();
-        path.put(FILE_SUFFIX_I).$();
-
-        if (ff.exists(path)) {
-            int typeSize = 4;
-            long fileSize = ff.length(path);
-            if (fileSize < partitionSize * typeSize) {
+    private void attachPartitionCheckSymbolColumn(FilesFacade ff, Path path, long partitionSize, int columnIndex) {
+        path.put(FILE_SUFFIX_D).$();
+        long fd = openRO(ff, path, LOG);
+        try {
+            long fileSize = ff.length(fd);
+            int typeSize = Integer.BYTES;
+            long expectedSize = partitionSize * typeSize;
+            if (fileSize < expectedSize) {
                 throw CairoException.instance(0)
                         .put("Column file row count does not match timestamp file row count. ")
                         .put("Partition files inconsistent [file=")
                         .put(path)
-                        .put(",expectedSize=")
-                        .put(partitionSize * typeSize)
-                        .put(",actual=")
+                        .put(", expectedSize=")
+                        .put(expectedSize)
+                        .put(", actual=")
                         .put(fileSize)
                         .put(']');
             }
 
-            path.trimTo(pathLen);
-            path.put(FILE_SUFFIX_D).$();
-            if (ff.exists(path)) {
-                // good
-                return;
+            long address = mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
+            try {
+                int maxKey = Vect.maxInt(address, partitionSize);
+                int symbolValues = symbolMapWriters.getQuick(columnIndex).getSymbolCount();
+                if (maxKey >= symbolValues) {
+                    throw CairoException.instance(0)
+                            .put("Symbol file does not match symbol column [file=")
+                            .put(path)
+                            .put(", key=")
+                            .put(maxKey)
+                            .put(", columnKeys=")
+                            .put(symbolValues)
+                            .put(']');
+                }
+                int minKey = Vect.minInt(address, partitionSize);
+                if (minKey < 0) {
+                    throw CairoException.instance(0)
+                            .put("Symbol file does not match symbol column, invalid key [file=")
+                            .put(path)
+                            .put(", key=")
+                            .put(minKey)
+                            .put(']');
+                }
+            } finally {
+                ff.munmap(address, fileSize, MemoryTag.MMAP_DEFAULT);
             }
+        } finally {
+            ff.close(fd);
         }
-        throw CairoException.instance(0).put("Column file does not exist [path=").put(path).put(']');
     }
 
     private static void attachPartitionCheckFilesMatchFixedColumn(FilesFacade ff, Path path, int columnType, long partitionSize) {

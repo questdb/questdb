@@ -363,12 +363,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
-    // test ignored because error message has changed
-    // I would like alter table to check if table is partitioned explicitly,
-    // rather than relying on 'partition by' API. But there is PR in flight that
-    // changes 'alter table'. So ignore is to avoid conflicts
-    // todo: fix the test
     public void testAttachPartitionsNonPartitioned() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
@@ -440,7 +434,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAttachPartitionsWithSymbols() throws Exception {
+    public void testAttachPartitionsWithSymbolsValueDoesNotMatch() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
                  TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY)) {
@@ -463,8 +457,42 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     copyAttachPartition(src, dst, 0, "2020-01-09");
                     Assert.fail();
                 } catch (SqlException e) {
-                    TestUtils.assertEquals("[23] attaching partitions to tables with symbol columns not supported", e.getMessage());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Symbol file does not match symbol column");
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testAttachPartitionsWithSymbolsValueMatch() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
+                 TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY)) {
+
+                createPopulateTable(
+                        src.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .col("s", ColumnType.SYMBOL)
+                                .timestamp("ts"),
+                        10000,
+                        "2020-01-01",
+                        10);
+
+                // Make sure nulls are included in the partition to be attached
+                assertSql("select count() from src where ts in '2020-01-09' and s = null", "count\n302\n");
+
+                createPopulateTable(
+                        dst.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .col("s", ColumnType.SYMBOL)
+                                .timestamp("ts"),
+                        10000,
+                        "2020-01-01",
+                        10);
+
+                compile("alter table dst drop partition list '2020-01-09'");
+
+                copyAttachPartition(src, dst, 9000, "2020-01-09");
             }
         });
     }
@@ -577,6 +605,70 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         testSqlFailedOnFsOperation(ff, "table 'dst' could not be altered: ", " File system error on trying to rename [");
     }
 
+    @Test
+    public void testDetachAttachDifferentPartitionTableReaderReload() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
+                 TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY)) {
+
+                int partitionRowCount = 5;
+                createPopulateTable(
+                        src.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .col("str", ColumnType.STRING)
+                                .timestamp("ts"),
+                        partitionRowCount,
+                        "2020-01-09",
+                        2);
+
+                createPopulateTable(
+                        dst.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .col("str", ColumnType.STRING)
+                                .timestamp("ts"),
+                        partitionRowCount - 3,
+                        "2020-01-09",
+                        2);
+
+                try (TableReader dstReader = new TableReader(configuration, dst.getTableName())) {
+                    dstReader.openPartition(0);
+                    dstReader.openPartition(1);
+                    dstReader.goPassive();
+
+                    long timestamp = TimestampFormatUtils.parseTimestamp("2020-01-09T00:00:00.000z");
+
+                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, dst.getTableName(), "testing")) {
+                        writer.removePartition(timestamp);
+                        copyPartitionToBackup(src.getName(), "2020-01-09", dst.getName());
+                        Assert.assertEquals(StatusCode.OK, writer.attachPartition(timestamp));
+                    }
+
+                    // Go active
+                    Assert.assertTrue(dstReader.reload());
+                    try (TableReader srcReader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, src.getTableName())) {
+                        String expected =
+                                "l\ti\tstr\tts\n" +
+                                        "1\t1\t1\t2020-01-09T09:35:59.800000Z\n" +
+                                        "2\t2\t2\t2020-01-09T19:11:59.600000Z\n" +
+                                        "3\t3\t3\t2020-01-10T04:47:59.400000Z\n" +
+                                        "4\t4\t4\t2020-01-10T14:23:59.200000Z\n" +
+                                        "5\t5\t5\t2020-01-10T23:59:59.000000Z\n";
+                        assertCursor(expected, srcReader.getCursor(), srcReader.getMetadata(), true);
+
+                        // Check that first 2 lines of partition 2020-01-09 match for src and dst tables
+                        assertCursor("l\ti\tstr\tts\n" +
+                                        "1\t1\t1\t2020-01-09T09:35:59.800000Z\n" +
+                                        "2\t2\t2\t2020-01-09T19:11:59.600000Z\n" +
+                                        "2\t2\t2\t2020-01-10T23:59:59.000000Z\n",
+                                dstReader.getCursor(),
+                                dstReader.getMetadata(),
+                                true);
+                    }
+                }
+            }
+        });
+    }
+
     private void assertSchemaMatch(AddColumn tm) throws Exception {
         setUp();
         assertMemoryLeak(() -> {
@@ -668,8 +760,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         String withClause = ", t1 as (select 1 as id, count() as cnt from src WHERE " + partitionsIn + ")\n";
 
         if (!skipCopy) {
-            for (String s : partitionList) {
-                copyPartitionToBackup(src.getName(), s, dst.getName());
+            for (String partitionFolder : partitionList) {
+                copyPartitionToBackup(src.getName(), partitionFolder, dst.getName());
             }
         }
 
@@ -702,7 +794,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
         // Check table is writable after partition attach
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "dst", "testing")) {
-
             TableWriter.Row row = writer.newRow(timestamp);
             row.putInt(1, 1);
             row.append();

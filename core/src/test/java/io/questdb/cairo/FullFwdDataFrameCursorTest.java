@@ -2005,7 +2005,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     cursor.of(reader);
                     record.of(reader);
 
-                    assertSymbolFoundInIndex(cursor, record, 1, M);
+                    assertSymbolFoundInIndex(cursor, record, 1, M); // VTJWCPSW
                     cursor.toTop();
                     assertSymbolFoundInIndex(cursor, record, 4, M);
 
