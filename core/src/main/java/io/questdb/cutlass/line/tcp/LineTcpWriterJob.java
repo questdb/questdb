@@ -108,10 +108,14 @@ class LineTcpWriterJob implements Job, Closeable {
                 // the heap based solution mentioned above will eliminate the minimum search
                 // we could just process the min element of the heap until we hit the first commit
                 // time greater than millis and that will be our nextCommitTime
-                long tableNextCommitTime = assignedTables.getQuick(n).commitIfIntervalElapsed(wallClockMillis);
-                if (tableNextCommitTime < minTableNextCommitTime) {
-                    // taking the earliest commit time
-                    minTableNextCommitTime = tableNextCommitTime;
+                try {
+                    long tableNextCommitTime = assignedTables.getQuick(n).commitIfIntervalElapsed(wallClockMillis);
+                    if (tableNextCommitTime < minTableNextCommitTime) {
+                        // taking the earliest commit time
+                        minTableNextCommitTime = tableNextCommitTime;
+                    }
+                } catch (Throwable th) {
+                    metrics.healthCheck().incrementUnhandledErrors();
                 }
             }
             // if no tables, just use the default commit interval
@@ -130,58 +134,57 @@ class LineTcpWriterJob implements Job, Closeable {
             }
             busy = true;
             final LineTcpMeasurementEvent event = queue.get(cursor);
-            boolean eventProcessed;
 
             try {
                 // we check the event's writer thread ID to avoid consuming
                 // incomplete events
 
                 final TableUpdateDetails tab = event.getTableUpdateDetails();
+                boolean closeWriter = false;
                 if (event.getWriterWorkerId() == workerId) {
                     try {
-                        if (!tab.isAssignedToJob()) {
-                            assignedTables.add(tab);
-                            tab.setAssignedToJob(true);
-                            nextCommitTime = millisecondClock.getTicks();
-                            LOG.info()
-                                    .$("assigned table to writer thread [tableName=").$(tab.getTableNameUtf16())
-                                    .$(", threadId=").$(workerId)
-                                    .I$();
+                        if (tab.isWriterInError()) {
+                            closeWriter = true;
+                        } else {
+                            if (!tab.isAssignedToJob()) {
+                                assignedTables.add(tab);
+                                tab.setAssignedToJob(true);
+                                nextCommitTime = millisecondClock.getTicks();
+                                LOG.info()
+                                        .$("assigned table to writer thread [tableName=").$(tab.getTableNameUtf16())
+                                        .$(", threadId=").$(workerId)
+                                        .I$();
+                            }
+                            event.append();
                         }
-                        event.append();
-                        eventProcessed = true;
                     } catch (Throwable ex) {
+                        tab.setWriterInError();
+                        metrics.healthCheck().incrementUnhandledErrors();
                         LOG.error()
                                 .$("closing writer because of error [table=").$(tab.getTableNameUtf16())
                                 .$(",ex=").$(ex)
                                 .I$();
+                        closeWriter = true;
                         event.createWriterReleaseEvent(tab, false);
-                        eventProcessed = false;
                         // This is a critical error, so we treat it as an unhandled one.
-                        metrics.healthCheck().incrementUnhandledErrors();
                     }
                 } else {
                     if (event.getWriterWorkerId() == LineTcpMeasurementEventType.ALL_WRITERS_RELEASE_WRITER) {
-                        eventProcessed = scheduler.processWriterReleaseEvent(event, workerId);
-                        assignedTables.remove(tab);
-                        tab.setAssignedToJob(false);
-                        nextCommitTime = millisecondClock.getTicks();
-                    } else {
-                        eventProcessed = true;
+                        closeWriter = true;
                     }
                 }
+
+                if (closeWriter && tab.getWriter() != null) {
+                    scheduler.processWriterReleaseEvent(event, workerId);
+                    assignedTables.remove(tab);
+                    tab.setAssignedToJob(false);
+                    nextCommitTime = millisecondClock.getTicks();
+                }
             } catch (Throwable ex) {
-                eventProcessed = true;
                 LOG.error().$("failed to process ILP event because of exception [ex=").$(ex).I$();
             }
 
-            // by not releasing cursor we force the sequence to return us the same value over and over
-            // until cursor value is released
-            if (eventProcessed) {
-                sequence.done(cursor);
-            } else {
-                return false;
-            }
+            sequence.done(cursor);
         }
     }
 

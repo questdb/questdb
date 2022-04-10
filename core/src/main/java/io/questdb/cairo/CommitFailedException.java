@@ -22,10 +22,18 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.model;
+package io.questdb.cairo;
 
-public interface IntervalModel {
-    void intersectIntervals(long lo, long hi);
+import io.questdb.std.ThreadLocal;
 
-    void intersectIntervals(CharSequence seq, int lo, int lim, int position);
+public class CommitFailedException extends Exception {
+    private static final ThreadLocal<CommitFailedException> tlException = new ThreadLocal<>(CommitFailedException::new);
+
+    public static CommitFailedException instance(Throwable reason) {
+        CommitFailedException ex = tlException.get();
+        assert (ex = new CommitFailedException()) != null;
+        ex.initCause(reason);
+        return ex;
+    }
+
 }

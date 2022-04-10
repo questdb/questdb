@@ -22,16 +22,15 @@
  *
  ******************************************************************************/
 
-export type SettingsType = string | boolean | number
+package io.questdb.griffin.model;
 
-export type LocalConfig = {
-  authPayload: string
-  editorCol: number
-  editorLine: number
-  notificationDelay: number
-  isNotificationEnabled: boolean
-  queryText: string
-  editorSplitterBasis: number
-  resultsSplitterBasis: number
-  exampleQueriesVisited: boolean
+public final class PeriodType {
+    public static final char NONE = (char) 0;
+
+    public static final char YEAR = 'y';
+    public static final char MONTH = 'M';
+    public static final char HOUR = 'h';
+    public static final char MINUTE = 'm';
+    public static final char SECOND = 's';
+    public static final char DAY = 'd';
 }

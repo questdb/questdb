@@ -411,16 +411,18 @@ public final class TestUtils {
         runnable.run();
         Path.clearThreadLocals();
         if (fileCount != Files.getOpenFileCount()) {
-            Assert.assertEquals(Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
+            Assert.assertEquals("file descriptors " + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
         }
 
         // Checks that the same tag used for allocation and freeing native memory
         long memAfter = Unsafe.getMemUsed();
+        Assert.assertTrue(memAfter > -1);
         if (mem != memAfter) {
             for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
                 long actualMemByTag = Unsafe.getMemUsedByTag(i);
                 if (memoryUsageByTag[i] != actualMemByTag) {
                     Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i), memoryUsageByTag[i], actualMemByTag);
+                    Assert.assertTrue(actualMemByTag > -1);
                 }
             }
             Assert.assertEquals(mem, memAfter);
@@ -633,7 +635,7 @@ public final class TestUtils {
     }
 
     @NotNull
-    public static Rnd generateRandom(Log log) {
+    public static Rnd generateRandom() {
         long s0 = System.nanoTime();
         long s1 = System.currentTimeMillis();
         System.out.println("random seed " + s0 + ", " + s1);

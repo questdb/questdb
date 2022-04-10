@@ -84,8 +84,7 @@ public class IntHashSet extends AbstractIntHashSet {
 
     public final void clear() {
         free = capacity;
-        Arrays.fill(keys, noEntryKeyValue
-        );
+        Arrays.fill(keys, noEntryKeyValue);
         list.clear();
     }
 

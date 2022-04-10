@@ -24,6 +24,7 @@
 
 import * as QuestDB from "utils/questdb"
 import { trim } from "ramda"
+import { formatSql } from "../../../../utils"
 
 export const formatTableSchemaQueryResult = (
   name: string,
@@ -82,7 +83,7 @@ export const formatTableSchemaQueryResult = (
       query += ` PARTITION BY ${partitionBy}`
     }
 
-    return `${query};`
+    return `${formatSql(query)};`
   } else {
     throw new Error("Could not format table schema")
   }
