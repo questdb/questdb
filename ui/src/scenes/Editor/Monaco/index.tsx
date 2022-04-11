@@ -30,6 +30,8 @@ import {
   language as QuestDBLanguage,
   createQuestDBCompletionProvider,
   createSchemaCompletionProvider,
+  documentFormattingEditProvider,
+  documentRangeFormattingEditProvider,
 } from "./questdb-sql"
 import { color } from "../../../utils"
 
@@ -91,6 +93,16 @@ const MonacoEditor = () => {
     monaco.languages.registerCompletionItemProvider(
       QuestDBLanguageName,
       createQuestDBCompletionProvider(),
+    )
+
+    monaco.languages.registerDocumentFormattingEditProvider(
+      QuestDBLanguageName,
+      documentFormattingEditProvider,
+    )
+
+    monaco.languages.registerDocumentRangeFormattingEditProvider(
+      QuestDBLanguageName,
+      documentRangeFormattingEditProvider,
     )
 
     setSchemaCompletionHandle(
@@ -346,6 +358,7 @@ const MonacoEditor = () => {
             enabled: false,
           },
           scrollBeyondLastLine: false,
+          tabSize: 2,
         }}
         theme="vs-dark"
       />

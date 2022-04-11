@@ -112,7 +112,7 @@ public class MessageBusImpl implements MessageBus {
 
         this.tableWriterEventQueue = new RingQueue<>(
                 TableWriterTask::new,
-                2048,
+                configuration.getWriterCommandQueueSlotSize(),
                 configuration.getWriterCommandQueueCapacity(),
                 MemoryTag.NATIVE_REPL
 

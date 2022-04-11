@@ -23,6 +23,8 @@
  ******************************************************************************/
 
 package io.questdb;
+import io.questdb.std.Numbers;
+
 import java.util.Arrays;
 import java.util.Map;
 import java.util.Optional;
@@ -64,6 +66,7 @@ public enum PropertyKey {
     CAIRO_SQL_JOIN_CONTEXT_POOL_CAPACITY("cairo.sql.join.context.pool.capacity"),
     CAIRO_LEXER_POOL_CAPACITY("cairo.lexer.pool.capacity"),
     CAIRO_WRITER_APPEND_PAGE_SIZE("cairo.writer.append.page.size"),
+    CAIRO_WRITER_COMMAND_QUEUE_SLOT_SIZE("cairo.writer.command.queue.slot.size"),
     CAIRO_SQL_MAP_KEY_CAPACITY("cairo.sql.map.key.capacity"),
     CAIRO_SQL_MAP_PAGE_SIZE("cairo.sql.map.page.size"),
     CAIRO_SQL_MAP_MAX_PAGES("cairo.sql.map.max.pages"),
