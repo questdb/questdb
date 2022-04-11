@@ -79,6 +79,48 @@ public class PGSecurityTest extends BasePGTest {
     }
 
     @Test
+    public void testDisallowInsert() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
+            assertQueryDisallowed("insert into src values (now(), 'foo')");
+        });
+    }
+
+    @Test
+    public void testDisallowCreateTable() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQueryDisallowed("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY");
+        });
+    }
+
+    @Test
+    public void testDisallowInsertAsSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
+            compiler.compile("insert into src values (now(), 'foo')", sqlExecutionContext);
+            assertQueryDisallowed("insert into src select now(), name from src");
+        });
+    }
+
+    @Test
+    @Ignore("Vacuum does not fail in the read-only mode. Technically there is nothing to vacuum at this point, but I suspect it should fail anyway")
+    public void testDisallowVacuum() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
+            assertQueryDisallowed("vacuum partitions src");
+        });
+    }
+
+    @Test
+    public void testDisallowTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
+            compiler.compile("insert into src values (now(), 'foo')", sqlExecutionContext);
+            assertQueryDisallowed("truncate table src");
+        });
+    }
+
+    @Test
     public void testAllowsSelect() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP)", sqlExecutionContext);
