@@ -28,4 +28,7 @@ public class ServerConfigurationException extends Exception {
     public ServerConfigurationException(String key, String value) {
         super("invalid configuration value [key=" + key + ", value=" + value + "]");
     }
+    public ServerConfigurationException(String key) {
+        super("invalid configuration value [key= " + key + "]");
+    }
 }
