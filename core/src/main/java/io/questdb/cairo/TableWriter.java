@@ -1570,7 +1570,7 @@ public class TableWriter implements Closeable {
                 long expectedFileSize = (partitionSize + 1) * typeSize;
                 if (fileSize < expectedFileSize) {
                     throw CairoException.instance(0)
-                            .put("Column file row count does not match timestamp file row count. ")
+                            .put("Column file is too small. ")
                             .put("Partition files inconsistent [file=")
                             .put(path)
                             .put(",expectedSize=")
@@ -1657,6 +1657,26 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private static void attachPartitionCheckFilesMatchFixedColumn(FilesFacade ff, Path path, int columnType, long partitionSize) {
+        path.put(FILE_SUFFIX_D).$();
+        if (ff.exists(path)) {
+            long fileSize = ff.length(path);
+            if (fileSize < partitionSize << ColumnType.pow2SizeOf(columnType)) {
+                throw CairoException.instance(0)
+                        .put("Column file is too small. ")
+                        .put("Partition files inconsistent [file=")
+                        .put(path)
+                        .put(", expectedSize=")
+                        .put(partitionSize << ColumnType.pow2SizeOf(columnType))
+                        .put(", actual=")
+                        .put(fileSize)
+                        .put(']');
+            }
+            return;
+        }
+        throw CairoException.instance(0).put("Column file does not exist [path=").put(path).put(']');
+    }
+
     private void attachPartitionCheckSymbolColumn(FilesFacade ff, Path path, long partitionSize, int columnIndex) {
         path.put(FILE_SUFFIX_D).$();
         long fd = openRO(ff, path, LOG);
@@ -1666,7 +1686,7 @@ public class TableWriter implements Closeable {
             long expectedSize = partitionSize * typeSize;
             if (fileSize < expectedSize) {
                 throw CairoException.instance(0)
-                        .put("Column file row count does not match timestamp file row count. ")
+                        .put("Column file is too small. ")
                         .put("Partition files inconsistent [file=")
                         .put(path)
                         .put(", expectedSize=")
@@ -1705,26 +1725,6 @@ public class TableWriter implements Closeable {
         } finally {
             ff.close(fd);
         }
-    }
-
-    private static void attachPartitionCheckFilesMatchFixedColumn(FilesFacade ff, Path path, int columnType, long partitionSize) {
-        path.put(FILE_SUFFIX_D).$();
-        if (ff.exists(path)) {
-            long fileSize = ff.length(path);
-            if (fileSize < partitionSize << ColumnType.pow2SizeOf(columnType)) {
-                throw CairoException.instance(0)
-                        .put("Column file row count does not match timestamp file row count. ")
-                        .put("Partition files inconsistent [file=")
-                        .put(path)
-                        .put(",expectedSize=")
-                        .put(partitionSize << ColumnType.pow2SizeOf(columnType))
-                        .put(",actual=")
-                        .put(fileSize)
-                        .put(']');
-            }
-            return;
-        }
-        throw CairoException.instance(0).put("Column file does not exist [path=").put(path).put(']');
     }
 
     private int addColumnToMeta(
