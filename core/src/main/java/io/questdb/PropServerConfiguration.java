@@ -235,6 +235,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerDataIndexValueAppendPageSize;
     private final long writerAsyncCommandBusyWaitTimeout;
     private final int writerAsyncCommandQueueCapacity;
+    private final long writerAsyncCommandQueueSlotSize;
     private final int writerTickRowsCountMod;
     private final long writerAsyncCommandMaxWaitTimeout;
     private final int o3PartitionPurgeListCapacity;
@@ -876,6 +877,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.writerAsyncCommandMaxWaitTimeout = getLong(properties, env, PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT_MICRO, 30_000_000L);
             this.writerTickRowsCountMod = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_WRITER_TICK_ROWS_COUNT, 1024)) - 1;
             this.writerAsyncCommandQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, 32));
+            this.writerAsyncCommandQueueSlotSize = Numbers.ceilPow2(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_SLOT_SIZE, 2048));
 
             this.buildInformation = buildInformation;
             this.binaryEncodingMaxLength = getInt(properties, env, PropertyKey.BINARYDATA_ENCODING_MAXLENGTH, 32768);
@@ -2189,6 +2191,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWriterCommandQueueCapacity() {
             return writerAsyncCommandQueueCapacity;
+        }
+
+        @Override
+        public long getWriterCommandQueueSlotSize() {
+            return writerAsyncCommandQueueSlotSize;
         }
 
         @Override
