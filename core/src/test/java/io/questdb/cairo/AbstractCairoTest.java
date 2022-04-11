@@ -86,6 +86,7 @@ public class AbstractCairoTest {
     protected static boolean hideTelemetryTable = false;
     private static TelemetryConfiguration telemetryConfiguration;
     protected static int writerCommandQueueCapacity = 4;
+    protected static long writerCommandQueueSlotSize = 2048L;
 
     @BeforeClass
     public static void setUpStatic() {
@@ -233,6 +234,11 @@ public class AbstractCairoTest {
             @Override
             public int getWriterCommandQueueCapacity() {
                 return writerCommandQueueCapacity;
+            }
+
+            @Override
+            public long getWriterCommandQueueSlotSize() {
+                return writerCommandQueueSlotSize;
             }
         };
         engine = new CairoEngine(configuration, metrics);

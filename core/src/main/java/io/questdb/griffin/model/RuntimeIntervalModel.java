@@ -103,6 +103,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         int size = intervals.size();
         int dynamicStart = size - dynamicRangeList.size() * STATIC_LONGS_PER_DYNAMIC_INTERVAL;
         int dynamicIndex = 0;
+        boolean firstFuncApplied = false;
 
         for (int i = dynamicStart; i < size; i += STATIC_LONGS_PER_DYNAMIC_INTERVAL) {
             Function dynamicFunction = dynamicRangeList.getQuick(dynamicIndex++);
@@ -191,7 +192,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
 
             // Do not apply operation (intersect, subtract)
             // if this is first element and no pre-calculated static intervals exist
-            if (divider > 0) {
+            if (firstFuncApplied || divider > 0) {
                 switch (operation) {
                     case IntervalOperation.INTERSECT:
                     case IntervalOperation.INTERSECT_BETWEEN:
@@ -208,6 +209,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                         throw new UnsupportedOperationException("Interval operation " + operation + " is not supported");
                 }
             }
+            firstFuncApplied = true;
         }
     }
 
