@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -422,6 +423,53 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
 
                 assertSql(
                         "up",
+                        "ts\tx\tstr\tsym1\tsym2\n" +
+                                "1970-01-01T00:00:00.000000Z\t1\ta\tA\t2\n" +
+                                "1970-01-01T00:00:01.000000Z\t2\tb\tC\t4\n" +
+                                "1970-01-01T00:00:02.000000Z\t3\td\tA\t2\n" +
+                                "1970-01-01T00:00:03.000000Z\t4\td\tA\t3\n" +
+                                "1970-01-01T00:00:04.000000Z\t5\ta\tD\t1\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeRespectsTableTruncates() throws Exception {
+        LogFactory.configureSync();
+        assertMemoryLeak(() -> {
+            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+                compiler.compile("create table testPurgeRespectsTableTruncates as" +
+                        " (select timestamp_sequence(0, 1000000) ts," +
+                        " x," +
+                        " rnd_str('a', 'b', 'c', 'd') str," +
+                        " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                        " rnd_symbol('1', '2', '3', '4') sym2" +
+                        " from long_sequence(5)), index(sym2)" +
+                        " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
+
+                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "testPurgeRespectsTableTruncates")) {
+                    executeUpdate("UPDATE testPurgeRespectsTableTruncates SET x = 100, str='abcd'");
+
+                    runPurgeJob(purgeJob);
+                    rdr.openPartition(0);
+                }
+                engine.releaseInactive();
+
+                compiler.compile("truncate table testPurgeRespectsTableTruncates", sqlExecutionContext);
+
+                compiler.compile("insert into testPurgeRespectsTableTruncates " +
+                        " select timestamp_sequence(0, 1000000) ts," +
+                        " x," +
+                        " rnd_str('a', 'b', 'c', 'd') str," +
+                        " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                        " rnd_symbol('1', '2', '3', '4') sym2" +
+                        " from long_sequence(5)", sqlExecutionContext);
+
+                runPurgeJob(purgeJob);
+
+                assertSql(
+                        "testPurgeRespectsTableTruncates",
                         "ts\tx\tstr\tsym1\tsym2\n" +
                                 "1970-01-01T00:00:00.000000Z\t1\ta\tA\t2\n" +
                                 "1970-01-01T00:00:01.000000Z\t2\tb\tC\t4\n" +
