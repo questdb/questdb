@@ -68,6 +68,8 @@ public class RingQueue<T> implements Closeable {
         this.memory = Unsafe.calloc(memorySize, memoryTag);
         long p = memory;
         for (int i = 0; i < cycle; i++) {
+            // intention is that whatever comes out of the factory it should work with the
+            // memory allocated by the queue for this slot and should not reallocate ever
             buf[i] = factory.newInstance(p, slotSize);
             p += slotSize;
         }
