@@ -102,6 +102,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntList orderByDirectionAdvice = new IntList();
     private ExpressionNode whereClause;
+    private ExpressionNode backupWhereClause;
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode constWhereClause;
     private QueryModel nestedModel;
@@ -145,11 +146,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<CharSequence> updateTableColumnNames = new ObjList<>();
     private QueryModel updateTableModel;
     private String updateTableName;
-    /**
-     * This flag is used to temporarily disable the whereClause field instead of removing it (by setting it to null).
-     * A disabled filter expression can be re-enabled by explicitly clearing the flag (by calling the resetWhereClauseDisableFlag* method).
-     */
-    private boolean whereClauseDisableFlag = false;
 
     private QueryModel() {
         joinModels.add(this);
@@ -724,35 +720,56 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.unionModel = unionModel;
     }
 
-    public ExpressionNode getWhereClause() {
-        return whereClauseDisableFlag ? null : whereClause;
+    public static void backupWhereClause(final ObjectPool<ExpressionNode> pool, final QueryModel model) {
+        QueryModel current = model;
+        while (current != null) {
+            if (current.unionModel != null) {
+                backupWhereClause(pool, current.unionModel);
+            }
+            if (current.updateTableModel != null) {
+                backupWhereClause(pool, current.updateTableModel);
+            }
+            for (int i = 0, n = current.joinModels.size(); i < n; i++) {
+                final QueryModel m = current.joinModels.get(i);
+                if (m != null && current != m) {
+                    backupWhereClause(pool, m);
+                }
+            }
+            current.backupWhereClause = ExpressionNode.deepClone(pool, current.whereClause);
+            current = current.nestedModel;
+        }
     }
 
     public void setUpdateTableName(String tableName) {
         this.updateTableName = tableName;
     }
 
+    public static void restoreWhereClause(final QueryModel model) {
+        QueryModel current = model;
+        while (current != null) {
+            if (current.unionModel != null) {
+                restoreWhereClause(current.unionModel);
+            }
+            if (current.updateTableModel != null) {
+                restoreWhereClause(current.updateTableModel);
+            }
+            for (int i = 0, n = current.joinModels.size(); i < n; i++) {
+                final QueryModel m = current.joinModels.get(i);
+                if (m != null && current != m) {
+                    restoreWhereClause(m);
+                }
+            }
+            current.whereClause = current.backupWhereClause;
+            current = current.nestedModel;
+        }
+    }
+
+    public ExpressionNode getWhereClause() {
+        return whereClause;
+    }
+
     public void setWhereClause(ExpressionNode whereClause) {
-        if (whereClause == null) {
-            // this local hack allows you to restore the state of the filter expression
-            // and reuse the model without copying of it
-            this.whereClauseDisableFlag = true;
-        } else {
-            this.whereClauseDisableFlag = false;
-            this.whereClause = whereClause;
-        }
-    }
-
-    public void resetWhereClauseDisableFlag() {
-        this.whereClauseDisableFlag = false;
-    }
-
-    public void resetWhereClauseDisableFlagAllNested() {
-        QueryModel model = this;
-        while (model != null) {
-            model.resetWhereClauseDisableFlag();
-            model = model.nestedModel;
-        }
+        this.whereClause = whereClause;
     }
 
     public boolean isDistinct() {
