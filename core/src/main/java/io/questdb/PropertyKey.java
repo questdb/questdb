@@ -23,7 +23,6 @@
  ******************************************************************************/
 
 package io.questdb;
-import io.questdb.std.Numbers;
 
 import java.util.Arrays;
 import java.util.Map;
@@ -329,25 +328,35 @@ public enum PropertyKey {
     TELEMETRY_ENABLED("telemetry.enabled"),
     TELEMETRY_DISABLE_COMPLETELY("telemetry.disable.completely"),
     TELEMETRY_QUEUE_CAPACITY("telemetry.queue.capacity"),
-    TELEMETRY_HIDE_TABLES("telemetry.hide.tables");
+    TELEMETRY_HIDE_TABLES("telemetry.hide.tables"),
+    PG_UPDATE_CACHE_ENABLED("pg.update.cache.enabled"),
+    PG_UPDATE_CACHE_BLOCK_COUNT("pg.update.cache.block.count"),
+    PG_UPDATE_CACHE_ROW_COUNT("pg.update.cache.row.count"),
+    PG_UPDATE_POOL_CAPACITY("pg.update.pool.capacity"),
+    CAIRO_SQL_COLUMN_VERSION_CLEAN_QUEUE_CAPACITY("cairo.sql.column.version.clean.queue.capacity"),
+    CAIRO_SQL_COLUMN_VERSION_CLEAN_TIMEOUT("cairo.sql.column.version.clean.timeout"),
+    CAIRO_SQL_COLUMN_VERSION_CLEAN_START_TIMEOUT("cairo.sql.column.version.clean.start.timeout"),
+    CAIRO_SQL_COLUMN_VERSION_CLEAN_TIMEOUT_EXPONENT("cairo.sql.column.version.clean.timeout.exponent"),
+    CAIRO_SQL_COLUMN_VERSION_CLEAN_LOOK_BACK_DAYS("cairo.sql.column.version.clean.look.back.days"),
+    CAIRO_SQL_SYSTEM_TABLE_PREFIX("cairo.system.table.prefix");
 
-    private final String propertyPath;
     private static final Map<String, PropertyKey> nameMapping;
+    private final String propertyPath;
 
     PropertyKey(String propertyPath) {
         this.propertyPath = propertyPath;
     }
 
-    static {
-        nameMapping = Arrays.stream(PropertyKey.values()).collect(Collectors.toMap(PropertyKey::getPropertyPath, k -> k));
+    public static Optional<PropertyKey> getByString(String name) {
+        return Optional.ofNullable(nameMapping.get(name));
     }
 
     public String getPropertyPath() {
         return propertyPath;
     }
 
-    public static Optional<PropertyKey> getByString(String name) {
-        return Optional.ofNullable(nameMapping.get(name));
+    static {
+        nameMapping = Arrays.stream(PropertyKey.values()).collect(Collectors.toMap(PropertyKey::getPropertyPath, k -> k));
     }
 
 }

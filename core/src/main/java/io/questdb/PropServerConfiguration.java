@@ -627,10 +627,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgInsertCacheBlockCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_BLOCK_COUNT, 8);
                 this.pgInsertCacheRowCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_ROW_COUNT, 8);
                 this.pgInsertPoolCapacity = getInt(properties, env, PropertyKey.PG_INSERT_POOL_CAPACITY, 64);
-                this.pgUpdateCacheEnabled = getBoolean(properties, env, "pg.update.cache.enabled", true);
-                this.pgUpdateCacheBlockCount = getInt(properties, env, "pg.update.cache.block.count", 8);
-                this.pgUpdateCacheRowCount = getInt(properties, env, "pg.update.cache.row.count", 8);
-                this.pgUpdatePoolCapacity = getInt(properties, env, "pg.update.pool.capacity", 64);
+                this.pgUpdateCacheEnabled = getBoolean(properties, env, PropertyKey.PG_UPDATE_CACHE_ENABLED, true);
+                this.pgUpdateCacheBlockCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_BLOCK_COUNT, 8);
+                this.pgUpdateCacheRowCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_ROW_COUNT, 8);
+                this.pgUpdatePoolCapacity = getInt(properties, env, PropertyKey.PG_UPDATE_POOL_CAPACITY, 64);
                 this.pgNamedStatementCacheCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_CACHE_CAPACITY, 32);
                 this.pgNamesStatementPoolCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_POOL_CAPACITY, 32);
                 this.pgPendingWritersCacheCapacity = getInt(properties, env, PropertyKey.PG_PENDING_WRITERS_CACHE_CAPACITY, 16);
@@ -689,12 +689,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlInsertModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY, 64);
             this.sqlCopyModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 32);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * 1024 * 1024);
-            this.columnVersionPurgeQueueCapacity = getQueueCapacity(properties, env,"cairo.sql.column.version.clean.queue.capacity", 1024);
-            this.columnVersionPurgeMaxTimeoutMicros = getLong(properties, env, "cairo.sql.column.version.clean.timeout", 60_000_000L);
-            this.columnVersionPurgeStartWaitTimeoutMicros = getLong(properties, env, "cairo.sql.column.version.clean.start.timeout", 10_000);
-            this.columnVersionPurgeWaitExponent = getDouble(properties, env, "cairo.sql.column.version.clean.timeout.exponent", 10.0);
-            this.columnVersionCleanupLookbackDays = getInt(properties, env, "cairo.sql.column.version.clean.look.back.days", 7);
-            this.systemTableNamePrefix = getString(properties, env, "cairo.system.name.prefix", "sys.");
+            this.columnVersionPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_CLEAN_QUEUE_CAPACITY, 1024);
+            this.columnVersionPurgeMaxTimeoutMicros = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_CLEAN_TIMEOUT, 60_000_000L);
+            this.columnVersionPurgeStartWaitTimeoutMicros = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_CLEAN_START_TIMEOUT, 10_000);
+            this.columnVersionPurgeWaitExponent = getDouble(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_CLEAN_TIMEOUT_EXPONENT, 10.0);
+            this.columnVersionCleanupLookbackDays = getInt(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_CLEAN_LOOK_BACK_DAYS, 7);
+            this.systemTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_SQL_SYSTEM_TABLE_PREFIX, "sys.");
 
             this.writerDataIndexKeyAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE, 512 * 1024));
             this.writerDataIndexValueAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, 16 * 1024 * 1024));
