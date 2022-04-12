@@ -261,7 +261,6 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
             public int getStrLen(int col) {
                 return getStr(col).length();
             }
-
         }
     }
 
@@ -276,6 +275,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("attlen", 7, ColumnType.SHORT));
         metadata.add(new TableColumnMetadata("attidentity", 8, ColumnType.CHAR));
         metadata.add(new TableColumnMetadata("attisdropped", 9, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("atthasdef", 10, ColumnType.BOOLEAN));
         METADATA = metadata;
     }
 }

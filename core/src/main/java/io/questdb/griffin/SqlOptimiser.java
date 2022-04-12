@@ -509,7 +509,6 @@ class SqlOptimiser {
                         jc.slaveIndex = lhi;
                         jc.parents.add(rhi);
                         linkDependencies(parent, rhi, lhi);
-
                     }
                     addJoinContext(parent, jc);
                 } else if (bSize == 0
@@ -1537,11 +1536,14 @@ class SqlOptimiser {
     }
 
     private JoinContext mergeContexts(QueryModel parent, JoinContext a, JoinContext b) {
+        if (a.slaveIndex != b.slaveIndex) {
+            System.out.println("ok");
+        }
         assert a.slaveIndex == b.slaveIndex;
 
         deletedContexts.clear();
         JoinContext r = contextPool.next();
-        // check if we merging a.x = b.x to a.y = b.y
+        // check if we are merging a.x = b.x to a.y = b.y
         // or a.x = b.x to a.x = b.y, e.g. one of columns in the same
         for (int i = 0, n = b.aNames.size(); i < n; i++) {
 
@@ -1628,10 +1630,14 @@ class SqlOptimiser {
                 r.bNodes.add(a.bNodes.getQuick(i));
 
                 r.parents.add(min);
+                r.slaveIndex = max;
                 linkDependencies(parent, min, max);
             }
         }
 
+        if (r.slaveIndex == -1) {
+            System.out.println("ok");
+        }
         return r;
     }
 
@@ -1644,7 +1650,7 @@ class SqlOptimiser {
 
         for (int i = 0, n = from.aIndexes.size(); i < n; i++) {
             // logically those clauses we move away from "from" context
-            // should not longer exist in "from", but instead of implementing
+            // should no longer exist in "from", but instead of implementing
             // "delete" function, which would be manipulating underlying array
             // on every invocation, we copy retained clauses to new context,
             // which is "result".
@@ -2495,7 +2501,7 @@ class SqlOptimiser {
 
             IntList ordered = model.nextOrderedJoinModels();
             int thisCost = doReorderTables(model, ordered);
-            if (thisCost < cost) {
+            if (thisCost < cost || root == -1) {
                 root = z;
                 cost = thisCost;
                 model.setOrderedJoinModels(ordered);

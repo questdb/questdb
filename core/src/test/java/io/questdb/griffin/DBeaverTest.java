@@ -116,9 +116,9 @@ public class DBeaverTest extends AbstractGriffinTest {
             compiler.compile("create table tab2(b long, z binary)", sqlExecutionContext);
 
             assertQuery(
-                    "relname\tattrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tdef_value\tdescription\n" +
-                            "xyz\t1\ta\t1\t23\tfalse\t0\t4\t\tfalse\t\t\n" +
-                            "xyz\t1\tt\t2\t1114\tfalse\t0\t-1\t\tfalse\t\t\n",
+                    "relname\tattrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\tdef_value\tdescription\n" +
+                            "xyz\t1\ta\t1\t23\tfalse\t0\t4\t\tfalse\tfalse\t\t\n" +
+                            "xyz\t1\tt\t2\t1114\tfalse\t0\t-1\t\tfalse\tfalse\t\t\n",
                     "SELECT \n" +
                             "    c.relname,\n" +
                             "    a.*,\n" +
@@ -144,9 +144,9 @@ public class DBeaverTest extends AbstractGriffinTest {
             compiler.compile("create table xyz(a int)", sqlExecutionContext);
             compiler.compile("create table tab2(b long)", sqlExecutionContext);
             assertQuery(
-                    "oid\trelname\trelnamespace\trelkind\trelowner\toid1\trelpartbound\tdescription\tpartition_expr\tpartition_key\n" +
-                            "2\ttab2\t2200\tr\t0\t2\t\t\t\t\n" +
-                            "1\txyz\t2200\tr\t0\t1\t\t\t\t\n",
+                    "oid\trelname\trelnamespace\trelkind\trelowner\toid1\trelpartbound\trelhasrules\trelhasoids\trelhassubclass\tdescription\tpartition_expr\tpartition_key\n" +
+                            "2\ttab2\t2200\tr\t0\t2\t\tfalse\tfalse\tfalse\t\t\t\n" +
+                            "1\txyz\t2200\tr\t0\t1\t\tfalse\tfalse\tfalse\t\t\t\n",
                     "SELECT c.oid,c.*,d.description,pg_catalog.pg_get_expr(c.relpartbound, c.oid) as partition_expr,  pg_catalog.pg_get_partkeydef(c.oid) as partition_key \n" +
                             "FROM pg_catalog.pg_class c\n" +
                             "LEFT OUTER JOIN pg_catalog.pg_description d ON d.objoid=c.oid AND d.objsubid=0 AND d.classoid='pg_class'::regclass\n" +

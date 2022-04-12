@@ -24,9 +24,9 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-public class PrefixedPgGetSIExprFunctionFactory extends PgGetSIExprFunctionFactory {
+public class PrefixedAttrDefCatalogueFunctionFactory extends AttrDefCatalogueFunctionFactory {
     @Override
     public String getSignature() {
-        return "pg_catalog.pg_get_expr(SI)";
+        return "pg_catalog.pg_attrdef()";
     }
 }

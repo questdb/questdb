@@ -3248,7 +3248,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testJoinColumnResolutionOnSubQuery() throws SqlException {
         assertQuery(
                 "select-group-by sum(timestamp) sum from (select [timestamp] from (select-choose [timestamp] ccy, timestamp from (select [timestamp] from y)) _xQdbA1 cross join (select-choose ccy from (select [ccy] from x)) _xQdbA2)",
-                "select sum(timestamp) from (y) cross join (x)",
+                "select sum(timestamp) from (select * from y) cross join (x)",
                 modelOf("x").col("ccy", ColumnType.SYMBOL),
                 modelOf("y").col("ccy", ColumnType.SYMBOL).col("timestamp", ColumnType.TIMESTAMP)
         );
@@ -3258,7 +3258,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testJoinColumnResolutionOnSubQuery2() throws SqlException {
         assertQuery(
                 "select-group-by sum(timestamp) sum from (select [timestamp, ccy, sym] from (select-choose [timestamp, ccy, sym] ccy, timestamp, sym from (select [timestamp, ccy, sym] from y)) _xQdbA1 join select [ccy, sym] from (select-choose [ccy, sym] ccy, sym from (select [ccy, sym] from x)) _xQdbA2 on _xQdbA2.ccy = _xQdbA1.ccy and _xQdbA2.sym = _xQdbA1.sym)",
-                "select sum(timestamp) from (y) join (x) on (ccy, sym)",
+                "select sum(timestamp) from (select * from y) join (select * from x) on (ccy, sym)",
                 modelOf("x").col("ccy", ColumnType.SYMBOL).col("sym", ColumnType.INT),
                 modelOf("y").col("ccy", ColumnType.SYMBOL).col("timestamp", ColumnType.TIMESTAMP).col("sym", ColumnType.INT)
         );
@@ -3268,7 +3268,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testJoinColumnResolutionOnSubQuery3() throws SqlException {
         assertQuery(
                 "select-group-by sum(timestamp) sum from (select [timestamp] from (select-choose [timestamp] ccy, timestamp from (select [timestamp] from y)) _xQdbA1 cross join x)",
-                "select sum(timestamp) from (y) cross join x",
+                "select sum(timestamp) from (select * from y) cross join x",
                 modelOf("x").col("ccy", ColumnType.SYMBOL),
                 modelOf("y").col("ccy", ColumnType.SYMBOL).col("timestamp", ColumnType.TIMESTAMP)
         );
@@ -5933,9 +5933,135 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSimpleSubQuery() throws Exception {
         assertQuery(
-                "select-choose y from (select-choose [y] y from (select [y] from x where y > 1))",
+                "select-choose y from (select [y] from x where y > 1)",
                 "(x) where y > 1",
                 modelOf("x").col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testExcelODBCQ2() throws Exception {
+        assertQuery(
+                "select-choose" +
+                        " ta.attname attname," +
+                        " ia.attnum attnum," +
+                        " ic.relname relname," +
+                        " n.nspname nspname," +
+                        " tc.relname relname1" +
+                        " from (" +
+                        "select [attname, attnum, attrelid, attisdropped] from pg_catalog.pg_attribute() ta" +
+                        " join (select" +
+                        " [relname, oid, relnamespace]" +
+                        " from pg_catalog.pg_class() tc" +
+                        " where relname = 'telemetry_config') tc" +
+                        " on tc.oid = ta.attrelid" +
+                        " join (select" +
+                        " [indexrelid, indkey, indrelid, indisprimary]" +
+                        " from pg_catalog.pg_index() i" +
+                        " where indisprimary = 't') i" +
+                        " on i.indrelid = ta.attrelid" +
+                        " join (" +
+                        "select [attnum, attrelid, attisdropped]" +
+                        " from pg_catalog.pg_attribute() ia" +
+                        " where not(attisdropped)) ia" +
+                        " on ia.attrelid = i.indexrelid" +
+                        " post-join-where ta.attnum = [](i.indkey,ia.attnum - 1)" +
+                        " join (select [nspname, oid]" +
+                        " from pg_catalog.pg_namespace() n" +
+                        " where nspname = 'public') n" +
+                        " on n.oid = tc.relnamespace" +
+                        " join select [relname, oid]" +
+                        " from pg_catalog.pg_class() ic" +
+                        " on ic.oid = i.indexrelid" +
+                        " where not(attisdropped)) ta" +
+                        " order by attnum",
+                "select\n" +
+                        "  ta.attname,\n" +
+                        "  ia.attnum,\n" +
+                        "  ic.relname,\n" +
+                        "  n.nspname,\n" +
+                        "  tc.relname\n" +
+                        "from\n" +
+                        "  pg_catalog.pg_attribute ta,\n" +
+                        "  pg_catalog.pg_attribute ia,\n" +
+                        "  pg_catalog.pg_class tc,\n" +
+                        "  pg_catalog.pg_index i,\n" +
+                        "  pg_catalog.pg_namespace n,\n" +
+                        "  pg_catalog.pg_class ic\n" +
+                        "where\n" +
+                        "  tc.relname = 'telemetry_config'\n" +
+                        "  AND n.nspname = 'public'\n" +
+                        "  AND tc.oid = i.indrelid\n" +
+                        "  AND n.oid = tc.relnamespace\n" +
+                        "  AND i.indisprimary = 't'\n" +
+                        "  AND ia.attrelid = i.indexrelid\n" +
+                        "  AND ta.attrelid = i.indrelid\n" +
+                        "  AND ta.attnum = i.indkey [ ia.attnum -1 ]\n" +
+                        "  AND (NOT ta.attisdropped)\n" +
+                        "  AND (NOT ia.attisdropped)\n" +
+                        "  AND ic.oid = i.indexrelid\n" +
+                        "order by\n" +
+                        "  ia.attnum\n" +
+                        ";\n"
+        );
+    }
+
+    @Test
+    // todo: this join is seriously broken
+    public void testExcelODBCQ3() throws Exception {
+        assertQuery(
+                "select-virtual" +
+                        " attname," +
+                        " attnum," +
+                        " relname," +
+                        " nspname," +
+                        " NULL NULL" +
+                        " from (select-choose" +
+                        " [ta.attname attname," +
+                        " ia.attnum attnum," +
+                        " ic.relname relname," +
+                        " n.nspname nspname]" +
+                        " ta.attname attname," +
+                        " ia.attnum attnum," +
+                        " ic.relname relname," +
+                        " n.nspname nspname" +
+                        " from (select [attname, attnum, attrelid, attisdropped]" +
+                        " from pg_catalog.pg_attribute() ta" +
+                        " join select [indexrelid, indkey, indrelid]" +
+                        " from pg_catalog.pg_index() i" +
+                        " on i.indrelid = ta.attrelid" +
+                        " join (select [attnum, attrelid, attisdropped]" +
+                        " from pg_catalog.pg_attribute() ia" +
+                        " where not(attisdropped)) ia" +
+                        " on ia.attrelid = i.indexrelid" +
+                        " post-join-where ta.attnum = [](i.indkey,ia.attnum - 1)" +
+                        " where not(attisdropped)) ta) ta" +
+                        " order by attnum",
+                "select\n" +
+                        "  ta.attname,\n" +
+                        "  ia.attnum,\n" +
+                        "  ic.relname,\n" +
+                        "  n.nspname,\n" +
+                        "  NULL\n" +
+                        "from\n" +
+                        "  pg_catalog.pg_attribute ta,\n" +
+                        "  pg_catalog.pg_attribute ia,\n" +
+                        "  pg_catalog.pg_class ic,\n" +
+                        "  pg_catalog.pg_index i,\n" +
+                        "  pg_catalog.pg_namespace n\n" +
+                        "where\n" +
+                        "  ic.relname = 'telemetry_config_pkey'\n" +
+                        "  AND n.nspname = 'public'\n" +
+                        "  AND ic.oid = i.indexrelid\n" +
+                        "  AND n.oid = ic.relnamespace\n" +
+                        "  AND ia.attrelid = i.indexrelid\n" +
+                        "  AND ta.attrelid = i.indrelid\n" +
+                        "  AND ta.attnum = i.indkey [ ia.attnum -1 ]\n" +
+                        "  AND (NOT ta.attisdropped)\n" +
+                        "  AND (NOT ia.attisdropped)\n" +
+                        "order by\n" +
+                        "  ia.attnum\n" +
+                        ";\n"
         );
     }
 
