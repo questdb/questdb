@@ -121,6 +121,27 @@ public class PGSecurityTest extends BasePGTest {
     }
 
     @Test
+    public void testDisallowSnapshotComplete() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+            try {
+                assertQueryDisallowed("snapshot complete");
+            } finally {
+                compiler.compile("snapshot complete", sqlExecutionContext);
+            }
+        });
+    }
+
+    @Test
+    public void testDisallowSnapshotPrepare() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
+            assertQueryDisallowed("snapshot prepare");
+        });
+    }
+
+    @Test
     public void testAllowsSelect() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP)", sqlExecutionContext);
