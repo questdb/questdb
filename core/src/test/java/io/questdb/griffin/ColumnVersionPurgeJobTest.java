@@ -436,7 +436,6 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
 
     @Test
     public void testPurgeRespectsTableTruncates() throws Exception {
-        LogFactory.configureSync();
         assertMemoryLeak(() -> {
             try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
                 compiler.compile("create table testPurgeRespectsTableTruncates as" +
