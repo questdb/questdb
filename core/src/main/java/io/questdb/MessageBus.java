@@ -34,7 +34,7 @@ import java.io.Closeable;
 public interface MessageBus extends Closeable {
     @Override
     default void close() {
-        Misc.free(getO3PartitionQueue());
+        // We need to close only queues with native backing memory.
         Misc.free(getTableWriterEventQueue());
     }
 
@@ -93,4 +93,10 @@ public interface MessageBus extends Closeable {
     RingQueue<VectorAggregateTask> getVectorAggregateQueue();
 
     Sequence getVectorAggregateSubSeq();
+
+    MPSequence getQueryCacheEventPubSeq();
+
+    RingQueue<QueryCacheTask> getQueryCacheEventQueue();
+
+    FanOut getQueryCacheEventFanOut();
 }

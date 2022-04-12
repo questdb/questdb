@@ -24,6 +24,8 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.MessageBus;
+import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
@@ -53,6 +55,9 @@ import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.InputStream;
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -1562,7 +1567,7 @@ public class IODispatcherTest {
             }, Metrics.disabled());
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -2207,7 +2212,7 @@ public class IODispatcherTest {
             }, Metrics.disabled());
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -2830,7 +2835,7 @@ public class IODispatcherTest {
 
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -4045,7 +4050,7 @@ public class IODispatcherTest {
 
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -4251,7 +4256,7 @@ public class IODispatcherTest {
             }, Metrics.disabled());
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)) {
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -4341,7 +4346,7 @@ public class IODispatcherTest {
             }, Metrics.disabled());
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -4448,7 +4453,7 @@ public class IODispatcherTest {
 
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -5189,6 +5194,7 @@ public class IODispatcherTest {
     public void testSCPConnectDownloadDisconnect() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
@@ -5206,7 +5212,10 @@ public class IODispatcherTest {
                     return false;
                 }
             }, Metrics.disabled());
-            try (HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)) {
+            try (
+                    MessageBus messageBus = new MessageBusImpl(configuration);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, messageBus, metrics, workerPool, false)
+            ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -5228,8 +5237,6 @@ public class IODispatcherTest {
                         final int diskBufferLen = 1024 * 1024;
 
                         writeRandomFile(path, rnd, 122222212222L);
-
-//                        httpServer.getStartedLatch().await();
 
                         long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                         try {
@@ -5357,6 +5364,7 @@ public class IODispatcherTest {
     public void testSCPFullDownload() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
@@ -5374,7 +5382,10 @@ public class IODispatcherTest {
                     return false;
                 }
             }, Metrics.disabled());
-            try (HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)) {
+            try (
+                    MessageBus messageBus = new MessageBusImpl(configuration);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, messageBus, metrics, workerPool, false)
+            ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -5513,6 +5524,7 @@ public class IODispatcherTest {
     public void testSCPHttp10() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(
                     NetworkFacadeImpl.INSTANCE,
                     baseDir,
@@ -5538,7 +5550,10 @@ public class IODispatcherTest {
                     return false;
                 }
             }, Metrics.disabled());
-            try (HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)) {
+            try (
+                    MessageBus messageBus = new MessageBusImpl(configuration);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, messageBus, metrics, workerPool, false)
+            ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -5993,7 +6008,6 @@ public class IODispatcherTest {
                     serverHaltLatch.countDown();
                 }).start();
 
-
                 long fd = Net.socketTcp(true);
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
@@ -6147,7 +6161,6 @@ public class IODispatcherTest {
                     }
                     serverHaltLatch.countDown();
                 }).start();
-
 
                 long fd = Net.socketTcp(true);
                 try {
@@ -6330,7 +6343,6 @@ public class IODispatcherTest {
         final int N = 100;
         final int serverThreadCount = 2;
         final int senderCount = 2;
-
 
         assertMemoryLeak(() -> {
             HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
@@ -6518,6 +6530,51 @@ public class IODispatcherTest {
                 1000);
     }
 
+    @Test
+    public void testJsonQueryFlushQueryCache() throws Exception {
+        testJsonQuery0(2, engine -> {
+            // create tables
+            sendAndReceiveDdl("CREATE TABLE test\n" +
+                    "AS(\n" +
+                    "    SELECT\n" +
+                    "        x id,\n" +
+                    "        timestamp_sequence(0L, 100000L) ts\n" +
+                    "    FROM long_sequence(1000) x)\n" +
+                    "TIMESTAMP(ts)\n" +
+                    "PARTITION BY DAY");
+
+            // execute a SELECT query that uses native memory
+            long memInitial = Unsafe.getMemUsed();
+
+            String sql = "SELECT *\n" +
+                    "FROM test t1 JOIN test t2 \n" +
+                    "ON t1.id = t2.id\n" +
+                    "LIMIT 1";
+            sendAndReceiveBasicSelect(sql, "\r\n" +
+                    "012b\r\n" +
+                    "{\"query\":\"SELECT *\\nFROM test t1 JOIN test t2 \\nON t1.id = t2.id\\nLIMIT 1\",\"columns\":[{\"name\":\"id\",\"type\":\"LONG\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"name\":\"id1\",\"type\":\"LONG\"},{\"name\":\"ts1\",\"type\":\"TIMESTAMP\"}],\"dataset\":[[1,\"1970-01-01T00:00:00.000000Z\",1,\"1970-01-01T00:00:00.000000Z\"]],\"count\":1}\r\n" +
+                    "00\r\n" +
+                    "\r\n");
+
+            long memAfterJoin = Unsafe.getMemUsed();
+            Assert.assertTrue("Factory used for JOIN should allocate native memory", memAfterJoin > memInitial);
+
+            // flush query cache and verify that the memory gets released
+            sql = "SELECT flush_query_cache()";
+            sendAndReceiveBasicSelect(sql, "\r\n" +
+                    "7d\r\n" +
+                    "{\"query\":\"SELECT flush_query_cache()\",\"columns\":[{\"name\":\"flush_query_cache\",\"type\":\"BOOLEAN\"}],\"dataset\":[[true]],\"count\":1}\r\n" +
+                    "00\r\n" +
+                    "\r\n");
+
+            // We need to wait until HTTP workers process the message.
+            Os.sleep(50);
+
+            long memAfterFlush = Unsafe.getMemUsed();
+            Assert.assertTrue("flush_query_cache() should release native memory", memAfterFlush < memAfterJoin);
+        }, false);
+    }
+
     private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
         int expectedHeaderLen = expectedResponseHeader.length();
         int headerCheckRemaining = expectedResponseHeader.length();
@@ -6595,6 +6652,71 @@ public class IODispatcherTest {
                 .withRequestCount(requestCount)
                 .withPauseBetweenSendAndReceive(pauseBetweenSendAndReceive)
                 .execute(request, response);
+    }
+
+    private static void sendAndReceiveDdl(String rawDdl) throws InterruptedException {
+        sendAndReceive(
+                NetworkFacadeImpl.INSTANCE,
+                "GET /query?query=" + urlEncodeQuery(rawDdl) + "&count=true HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Accept: */*\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        JSON_DDL_RESPONSE,
+                1,
+                0,
+                false
+        );
+    }
+
+    private static void sendAndReceiveBasicSelect(String rawSelect, String expectedBody) throws InterruptedException {
+        sendAndReceive(
+                NetworkFacadeImpl.INSTANCE,
+                "GET /query?query=" + urlEncodeQuery(rawSelect) + "&count=true HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Accept: */*\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        expectedBody,
+                1,
+                0,
+                false
+        );
+    }
+
+    private static String urlEncodeQuery(String query) {
+        try {
+            return URLEncoder.encode(query, StandardCharsets.UTF_8.toString());
+        } catch (UnsupportedEncodingException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private void assertColumn(CharSequence expected, int index) {

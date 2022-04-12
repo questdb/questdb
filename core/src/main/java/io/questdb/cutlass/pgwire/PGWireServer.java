@@ -32,9 +32,7 @@ import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.EagerThreadSetup;
-import io.questdb.mp.Job;
-import io.questdb.mp.WorkerPool;
+import io.questdb.mp.*;
 import io.questdb.network.*;
 import io.questdb.std.Misc;
 import io.questdb.std.ThreadLocal;
@@ -72,6 +70,11 @@ public class PGWireServer implements Closeable {
 
         for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
             final PGJobContext jobContext = new PGJobContext(configuration, engine, functionFactoryCache, snapshotAgent);
+
+            final SCSequence queryCacheEventSubSeq = new SCSequence();
+            final FanOut queryCacheEventFanOut = engine.getMessageBus().getQueryCacheEventFanOut();
+            queryCacheEventFanOut.and(queryCacheEventSubSeq);
+
             workerPool.assign(i, new Job() {
                 private final IORequestProcessor<PGConnectionContext> processor = (operation, context) -> {
                     try {
@@ -93,6 +96,13 @@ public class PGWireServer implements Closeable {
 
                 @Override
                 public boolean run(int workerId) {
+                    long seq = queryCacheEventSubSeq.next();
+                    if (seq > -1) {
+                        // Queue is not empty, so flush query cache.
+                        LOG.info().$("flushing PG Wire query cache [worker=").$(workerId).$(']').$();
+                        jobContext.flushQueryCache();
+                        queryCacheEventSubSeq.done(seq);
+                    }
                     return dispatcher.processIOQueue(processor);
                 }
             });
@@ -102,6 +112,8 @@ public class PGWireServer implements Closeable {
             workerPool.assign(i, () -> {
                 Misc.free(jobContext);
                 contextFactory.closeContextPool();
+                engine.getMessageBus().getQueryCacheEventFanOut().remove(queryCacheEventSubSeq);
+                queryCacheEventSubSeq.clear();
             });
         }
 
