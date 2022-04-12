@@ -2672,6 +2672,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery vacuum(SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getCairoSecurityContext().checkWritePermission();
         CharSequence tok = expectToken(lexer, "'partitions'");
         if (isPartitionsKeyword(tok)) {
             CharSequence tableName = expectToken(lexer, "table name");

@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -1743,6 +1744,34 @@ public class UpdateTest extends AbstractGriffinTest {
                     "1970-01-02T18:00:00.000000Z\t1\n" +
                     "1970-01-03T00:00:00.000000Z\t10\n" +
                     "1970-01-03T06:00:00.000000Z\t1\n");
+        });
+    }
+
+    @Test
+    public void testUpdateReadonlyFails() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " cast(x as int) x" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            SqlExecutionContext roExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                    .with(
+                            new CairoSecurityContextImpl(false),
+                            bindVariableService,
+                            null,
+                            -1,
+                            null);
+
+            try {
+                String query = "UPDATE up SET x = x WHERE x > 1 and x < 4";
+                CompiledQuery cc = compiler.compile(query, roExecutionContext);
+                cc.execute(null);
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "permission denied");
+            }
         });
     }
 
