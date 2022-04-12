@@ -269,6 +269,8 @@ public class AbstractCairoTest {
     public static void tearDownStatic() {
         snapshotAgent = Misc.free(snapshotAgent);
         engine = Misc.free(engine);
+        backupDir = null;
+        backupDirTimestampFormat = null;
     }
 
     @Before
