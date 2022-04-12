@@ -925,6 +925,8 @@ public final class SqlParser {
                     nestedModel.addJoinModel(parseJoin(lexer, tok, joinType, topLevelWithModel));
                     tok = optTok(lexer);
                 }
+            } else if (tok != null && isSemicolon(tok)) {
+                tok = null;
             } else if (tok != null && !isWhereKeyword(tok)) {
                 throw SqlException.$(lexer.lastTokenPosition(), "FROM, WHERE or EOF expected");
             }
@@ -937,7 +939,7 @@ public final class SqlParser {
                 } else {
                     throw SqlException.$((lexer.lastTokenPosition()), "empty where clause");
                 }
-            } else if (tok != null) {
+            } else if (tok != null && !isSemicolon(tok)) {
                 throw errUnexpected(lexer, tok);
             }
 

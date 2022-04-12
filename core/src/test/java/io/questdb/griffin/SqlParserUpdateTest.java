@@ -56,6 +56,47 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testUpdateEmptyWhereFails() throws Exception {
+        assertSyntaxError(
+                "update tblx set tt = 1 where ",
+                "update tblx set tt = 1 where".length(),
+                "empty where clause",
+                partitionedModelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("tt", ColumnType.INT)
+                        .timestamp());
+    }
+
+    @Test
+    public void testUpdateJoinInvalidSyntaxFails() throws Exception {
+        assertSyntaxError(
+                "update tblx set tt = 1 join tblx on x = y and x > 10",
+                "update tblx set tt = 1 ".length(),
+                "FROM, WHERE or EOF expected",
+                partitionedModelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("tt", ColumnType.INT)
+                        .timestamp(),
+                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
+    }
+
+    @Test
+    public void testUpdateJoinTableWithDoubleFromFails() throws Exception {
+        assertSyntaxError(
+                "update tblx set tt = 1 from tblx from tbly where x = y and x > 10",
+                "update tblx set tt = 1 from tblx ".length(),
+                "unexpected token: from",
+                partitionedModelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("tt", ColumnType.INT)
+                        .timestamp(),
+                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
+    }
+
+    @Test
     public void testUpdateNoSetFails() throws Exception {
         assertSyntaxError(
                 "update tblx x = 1",
@@ -81,6 +122,16 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
                         .col("s", ColumnType.SYMBOL)
                         .timestamp()
         );
+    }
+
+    @Test
+    public void testUpdateSingleTableEndsSemicolon() throws Exception {
+        assertUpdate("update tblx set tt = tt + 1 from (select-virtual tt + 1 tt from (select [tt, t] from tblx timestamp (timestamp) where t = NULL))",
+                "update tblx set tt = tt + 1 WHERE t = NULL;",
+                partitionedModelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("tt", ColumnType.TIMESTAMP)
+                        .timestamp());
     }
 
     @Test
@@ -114,19 +165,9 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testUpdateSingleTableEndsSemicolon() throws Exception {
-        assertUpdate("update tblx set tt = tt + 1 from (select-virtual tt + 1 tt from (select [tt, t] from tblx timestamp (timestamp) where t = NULL))",
-                "update tblx set tt = tt + 1 WHERE t = NULL;",
-                partitionedModelOf("tblx")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("tt", ColumnType.TIMESTAMP)
-                        .timestamp());
-    }
-
-    @Test
-    public void testUpdateSingleTableWithJoinInFrom() throws Exception {
-        assertUpdate("update tblx set tt = tt + 1 from (select-virtual tt + 1 tt from (select [tt, x] from tblx timestamp (timestamp) join select [y] from tbly y on y = x where x > 10))",
-                "update tblx set tt = tt + 1 from tbly y where x = y and x > 10",
+    public void testUpdateSingleTableWithJoinAndConstFiltering() throws Exception {
+        assertUpdate("update tblx set tt = 1 from (select-virtual 1 tt from (select [x] from tblx timestamp (timestamp) join select [y] from tbly y on y = x where x > 10 const-where 100 > 100))",
+                "update tblx set tt = 1 from tbly y where x = y and x > 10 and 100 > 100",
                 partitionedModelOf("tblx")
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
@@ -139,18 +180,6 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
     public void testUpdateSingleTableWithJoinAndFiltering() throws Exception {
         assertUpdate("update tblx set tt = 1 from (select-virtual 1 tt from (select [x] from tblx timestamp (timestamp) join (select [y, t] from tbly y where t > 100) y on y = x where x > 10))",
                 "update tblx set tt = 1 from tbly y where x = y and x > 10 and y.t > 100",
-                partitionedModelOf("tblx")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("x", ColumnType.INT)
-                        .col("tt", ColumnType.INT)
-                        .timestamp(),
-                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
-    }
-
-    @Test
-    public void testUpdateSingleTableWithJoinAndConstFiltering() throws Exception {
-        assertUpdate("update tblx set tt = 1 from (select-virtual 1 tt from (select [x] from tblx timestamp (timestamp) join select [y] from tbly y on y = x where x > 10 const-where 100 > 100))",
-                "update tblx set tt = 1 from tbly y where x = y and x > 10 and 100 > 100",
                 partitionedModelOf("tblx")
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
@@ -176,59 +205,15 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testUpdateWithJoinKeywordFails() throws Exception {
-        assertSyntaxError(
-                "update tblx set tt = 1 from tblx join tbly where x = y and x > 10",
-                "update tblx set tt = 1 from tblx ".length(),
-                "JOIN is not supported on UPDATE statement",
-                partitionedModelOf("tblx")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("x", ColumnType.INT)
-                        .col("tt", ColumnType.INT)
-                        .timestamp(),
-                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testUpdateJoinTableWithDoubleFromFails() throws Exception {
-        assertSyntaxError(
-                "update tblx set tt = 1 from tblx from tbly where x = y and x > 10",
-                "update tblx set tt = 1 from tblx ".length(),
-                "unexpected token: from",
+    public void testUpdateSingleTableWithJoinInFrom() throws Exception {
+        assertUpdate("update tblx set tt = tt + 1 from (select-virtual tt + 1 tt from (select [tt, x] from tblx timestamp (timestamp) join select [y] from tbly y on y = x where x > 10))",
+                "update tblx set tt = tt + 1 from tbly y where x = y and x > 10",
                 partitionedModelOf("tblx")
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
                         .col("tt", ColumnType.INT)
                         .timestamp(),
                 partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
-    }
-
-    @Test
-    public void testUpdateJoinInvalidSyntaxFails() throws Exception {
-        assertSyntaxError(
-                "update tblx set tt = 1 join tblx on x = y and x > 10",
-                "update tblx set tt = 1 ".length(),
-                "FROM, WHERE or EOF expected",
-                partitionedModelOf("tblx")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("x", ColumnType.INT)
-                        .col("tt", ColumnType.INT)
-                        .timestamp(),
-                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
-    }
-
-    @Test
-    public void testUpdateEmptyWhereFails() throws Exception {
-        assertSyntaxError(
-                "update tblx set tt = 1 where ",
-                "update tblx set tt = 1 where".length(),
-                "empty where clause",
-                partitionedModelOf("tblx")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("x", ColumnType.INT)
-                        .col("tt", ColumnType.INT)
-                        .timestamp());
     }
 
     @Test
@@ -323,6 +308,28 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testUpdateWithCrossJoinAndSemicolon() throws Exception {
+        String expected = "update tblx set tt = 1 from (select-virtual 1 tt from (tblx timestamp (timestamp) cross join tbly y))";
+        assertUpdate(expected,
+                "update tblx set tt = 1 from tbly y",
+                partitionedModelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("tt", ColumnType.INT)
+                        .timestamp(),
+                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
+
+        assertUpdate(expected,
+                "update tblx set tt = 1 from tbly y;",
+                partitionedModelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("tt", ColumnType.INT)
+                        .timestamp(),
+                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
+    }
+
+    @Test
     public void testUpdateWithLatestByFails() throws Exception {
         assertSyntaxError(
                 "update tblx as xx set tt = 1 where x > 10 LATEST BY s",
@@ -367,6 +374,42 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
                 partitionedModelOf("tblx").col("t", ColumnType.TIMESTAMP).col("x", ColumnType.INT),
                 partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
     }
+
+    @Test
+    public void testUpdateWithJoinKeywordFails() throws Exception {
+        assertSyntaxError(
+                "update tblx set tt = 1 from tblx join tbly where x = y and x > 10",
+                "update tblx set tt = 1 from tblx ".length(),
+                "JOIN is not supported on UPDATE statement",
+                partitionedModelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("tt", ColumnType.INT)
+                        .timestamp(),
+                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testUpdateWithSemicolon() throws Exception {
+        assertUpdate("update x set tt = 1 from (select-virtual 1 tt from (x timestamp (timestamp)))",
+                "update x set tt = 1;",
+                partitionedModelOf("x")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("tt", ColumnType.TIMESTAMP)
+                        .timestamp());
+    }
+
+    @Test
+    public void testUpdateWithWhereAndSemicolon() throws Exception {
+        assertUpdate("update tblx as x set tt = tt + 1 from (select-virtual tt + 1 tt from (select [tt, t] from tblx x timestamp (timestamp) where t = NULL))",
+                "update tblx x set tt = tt + 1 WHERE x.t = NULL;",
+                partitionedModelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("tt", ColumnType.TIMESTAMP)
+                        .timestamp());
+    }
+
 
     private static TableModel partitionedModelOf(String tableName) {
         return new TableModel(configuration, tableName, PartitionBy.DAY);
