@@ -24,10 +24,15 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
+import org.junit.BeforeClass;
+import org.junit.ClassRule;
 import org.junit.Ignore;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 import org.postgresql.util.PSQLException;
 
+import java.io.IOException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 
@@ -36,12 +41,21 @@ import static org.junit.Assert.fail;
 
 public class PGSecurityTest extends BasePGTest {
 
+    @ClassRule
+    public static TemporaryFolder backup = new TemporaryFolder();
+
     private static final PGWireConfiguration READ_ONLY_CONF = new DefaultPGWireConfiguration() {
         @Override
         public boolean readOnlySecurityContext() {
             return true;
         }
     };
+
+    @BeforeClass
+    public static void configureForBackups() throws IOException {
+        backupDir = backup.newFolder("dbBackupRoot").getAbsolutePath();
+        backupDirTimestampFormat = new TimestampFormatCompiler().compile("ddMMMyyyy");
+    }
 
     @Test
     public void testDisallowDrop() throws Exception {
@@ -142,6 +156,15 @@ public class PGSecurityTest extends BasePGTest {
     }
 
     @Test
+    public void testDisallowsBackup() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
+            compiler.compile("insert into src values (now(), 'foo')", sqlExecutionContext);
+            assertQueryDisallowed("backup database");
+        });
+    }
+
+    @Test
     public void testAllowsSelect() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP)", sqlExecutionContext);
@@ -161,6 +184,7 @@ public class PGSecurityTest extends BasePGTest {
             assertContains(e.getMessage(), "Write permission denied");
         }
     }
+
 
     private void assertQueryDoesNotThrowException(String query) throws Exception {
         try (
