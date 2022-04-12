@@ -54,6 +54,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     public int intrinsicValue = IntrinsicModel.UNDEFINED;
     public boolean innerPredicate = false;
 
+    // IMPORTANT: update deepClone method after adding a new field
     private ExpressionNode() {
     }
 

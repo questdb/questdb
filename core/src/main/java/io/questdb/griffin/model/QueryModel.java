@@ -102,6 +102,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntList orderByDirectionAdvice = new IntList();
     private ExpressionNode whereClause;
+    // Used to store a deep copy of the whereClause field
+    // since whereClause can be changed during optimization/generation stage.
     private ExpressionNode backupWhereClause;
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode constWhereClause;
@@ -720,6 +722,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.unionModel = unionModel;
     }
 
+    // Recursively clones the current value of whereClause for the model and its sub-models into the backupWhereClause field.
     public static void backupWhereClause(final ObjectPool<ExpressionNode> pool, final QueryModel model) {
         QueryModel current = model;
         while (current != null) {
@@ -744,6 +747,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.updateTableName = tableName;
     }
 
+    // Recursively restores the whereClause field from backupWhereClause for the model and its sub-models.
     public static void restoreWhereClause(final QueryModel model) {
         QueryModel current = model;
         while (current != null) {
