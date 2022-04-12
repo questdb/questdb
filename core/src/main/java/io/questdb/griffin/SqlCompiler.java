@@ -2732,6 +2732,7 @@ public class SqlCompiler implements Closeable {
             int tableNamePos = lexer.lastTokenPosition();
             CharSequence eol = SqlUtil.fetchNext(lexer);
             if (eol == null || Chars.equals(eol, ';')) {
+                executionContext.getCairoSecurityContext().checkWritePermission();
                 tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
                 try (TableReader rdr = engine.getReader(executionContext.getCairoSecurityContext(), tableName)) {
                     int partitionBy = rdr.getMetadata().getPartitionBy();

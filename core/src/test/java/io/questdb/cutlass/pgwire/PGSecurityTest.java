@@ -117,7 +117,6 @@ public class PGSecurityTest extends BasePGTest {
     }
 
     @Test
-    @Ignore("Vacuum does not fail in the read-only mode. Technically there is nothing to vacuum at this point, but I suspect it should fail anyway")
     public void testDisallowVacuum() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
@@ -174,7 +173,7 @@ public class PGSecurityTest extends BasePGTest {
     }
 
     @Test
-    @Ignore("This is failing, is repair doing anything at all?")
+    @Ignore("This is failing, but repair is nop so that's ok")
     public void testDisallowsRepairTable() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
