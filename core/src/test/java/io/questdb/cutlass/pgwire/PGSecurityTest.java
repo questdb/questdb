@@ -24,7 +24,9 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
+import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Ignore;
@@ -135,6 +137,8 @@ public class PGSecurityTest extends BasePGTest {
 
     @Test
     public void testDisallowSnapshotComplete() throws Exception {
+        // snapshot is not supported on windows at all
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
             compiler.compile("snapshot prepare", sqlExecutionContext);
@@ -148,6 +152,7 @@ public class PGSecurityTest extends BasePGTest {
 
     @Test
     public void testDisallowSnapshotPrepare() throws Exception {
+        // snapshot is not supported on windows at all
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
             assertQueryDisallowed("snapshot prepare");
