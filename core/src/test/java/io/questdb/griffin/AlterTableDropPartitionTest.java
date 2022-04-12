@@ -275,7 +275,6 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDropPartitionWithColumnTop() throws Exception {
-        LogFactory.configureSync();
         assertMemoryLeak(() -> {
             String tableName = "x";
             try (TableModel tm = new TableModel(engine.getConfiguration(), tableName, PartitionBy.DAY)) {
