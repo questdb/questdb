@@ -1634,10 +1634,6 @@ class SqlOptimiser {
                 linkDependencies(parent, min, max);
             }
         }
-
-        if (r.slaveIndex == -1) {
-            System.out.println("ok");
-        }
         return r;
     }
 

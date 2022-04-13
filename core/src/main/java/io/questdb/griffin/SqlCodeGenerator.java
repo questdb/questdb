@@ -971,7 +971,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     }
                 } catch (Throwable th) {
-                    Misc.free(master);
+                    th.printStackTrace();
+                    master = Misc.free(master);
                     Misc.free(slave);
                     throw th;
                 } finally {
@@ -1425,7 +1426,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateQuery0(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
-        return generateLimit(
+        RecordCursorFactory f = generateLimit(
                 generateOrderBy(
                         generateLatestBy(
                                 generateFilter(
@@ -1445,6 +1446,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 model,
                 executionContext
         );
+        System.out.println("done");
+
+        return f;
     }
 
     @NotNull
