@@ -1536,9 +1536,6 @@ class SqlOptimiser {
     }
 
     private JoinContext mergeContexts(QueryModel parent, JoinContext a, JoinContext b) {
-        if (a.slaveIndex != b.slaveIndex) {
-            System.out.println("ok");
-        }
         assert a.slaveIndex == b.slaveIndex;
 
         deletedContexts.clear();
@@ -2497,6 +2494,10 @@ class SqlOptimiser {
 
             IntList ordered = model.nextOrderedJoinModels();
             int thisCost = doReorderTables(model, ordered);
+
+            // we have to have root, even if it is expensive
+            // so the first iteration sets the root regardless
+            // the following iterations might improve it
             if (thisCost < cost || root == -1) {
                 root = z;
                 cost = thisCost;
