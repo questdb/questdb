@@ -144,7 +144,7 @@ public class SqlCompiler implements Closeable {
                         : new FunctionFactoryCache(engine.getConfiguration(), ServiceLoader.load(
                         FunctionFactory.class, FunctionFactory.class.getClassLoader()))
         );
-        this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser);
+        this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser, sqlNodePool);
 
         // we have cyclical dependency here
         functionParser.setSqlCodeGenerator(codeGenerator);

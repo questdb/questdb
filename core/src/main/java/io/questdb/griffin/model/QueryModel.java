@@ -102,6 +102,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntList orderByDirectionAdvice = new IntList();
     private ExpressionNode whereClause;
+    // Used to store a deep copy of the whereClause field
+    // since whereClause can be changed during optimization/generation stage.
+    private ExpressionNode backupWhereClause;
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode constWhereClause;
     private QueryModel nestedModel;
@@ -719,12 +722,54 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.unionModel = unionModel;
     }
 
-    public ExpressionNode getWhereClause() {
-        return whereClause;
+    // Recursively clones the current value of whereClause for the model and its sub-models into the backupWhereClause field.
+    public static void backupWhereClause(final ObjectPool<ExpressionNode> pool, final QueryModel model) {
+        QueryModel current = model;
+        while (current != null) {
+            if (current.unionModel != null) {
+                backupWhereClause(pool, current.unionModel);
+            }
+            if (current.updateTableModel != null) {
+                backupWhereClause(pool, current.updateTableModel);
+            }
+            for (int i = 0, n = current.joinModels.size(); i < n; i++) {
+                final QueryModel m = current.joinModels.get(i);
+                if (m != null && current != m) {
+                    backupWhereClause(pool, m);
+                }
+            }
+            current.backupWhereClause = ExpressionNode.deepClone(pool, current.whereClause);
+            current = current.nestedModel;
+        }
     }
 
     public void setUpdateTableName(String tableName) {
         this.updateTableName = tableName;
+    }
+
+    // Recursively restores the whereClause field from backupWhereClause for the model and its sub-models.
+    public static void restoreWhereClause(final QueryModel model) {
+        QueryModel current = model;
+        while (current != null) {
+            if (current.unionModel != null) {
+                restoreWhereClause(current.unionModel);
+            }
+            if (current.updateTableModel != null) {
+                restoreWhereClause(current.updateTableModel);
+            }
+            for (int i = 0, n = current.joinModels.size(); i < n; i++) {
+                final QueryModel m = current.joinModels.get(i);
+                if (m != null && current != m) {
+                    restoreWhereClause(m);
+                }
+            }
+            current.whereClause = current.backupWhereClause;
+            current = current.nestedModel;
+        }
+    }
+
+    public ExpressionNode getWhereClause() {
+        return whereClause;
     }
 
     public void setWhereClause(ExpressionNode whereClause) {
@@ -1072,7 +1117,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             }
         }
 
-        if (whereClause != null) {
+        if (getWhereClause() != null) {
             sink.put(" where ");
             whereClause.toSink(sink);
         }
