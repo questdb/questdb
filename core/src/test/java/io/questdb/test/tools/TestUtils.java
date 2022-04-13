@@ -289,10 +289,6 @@ public final class TestUtils {
     }
 
     public static void assertEquals(String message, CharSequence expected, CharSequence actual) {
-        // String expected_str = String.valueOf(expected);
-        // String actual_str = String.valueOf(actual);
-        // expected_str = expected_str.replace("\n", "");
-        // actual_str = actual_str.replace("\n", "");
         if (expected == null && actual == null) {
             return;
         }
