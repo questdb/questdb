@@ -35,7 +35,7 @@ import io.questdb.std.ObjList;
 public class DateTruncFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "date_trunc(SN)";
+        return "date_trunc(sN)";
     }
 
     @Override
