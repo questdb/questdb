@@ -213,7 +213,8 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         offsetMem.truncate();
         offsetMem.putInt(HEADER_CAPACITY, symbolCapacity);
         offsetMem.putBool(HEADER_CACHE_ENABLED, isCached());
-        updateNullFlag(nullValue = false);
+        nullValue = false;
+        updateNullFlag(nullValue);
         offsetMem.jumpTo(keyToOffset(0) + Long.BYTES);
         charMem.truncate();
         indexWriter.truncate();
