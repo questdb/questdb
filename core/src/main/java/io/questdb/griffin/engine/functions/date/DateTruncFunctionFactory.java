@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -45,32 +46,32 @@ public class DateTruncFunctionFactory implements FunctionFactory {
         Function innerFunction = args.getQuick(1);
         if (kind == null) {
             throw SqlException.position(argPositions.getQuick(0)).put("invalid kind 'null'");
-        } else if ("microseconds".contentEquals(kind)) {
+        } else if (Chars.equals(kind, "microseconds")) {
             // timestamps are in microseconds internally, there is nothing to truncate
             return innerFunction;
-        } else if ("milliseconds".contentEquals(kind)) {
+        } else if (Chars.equals(kind, "milliseconds")) {
             return new TimestampFloorFunctions.TimestampFloorMSFunction(innerFunction);
-        } else if ("second".contentEquals(kind)) {
+        } else if (Chars.equals(kind, "second")) {
             return new TimestampFloorFunctions.TimestampFloorSSFunction(innerFunction);
-        } else if ("minute".contentEquals(kind)) {
+        } else if (Chars.equals(kind, "minute")) {
             return new TimestampFloorFunctions.TimestampFloorMIFunction(innerFunction);
-        } else if ("hour".contentEquals(kind)) {
+        } else if (Chars.equals(kind, "hour")) {
             return new TimestampFloorFunctions.TimestampFloorHHFunction(innerFunction);
-        } else if ("day".contentEquals(kind)) {
+        } else if (Chars.equals(kind, "day")) {
             return new TimestampFloorFunctions.TimestampFloorDDFunction(innerFunction);
-        } else if ("week".contentEquals(kind)) {
+        } else if (Chars.equals(kind, "week")) {
             return new TimestampFloorFunctions.TimestampFloorDayOfWeekFunction(innerFunction);
-        } else if ("month".contentEquals(kind)) {
+        } else if (Chars.equals(kind, "month")) {
             return new TimestampFloorFunctions.TimestampFloorMMFunction(innerFunction);
-        } else if ("quarter".contentEquals(kind)) {
+        } else if (Chars.equals(kind, "quarter")) {
             return new TimestampFloorFunctions.TimestampFloorQuarterFunction(innerFunction);
-        } else if ("year".contentEquals(kind)) {
+        } else if (Chars.equals(kind, "year")) {
             return new TimestampFloorFunctions.TimestampFloorYYYYFunction(innerFunction);
-        } else if ("decade".contentEquals(kind)) {
+        } else if (Chars.equals(kind, "decade")) {
             return new TimestampFloorFunctions.TimestampFloorDecadeFunction(innerFunction);
-        } else if ("century".contentEquals(kind)) {
+        } else if (Chars.equals(kind, "century")) {
             return new TimestampFloorFunctions.TimestampFloorCenturyFunction(innerFunction);
-        } else if ("millennium".contentEquals(kind)) {
+        } else if (Chars.equals(kind, "millennium")) {
             return new TimestampFloorFunctions.TimestampFloorMillenniumFunction(innerFunction);
         } else {
             throw SqlException.position(argPositions.getQuick(0)).put("invalid kind '").put(kind).put('\'');
