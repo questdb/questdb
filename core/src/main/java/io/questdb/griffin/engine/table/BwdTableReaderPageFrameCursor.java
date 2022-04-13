@@ -138,7 +138,7 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
         for (int i = 0; i < columnCount; i++) {
             final int columnIndex = columnIndexes.getQuick(i);
             long top = reader.getColumnTop(base, columnIndex);
-            if (top > partitionLo && top > adjustedLo) {
+            if (top > adjustedLo && top < partitionHi) {
                 adjustedLo = top;
             }
         }
@@ -148,7 +148,7 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
             final int readerColIndex = TableReader.getPrimaryColumnIndex(base, columnIndex);
             final MemoryR col = reader.getColumn(readerColIndex);
             // when the entire column is NULL we make it skip the whole of the data frame
-            final long top = col instanceof NullMemoryMR ? adjustedLo : reader.getColumnTop(base, columnIndex);
+            final long top = col instanceof NullMemoryMR ? partitionHi : reader.getColumnTop(base, columnIndex);
             final long partitionLoAdjusted = adjustedLo - top;
             final long partitionHiAdjusted = partitionHi - top;
             final int sh = columnSizes.getQuick(i);
@@ -186,7 +186,7 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
 
         // it is possible that all columns in data frame are empty, but it doesn't mean
         // the data frame size is 0; sometimes we may want to imply nulls
-        if (adjustedLo > partitionLo) {
+        if (partitionLo < adjustedLo) {
             this.reenterPartitionLo = partitionLo;
             this.reenterPartitionHi = adjustedLo;
             this.reenterDataFrame = true;

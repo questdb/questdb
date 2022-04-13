@@ -116,7 +116,16 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     "2\t1970-01-01T00:00:00.100000Z\n" +
                     "1\t1970-01-01T00:00:00.000000Z\n";
 
-            assertSql(query, expected);
+            assertQuery(
+                    expected,
+                    query,
+                    null,
+                    null,
+                    true,
+                    true,
+                    true
+            );
+//            assertSql(query, expected);
             assertSqlRunWithJit(query);
         });
     }

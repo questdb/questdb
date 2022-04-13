@@ -32,8 +32,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
-
 public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends DataFrameRecordCursorFactory {
     private final int symbolColumnIndex;
     private final SingleSymbolFilter symbolFilter;
@@ -105,15 +103,15 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         assert this.convertedToFrame;
         DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, order);
-        initPageFrameCursor(executionContext, dataFrameCursor);
+        initFwdPageFrameCursor(executionContext, dataFrameCursor);
         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
             final CharSequence symbol = symbolFunc.getStr(null);
-            final StaticSymbolTable symbolMapReader = pageFrameCursor.getSymbolTable(symbolColumnIndex);
+            final StaticSymbolTable symbolMapReader = fwdPageFrameCursor.getSymbolTable(symbolColumnIndex);
             this.symbolKey = symbolMapReader.keyOf(symbol);
             if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
                 this.symbolKey = TableUtils.toIndexKey(symbolKey);
             }
         }
-        return pageFrameCursor;
+        return fwdPageFrameCursor;
     }
 }

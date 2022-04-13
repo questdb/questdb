@@ -55,12 +55,16 @@ public class PageFrameReduceTask implements Closeable {
     }
 
     public void collected() {
+        collected(false);
+    }
+
+    public void collected(boolean forceCollect) {
         final long frameCount = frameSequence.getFrameCount();
         // We have to reset capacity only on max all queue items
         // What we are avoiding here is resetting capacity on 1000 frames given our queue size
         // is 32 items. If our particular producer resizes queue items to 10x of the initial size
         // we let these sizes stick until produce starts to wind down.
-        if (frameIndex >= frameCount - pageFrameQueueCapacity) {
+        if (forceCollect || frameIndex >= frameCount - pageFrameQueueCapacity) {
             rows.resetCapacity();
             columns.resetCapacity();
         }
@@ -70,6 +74,10 @@ public class PageFrameReduceTask implements Closeable {
         if (frameIndex + 1 == frameCount) {
             frameSequence.reset();
         }
+    }
+
+    public DirectLongList getColumns() {
+        return columns;
     }
 
     public int getFrameIndex() {
@@ -89,16 +97,12 @@ public class PageFrameReduceTask implements Closeable {
         return (PageFrameSequence<T>) frameSequence;
     }
 
-    public DirectLongList getRows() {
-        return rows;
-    }
-
-    public DirectLongList getColumns() {
-        return columns;
-    }
-
     public PageAddressCache getPageAddressCache() {
         return frameSequence.getPageAddressCache();
+    }
+
+    public DirectLongList getRows() {
+        return rows;
     }
 
     public void of(PageFrameSequence<?> frameSequence, int frameIndex) {

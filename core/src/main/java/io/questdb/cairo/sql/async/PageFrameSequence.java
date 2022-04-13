@@ -118,7 +118,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     // discard collect items
                     final PageFrameReduceTask tsk = queue.get(cursor);
                     if (tsk.getFrameSequence() == this) {
-                        tsk.collected();
+                        tsk.collected(true);
                     }
                     collectSubSeq.done(cursor);
                 } else {
@@ -336,6 +336,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             doneLatch.reset();
             dispatchStartIndex.set(0);
             reduceCounter.set(0);
+            valid.set(true);
             long dispatchCursor;
             do {
                 dispatchCursor = dispatchPubSeq.next();

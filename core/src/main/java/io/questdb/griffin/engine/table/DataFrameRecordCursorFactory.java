@@ -28,10 +28,14 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 
 public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
     protected final int pageFrameMinRows;
@@ -42,7 +46,8 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     private final boolean framingSupported;
     private final IntList columnIndexes;
     private final IntList columnSizes;
-    protected FwdTableReaderPageFrameCursor pageFrameCursor;
+    protected FwdTableReaderPageFrameCursor fwdPageFrameCursor;
+    protected BwdTableReaderPageFrameCursor bwdPageFrameCursor;
 
     public DataFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -82,13 +87,19 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, order);
-        if (pageFrameCursor != null) {
-            return pageFrameCursor.of(dataFrameCursor);
-        } else if (framingSupported) {
-            return initPageFrameCursor(executionContext, dataFrameCursor);
-        } else {
-            return null;
+        if (order == ORDER_ASC || order == ORDER_ANY) {
+            if (framingSupported) {
+                return initFwdPageFrameCursor(executionContext, dataFrameCursor);
+            } else {
+                return null;
+            }
         }
+
+        if (framingSupported) {
+            return initBwdPageFrameCursor(executionContext, dataFrameCursor);
+        }
+
+        return null;
     }
 
     @Override
@@ -129,12 +140,12 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         return cursor;
     }
 
-    protected FwdTableReaderPageFrameCursor initPageFrameCursor(
+    protected PageFrameCursor initFwdPageFrameCursor(
             SqlExecutionContext executionContext,
             DataFrameCursor dataFrameCursor
     ) {
-        if (pageFrameCursor == null) {
-            pageFrameCursor = new FwdTableReaderPageFrameCursor(
+        if (fwdPageFrameCursor == null) {
+            fwdPageFrameCursor = new FwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizes,
                     executionContext.getWorkerCount(),
@@ -142,7 +153,22 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
                     pageFrameMaxRows
             );
         }
-        return pageFrameCursor.of(dataFrameCursor);
+        return fwdPageFrameCursor.of(dataFrameCursor);
     }
 
+    protected PageFrameCursor initBwdPageFrameCursor(
+            SqlExecutionContext executionContext,
+            DataFrameCursor dataFrameCursor
+    ) {
+        if (bwdPageFrameCursor == null) {
+            bwdPageFrameCursor = new BwdTableReaderPageFrameCursor(
+                    columnIndexes,
+                    columnSizes,
+                    executionContext.getWorkerCount(),
+                    pageFrameMinRows,
+                    pageFrameMaxRows
+            );
+        }
+        return bwdPageFrameCursor.of(dataFrameCursor);
+    }
 }

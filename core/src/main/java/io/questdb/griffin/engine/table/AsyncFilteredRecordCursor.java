@@ -56,6 +56,8 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     // Artificial limit on remaining rows to be returned from this cursor.
     // It is typically copied from 'limit' clause on SQL statement
     private long rowsRemaining;
+    // the OG rows remaining, used to reset the counter when re-running cursor from top();
+    private long ogRowsRemaining;
 
     public AsyncFilteredRecordCursor(Function filter, boolean hasDescendingOrder) {
         this.filter = filter;
@@ -72,7 +74,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 .$(", cursor=").$(cursor)
                 .I$();
 
-        collectCursor();
+        collectCursor(true);
         if (frameLimit > -1) {
             frameSequence.await();
         }
@@ -101,7 +103,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         // Release previous queue item.
         // There is no identity check here because this check
         // had been done when 'cursor' was assigned
-        collectCursor();
+        collectCursor(false);
 
         // do we have more frames?
         if (frameIndex < frameLimit) {
@@ -142,6 +144,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         }
         filter.toTop();
         frameSequence.toTop();
+        rowsRemaining = ogRowsRemaining;
         if (frameLimit > -1) {
             frameIndex = -1;
             fetchNextFrame();
@@ -161,9 +164,9 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         return true;
     }
 
-    private void collectCursor() {
+    private void collectCursor(boolean forceCollect) {
         if (cursor > -1) {
-            unsafeCollectCursor();
+            unsafeCollectCursor(forceCollect);
         }
     }
 
@@ -193,7 +196,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                         // It is necessary to clear 'cursor' value
                         // because we updated frameIndex and loop can exit due to lack of frames.
                         // Non-update of 'cursor' could cause double-free.
-                        unsafeCollectCursor();
+                        unsafeCollectCursor(false);
                     }
                 } else {
                     // not our task, nothing to collect
@@ -211,6 +214,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         this.reduceQueue = frameSequence.getPageFrameReduceQueue();
         this.frameIndex = -1;
         this.frameLimit = frameSequence.getFrameCount() - 1;
+        this.ogRowsRemaining = rowsRemaining;
         this.rowsRemaining = rowsRemaining;
         record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
         // when frameCount is 0 our collect sequence is not subscribed
@@ -220,8 +224,8 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         }
     }
 
-    private void unsafeCollectCursor() {
-        reduceQueue.get(cursor).collected();
+    private void unsafeCollectCursor(boolean forceCollect) {
+        reduceQueue.get(cursor).collected(forceCollect);
         collectSubSeq.done(cursor);
         cursor = -1;
     }

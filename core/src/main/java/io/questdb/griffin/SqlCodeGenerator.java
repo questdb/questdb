@@ -2675,7 +2675,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         int typeSize = ColumnType.sizeOf(type);
 
                         columnIndexes.add(columnIndex);
-                        columnSizes.add((Numbers.msb(typeSize)));
+                        columnSizes.add(Numbers.msb(typeSize));
 
                         myMeta.add(new TableColumnMetadata(
                                 Chars.toString(topDownColumns.getQuick(i).getName()),

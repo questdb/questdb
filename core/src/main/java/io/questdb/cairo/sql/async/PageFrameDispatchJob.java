@@ -187,7 +187,11 @@ public class PageFrameDispatchJob implements Job, Closeable {
             while (framesReducedCounter.get() < frameCount) {
                 idle = false;
                 if (stealWork(queue, reduceSubSeq, record, circuitBreaker) || !workStealingMode) {
-                    continue;
+                    if (frameSequence.isValid()) {
+                        continue;
+                    } else {
+                        break;
+                    }
                 }
                 break;
             }

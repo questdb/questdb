@@ -80,17 +80,24 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final long rowsRemaining;
+        long rowsRemaining;
         final int order;
         if (limitHiFunction != null) {
             limitHiFunction.init(frameSequence.getSymbolTableSource(), executionContext);
             rowsRemaining = limitHiFunction.getLong(null);
-            order = rowsRemaining > 0 ? ORDER_ASC : ORDER_DESC;
+            // on negative limit we will be looking for positive number of rows
+            // while scanning table from the highest timestamp to the lowest
+            if (rowsRemaining > -1) {
+                order = ORDER_ASC;
+            } else {
+                order = ORDER_DESC;
+                rowsRemaining = -rowsRemaining;
+            }
         } else {
             rowsRemaining = Long.MAX_VALUE;
             order = ORDER_ANY;
         }
-        cursor.of(collectSubSeq, execute(executionContext, collectSubSeq, ORDER_ANY), rowsRemaining);
+        cursor.of(collectSubSeq, execute(executionContext, collectSubSeq, order), rowsRemaining);
         return cursor;
     }
 
