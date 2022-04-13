@@ -40,6 +40,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -303,6 +304,11 @@ public class AbstractCairoTest {
         snapshotRecoveryEnabled = null;
         hideTelemetryTable = false;
         writerCommandQueueCapacity = 4;
+    }
+
+    protected static void configureForBackups() throws IOException {
+        backupDir = temp.newFolder().getAbsolutePath();
+        backupDirTimestampFormat = new TimestampFormatCompiler().compile("ddMMMyyyy");
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {

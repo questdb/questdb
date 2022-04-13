@@ -25,9 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.std.Os;
-import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import org.junit.Assume;
-import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -52,12 +50,6 @@ public class PGSecurityTest extends BasePGTest {
             return true;
         }
     };
-
-    @BeforeClass
-    public static void configureForBackups() throws IOException {
-        backupDir = backup.newFolder("dbBackupRoot").getAbsolutePath();
-        backupDirTimestampFormat = new TimestampFormatCompiler().compile("ddMMMyyyy");
-    }
 
     @Test
     public void testDisallowDrop() throws Exception {
@@ -175,6 +167,7 @@ public class PGSecurityTest extends BasePGTest {
     @Test
     public void testDisallowsBackupDatabase() throws Exception {
         assertMemoryLeak(() -> {
+            configureForBackups();
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
             compiler.compile("insert into src values (now(), 'foo')", sqlExecutionContext);
             assertQueryDisallowed("backup database");
@@ -184,6 +177,7 @@ public class PGSecurityTest extends BasePGTest {
     @Test
     public void testDisallowsBackupTable() throws Exception {
         assertMemoryLeak(() -> {
+            configureForBackups();
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
             compiler.compile("insert into src values (now(), 'foo')", sqlExecutionContext);
             assertQueryDisallowed("backup table src");
